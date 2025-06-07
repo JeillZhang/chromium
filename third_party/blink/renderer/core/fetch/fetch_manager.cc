@@ -45,6 +45,7 @@
 #include "third_party/blink/renderer/core/dom/abort_signal.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
+#include "third_party/blink/renderer/core/dom/quota_exceeded_error.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/fetch/body.h"
 #include "third_party/blink/renderer/core/fetch/body_stream_buffer.h"
@@ -523,12 +524,16 @@ class FetchManager::Loader final
           return;
       }
 
+      String error_message;
       finished_ = true;
       if (result == Result::kDone) {
         bool integrity_failed = false;
         if (unencoded_digest_.has_value() &&
             !unencoded_digest_->DoesMatch(&buffer_)) {
           integrity_failed = true;
+          error_message =
+              "The resource's `unencoded-digest` header asserted "
+              "a digest which does not match the resource's body.";
         }
         if (!integrity_failed && !integrity_metadata_.empty()) {
           IntegrityReport integrity_report;
@@ -546,6 +551,7 @@ class FetchManager::Loader final
               metadata_set, &buffer_, url_, type, raw_headers,
               loader_->GetExecutionContext(), integrity_report);
           integrity_report.SendReports(loader_->GetExecutionContext());
+          error_message = "SRI's integrity checks failed.";
         }
         if (!integrity_failed) {
           updater_->Update(
@@ -555,8 +561,6 @@ class FetchManager::Loader final
           return;
         }
       }
-      String error_message =
-          "Unknown error occurred while trying to verify integrity.";
       if (updater_) {
         updater_->Update(
             BytesConsumer::CreateErrored(BytesConsumer::Error(error_message)));
@@ -1043,10 +1047,10 @@ void FetchLoaderBase::FileIssueAndPerformNetworkError(
                                    fetch_request_data_->Origin()->ToString(),
                                    fetch_request_data_->Url().Protocol(),
                                    issue_id);
-      PerformNetworkError("URL scheme \"" +
-                              fetch_request_data_->Url().Protocol() +
-                              "\" is not supported.",
-                          issue_id);
+      PerformNetworkError(
+          WTF::StrCat({"URL scheme \"", fetch_request_data_->Url().Protocol(),
+                       "\" is not supported."}),
+          issue_id);
       break;
     }
     case RendererCorsIssueCode::kDisallowedByMode: {
@@ -1055,9 +1059,9 @@ void FetchLoaderBase::FileIssueAndPerformNetworkError(
                                    fetch_request_data_->Origin()->ToString(),
                                    WTF::g_empty_string, issue_id);
       PerformNetworkError(
-          "Request mode is \"same-origin\" but the URL\'s "
-          "origin is not same as the request origin " +
-              fetch_request_data_->Origin()->ToString() + ".",
+          WTF::StrCat({"Request mode is \"same-origin\" but the URL\'s origin "
+                       "is not same as the request origin ",
+                       fetch_request_data_->Origin()->ToString(), "."}),
           issue_id);
 
       break;
@@ -1079,8 +1083,9 @@ void FetchLoaderBase::FileIssueAndPerformNetworkError(
 void FetchLoaderBase::PerformNetworkError(
     const String& issue_summary,
     std::optional<base::UnguessableToken> issue_id) {
-  Failed("Fetch API cannot load " + fetch_request_data_->Url().ElidedString() +
-             ". " + issue_summary,
+  Failed(WTF::StrCat({"Fetch API cannot load ",
+                      fetch_request_data_->Url().ElidedString(), ". ",
+                      issue_summary}),
          nullptr, std::nullopt, issue_id, issue_summary);
 }
 
@@ -1154,6 +1159,10 @@ void FetchLoaderBase::PerformHTTPFetch(ExceptionState& exception_state) {
   if (fetch_request_data_->Keepalive()) {
     request.SetKeepalive(true);
     UseCounter::Count(execution_context_, mojom::WebFeature::kFetchKeepalive);
+  }
+
+  if (fetch_request_data_->HasRetryOptions()) {
+    request.SetFetchRetryOptions(fetch_request_data_->RetryOptions().value());
   }
 
   request.SetBrowsingTopics(fetch_request_data_->BrowsingTopics());
@@ -1683,8 +1692,8 @@ FetchLaterResult* FetchLaterManager::FetchLater(
   if (available_quota < total_request_length) {
     UseCounter::Count(GetExecutionContext(),
                       WebFeature::kFetchLaterErrorQuotaExceeded);
-    exception_state.ThrowDOMException(
-        DOMExceptionCode::kQuotaExceededError,
+    QuotaExceededError::Throw(
+        exception_state,
         String::Format(
             "fetchLater exceeds its quota for the origin: got %" PRIu64 " "
             "bytes, expected less than %" PRIu64 " bytes.",
@@ -1862,25 +1871,15 @@ FetchLaterManager::PrepareNetworkRequest(
       fetcher->GetProperties().GetFetchClientSettingsObject();
 
   FetchManagerResourceRequestContext resource_request_context;
-  if (!RuntimeEnabledFeatures::
-          MinimimalResourceRequestPrepBeforeCacheLookupEnabled()) {
-    if (PrepareResourceRequest(
-            kFetchLaterResourceType, fetch_client_settings_object, params,
-            fetcher->Context(), unused_virtual_time_pauser,
-            resource_request_context, KURL()) != std::nullopt) {
-      return nullptr;
-    }
-  } else {
-    if (PrepareResourceRequestForCacheAccess(
-            kFetchLaterResourceType, fetch_client_settings_object, KURL(),
-            resource_request_context, fetcher->Context(),
-            params) != std::nullopt) {
-      return nullptr;
-    }
-    UpgradeResourceRequestForLoaderNew(
-        kFetchLaterResourceType, params, fetcher->Context(),
-        resource_request_context, unused_virtual_time_pauser);
+  if (PrepareResourceRequestForCacheAccess(
+          kFetchLaterResourceType, fetch_client_settings_object, KURL(),
+          resource_request_context, fetcher->Context(),
+          params) != std::nullopt) {
+    return nullptr;
   }
+  UpgradeResourceRequestForLoader(kFetchLaterResourceType, params,
+                                  fetcher->Context(), resource_request_context,
+                                  unused_virtual_time_pauser);
 
   // From `ResourceFetcher::StartLoad()`:
   ScriptForbiddenScope script_forbidden_scope;
@@ -1888,6 +1887,8 @@ FetchLaterManager::PrepareNetworkRequest(
   PopulateResourceRequest(
       params.GetResourceRequest(),
       std::move(params.MutableResourceRequest().MutableBody()),
+      network_resource_request.get());
+  fetcher->PopulateResourceRequestPermissionsPolicy(
       network_resource_request.get());
   return network_resource_request;
 }

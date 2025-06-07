@@ -30,6 +30,7 @@
 #include "services/network/public/mojom/network_context.mojom-forward.h"
 
 #if BUILDFLAG(IS_MAC)
+#include "base/apple/owned_objc.h"
 #include "device/fido/mac/authenticator_config.h"
 #endif  // BUILDFLAG(IS_MAC)
 
@@ -108,9 +109,12 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoDiscoveryFactory {
     mac_touch_id_config_ = std::move(mac_touch_id_config);
   }
   // Sets the window on top of which macOS will show any iCloud Keychain UI.
-  // This is passed as a `uintptr_t` to avoid handling `NSWindow` (an ObjC++
-  // type) in C++. See crbug.com/1433041.
-  void set_nswindow(uintptr_t window) { nswindow_ = window; }
+  void set_nswindow(base::apple::WeakNSWindow window) { nswindow_ = window; }
+  // Sets a flag to allow for discovery of the authenticator despite having no
+  // NSWindow. For testing use only.
+  void set_allow_no_nswindow_for_testing(bool value) {
+    allow_no_nswindow_for_testing_ = value;
+  }
 #endif  // BUILDFLAG(IS_MAC)
 
 #if BUILDFLAG(IS_WIN)
@@ -149,7 +153,8 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoDiscoveryFactory {
 
 #if BUILDFLAG(IS_MAC)
   std::optional<fido::mac::AuthenticatorConfig> mac_touch_id_config_;
-  uintptr_t nswindow_ = 0;
+  base::apple::WeakNSWindow nswindow_;
+  bool allow_no_nswindow_for_testing_;
 #endif  // BUILDFLAG(IS_MAC)
   NetworkContextFactory network_context_factory_;
   std::optional<std::vector<CableDiscoveryData>> cable_data_;

@@ -131,7 +131,7 @@ TEST_F(NavigatorTest, SimpleBrowserInitiatedNavigationFromNonLiveRenderer) {
   EXPECT_TRUE(main_test_rfh()->IsActive());
   EXPECT_EQ(main_test_rfh()->lifecycle_state(),
             RenderFrameHostImpl::LifecycleStateImpl::kActive);
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_EQ(CreateExpectedSiteInfo(kUrl),
               main_test_rfh()->GetSiteInstance()->GetSiteInfo());
   } else {
@@ -199,7 +199,7 @@ TEST_F(NavigatorTest, SimpleRendererInitiatedSameSiteNavigation) {
   // Commit the navigation.
   navigation->Commit();
   EXPECT_TRUE(main_test_rfh()->IsActive());
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_EQ(CreateExpectedSiteInfo(kUrl2),
               main_test_rfh()->GetSiteInstance()->GetSiteInfo());
   } else {
@@ -418,6 +418,9 @@ TEST_F(NavigatorTest, BeforeUnloadDenialCancelNavigation) {
   const GURL kUrl2("http://www.chromium.org/");
 
   contents()->NavigateAndCommit(kUrl1);
+  // This test assumes a beforeunload handler is present.
+  main_test_rfh()->SuddenTerminationDisablerChanged(
+      true, blink::mojom::SuddenTerminationDisablerType::kBeforeUnloadHandler);
 
   // Start a new navigation.
   FrameTreeNode* node = main_test_rfh()->frame_tree_node();
@@ -451,6 +454,9 @@ TEST_F(NavigatorTest, BeginNavigation) {
   FrameTreeNode* root_node = contents()->GetPrimaryFrameTree().root();
   TestRenderFrameHost* subframe_rfh = main_test_rfh()->AppendChild("Child");
   ASSERT_TRUE(subframe_rfh);
+  // This test assumes a beforeunload handler is present on the subframe.
+  subframe_rfh->SuddenTerminationDisablerChanged(
+      true, blink::mojom::SuddenTerminationDisablerType::kBeforeUnloadHandler);
 
   // Start a navigation at the subframe.
   FrameTreeNode* subframe_node = subframe_rfh->frame_tree_node();
@@ -721,7 +727,7 @@ TEST_F(NavigatorTest, BrowserInitiatedNavigationCancel) {
   TestRenderFrameHost* speculative_rfh = GetSpeculativeRenderFrameHost(node);
   ASSERT_TRUE(speculative_rfh);
   auto site_instance_id_1 = speculative_rfh->GetSiteInstance()->GetId();
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_EQ(kUrl1SiteInfo, speculative_rfh->GetSiteInstance()->GetSiteInfo());
   } else {
     EXPECT_TRUE(speculative_rfh->GetSiteInstance()->IsDefaultSiteInstance());
@@ -745,7 +751,7 @@ TEST_F(NavigatorTest, BrowserInitiatedNavigationCancel) {
   ASSERT_TRUE(speculative_rfh);
   auto site_instance_id_2 = speculative_rfh->GetSiteInstance()->GetId();
 
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_NE(site_instance_id_1, site_instance_id_2);
   } else {
     EXPECT_TRUE(speculative_rfh->GetSiteInstance()->IsDefaultSiteInstance());
@@ -761,7 +767,7 @@ TEST_F(NavigatorTest, BrowserInitiatedNavigationCancel) {
 
   // Confirm that the commit corresponds to the new request.
   ASSERT_TRUE(main_test_rfh());
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_EQ(kUrl2SiteInfo, main_test_rfh()->GetSiteInstance()->GetSiteInfo());
   } else {
     EXPECT_TRUE(main_test_rfh()->GetSiteInstance()->IsDefaultSiteInstance());
@@ -1064,7 +1070,7 @@ TEST_F(NavigatorTest, SpeculativeRendererWorksBaseCase) {
   auto site_instance_id = speculative_rfh->GetSiteInstance()->GetId();
   ASSERT_TRUE(speculative_rfh);
   EXPECT_NE(speculative_rfh, main_test_rfh());
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_EQ(CreateExpectedSiteInfo(kUrl),
               speculative_rfh->GetSiteInstance()->GetSiteInfo());
   } else {
@@ -1104,7 +1110,7 @@ TEST_F(NavigatorTest, SpeculativeRendererDiscardedAfterRedirectToAnotherSite) {
   EXPECT_EQ(init_site_instance_id, main_test_rfh()->GetSiteInstance()->GetId());
   EXPECT_NE(speculative_rfh, main_test_rfh());
 
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_EQ(CreateExpectedSiteInfo(kUrl),
               speculative_rfh->GetSiteInstance()->GetSiteInfo());
   } else {
@@ -1142,7 +1148,7 @@ TEST_F(NavigatorTest, SpeculativeRendererDiscardedAfterRedirectToAnotherSite) {
   // they should be associated with different BrowsingInstances.
   EXPECT_NE(init_site_instance_id, redirect_site_instance_id);
 
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_EQ(CreateExpectedSiteInfo(kUrlRedirect),
               speculative_rfh->GetSiteInstance()->GetSiteInfo());
     EXPECT_NE(site_instance_id, redirect_site_instance_id);
@@ -1290,7 +1296,7 @@ TEST_F(NavigatorTest, SiteInstanceDescriptionConversion) {
     EXPECT_NE(current_instance, related_instance.get());
     EXPECT_NE(unrelated_instance.get(), related_instance.get());
 
-    if (AreAllSitesIsolatedForTesting()) {
+    if (AreStrictSiteInstancesEnabled()) {
       EXPECT_EQ(SiteInfo::CreateForTesting(
                     current_instance->GetIsolationContext(), kUrlSameSiteAs2),
                 related_instance->GetSiteInfo());
@@ -1353,7 +1359,7 @@ TEST_F(NavigatorTest, SiteInstanceDescriptionConversion) {
     EXPECT_NE(related_instance.get(), converted_instance_1.get());
     EXPECT_NE(unrelated_instance.get(), converted_instance_1.get());
 
-    if (AreAllSitesIsolatedForTesting()) {
+    if (AreStrictSiteInstancesEnabled()) {
       EXPECT_EQ(CreateExpectedSiteInfo(kUrlSameSiteAs2),
                 converted_instance_1->GetSiteInfo());
     } else {
@@ -1396,7 +1402,7 @@ TEST_F(NavigatorTest, PermissionsPolicySameSiteNavigation) {
   contents()->NavigateAndCommit(kUrl1);
 
   // Check the permissions policy before navigation.
-  const blink::PermissionsPolicy* original_permissions_policy =
+  const network::PermissionsPolicy* original_permissions_policy =
       main_test_rfh()->GetPermissionsPolicy();
   ASSERT_TRUE(original_permissions_policy);
 
@@ -1404,7 +1410,7 @@ TEST_F(NavigatorTest, PermissionsPolicySameSiteNavigation) {
   contents()->NavigateAndCommit(kUrl2);
 
   // Check the permissions policy after navigation.
-  const blink::PermissionsPolicy* final_permissions_policy =
+  const network::PermissionsPolicy* final_permissions_policy =
       main_test_rfh()->GetPermissionsPolicy();
   ASSERT_TRUE(final_permissions_policy);
   ASSERT_NE(original_permissions_policy, final_permissions_policy);
@@ -1419,7 +1425,7 @@ TEST_F(NavigatorTest, PermissionsPolicyFragmentNavigation) {
   contents()->NavigateAndCommit(kUrl1);
 
   // Check the permissions policy before navigation.
-  const blink::PermissionsPolicy* original_permissions_policy =
+  const network::PermissionsPolicy* original_permissions_policy =
       main_test_rfh()->GetPermissionsPolicy();
   ASSERT_TRUE(original_permissions_policy);
 
@@ -1427,7 +1433,7 @@ TEST_F(NavigatorTest, PermissionsPolicyFragmentNavigation) {
   contents()->NavigateAndCommit(kUrl2);
 
   // Check the permissions policy after navigation.
-  const blink::PermissionsPolicy* final_permissions_policy =
+  const network::PermissionsPolicy* final_permissions_policy =
       main_test_rfh()->GetPermissionsPolicy();
   ASSERT_EQ(original_permissions_policy, final_permissions_policy);
 }
@@ -1445,7 +1451,7 @@ TEST_F(NavigatorTest, PermissionsPolicyNewChild) {
       contents()->GetPrimaryMainFrame()->AppendChild("child");
   NavigationSimulator::NavigateAndCommitFromDocument(kUrl2, subframe_rfh);
 
-  const blink::PermissionsPolicy* subframe_permissions_policy =
+  const network::PermissionsPolicy* subframe_permissions_policy =
       subframe_rfh->GetPermissionsPolicy();
   ASSERT_TRUE(subframe_permissions_policy);
   ASSERT_FALSE(subframe_permissions_policy->GetOriginForTest().opaque());

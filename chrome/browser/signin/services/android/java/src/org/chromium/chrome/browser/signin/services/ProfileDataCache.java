@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.signin.services;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
@@ -20,8 +22,6 @@ import android.graphics.drawable.Drawable;
 import androidx.annotation.DimenRes;
 import androidx.annotation.DrawableRes;
 import androidx.annotation.MainThread;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.Px;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.content.res.AppCompatResources;
@@ -29,6 +29,8 @@ import androidx.appcompat.content.res.AppCompatResources;
 import org.chromium.base.ObserverList;
 import org.chromium.base.Promise;
 import org.chromium.base.ThreadUtils;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.util.AvatarGenerator;
 import org.chromium.components.signin.AccountEmailDisplayHook;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
@@ -46,6 +48,7 @@ import java.util.Objects;
  * Fetches and caches Google Account profile images and full names for the accounts on the device.
  */
 @MainThread
+@NullMarked
 public class ProfileDataCache implements AccountInfoService.Observer {
     /** Observer to get notifications about changes in profile data. */
     public interface Observer {
@@ -122,7 +125,7 @@ public class ProfileDataCache implements AccountInfoService.Observer {
     // * Else if there is a default config, use that
     // * Else do not display a badge.
     private @Nullable BadgeConfig mDefaultBadgeConfig;
-    private Map<String, BadgeConfig> mPerAccountBadgeConfig = new HashMap<>();
+    private final Map<String, BadgeConfig> mPerAccountBadgeConfig = new HashMap<>();
     private final Drawable mPlaceholderImage;
     private final ObserverList<Observer> mObservers = new ObserverList<>();
     private final Map<String, DisplayableProfileData> mCachedProfileData = new HashMap<>();
@@ -238,9 +241,10 @@ public class ProfileDataCache implements AccountInfoService.Observer {
      *     given account or a {@link DisplayableProfileData} with a placeholder image and null full
      *     and given name.
      */
-    public DisplayableProfileData getProfileDataOrDefault(String accountEmail) {
+    public DisplayableProfileData getProfileDataOrDefault(@Nullable String accountEmail) {
         DisplayableProfileData profileData = mCachedProfileData.get(accountEmail);
         if (profileData == null) {
+            assumeNonNull(accountEmail);
             return new DisplayableProfileData(
                     accountEmail,
                     mPlaceholderImage,
@@ -327,7 +331,7 @@ public class ProfileDataCache implements AccountInfoService.Observer {
 
     /** Implements {@link AccountInfoService.Observer}. */
     @Override
-    public void onAccountInfoUpdated(AccountInfo accountInfo) {
+    public void onAccountInfoUpdated(@Nullable AccountInfo accountInfo) {
         // We don't update the cache if the account information and ProfileDataCache config mean
         // that we would just be returning the default profile data.
         if (accountInfo != null
@@ -350,8 +354,7 @@ public class ProfileDataCache implements AccountInfoService.Observer {
     }
 
     private void populateCache(AccountInfoService accountInfoService) {
-        Promise<List<CoreAccountInfo>> accountsPromise =
-                AccountManagerFacadeProvider.getInstance().getCoreAccountInfos();
+        var accountsPromise = AccountManagerFacadeProvider.getInstance().getAccounts();
         if (accountsPromise.isFulfilled()) {
             populateCacheForAllAccounts(accountInfoService, accountsPromise.getResult());
         } else {
@@ -363,9 +366,9 @@ public class ProfileDataCache implements AccountInfoService.Observer {
     }
 
     private void populateCacheForAllAccounts(
-            AccountInfoService accountInfoService, List<CoreAccountInfo> accounts) {
-        for (CoreAccountInfo coreAccountInfo : accounts) {
-            populateCacheForAccount(accountInfoService, coreAccountInfo.getEmail());
+            AccountInfoService accountInfoService, List<AccountInfo> accounts) {
+        for (CoreAccountInfo account : accounts) {
+            populateCacheForAccount(accountInfoService, account.getEmail());
         }
     }
 
@@ -373,7 +376,7 @@ public class ProfileDataCache implements AccountInfoService.Observer {
     private void populateCacheForAccount(
             AccountInfoService accountInfoService, String accountEmail) {
         // TODO(crbug.com/341948846): Remove AccountInfoService and simplify this.
-        Promise<AccountInfo> accountInfoPromise =
+        Promise<@Nullable AccountInfo> accountInfoPromise =
                 accountInfoService.getAccountInfoByEmail(accountEmail);
         if (accountInfoPromise.isFulfilled()) {
             onAccountInfoUpdated(accountInfoPromise.getResult());
@@ -384,7 +387,7 @@ public class ProfileDataCache implements AccountInfoService.Observer {
 
     private void updateCacheAndNotifyObservers(
             String email,
-            Bitmap avatar,
+            @Nullable Bitmap avatar,
             String fullName,
             String givenName,
             boolean hasDisplayableEmailAddress) {
@@ -458,7 +461,7 @@ public class ProfileDataCache implements AccountInfoService.Observer {
         return new BitmapDrawable(context.getResources(), output);
     }
 
-    private @Nullable BadgeConfig getBadgeConfigForAccount(@NonNull String email) {
+    private @Nullable BadgeConfig getBadgeConfigForAccount(String email) {
         return mPerAccountBadgeConfig.get(email) != null
                 ? mPerAccountBadgeConfig.get(email)
                 : mDefaultBadgeConfig;

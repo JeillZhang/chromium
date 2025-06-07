@@ -9,7 +9,6 @@
 
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
-#include "base/not_fatal_until.h"
 #include "base/uuid.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -19,12 +18,17 @@
 #include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_action_context_desktop.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "components/saved_tab_groups/internal/stats.h"
+#include "components/saved_tab_groups/internal/tab_group_sync_service_impl.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/saved_tab_groups/public/types.h"
+#include "components/tabs/public/tab_interface.h"
 #include "ui/gfx/range/range.h"
 
 namespace tab_groups {
 namespace {
+
+constexpr base::TimeDelta kDelayBeforeMetricsLogged = base::Hours(1);
 
 class ScopedLocalObservationPauserImpl : public ScopedLocalObservationPauser {
  public:
@@ -131,13 +135,17 @@ tabs::TabInterface* MaybeOpenTabFromSavedTab(const SavedTabGroupTab& saved_tab,
 TabGroupSyncDelegateDesktop::TabGroupSyncDelegateDesktop(
     TabGroupSyncService* service,
     Profile* profile)
-    : service_(service),
+    : profile_(profile),
+      service_(service),
       listener_(
-          std::make_unique<SavedTabGroupModelListener>(service_, profile)) {}
+          std::make_unique<SavedTabGroupModelListener>(service_, profile)) {
+  service_observation_.Observe(service_);
+}
 
 TabGroupSyncDelegateDesktop::~TabGroupSyncDelegateDesktop() = default;
 
-void TabGroupSyncDelegateDesktop::HandleOpenTabGroupRequest(
+std::optional<LocalTabGroupID>
+TabGroupSyncDelegateDesktop::HandleOpenTabGroupRequest(
     const base::Uuid& sync_tab_group_id,
     std::unique_ptr<TabGroupActionContext> context) {
   const std::optional<SavedTabGroup> group =
@@ -147,14 +155,14 @@ void TabGroupSyncDelegateDesktop::HandleOpenTabGroupRequest(
   // interstitial, the saved_group could be null, so protect against this by
   // early returning.
   if (!group.has_value()) {
-    return;
+    return std::nullopt;
   }
 
   // Activate the first tab in a group if it is already open.
   if (group->local_group_id().has_value()) {
     SavedTabGroupUtils::FocusFirstTabOrWindowInOpenGroup(
         group->local_group_id().value());
-    return;
+    return group->local_group_id().value();
   }
 
   TabGroupActionContextDesktop* desktop_context =
@@ -166,13 +174,13 @@ void TabGroupSyncDelegateDesktop::HandleOpenTabGroupRequest(
       OpenTabsAndMapToUuids(browser, group.value());
 
   if (tab_guid_mapping.empty()) {
-    // If not tabs were opened, do nothing.
-    return;
+    // If no tabs were opened, do nothing.
+    return std::nullopt;
   }
 
   // Add the tabs to a new group in the tabstrip and link it to `group`.
-  AddOpenedTabsToGroup(browser->tab_strip_model(), std::move(tab_guid_mapping),
-                       group.value());
+  return AddOpenedTabsToGroup(browser->tab_strip_model(),
+                              std::move(tab_guid_mapping), group.value());
 }
 
 void TabGroupSyncDelegateDesktop::CreateLocalTabGroup(
@@ -241,8 +249,7 @@ void TabGroupSyncDelegateDesktop::UpdateLocalTabGroup(
   }
 
   const LocalTabGroupID& group_id = group.local_group_id().value();
-  CHECK(listener_->IsTrackingLocalTabGroup(group_id),
-        base::NotFatalUntil::M135);
+  CHECK(listener_->IsTrackingLocalTabGroup(group_id));
 
   // Update the local group with the new data. This will open new tabs, close
   // tabs, and navigate tabs to match the saved group.
@@ -253,6 +260,11 @@ std::vector<LocalTabGroupID>
 TabGroupSyncDelegateDesktop::GetLocalTabGroupIds() {
   std::vector<LocalTabGroupID> local_group_ids;
   for (Browser* browser : *BrowserList::GetInstance()) {
+    if (browser->profile() != profile_) {
+      // Skip browsers for other profiles.
+      continue;
+    }
+
     if (browser->tab_strip_model() &&
         browser->tab_strip_model()->SupportsTabGroups()) {
       std::vector<LocalTabGroupID> local_groups =
@@ -270,9 +282,34 @@ std::vector<LocalTabID> TabGroupSyncDelegateDesktop::GetLocalTabIdsForTabGroup(
   return std::vector<LocalTabID>();
 }
 
+std::set<LocalTabID> TabGroupSyncDelegateDesktop::GetSelectedTabs() {
+  std::set<LocalTabID> selected_tab_ids;
+  for (Browser* browser : *BrowserList::GetInstance()) {
+    if (browser->profile() != profile_) {
+      // Skip browsers for other profiles.
+      continue;
+    }
+
+    if (browser->tab_strip_model()) {
+      tabs::TabInterface* active_tab =
+          browser->tab_strip_model()->GetActiveTab();
+      if (active_tab) {
+        selected_tab_ids.insert(active_tab->GetHandle().raw_value());
+      }
+    }
+  }
+
+  return selected_tab_ids;
+}
+
 std::u16string TabGroupSyncDelegateDesktop::GetTabTitle(
     const LocalTabID& local_tab_id) {
   for (Browser* browser : *BrowserList::GetInstance()) {
+    if (browser->profile() != profile_) {
+      // Skip browsers for other profiles.
+      continue;
+    }
+
     TabStripModel* tab_strip_model = browser->tab_strip_model();
     if (tab_strip_model) {
       for (int i = 0; i < tab_strip_model->count(); ++i) {
@@ -338,14 +375,14 @@ TabGroupId TabGroupSyncDelegateDesktop::AddOpenedTabsToGroup(
       tab_strip_model->group_model()->GetTabGroup(tab_group_id);
 
   // Activate the first tab in the group.
-  std::optional<int> first_tab = tab_group->GetFirstTab();
-  DCHECK(first_tab.has_value());
-  tab_strip_model->ActivateTabAt(first_tab.value());
+  tabs::TabInterface* first_tab = tab_group->GetFirstTab();
+  DCHECK(first_tab);
+  tab_strip_model->ActivateTabAt(tab_strip_model->GetIndexOfTab(first_tab));
 
   // Update the group to use the saved title and color.
   TabGroupVisualData visual_data(saved_group.title(), saved_group.color(),
                                  /*is_collapsed=*/false);
-  tab_group->SetVisualData(visual_data, /*is_customized=*/true);
+  tab_strip_model->ChangeTabGroupVisuals(tab_group_id, visual_data);
 
   const std::optional<SavedTabGroup> saved_group2 =
       service_->GetGroup(saved_group.saved_guid());
@@ -353,4 +390,26 @@ TabGroupId TabGroupSyncDelegateDesktop::AddOpenedTabsToGroup(
   listener_->ConnectToLocalTabGroup(*saved_group2, tab_guid_mapping);
   return tab_group_id;
 }
+
+void TabGroupSyncDelegateDesktop::OnInitialized() {
+  StartRecordingHourlyMetrics();
+}
+
+void TabGroupSyncDelegateDesktop::OnWillBeDestroyed() {
+  service_observation_.Reset();
+}
+
+void TabGroupSyncDelegateDesktop::StartRecordingHourlyMetrics() {
+  hourly_metrics_timer_.Start(
+      FROM_HERE, kDelayBeforeMetricsLogged,
+      base::BindRepeating(&TabGroupSyncDelegateDesktop::RecordHourlyMetrics,
+                          base::Unretained(this)));
+}
+
+void TabGroupSyncDelegateDesktop::RecordHourlyMetrics() {
+  auto* model = static_cast<TabGroupSyncServiceImpl*>(service_)->GetModel();
+  stats::RecordSavedTabGroupMetrics(model);
+  hourly_metrics_timer_.Reset();
+}
+
 }  // namespace tab_groups

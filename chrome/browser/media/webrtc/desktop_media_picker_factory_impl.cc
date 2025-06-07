@@ -7,7 +7,6 @@
 #include "base/containers/contains.h"
 #include "base/no_destructor.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/media/webrtc/current_tab_desktop_media_list.h"
 #include "chrome/browser/media/webrtc/desktop_capturer_wrapper.h"
 #include "chrome/browser/media/webrtc/native_desktop_media_list.h"
@@ -33,7 +32,9 @@ std::unique_ptr<ThumbnailCapturer> MakeScreenCapturer() {
 #endif  // BUILDFLAG(IS_MAC)
 
   std::unique_ptr<webrtc::DesktopCapturer> desktop_capturer =
-      content::desktop_capture::CreateScreenCapturer();
+      content::desktop_capture::CreateScreenCapturer(
+          content::desktop_capture::CreateDesktopCaptureOptions(),
+          /*for_snapshot=*/true);
   return desktop_capturer ? std::make_unique<DesktopCapturerWrapper>(
                                 std::move(desktop_capturer))
                           : nullptr;
@@ -47,7 +48,8 @@ std::unique_ptr<ThumbnailCapturer> MakeWindowCapturer() {
 #endif  // BUILDFLAG(IS_MAC)
 
   std::unique_ptr<webrtc::DesktopCapturer> desktop_capturer =
-      content::desktop_capture::CreateWindowCapturer();
+      content::desktop_capture::CreateWindowCapturer(
+          content::desktop_capture::CreateDesktopCaptureOptions());
   return desktop_capturer ? std::make_unique<DesktopCapturerWrapper>(
                                 std::move(desktop_capturer))
                           : nullptr;

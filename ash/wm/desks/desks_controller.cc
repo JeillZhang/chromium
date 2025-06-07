@@ -2,19 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/wm/desks/desks_controller.h"
 
 #include <algorithm>
+#include <array>
 #include <utility>
 
 #include "ash/accessibility/accessibility_controller.h"
 #include "ash/app_list/app_list_controller_impl.h"
-#include "ash/constants/ash_features.h"
 #include "ash/constants/notifier_catalogs.h"
 #include "ash/public/cpp/shelf_model.h"
 #include "ash/public/cpp/shelf_prefs.h"
@@ -65,6 +60,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -126,7 +122,7 @@ constexpr base::TimeDelta kDeskTraversalsTimeout = base::Seconds(5);
 // its "close" hooks before being forcefully closed.
 base::TimeDelta g_close_all_window_close_timeout = base::Seconds(1);
 
-constexpr int kDeskDefaultNameIds[] = {
+constexpr auto kDeskDefaultNameIds = std::to_array<int>({
     IDS_ASH_DESKS_DESK_1_MINI_VIEW_TITLE,
     IDS_ASH_DESKS_DESK_2_MINI_VIEW_TITLE,
     IDS_ASH_DESKS_DESK_3_MINI_VIEW_TITLE,
@@ -143,7 +139,7 @@ constexpr int kDeskDefaultNameIds[] = {
     IDS_ASH_DESKS_DESK_14_MINI_VIEW_TITLE,
     IDS_ASH_DESKS_DESK_15_MINI_VIEW_TITLE,
     IDS_ASH_DESKS_DESK_16_MINI_VIEW_TITLE,
-};
+});
 
 // Appends the given |windows| to the end of the currently active overview mode
 // session such that the most-recently used window is added first. If
@@ -385,12 +381,6 @@ class DesksController::DeskTraversalsMetricsHelper {
       count_ += visible_desk_changes;
   }
 
-  // Fires |timer_| immediately.
-  void FireTimerForTesting() {
-    if (timer_.IsRunning())
-      timer_.FireNow();
-  }
-
  private:
   void OnTimerStop() {
     // If an animation is still running, add its current visible desk change
@@ -433,9 +423,7 @@ DesksController::DesksController()
       FROM_HERE, base::Days(7), this,
       &DesksController::RecordAndResetNumberOfWeeklyActiveDesks);
 
-  if (ash::features::IsDeskButtonEnabled()) {
-    desk_bar_controller_ = std::make_unique<DeskBarController>();
-  }
+  desk_bar_controller_ = std::make_unique<DeskBarController>();
 }
 
 DesksController::~DesksController() {
@@ -642,14 +630,12 @@ void DesksController::NewDesk(DesksCreationRemovalSource source,
   }
 
   if (!is_first_ever_desk) {
-    if (features::IsDeskButtonEnabled()) {
-      PrefService* prefs =
-          Shell::Get()->session_controller()->GetLastActiveUserPrefService();
-      // Record that virtual desks have been used on this device so we can show
-      // the desk button from now on, if the user doesn't and hasn't elected to
-      // hide it from the shelf context menu.
-      SetDeviceUsesDesksPref(prefs, true);
-    }
+    PrefService* prefs =
+        Shell::Get()->session_controller()->GetLastActiveUserPrefService();
+    // Record that virtual desks have been used on this device so we can show
+    // the desk button from now on, if the user doesn't and hasn't elected to
+    // hide it from the shelf context menu.
+    SetDeviceUsesDesksPref(prefs, true);
     desks_restore_util::UpdatePrimaryUserDeskGuidsPrefs();
     desks_restore_util::UpdatePrimaryUserDeskNamesPrefs();
     desks_restore_util::UpdatePrimaryUserDeskLacrosProfileIdPrefs();
@@ -805,9 +791,10 @@ void DesksController::ActivateDesk(const Desk* desk, DesksSwitchSource source) {
 
   UMA_HISTOGRAM_ENUMERATION(kDeskSwitchHistogramName, source);
 
-  const int target_desk_index = GetDeskIndex(desk);
-  if (source != DesksSwitchSource::kDeskRemoved &&
-      source != DesksSwitchSource::kDeskButtonDeskRemoved) {
+  const bool is_removal = source == DesksSwitchSource::kDeskRemoved ||
+                          source == DesksSwitchSource::kDeskButtonDeskRemoved;
+
+  if (!is_removal) {
     // Desk removal has its own a11y alert.
     Shell::Get()
         ->accessibility_controller()
@@ -815,8 +802,7 @@ void DesksController::ActivateDesk(const Desk* desk, DesksSwitchSource source) {
             IDS_ASH_VIRTUAL_DESKS_ALERT_DESK_ACTIVATED, desk->name()));
   }
 
-  if (source == DesksSwitchSource::kDeskRemoved ||
-      source == DesksSwitchSource::kDeskButtonDeskRemoved ||
+  if (is_removal ||
       (source == DesksSwitchSource::kRemovalUndone && in_overview) ||
       is_user_switch) {
     // Desk switches due to desks removal, undoing the removal of an active desk
@@ -834,6 +820,11 @@ void DesksController::ActivateDesk(const Desk* desk, DesksSwitchSource source) {
     return;
   }
 
+  // Desk activation will be done during the animation.
+
+  const int starting_desk_index = GetDeskIndex(active_desk());
+  const int target_desk_index = GetDeskIndex(desk);
+
   // When switching desks we want to update window activation when leaving
   // overview or if nothing was active prior to switching desks. This will
   // ensure that after switching desks, we will try to focus a candidate window.
@@ -849,7 +840,6 @@ void DesksController::ActivateDesk(const Desk* desk, DesksSwitchSource source) {
       IsParentSwitchableContainer(active_window) ||
       IsApplistActiveInTabletMode(active_window);
 
-  const int starting_desk_index = GetDeskIndex(active_desk());
   animation_ = std::make_unique<DeskActivationAnimation>(
       this, starting_desk_index, target_desk_index, source,
       update_window_activation);
@@ -1347,8 +1337,6 @@ bool DesksController::OnSingleInstanceAppLaunchingFromSavedDesk(
   auto& app_restore_data = *launch_list.begin()->second;
 
   // No need to shift a window that is visible on all desks.
-  // TODO(sammiequon): Remove this property if the window on the new desk should
-  // not be visible on all desks.
   if (!desks_util::IsWindowVisibleOnAllWorkspaces(
           existing_app_instance_window)) {
     // The uuid of the target desk is found in `app_restore_data`. If it isn't
@@ -1462,9 +1450,6 @@ bool DesksController::OnSingleInstanceAppLaunchingFromSavedDesk(
   }
 
   WindowRestoreController::Get()->StackWindow(existing_app_instance_window);
-
-  // TODO(sammiequon): Read something for chromevox, either here or when the
-  // whole template launches.
   return false;
 }
 
@@ -1575,6 +1560,14 @@ void DesksController::OnWindowActivating(ActivationReason reason,
   if (!window_desk || window_desk == active_desk_)
     return;
 
+  // If the identified desk is not in the set of current desks (that is, those
+  // that are visible in the mini view), then we ignore the activation. This can
+  // happen in cases when close all is used and the window is on a desk that is
+  // about to go away.
+  if (!HasDesk(window_desk)) {
+    return;
+  }
+
   ActivateDesk(window_desk, DesksSwitchSource::kWindowActivated);
 }
 
@@ -1618,31 +1611,6 @@ void DesksController::OnFirstSessionStarted() {
   current_account_id_ =
       Shell::Get()->session_controller()->GetActiveAccountId();
   desks_restore_util::RestorePrimaryUserDesks();
-
-  // The DeskProfilesDelegate will be available if lacros and desk profiles are
-  // both enabled.
-  desk_profiles_observer_.Reset();
-  if (auto* delegate = Shell::Get()->GetDeskProfilesDelegate()) {
-    desk_profiles_observer_.Observe(delegate);
-  }
-}
-
-void DesksController::OnProfileRemoved(uint64_t profile_id) {
-  auto* delegate = Shell::Get()->GetDeskProfilesDelegate();
-  CHECK(delegate);
-
-  uint64_t primary_profile_id = delegate->GetPrimaryProfileId();
-  for (auto& desk : desks_) {
-    // If this desk's profile has been removed, revert it to the primary user's
-    // profile (which cannot be deleted).
-    if (desk->lacros_profile_id() == profile_id) {
-      desk->SetLacrosProfileId(primary_profile_id);
-    }
-  }
-}
-
-void DesksController::FireMetricsTimerForTesting() {
-  metrics_helper_->FireTimerForTesting();
 }
 
 void DesksController::ResetAnimation() {
@@ -1772,11 +1740,6 @@ void DesksController::RemoveDeskInternal(const Desk* desk,
                                          DesksCreationRemovalSource source,
                                          DeskCloseType close_type,
                                          bool desk_switched) {
-  // Removing a desk can cause transient raster scale updates during overview
-  // mode, if desks are combined. Pause raster scale updates until windows are
-  // in their final state.
-  ScopedPauseRasterScaleUpdates scoped_pause;
-
   MaybeCommitPendingDeskRemoval();
 
   DCHECK(CanRemoveDesks());

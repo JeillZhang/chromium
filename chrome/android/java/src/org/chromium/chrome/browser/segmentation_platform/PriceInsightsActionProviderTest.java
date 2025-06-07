@@ -11,16 +11,18 @@ import static org.mockito.Mockito.doReturn;
 import android.os.Handler;
 
 import org.junit.Assert;
-import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.segmentation_platform.ContextualPageActionController.ActionProvider;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant;
 import org.chromium.components.commerce.core.ShoppingService;
 import org.chromium.components.commerce.core.ShoppingService.PriceInsightsInfo;
 import org.chromium.components.commerce.core.ShoppingService.PriceInsightsInfoCallback;
@@ -29,7 +31,7 @@ import org.chromium.url.JUnitTestGURLs;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
+import java.util.HashMap;
 import java.util.Optional;
 
 /** Unit tests for {@link PriceInsightsActionProvider} */
@@ -37,6 +39,7 @@ import java.util.Optional;
 @Config(manifest = Config.NONE)
 public class PriceInsightsActionProviderTest {
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private Tab mMockTab;
     @Mock private ShoppingService mShoppingService;
 
@@ -63,77 +66,72 @@ public class PriceInsightsActionProviderTest {
                     0,
                     true);
 
-    @Before
-    public void setUp() {
-        MockitoAnnotations.initMocks(this);
-    }
-
     @Test
     public void testPriceInsightsDisabledForNonHttpUrls() {
         // Use a non-http(s) url (about:blank).
         doReturn(JUnitTestGURLs.ABOUT_BLANK).when(mMockTab).getUrl();
-        List<ActionProvider> providers = new ArrayList<>();
+        HashMap<Integer, ActionProvider> providers = new HashMap<>();
         PriceInsightsActionProvider provider =
                 new PriceInsightsActionProvider(() -> mShoppingService);
-        providers.add(provider);
+        providers.put(AdaptiveToolbarButtonVariant.PRICE_INSIGHTS, provider);
         SignalAccumulator accumulator = new SignalAccumulator(new Handler(), mMockTab, providers);
         provider.getAction(mMockTab, accumulator);
-        Assert.assertFalse(accumulator.hasPriceInsights());
+        Assert.assertFalse(accumulator.getSignal(AdaptiveToolbarButtonVariant.PRICE_INSIGHTS));
     }
 
     @Test
     public void testPriceInsightsDisabledForShoppingServiceIneligible() {
         doReturn(JUnitTestGURLs.EXAMPLE_URL).when(mMockTab).getUrl();
-        List<ActionProvider> providers = new ArrayList<>();
+        HashMap<Integer, ActionProvider> providers = new HashMap<>();
         PriceInsightsActionProvider provider =
                 new PriceInsightsActionProvider(() -> mShoppingService);
-        providers.add(provider);
+        providers.put(AdaptiveToolbarButtonVariant.PRICE_INSIGHTS, provider);
         SignalAccumulator accumulator = new SignalAccumulator(new Handler(), mMockTab, providers);
         mockShoppingServiceIsPriceInsightsEligibleResult(false);
         provider.getAction(mMockTab, accumulator);
-        Assert.assertFalse(accumulator.hasPriceInsights());
+        Assert.assertFalse(accumulator.getSignal(AdaptiveToolbarButtonVariant.PRICE_INSIGHTS));
     }
 
     @Test
     public void testPriceInsightsDisabledForNullPriceInsightsInfo() {
         doReturn(JUnitTestGURLs.EXAMPLE_URL).when(mMockTab).getUrl();
-        List<ActionProvider> providers = new ArrayList<>();
+        HashMap<Integer, ActionProvider> providers = new HashMap<>();
         PriceInsightsActionProvider provider =
                 new PriceInsightsActionProvider(() -> mShoppingService);
-        providers.add(provider);
+        providers.put(AdaptiveToolbarButtonVariant.PRICE_INSIGHTS, provider);
         SignalAccumulator accumulator = new SignalAccumulator(new Handler(), mMockTab, providers);
         mockShoppingServiceIsPriceInsightsEligibleResult(true);
         mockShoppingServiceGetPriceInsightsInfoForUrlResult(null);
         provider.getAction(mMockTab, accumulator);
-        Assert.assertFalse(accumulator.hasPriceInsights());
+        Assert.assertFalse(accumulator.getSignal(AdaptiveToolbarButtonVariant.PRICE_INSIGHTS));
     }
 
     @Test
     public void testPriceInsightsDisabledForEmptyPriceInsightsInfo() {
         doReturn(JUnitTestGURLs.EXAMPLE_URL).when(mMockTab).getUrl();
-        List<ActionProvider> providers = new ArrayList<>();
+        HashMap<Integer, ActionProvider> providers = new HashMap<>();
         PriceInsightsActionProvider provider =
                 new PriceInsightsActionProvider(() -> mShoppingService);
-        providers.add(provider);
+        providers.put(AdaptiveToolbarButtonVariant.PRICE_INSIGHTS, provider);
         SignalAccumulator accumulator = new SignalAccumulator(new Handler(), mMockTab, providers);
         mockShoppingServiceIsPriceInsightsEligibleResult(true);
         mockShoppingServiceGetPriceInsightsInfoForUrlResult(EMPTY_PRICE_INSIGHTS_INFO);
         provider.getAction(mMockTab, accumulator);
-        Assert.assertFalse(accumulator.hasPriceInsights());
+        Assert.assertFalse(accumulator.getSignal(AdaptiveToolbarButtonVariant.PRICE_INSIGHTS));
     }
 
     @Test
     public void testPriceInsightsEnabled() {
         doReturn(JUnitTestGURLs.EXAMPLE_URL).when(mMockTab).getUrl();
-        List<ActionProvider> providers = new ArrayList<>();
+        HashMap<Integer, ActionProvider> providers = new HashMap<>();
         PriceInsightsActionProvider provider =
                 new PriceInsightsActionProvider(() -> mShoppingService);
-        providers.add(provider);
+        providers.put(AdaptiveToolbarButtonVariant.PRICE_INSIGHTS, provider);
         SignalAccumulator accumulator = new SignalAccumulator(new Handler(), mMockTab, providers);
         mockShoppingServiceIsPriceInsightsEligibleResult(true);
         mockShoppingServiceGetPriceInsightsInfoForUrlResult(PRICE_INSIGHTS_INFO);
         provider.getAction(mMockTab, accumulator);
-        Assert.assertTrue(accumulator.hasPriceInsights());
+        Assert.assertTrue(accumulator.getSignal(AdaptiveToolbarButtonVariant.PRICE_INSIGHTS));
     }
 
     private void mockShoppingServiceIsPriceInsightsEligibleResult(boolean isEligible) {

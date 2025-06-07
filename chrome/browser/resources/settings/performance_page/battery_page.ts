@@ -53,7 +53,7 @@ export class SettingsBatteryPageElement extends SettingsBatteryPageElementBase {
         value: BatterySaverModeState,
       },
 
-      isBatterySaverModeManagedByOS_: {
+      isBatterySaverModeManagedByOs_: {
         type: Boolean,
         value() {
           return loadTimeData.getBoolean('isBatterySaverModeManagedByOS');
@@ -67,7 +67,8 @@ export class SettingsBatteryPageElement extends SettingsBatteryPageElementBase {
     };
   }
 
-  private numericUncheckedValues_: BatterySaverModeState[];
+  declare private isBatterySaverModeManagedByOs_: boolean;
+  declare private numericUncheckedValues_: BatterySaverModeState[];
   private metricsProxy_: PerformanceMetricsProxy =
       PerformanceMetricsProxyImpl.getInstance();
 

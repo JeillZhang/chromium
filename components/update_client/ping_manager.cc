@@ -72,14 +72,15 @@ void PingManager::SendPing(const std::string& session_id,
   apps.push_back(MakeProtocolApp(
       component.app_id, component.version, component.ap, component.brand,
       send_install_id ? metadata.GetInstallId(component.app_id) : "",
-      config_->GetLang(), metadata.GetInstallDate(component.app_id),
-      component.install_source, component.install_location,
-      component.fingerprint, component.installer_attributes,
+      component.lang.empty() ? config_->GetLang() : component.lang,
+      metadata.GetInstallDate(component.app_id), component.install_source,
+      component.install_location, component.installer_attributes,
       metadata.GetCohort(component.app_id),
       metadata.GetCohortHint(component.app_id),
       metadata.GetCohortName(component.app_id), component.channel,
-      component.disabled_reasons, std::nullopt /* update check */,
-      {} /* data */, std::nullopt /* ping */, std::move(events)));
+      component.disabled_reasons, /*cached_hashes=*/{},
+      std::nullopt /* update check */, {} /* data */, std::nullopt /* ping */,
+      std::move(events)));
   base::MakeRefCounted<RequestSender>(config_->GetNetworkFetcherFactory())
       ->Send(
           urls, {},

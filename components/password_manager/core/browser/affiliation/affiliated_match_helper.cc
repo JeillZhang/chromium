@@ -7,14 +7,14 @@
 #include <algorithm>
 #include <memory>
 #include <utility>
+#include <variant>
 
 #include "base/barrier_callback.h"
 #include "base/barrier_closure.h"
-#include "base/not_fatal_until.h"
+#include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/affiliations/core/browser/affiliation_service.h"
 #include "components/password_manager/core/browser/password_form.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace password_manager {
 
@@ -81,17 +81,17 @@ GroupedRealms ProcessGroupedFacets(
 
 void ProcessAffiliationAndGroupResponse(
     AffiliatedMatchHelper::AffiliatedRealmsCallback result_callback,
-    std::vector<absl::variant<AffiliatedRealms, GroupedRealms>> results) {
+    std::vector<std::variant<AffiliatedRealms, GroupedRealms>> results) {
   CHECK(!results.empty());
 
   AffiliatedRealms affiliated_realms;
   GroupedRealms grouped_realms;
 
   for (auto& result : results) {
-    if (absl::holds_alternative<AffiliatedRealms>(result)) {
-      affiliated_realms = absl::get<AffiliatedRealms>(std::move(result));
+    if (std::holds_alternative<AffiliatedRealms>(result)) {
+      affiliated_realms = std::get<AffiliatedRealms>(std::move(result));
     } else {
-      grouped_realms = absl::get<GroupedRealms>(std::move(result));
+      grouped_realms = std::get<GroupedRealms>(std::move(result));
     }
   }
 
@@ -120,7 +120,7 @@ void AffiliatedMatchHelper::GetAffiliatedAndGroupedRealms(
 
   const int kCallsNumber = 2;
   auto barrier_callback =
-      base::BarrierCallback<absl::variant<AffiliatedRealms, GroupedRealms>>(
+      base::BarrierCallback<std::variant<AffiliatedRealms, GroupedRealms>>(
           kCallsNumber, base::BindOnce(&ProcessAffiliationAndGroupResponse,
                                        std::move(result_callback)));
 
@@ -209,7 +209,7 @@ void AffiliatedMatchHelper::CompleteInjectAffiliationAndBrandingInformation(
   // icon URL). We expect to always find a matching facet URI in the results.
   auto facet = std::ranges::find(results, facet_uri, &Facet::uri);
 
-  CHECK(facet != results.end(), base::NotFatalUntil::M130);
+  CHECK(facet != results.end());
   form->app_display_name = facet->branding_info.name;
   form->app_icon_url = facet->branding_info.icon_url;
 

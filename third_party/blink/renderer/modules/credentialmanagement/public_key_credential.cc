@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/modules/credentialmanagement/public_key_credential.h"
 
 #include <utility>
+#include <variant>
 
 #include "base/functional/overloaded.h"
 #include "third_party/blink/public/mojom/webauthn/authenticator.mojom-shared.h"
@@ -93,9 +94,7 @@ void OnGetClientCapabilitiesComplete(
   results.emplace_back("extension:enforceCredentialProtectionPolicy", true);
   results.emplace_back("extension:minPinLength", true);
   results.emplace_back("extension:credProps", true);
-  results.emplace_back(
-      "extension:largeBlob",
-      RuntimeEnabledFeatures::WebAuthenticationLargeBlobExtensionEnabled());
+  results.emplace_back("extension:largeBlob", true);
   results.emplace_back("extension:credBlob", true);
   results.emplace_back("extension:getCredBlob", true);
   results.emplace_back(
@@ -110,6 +109,18 @@ void OnGetClientCapabilitiesComplete(
       [](const std::pair<String, bool>& a, const std::pair<String, bool>& b) {
         return CodeUnitCompare(a.first, b.first) < 0;
       });
+
+  // TODO(crbug.com/393055190): Remove this when the feature is graduated from
+  // origin trials.
+  if (!RuntimeEnabledFeatures::WebAuthenticationImmediateGetEnabled(
+          resolver->GetExecutionContext())) {
+    for (wtf_size_t i = 0; i < results.size(); ++i) {
+      if (results[i].first == "immediateGet") {
+        results.EraseAt(i);
+        break;
+      }
+    }
+  }
   resolver->Resolve(std::move(results));
 }
 
@@ -238,12 +249,12 @@ v8::Local<v8::Object> PublicKeyCredential::toJSON(
   // return a RegistrationResponseJSON, and in the latter an
   // AuthenticationResponseJSON.  We can't reflect the type of `response_`
   // though, so we serialize it to JSON first and branch on the result type.
-  absl::variant<AuthenticatorAssertionResponseJSON*,
-                AuthenticatorAttestationResponseJSON*>
+  std::variant<AuthenticatorAssertionResponseJSON*,
+               AuthenticatorAttestationResponseJSON*>
       response_json = response_->toJSON();
 
   v8::Local<v8::Value> result;
-  absl::visit(
+  std::visit(
       base::Overloaded{
           [&](AuthenticatorAttestationResponseJSON* attestation_response) {
             auto* registration_response = RegistrationResponseJSON::Create();
@@ -314,7 +325,7 @@ ScriptPromise<IDLUndefined> PublicKeyCredential::signalUnknownCredential(
       script_state, exception_state.GetContext());
   auto promise = resolver->Promise();
 
-  Vector<char> decoded_cred_id;
+  Vector<uint8_t> decoded_cred_id;
   if (!WTF::Base64UnpaddedURLDecode(options->credentialId(), decoded_cred_id)) {
     resolver->RejectWithTypeError("Invalid base64url string for credentialId.");
     return promise;
@@ -346,14 +357,14 @@ ScriptPromise<IDLUndefined> PublicKeyCredential::signalAllAcceptedCredentials(
   auto promise = resolver->Promise();
 
   for (WTF::String credential_id : options->allAcceptedCredentialIds()) {
-    Vector<char> decoded_cred_id;
+    Vector<uint8_t> decoded_cred_id;
     if (!WTF::Base64UnpaddedURLDecode(credential_id, decoded_cred_id)) {
       resolver->RejectWithTypeError(
           "Invalid base64url string for allAcceptedCredentialIds.");
       return promise;
     }
   }
-  Vector<char> decoded_user_id;
+  Vector<uint8_t> decoded_user_id;
   if (!WTF::Base64UnpaddedURLDecode(options->userId(), decoded_user_id)) {
     resolver->RejectWithTypeError("Invalid base64url string for userId.");
     return promise;
@@ -384,7 +395,7 @@ ScriptPromise<IDLUndefined> PublicKeyCredential::signalCurrentUserDetails(
       script_state, exception_state.GetContext());
   auto promise = resolver->Promise();
 
-  Vector<char> decoded_user_id;
+  Vector<uint8_t> decoded_user_id;
   if (!WTF::Base64UnpaddedURLDecode(options->userId(), decoded_user_id)) {
     resolver->RejectWithTypeError("Invalid base64url string for userId.");
     return promise;

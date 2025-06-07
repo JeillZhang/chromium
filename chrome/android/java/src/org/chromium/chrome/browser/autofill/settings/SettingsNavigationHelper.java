@@ -5,16 +5,19 @@
 package org.chromium.chrome.browser.autofill.settings;
 
 import android.content.Context;
-
-import androidx.annotation.Nullable;
+import android.os.Bundle;
 
 import org.jni_zero.CalledByNative;
 
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.ui.base.WindowAndroid;
 
 /** Launches autofill settings subpages. */
+@NullMarked
 public class SettingsNavigationHelper {
     /**
      * Tries showing the settings page for Addresses.
@@ -48,13 +51,30 @@ public class SettingsNavigationHelper {
         return true;
     }
 
+    /**
+     * Shows the loyalty card management pref in the payments settings fragment.
+     *
+     * @param context The {@link Context} required to start the settings page.
+     */
+    public static void showGoogleWalletSettings(Context context) {
+        // TODO: crbug.com/421839554 - Record user action for this scenario.
+        Bundle bundle = new Bundle();
+        bundle.putBoolean(AutofillPaymentMethodsFragment.EXTRA_FOCUS_LOYALTY_CARD_PREF, true);
+        SettingsNavigationFactory.createSettingsNavigation()
+                .startSettings(context, AutofillPaymentMethodsFragment.class, bundle);
+    }
+
     @CalledByNative
     private static void showAutofillProfileSettings(WebContents webContents) {
-        showAutofillProfileSettings(webContents.getTopLevelNativeWindow().getActivity().get());
+        WindowAndroid windowAndroid = webContents.getTopLevelNativeWindow();
+        if (windowAndroid == null) return;
+        showAutofillProfileSettings(windowAndroid.getActivity().get());
     }
 
     @CalledByNative
     private static void showAutofillCreditCardSettings(WebContents webContents) {
-        showAutofillCreditCardSettings(webContents.getTopLevelNativeWindow().getActivity().get());
+        WindowAndroid windowAndroid = webContents.getTopLevelNativeWindow();
+        if (windowAndroid == null) return;
+        showAutofillCreditCardSettings(windowAndroid.getActivity().get());
     }
 }

@@ -24,8 +24,8 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/signin/public/base/gaia_id_hash.h"
 #include "components/signin/public/base/signin_pref_names.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
@@ -34,6 +34,7 @@
 #include "components/sync/base/data_type.h"
 #include "components/sync/base/features.h"
 #include "components/sync/base/pref_names.h"
+#include "components/sync/base/previously_syncing_gaia_id_info_for_metrics.h"
 #include "components/sync/base/sync_util.h"
 #include "components/sync/base/user_selectable_type.h"
 #include "components/sync/engine/nigori/key_derivation_params.h"
@@ -213,6 +214,12 @@ class SyncServiceImplTest : public ::testing::Test {
     controllers.push_back(std::make_unique<FakeDataTypeController>(BOOKMARKS));
     controllers.push_back(std::make_unique<FakeDataTypeController>(
         DEVICE_INFO, /*enable_transport_only_modle=*/true));
+
+    // Hold raw pointers to directly interact with controllers.
+    for (const auto& controller : controllers) {
+      controller_map_[controller->type()] =
+          static_cast<FakeDataTypeController*>(controller.get());
+    }
 
     std::unique_ptr<SyncClientMock> sync_client =
         sync_service_impl_bundle_.CreateSyncClientMock();
@@ -465,17 +472,16 @@ TEST_F(SyncServiceImplTest, DisabledByPolicyBeforeInitThenPolicyRemoved) {
   // On ChromeOS Ash, sync-the-feature stays disabled even after the policy is
   // removed, for historic reasons. It is unclear if this behavior is optional,
   // because it is indistinguishable from the sync-reset-via-dashboard case.
-  // It can be resolved by invoking SetSyncFeatureRequested().
+  // It can be resolved by invoking ClearSyncFeatureDisabledViaDashboard().
   EXPECT_TRUE(
       service()->GetUserSettings()->IsSyncFeatureDisabledViaDashboard());
-  service()->SetSyncFeatureRequested();
+  service()->GetUserSettings()->ClearSyncFeatureDisabledViaDashboard();
 
 #else
   // For any platform except ChromeOS Ash, the user needs to turn sync on
   // manually.
   ASSERT_FALSE(
       service()->GetUserSettings()->IsInitialSyncFeatureSetupComplete());
-  service()->SetSyncFeatureRequested();
   service()->GetUserSettings()->SetInitialSyncFeatureSetupComplete(
       syncer::SyncFirstSetupCompleteSource::BASIC_FLOW);
   base::RunLoop().RunUntilIdle();
@@ -601,6 +607,9 @@ TEST_F(SyncServiceImplTest,
   ASSERT_TRUE(
       engine_factory()->HasTransportDataIncludingFirstSync(gaia_id_hash()));
 
+  SyncPrefs sync_prefs(prefs());
+  ASSERT_TRUE(sync_prefs.IsFirstSyncCompletedInFullSyncMode());
+
   // Sign-out.
   signin::PrimaryAccountMutator* account_mutator =
       identity_manager()->GetPrimaryAccountMutator();
@@ -616,6 +625,70 @@ TEST_F(SyncServiceImplTest,
             service()->GetDisableReasons());
   EXPECT_FALSE(
       engine_factory()->HasTransportDataIncludingFirstSync(gaia_id_hash()));
+  EXPECT_FALSE(sync_prefs.IsFirstSyncCompletedInFullSyncMode());
+}
+
+TEST_F(SyncServiceImplTest, SignInWhilePausedClearsCachedPersistentAuthError) {
+  // Sign-in and enable sync.
+  PopulatePrefsForInitialSyncFeatureSetupComplete();
+  SignInWithSyncConsent();
+  InitializeService();
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_FALSE(service()->HasCachedPersistentAuthErrorForMetrics());
+
+  // Emulate Chrome receiving a new, invalid LST. This happens when the user
+  // signs out of the content area.
+  identity_test_env()->SetAutomaticIssueOfAccessTokens(false);
+  identity_test_env()->SetRefreshTokenForPrimaryAccount();
+  identity_test_env()->WaitForAccessTokenRequestIfNecessaryAndRespondWithError(
+      GoogleServiceAuthError(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
+  ASSERT_EQ(SyncService::TransportState::PAUSED,
+            service()->GetTransportState());
+  EXPECT_TRUE(service()->HasCachedPersistentAuthErrorForMetrics());
+
+  // Resolve the auth error (emulate receiving a valid LST).
+  identity_test_env()->SetAutomaticIssueOfAccessTokens(true);
+  identity_test_env()->SetRefreshTokenForPrimaryAccount();
+
+  ASSERT_EQ(SyncService::TransportState::INITIALIZING,
+            service()->GetTransportState());
+  ASSERT_TRUE(service()->HasCachedPersistentAuthErrorForMetrics());
+
+  // Loop until sync becomes active.
+  base::RunLoop().RunUntilIdle();
+  ASSERT_EQ(SyncService::TransportState::ACTIVE,
+            service()->GetTransportState());
+  EXPECT_FALSE(service()->HasCachedPersistentAuthErrorForMetrics());
+}
+
+TEST_F(SyncServiceImplTest, SignOutWhilePausedClearsCachedPersistentAuthError) {
+  // Sign-in and enable sync.
+  PopulatePrefsForInitialSyncFeatureSetupComplete();
+  SignInWithSyncConsent();
+  InitializeService();
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_FALSE(service()->HasCachedPersistentAuthErrorForMetrics());
+
+  // Emulate Chrome receiving a new, invalid LST. This happens when the user
+  // signs out of the content area.
+  identity_test_env()->SetAutomaticIssueOfAccessTokens(false);
+  identity_test_env()->SetRefreshTokenForPrimaryAccount();
+  identity_test_env()->WaitForAccessTokenRequestIfNecessaryAndRespondWithError(
+      GoogleServiceAuthError(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
+  ASSERT_EQ(SyncService::TransportState::PAUSED,
+            service()->GetTransportState());
+  EXPECT_TRUE(service()->HasCachedPersistentAuthErrorForMetrics());
+
+  // Sign-out.
+  signin::PrimaryAccountMutator* account_mutator =
+      identity_manager()->GetPrimaryAccountMutator();
+  DCHECK(account_mutator) << "Account mutator should only be null on ChromeOS.";
+  account_mutator->ClearPrimaryAccount(signin_metrics::ProfileSignout::kTest);
+  ASSERT_EQ(SyncService::TransportState::DISABLED,
+            service()->GetTransportState());
+  EXPECT_FALSE(service()->HasCachedPersistentAuthErrorForMetrics());
 }
 
 TEST_F(SyncServiceImplTest,
@@ -766,7 +839,6 @@ TEST_F(
   EXPECT_TRUE(service()->GetUserSettings()->GetSelectedTypes().Has(
       UserSelectableType::kAutofill));
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 TEST_F(
     SyncServiceImplTest,
@@ -775,9 +847,6 @@ TEST_F(
   scoped_feature_list.InitWithFeatures(
       /*enabled_features=*/
       {syncer::kReplaceSyncPromosWithSignInPromos,
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-       switches::kExplicitBrowserSigninUIOnDesktop,
-#endif
        syncer::kSyncEnableContactInfoDataTypeForCustomPassphraseUsers},
       /*disabled_features=*/{});
 
@@ -823,6 +892,7 @@ TEST_F(
   EXPECT_TRUE(service()->GetUserSettings()->GetSelectedTypes().Has(
       UserSelectableType::kAutofill));
 }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 TEST_F(SyncServiceImplTest, GetSyncTokenStatus) {
   PopulatePrefsForInitialSyncFeatureSetupComplete();
@@ -1092,8 +1162,6 @@ TEST_F(SyncServiceImplTest, CredentialErrorReturned) {
   // Emulate Chrome receiving a new, invalid LST. This happens when the user
   // signs out of the content area.
   identity_test_env()->SetRefreshTokenForPrimaryAccount();
-  // Again, wait for SyncServiceImpl to be notified.
-  base::RunLoop().RunUntilIdle();
   identity_test_env()->WaitForAccessTokenRequestIfNecessaryAndRespondWithError(
       GoogleServiceAuthError(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
 
@@ -1179,7 +1247,6 @@ TEST_F(SyncServiceImplTest, CredentialErrorClearsOnNewToken) {
   identity_test_env()->SetRefreshTokenForPrimaryAccount();
   // Wait for SyncServiceImpl to be notified of the changed credentials and
   // send a new access token request.
-  base::RunLoop().RunUntilIdle();
   identity_test_env()->WaitForAccessTokenRequestIfNecessaryAndRespondWithError(
       GoogleServiceAuthError(GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS));
 
@@ -1193,7 +1260,6 @@ TEST_F(SyncServiceImplTest, CredentialErrorClearsOnNewToken) {
   // Now emulate Chrome receiving a new, valid LST.
   identity_test_env()->SetRefreshTokenForPrimaryAccount();
   // Again, wait for SyncServiceImpl to be notified.
-  base::RunLoop().RunUntilIdle();
   identity_test_env()->WaitForAccessTokenRequestIfNecessaryAndRespondWithToken(
       "this one works", base::Time::Now() + base::Days(10));
 
@@ -1419,13 +1485,13 @@ TEST_F(SyncServiceImplTest, DisableSyncOnClientClearsPassphrasePrefForAccount) {
 
   // Set the passphrase.
   SyncPrefs sync_prefs(prefs());
-  signin::GaiaIdHash gaia_id_hash = signin::GaiaIdHash::FromGaiaId(
+
+  const GaiaId gaia_id =
       identity_manager()
           ->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
-          .gaia);
-  sync_prefs.SetEncryptionBootstrapTokenForAccount("token", gaia_id_hash);
-  ASSERT_EQ("token",
-            sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id_hash));
+          .gaia;
+  sync_prefs.SetEncryptionBootstrapTokenForAccount("token", gaia_id);
+  ASSERT_EQ("token", sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id));
 
   // Clear sync from the dashboard.
   SyncProtocolError client_cmd;
@@ -1436,7 +1502,7 @@ TEST_F(SyncServiceImplTest, DisableSyncOnClientClearsPassphrasePrefForAccount) {
   // The passphrase for account pref cleared when sync is cleared from
   // dashboard.
   EXPECT_TRUE(
-      sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id_hash).empty());
+      sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id).empty());
 }
 
 TEST_F(SyncServiceImplTest,
@@ -1457,13 +1523,12 @@ TEST_F(SyncServiceImplTest,
 
   // Set the passphrase.
   SyncPrefs sync_prefs(prefs());
-  signin::GaiaIdHash gaia_id_hash = signin::GaiaIdHash::FromGaiaId(
+  const GaiaId gaia_id =
       identity_manager()
           ->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
-          .gaia);
-  sync_prefs.SetEncryptionBootstrapTokenForAccount("token", gaia_id_hash);
-  ASSERT_EQ("token",
-            sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id_hash));
+          .gaia;
+  sync_prefs.SetEncryptionBootstrapTokenForAccount("token", gaia_id);
+  ASSERT_EQ("token", sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id));
 
   // Clear sync from the dashboard.
   SyncProtocolError client_cmd;
@@ -1474,7 +1539,7 @@ TEST_F(SyncServiceImplTest,
   // The passphrase for account pref cleared when sync is cleared from
   // dashboard.
   EXPECT_TRUE(
-      sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id_hash).empty());
+      sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id).empty());
 }
 
 TEST_F(SyncServiceImplTest, EncryptionObsoleteClearsPassphrasePrefForAccount) {
@@ -1493,13 +1558,12 @@ TEST_F(SyncServiceImplTest, EncryptionObsoleteClearsPassphrasePrefForAccount) {
 
   // Set the passphrase.
   SyncPrefs sync_prefs(prefs());
-  signin::GaiaIdHash gaia_id_hash = signin::GaiaIdHash::FromGaiaId(
+  const GaiaId gaia_id =
       identity_manager()
           ->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
-          .gaia);
-  sync_prefs.SetEncryptionBootstrapTokenForAccount("token", gaia_id_hash);
-  ASSERT_EQ("token",
-            sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id_hash));
+          .gaia;
+  sync_prefs.SetEncryptionBootstrapTokenForAccount("token", gaia_id);
+  ASSERT_EQ("token", sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id));
 
   SyncProtocolError client_cmd;
   client_cmd.action = DISABLE_SYNC_ON_CLIENT;
@@ -1508,7 +1572,7 @@ TEST_F(SyncServiceImplTest, EncryptionObsoleteClearsPassphrasePrefForAccount) {
 
   // The passphrase for account pref should be cleared.
   EXPECT_TRUE(
-      sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id_hash).empty());
+      sync_prefs.GetEncryptionBootstrapTokenForAccount(gaia_id).empty());
 }
 
 // Verify a that local sync mode isn't impacted by sync being disabled.
@@ -1551,7 +1615,7 @@ TEST_F(SyncServiceImplTest, ConfigureDataTypeManagerReason) {
   // Reconfiguration.
   // Trigger a reconfig by grabbing a SyncSetupInProgressHandle and immediately
   // releasing it again (via the temporary unique_ptr going away).
-  service()->GetSetupInProgressHandle();
+  std::ignore = service()->GetSetupInProgressHandle();
   EXPECT_EQ(CONFIGURE_REASON_RECONFIGURATION,
             engine()->last_configure_reason());
   ShutdownAndReleaseService();
@@ -1563,16 +1627,189 @@ TEST_F(SyncServiceImplTest, ConfigureDataTypeManagerReason) {
 
   ASSERT_EQ(SyncService::TransportState::ACTIVE,
             service()->GetTransportState());
-  EXPECT_EQ(CONFIGURE_REASON_NEWLY_ENABLED_DATA_TYPE,
+  EXPECT_EQ(CONFIGURE_REASON_EXISTING_CLIENT_RESTART,
             engine()->last_configure_reason());
 
   // Reconfiguration.
   // Trigger a reconfig by grabbing a SyncSetupInProgressHandle and immediately
   // releasing it again (via the temporary unique_ptr going away).
-  service()->GetSetupInProgressHandle();
+  std::ignore = service()->GetSetupInProgressHandle();
   EXPECT_EQ(CONFIGURE_REASON_RECONFIGURATION,
             engine()->last_configure_reason());
   ShutdownAndReleaseService();
+}
+
+TEST_F(SyncServiceImplTest, PreviouslySyncingGaiaIdInfoWithLocalSync) {
+  InitializeServiceWithLocalSyncBackend();
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_EQ(SyncService::TransportState::ACTIVE,
+            service()->GetTransportState());
+  EXPECT_EQ(PreviouslySyncingGaiaIdInfoForMetrics::kUnspecified,
+            get_controller(DEVICE_INFO)
+                ->model(SyncMode::kTransportOnly)
+                ->previously_syncing_gaia_id_info());
+}
+
+TEST_F(
+    SyncServiceImplTest,
+    DifferentPreviouslySyncingGaiaIdInfoWithSyncFeatureAlreadyEnabledUponStartup) {
+  PopulatePrefsForInitialSyncFeatureSetupComplete();
+  SignInWithSyncConsent();
+  // If sync is on, the pref is already populated with the current gaia ID.
+  prefs()->SetString(::prefs::kGoogleServicesLastSyncingGaiaId,
+                     identity_test_env()
+                         ->identity_manager()
+                         ->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
+                         .gaia.ToString());
+  // In this case the second pref becomes relevant and is different to the
+  // current one.
+  prefs()->SetString(::prefs::kGoogleServicesSecondLastSyncingGaiaId, "other");
+  InitializeService();
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_EQ(SyncService::TransportState::ACTIVE,
+            service()->GetTransportState());
+  EXPECT_EQ(
+      PreviouslySyncingGaiaIdInfoForMetrics::
+          kCurrentGaiaIdIfDiffersPreviousWithSyncFeatureOn,
+      get_controller(DEVICE_INFO)->model()->previously_syncing_gaia_id_info());
+}
+
+TEST_F(
+    SyncServiceImplTest,
+    SamePreviouslySyncingGaiaIdInfoWithSyncFeatureAlreadyEnabledUponStartup) {
+  PopulatePrefsForInitialSyncFeatureSetupComplete();
+  SignInWithSyncConsent();
+  // If sync is on, the pref is already populated with the current gaia ID.
+  prefs()->SetString(::prefs::kGoogleServicesLastSyncingGaiaId,
+                     identity_test_env()
+                         ->identity_manager()
+                         ->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
+                         .gaia.ToString());
+  // In this case the second pref becomes relevant and matches the current one.
+  prefs()->SetString(::prefs::kGoogleServicesSecondLastSyncingGaiaId,
+                     identity_test_env()
+                         ->identity_manager()
+                         ->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
+                         .gaia.ToString());
+  InitializeService();
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_EQ(SyncService::TransportState::ACTIVE,
+            service()->GetTransportState());
+  EXPECT_EQ(
+      PreviouslySyncingGaiaIdInfoForMetrics::
+          kCurrentGaiaIdMatchesPreviousWithSyncFeatureOn,
+      get_controller(DEVICE_INFO)->model()->previously_syncing_gaia_id_info());
+}
+
+TEST_F(SyncServiceImplTest, PreviouslySyncingGaiaIdInfoWithNoPreviousAccount) {
+  InitializeService();
+  base::RunLoop().RunUntilIdle();
+
+  SignInWithoutSyncConsent();
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_EQ(SyncService::TransportState::ACTIVE,
+            service()->GetTransportState());
+  EXPECT_EQ(PreviouslySyncingGaiaIdInfoForMetrics::
+                kSyncFeatureNeverPreviouslyTurnedOn,
+            get_controller(DEVICE_INFO)
+                ->model(SyncMode::kTransportOnly)
+                ->previously_syncing_gaia_id_info());
+}
+
+TEST_F(SyncServiceImplTest,
+       PreviouslySyncingGaiaIdInfoWithSamePreviousAccount) {
+  prefs()->SetString(::prefs::kGoogleServicesLastSyncingGaiaId,
+                     signin::GetTestGaiaIdForEmail(kTestUser).ToString());
+
+  InitializeService();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_EQ(SyncService::TransportState::DISABLED,
+            service()->GetTransportState());
+
+  SignInWithoutSyncConsent();
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_EQ(SyncService::TransportState::ACTIVE,
+            service()->GetTransportState());
+  EXPECT_EQ(PreviouslySyncingGaiaIdInfoForMetrics::
+                kCurrentGaiaIdMatchesPreviousWithSyncFeatureOn,
+            get_controller(DEVICE_INFO)
+                ->model(SyncMode::kTransportOnly)
+                ->previously_syncing_gaia_id_info());
+}
+
+TEST_F(SyncServiceImplTest,
+       PreviouslySyncingGaiaIdInfoWithDifferentPreviousAccount) {
+  prefs()->SetString(::prefs::kGoogleServicesLastSyncingGaiaId,
+                     "DifferentGaiaId");
+
+  InitializeService();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_EQ(SyncService::TransportState::DISABLED,
+            service()->GetTransportState());
+
+  SignInWithoutSyncConsent();
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_EQ(SyncService::TransportState::ACTIVE,
+            service()->GetTransportState());
+  EXPECT_EQ(PreviouslySyncingGaiaIdInfoForMetrics::
+                kCurrentGaiaIdIfDiffersPreviousWithSyncFeatureOn,
+            get_controller(DEVICE_INFO)
+                ->model(SyncMode::kTransportOnly)
+                ->previously_syncing_gaia_id_info());
+}
+
+TEST_F(SyncServiceImplTest,
+       PreviouslySyncingGaiaIdInfoWithFirstSyncAlreadyCompleted) {
+  // Sign in and enable sync.
+  InitializeService();
+  SignInWithSyncConsent();
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // On ChromeOS Ash, the first setup is marked as complete automatically.
+  ASSERT_TRUE(
+      service()->GetUserSettings()->IsInitialSyncFeatureSetupComplete());
+#else
+  // For any platform except ChromeOS Ash, the user needs to turn sync on
+  // manually.
+  ASSERT_FALSE(
+      service()->GetUserSettings()->IsInitialSyncFeatureSetupComplete());
+  service()->GetUserSettings()->SetInitialSyncFeatureSetupComplete(
+      syncer::SyncFirstSetupCompleteSource::BASIC_FLOW);
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+  base::RunLoop().RunUntilIdle();
+
+  ASSERT_EQ(SyncService::TransportState::ACTIVE,
+            service()->GetTransportState());
+  ASSERT_EQ(PreviouslySyncingGaiaIdInfoForMetrics::
+                kSyncFeatureNeverPreviouslyTurnedOn,
+            get_controller(BOOKMARKS)
+                ->model(SyncMode::kFull)
+                ->previously_syncing_gaia_id_info());
+  ASSERT_TRUE(SyncPrefs(prefs()).IsFirstSyncCompletedInFullSyncMode());
+
+  // Disable all types from settings.
+  service()->GetUserSettings()->SetSelectedTypes(/*sync_everything=*/false,
+                                                 /*types=*/{});
+  base::RunLoop().RunUntilIdle();
+
+  // Re-enable all types from settings.
+  service()->GetUserSettings()->SetSelectedTypes(/*sync_everything=*/true,
+                                                 /*types=*/{});
+  base::RunLoop().RunUntilIdle();
+
+  // Reconfiguration as a result of customizing toggles in settings should be
+  // reported as `kUnspecified` (i.e. not relevant for metric recording).
+  EXPECT_EQ(PreviouslySyncingGaiaIdInfoForMetrics::kUnspecified,
+            get_controller(BOOKMARKS)
+                ->model(SyncMode::kFull)
+                ->previously_syncing_gaia_id_info());
 }
 
 // Regression test for crbug.com/1043642, can be removed once
@@ -2165,8 +2402,10 @@ TEST_F(SyncServiceImplTest,
 
 TEST_F(SyncServiceImplTest, EarlyCallToGetTypesWithUnsyncedDataShouldNotCrash) {
   InitializeService();
-  base::MockCallback<base::OnceCallback<void(DataTypeSet)>> cb;
-  EXPECT_CALL(cb, Run(DataTypeSet()));
+  base::MockCallback<
+      base::OnceCallback<void(absl::flat_hash_map<DataType, size_t>)>>
+      cb;
+  EXPECT_CALL(cb, Run(absl::flat_hash_map<DataType, size_t>()));
   service()->GetTypesWithUnsyncedData(syncer::UserTypes(), cb.Get());
 }
 
@@ -2275,14 +2514,7 @@ TEST_F(SyncServiceImplTest,
   service()->TriggerLocalDataMigration({DEVICE_INFO});
 }
 
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-class SyncServiceImplWithBatchUploadDesktopTest : public SyncServiceImplTest {
- private:
-  base::test::ScopedFeatureList scoped_feature_list_{
-      switches::kBatchUploadDesktop};
-};
-
-TEST_F(SyncServiceImplWithBatchUploadDesktopTest,
+TEST_F(SyncServiceImplTest,
        ShouldNotForwardUponTriggerLocalDataMigrationForItemsIfSyncDisabled) {
   prefs()->SetManagedPref(prefs::internal::kSyncManaged, base::Value(true));
   SignInWithoutSyncConsent();
@@ -2313,7 +2545,7 @@ TEST_F(SyncServiceImplWithBatchUploadDesktopTest,
   service()->TriggerLocalDataMigrationForItems(items);
 }
 
-TEST_F(SyncServiceImplWithBatchUploadDesktopTest,
+TEST_F(SyncServiceImplTest,
        ShouldDoNothingUponTriggerLocalDataMigrationForItemsForSyncingUsers) {
   PopulatePrefsForInitialSyncFeatureSetupComplete();
   SignInWithSyncConsent();
@@ -2339,7 +2571,8 @@ TEST_F(SyncServiceImplWithBatchUploadDesktopTest,
   service()->TriggerLocalDataMigrationForItems(items);
 }
 
-TEST_F(SyncServiceImplWithBatchUploadDesktopTest,
+#if !BUILDFLAG(IS_CHROMEOS)
+TEST_F(SyncServiceImplTest,
        ShouldForwardUponSelectTypeAndMigrateLocalDataItemsWhenActive) {
   SignInWithoutSyncConsent();
 
@@ -2362,7 +2595,7 @@ TEST_F(SyncServiceImplWithBatchUploadDesktopTest,
 }
 
 TEST_F(
-    SyncServiceImplWithBatchUploadDesktopTest,
+    SyncServiceImplTest,
     ShouldForwardUponSelectTypeAndMigrateLocalDataItemsWhenActiveWithDataTypeDisabled) {
   SignInWithoutSyncConsent();
 
@@ -2388,9 +2621,10 @@ TEST_F(
   service()->SelectTypeAndMigrateLocalDataItemsWhenActive(PASSWORDS, items);
   EXPECT_TRUE(service()->GetActiveDataTypes().Has(PASSWORDS));
 }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 TEST_F(
-    SyncServiceImplWithBatchUploadDesktopTest,
+    SyncServiceImplTest,
     ShouldNotForwardUponSelectTypeAndMigrateLocalDataItemsWhenActiveWithEnterprisePolicy) {
   prefs()->SetManagedPref(prefs::internal::kSyncManaged, base::Value(true));
   SignInWithoutSyncConsent();
@@ -2419,7 +2653,7 @@ TEST_F(
 }
 
 TEST_F(
-    SyncServiceImplWithBatchUploadDesktopTest,
+    SyncServiceImplTest,
     ShouldNotForwardUponSelectTypeAndMigrateLocalDataItemsWhenActiveWithTypeDisabledByPolicy) {
   PrefValueMap policy_prefs;
   SyncPrefs::SetTypeDisabledByPolicy(&policy_prefs,
@@ -2453,7 +2687,7 @@ TEST_F(
 }
 
 TEST_F(
-    SyncServiceImplWithBatchUploadDesktopTest,
+    SyncServiceImplTest,
     ShouldNotForwardUponSelectTypeAndMigrateLocalDataItemsWhenActiveWithoutTransportOnlyMode) {
   SignInWithoutSyncConsent();
 
@@ -2475,7 +2709,6 @@ TEST_F(
   service()->SelectTypeAndMigrateLocalDataItemsWhenActive(BOOKMARKS, items);
   EXPECT_FALSE(service()->GetActiveDataTypes().Has(BOOKMARKS));
 }
-#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 TEST_F(SyncServiceImplTest, ShouldRecordLocalDataMigrationRequests) {
   base::HistogramTester histogram_tester;

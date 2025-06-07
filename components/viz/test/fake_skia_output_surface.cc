@@ -10,7 +10,6 @@
 
 #include "base/functional/bind.h"
 #include "base/logging.h"
-#include "base/not_fatal_until.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -18,6 +17,7 @@
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/frame_sinks/copy_output_util.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
+#include "components/viz/common/resources/transferable_resource.h"
 #include "components/viz/service/display/output_surface_client.h"
 #include "components/viz/service/display/output_surface_frame.h"
 #include "gpu/GLES2/gl2extchromium.h"
@@ -145,19 +145,11 @@ gpu::SyncToken FakeSkiaOutputSurface::ReleaseImageContexts(
 }
 
 std::unique_ptr<ExternalUseClient::ImageContext>
-FakeSkiaOutputSurface::CreateImageContext(
-    const gpu::Mailbox& mailbox,
-    const gpu::SyncToken& sync_token,
-    uint32_t texture_target,
-    const gfx::Size& size,
-    SharedImageFormat format,
-    bool concurrent_reads,
-    const std::optional<gpu::VulkanYCbCrInfo>& ycbcr_info,
-    sk_sp<SkColorSpace> color_space,
-    bool raw_draw_if_possible) {
-  return std::make_unique<ExternalUseClient::ImageContext>(
-      mailbox, sync_token, texture_target, size, format, ycbcr_info,
-      std::move(color_space));
+FakeSkiaOutputSurface::CreateImageContext(const TransferableResource& resource,
+                                          bool concurrent_reads,
+                                          bool raw_draw_if_possible,
+                                          uint32_t client_id) {
+  return std::make_unique<ExternalUseClient::ImageContext>(resource);
 }
 
 SkCanvas* FakeSkiaOutputSurface::BeginPaintRenderPass(
@@ -218,7 +210,7 @@ sk_sp<SkImage> FakeSkiaOutputSurface::MakePromiseSkImageFromRenderPass(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   auto it = sk_surfaces_.find(id);
-  CHECK(it != sk_surfaces_.end(), base::NotFatalUntil::M130);
+  CHECK(it != sk_surfaces_.end());
   return it->second->makeImageSnapshot();
 }
 
@@ -229,7 +221,7 @@ void FakeSkiaOutputSurface::RemoveRenderPassResource(
 
   for (const auto& id : ids) {
     auto it = sk_surfaces_.find(id);
-    CHECK(it != sk_surfaces_.end(), base::NotFatalUntil::M130);
+    CHECK(it != sk_surfaces_.end());
     sk_surfaces_.erase(it);
   }
 
@@ -351,7 +343,6 @@ bool FakeSkiaOutputSurface::GetGrBackendTexture(
   DCHECK(!image_context.mailbox().IsZero());
 
   auto* gl = context_provider()->ContextGL();
-  gl->WaitSyncTokenCHROMIUM(image_context.sync_token().GetConstData());
   auto texture_id = gl->CreateAndTexStorage2DSharedImageCHROMIUM(
       image_context.mailbox().name);
   auto gl_format_desc = gpu::GLFormatCaps().ToGLFormatDesc(

@@ -11,6 +11,7 @@
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
@@ -34,6 +35,7 @@
 #include "media/audio/audio_device_description.h"
 #include "media/base/media_content_type.h"
 #include "media/base/media_switches.h"
+#include "media/base/picture_in_picture_events_info.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "services/media_session/public/cpp/media_image_manager.h"
 #include "services/media_session/public/mojom/audio_focus.mojom.h"
@@ -155,22 +157,6 @@ MediaSessionImpl::PlayerIdentifier::PlayerIdentifier(
     MediaSessionPlayerObserver* observer,
     int player_id)
     : observer(observer), player_id(player_id) {}
-
-bool MediaSessionImpl::PlayerIdentifier::operator==(
-    const PlayerIdentifier& other) const {
-  return this->observer == other.observer && this->player_id == other.player_id;
-}
-
-bool MediaSessionImpl::PlayerIdentifier::operator!=(
-    const PlayerIdentifier& other) const {
-  return this->observer != other.observer || this->player_id != other.player_id;
-}
-
-bool MediaSessionImpl::PlayerIdentifier::operator<(
-    const PlayerIdentifier& other) const {
-  return observer != other.observer ? observer < other.observer
-                                    : player_id < other.player_id;
-}
 
 // static
 MediaSession* MediaSession::Get(WebContents* web_contents) {
@@ -623,6 +609,19 @@ void MediaSessionImpl::RebuildAndNotifyMediaPositionChanged() {
     ResetDurationUpdateGuard();
   }
 
+  // Notify the VideoPictureInPictureWindowControllerImpl regardless of whether
+  // or not the position has actually changed, since there may or may not have
+  // been a picture-in-picture window last time we updated. We also must only
+  // give the VideoPictureInPictureWindowControllerImpl a position if it's been
+  // explicitly set by the website (and not calculated based on players like
+  // below), since the VideoPictureInPictureWindowControllerImpl has its own
+  // connection for its specific player which may be different.
+  if (auto* pip_window_controller =
+          VideoPictureInPictureWindowControllerImpl::FromWebContents(
+              web_contents())) {
+    pip_window_controller->MediaSessionPositionChanged(position);
+  }
+
   // If we only have a single player then we should use the position from that.
   if (!position && normal_players_.size() == 1 && one_shot_players_.empty() &&
       pepper_players_.empty()) {
@@ -637,15 +636,6 @@ void MediaSessionImpl::RebuildAndNotifyMediaPositionChanged() {
 
       position = MaybeGuardDurationUpdate(position);
     }
-  }
-
-  // Notify the VideoPictureInPictureWindowControllerImpl regardless of whether
-  // or not the position has actually changed, since there may or may not have
-  // been a picture-in-picture window last time we updated.
-  if (auto* pip_window_controller_ =
-          VideoPictureInPictureWindowControllerImpl::FromWebContents(
-              web_contents())) {
-    pip_window_controller_->MediaSessionPositionChanged(position);
   }
 
   if (position == position_)
@@ -1290,8 +1280,12 @@ void MediaSessionImpl::EnterPictureInPicture() {
     return;
   }
 
-  // There should be one and only one player when we enter picture-in-picture.
   DCHECK_EQ(normal_players_.size(), 1u);
+  if (normal_players_.size() != 1u) {
+    // There should be one and only one player when we enter picture-in-picture.
+    return;
+  }
+
   normal_players_.begin()->first.observer->OnEnterPictureInPicture(
       normal_players_.begin()->first.player_id);
   uma_helper_.RecordEnterPictureInPicture(
@@ -1309,6 +1303,7 @@ void MediaSessionImpl::EnterAutoPictureInPicture() {
   }
   if (!ShouldRouteAction(
           media_session::mojom::MediaSessionAction::kEnterPictureInPicture)) {
+    MaybeEnterBrowserInitiatedAutomaticPictureInPicture();
     return;
   }
 
@@ -1316,6 +1311,7 @@ void MediaSessionImpl::EnterAutoPictureInPicture() {
       media_session::mojom::MediaSessionAction::kEnterPictureInPicture);
   uma_helper_.RecordEnterPictureInPicture(
       MediaSessionUmaHelper::EnterPictureInPictureType::kRegisteredAutomatic);
+  ReportAutoPictureInPictureInfoChanged();
 }
 
 void MediaSessionImpl::SetAudioSinkId(const std::optional<std::string>& id) {
@@ -1423,6 +1419,22 @@ void MediaSessionImpl::GetMediaImageBitmap(
                      mojo::WrapCallbackWithDefaultInvokeIfNotRun(
                          std::move(callback), SkBitmap()),
                      minimum_size_px, desired_size_px, source_icon));
+}
+
+void MediaSessionImpl::ReportAutoPictureInPictureInfoChanged() {
+  ContentClient* content_client = GetContentClient();
+  const auto auto_picture_in_picture_info =
+      media::PictureInPictureEventsInfo::AutoPipInfo{
+          content_client->browser()->GetAutoPipInfo(*web_contents())};
+
+  ForAllPlayers(base::BindRepeating(
+      [](const media::PictureInPictureEventsInfo::AutoPipInfo&
+             auto_picture_in_picture_info,
+         const PlayerIdentifier& player) {
+        player.observer->OnAutoPictureInPictureInfoChanged(
+            player.player_id, auto_picture_in_picture_info);
+      },
+      auto_picture_in_picture_info));
 }
 
 void MediaSessionImpl::AbandonSystemAudioFocusIfNeeded() {
@@ -1669,17 +1681,6 @@ void MediaSessionImpl::UpdateRoutedService() {
   RebuildAndNotifyActionsChanged();
   RebuildAndNotifyMediaSessionInfoChanged();
   RebuildAndNotifyMediaPositionChanged();
-
-  if (routed_service_ &&
-      !BackForwardCacheImpl::IsMediaSessionServiceAllowed()) {
-    // A page in the back-forward cache may affect the media control UI
-    // displayed to users. So it is marked as ineligible as soon as a
-    // MediaSession service is associated with it.
-    BackForwardCache::DisableForRenderFrameHost(
-        routed_service_->GetRenderFrameHostId(),
-        BackForwardCacheDisable::DisabledReason(
-            BackForwardCacheDisable::DisabledReasonId::kMediaSessionService));
-  }
 }
 
 MediaSessionServiceImpl* MediaSessionImpl::ComputeServiceForRouting() {
@@ -1862,6 +1863,15 @@ void MediaSessionImpl::RebuildAndNotifyActionsChanged() {
       actions.insert(
           media_session::mojom::MediaSessionAction::kExitPictureInPicture);
     }
+  }
+
+  // If the website could enter browser initiated automatic picture in picture,
+  // then we should expose EnterAutoPictureInPicture as an available action.
+  if (CouldEnterBrowserInitiatedAutomaticPictureInPicture()) {
+    actions.insert(
+        media_session::mojom::MediaSessionAction::kEnterAutoPictureInPicture);
+    actions.insert(
+        media_session::mojom::MediaSessionAction::kExitPictureInPicture);
   }
 
   if (base::FeatureList::IsEnabled(
@@ -2159,6 +2169,50 @@ void MediaSessionImpl::ResetDurationUpdateGuard() {
 void MediaSessionImpl::SetShouldThrottleDurationUpdateForTest(
     bool should_throttle) {
   should_throttle_duration_update_ = should_throttle;
+}
+
+bool MediaSessionImpl::CouldEnterBrowserInitiatedAutomaticPictureInPicture()
+    const {
+  if (!base::FeatureList::IsEnabled(
+          blink::features::kBrowserInitiatedAutomaticPictureInPicture)) {
+    return false;
+  }
+
+  if (!IsPictureInPictureAvailable()) {
+    return false;
+  }
+
+  // There should be one and only one player when we could enter browser
+  // initiated automatic picture-in-picture.
+  CHECK_EQ(normal_players_.size(), 1u);
+
+  auto& first = normal_players_.begin()->first;
+  if (first.observer->IsPaused(first.player_id)) {
+    return false;
+  }
+
+  // Ensure that browser initiated automatic picture-in-picture is only allowed
+  // for the primary main frame.
+  RenderFrameHost* frame = first.observer->render_frame_host();
+  if (!frame || !frame->IsInPrimaryMainFrame()) {
+    return false;
+  }
+
+  return true;
+}
+
+void MediaSessionImpl::MaybeEnterBrowserInitiatedAutomaticPictureInPicture()
+    const {
+  if (!CouldEnterBrowserInitiatedAutomaticPictureInPicture()) {
+    return;
+  }
+
+  // There should be one and only one player when we could enter browser
+  // initiated automatic picture-in-picture.
+  CHECK_EQ(normal_players_.size(), 1u);
+
+  auto& first = normal_players_.begin()->first;
+  first.observer->OnEnterPictureInPicture(first.player_id);
 }
 
 bool MediaSessionImpl::HasImageCacheForTest(const GURL& image_url) const {

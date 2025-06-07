@@ -80,10 +80,8 @@ static_library("test_support") {
   sources = [
     "command_buffer/client/client_test_helper.cc",
     "command_buffer/client/client_test_helper.h",
-    "command_buffer/client/gles2_interface_stub.cc",
-    "command_buffer/client/gles2_interface_stub.h",
-    "command_buffer/client/gles2_interface_stub_autogen.h",
-    "command_buffer/client/gles2_interface_stub_impl_autogen.h",
+    "command_buffer/client/fake_gpu_memory_buffer.cc",
+    "command_buffer/client/fake_gpu_memory_buffer.h",
     "command_buffer/client/test_gpu_memory_buffer_manager.cc",
     "command_buffer/client/test_gpu_memory_buffer_manager.h",
     "command_buffer/client/test_shared_image_interface.cc",
@@ -104,8 +102,6 @@ static_library("test_support") {
     "command_buffer/service/shared_image/test_image_backing.h",
     "command_buffer/service/test_helper.cc",
     "command_buffer/service/test_helper.h",
-    "command_buffer/service/test_memory_tracker.cc",
-    "command_buffer/service/test_memory_tracker.h",
     "ipc/raster_in_process_context.cc",
     "ipc/raster_in_process_context.h",
     "ipc/service/gpu_memory_buffer_factory_test_template.h",
@@ -131,6 +127,7 @@ static_library("test_support") {
     "//gpu/ipc/common",
     "//gpu/ipc/service",
     "//gpu/skia_bindings:skia_bindings",
+    "//media",
     "//testing/gmock",
     "//testing/gtest",
     "//ui/gfx:test_support",
@@ -466,6 +463,7 @@ test("gpu_unittests") {
     "command_buffer/service/gpu_tracer_unittest.cc",
     "command_buffer/service/gr_cache_controller_unittest.cc",
     "command_buffer/service/gr_shader_cache_unittest.cc",
+    "command_buffer/service/graphite_shared_context_unittest.cc",
     "command_buffer/service/id_manager_unittest.cc",
     "command_buffer/service/indexed_buffer_binding_host_unittest.cc",
     "command_buffer/service/memory_program_cache_unittest.cc",
@@ -556,7 +554,7 @@ test("gpu_unittests") {
     sources += [ "ipc/service/image_decode_accelerator_stub_unittest.cc" ]
   }
 
-  if (is_apple) {
+  if (is_mac) {
     sources += [
       "ipc/common/gpu_memory_buffer_impl_io_surface_unittest.cc",
       "ipc/service/gpu_memory_buffer_factory_io_surface_unittest.cc",
@@ -579,10 +577,6 @@ test("gpu_unittests") {
 
   if (is_linux || is_chromeos || is_android) {
     sources += [ "command_buffer/service/gpu_fence_manager_unittest.cc" ]
-  }
-
-  if (is_mac) {
-    sources += [ "ipc/service/built_in_shader_cache_unittest.cc" ]
   }
 
   # On official builds angle doesn't build null backend that is required for

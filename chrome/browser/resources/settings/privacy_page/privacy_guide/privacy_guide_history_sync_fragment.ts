@@ -13,6 +13,7 @@ import '/shared/settings/prefs/prefs.js';
 import './privacy_guide_fragment_shared.css.js';
 import './privacy_guide_fragment_shared.css.js';
 import '../../controls/settings_toggle_button.js';
+import '../../icons.html.js';
 
 import type {SyncBrowserProxy, SyncPrefs} from '/shared/settings/people_page/sync_browser_proxy.js';
 import {SyncBrowserProxyImpl, syncPrefsIndividualDataTypes} from '/shared/settings/people_page/sync_browser_proxy.js';
@@ -51,14 +52,6 @@ export class PrivacyGuideHistorySyncFragmentElement extends
 
   static get properties() {
     return {
-      /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
       /** Virtual pref to drive the settings-toggle from syncPrefs. */
       historySyncVirtualPref_: {
         type: Object,
@@ -81,7 +74,8 @@ export class PrivacyGuideHistorySyncFragmentElement extends
    * set with the next sync prefs update.
    */
   private syncAllCache_: boolean|null = null;
-  private historySyncVirtualPref_: chrome.settingsPrivate.PrefObject<boolean>;
+  declare private historySyncVirtualPref_:
+      chrome.settingsPrivate.PrefObject<boolean>;
   private metricsBrowserProxy_: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
   private startStateHistorySyncOn_: boolean;

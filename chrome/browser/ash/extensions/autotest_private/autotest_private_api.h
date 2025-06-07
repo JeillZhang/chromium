@@ -1222,6 +1222,7 @@ class AutotestPrivateInstallPWAForCurrentURLFunction
   std::unique_ptr<PWABannerObserver> banner_observer_;
   std::unique_ptr<PWAInstallManagerObserver> install_mananger_observer_;
   base::OneShotTimer timeout_timer_;
+  base::AutoReset<bool> auto_accept_pwa_install_confirmation_;
 };
 
 class AutotestPrivateActivateAcceleratorFunction : public ExtensionFunction {
@@ -1714,6 +1715,21 @@ class AutotestPrivateOverrideOrcaResponseForTestingFunction
 
  private:
   ~AutotestPrivateOverrideOrcaResponseForTestingFunction() override;
+  ResponseAction Run() override;
+};
+
+class AutotestPrivateOverrideScannerResponsesForTestingFunction
+    : public ExtensionFunction {
+ public:
+  AutotestPrivateOverrideScannerResponsesForTestingFunction();
+
+  DECLARE_EXTENSION_FUNCTION(
+      "autotestPrivate.overrideScannerResponsesForTesting",
+      AUTOTESTPRIVATE_OVERRIDESCANNERRESPONSESFORTESTING)
+
+ private:
+  ~AutotestPrivateOverrideScannerResponsesForTestingFunction() override;
+
   ResponseAction Run() override;
 };
 

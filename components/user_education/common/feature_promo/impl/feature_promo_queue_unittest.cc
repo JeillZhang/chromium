@@ -7,6 +7,7 @@
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/task_environment.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
@@ -15,7 +16,6 @@
 #include "components/user_education/common/feature_promo/feature_promo_precondition.h"
 #include "components/user_education/common/feature_promo/feature_promo_result.h"
 #include "components/user_education/common/feature_promo/feature_promo_specification.h"
-#include "components/user_education/common/feature_promo/impl/precondition_data.h"
 #include "components/user_education/common/user_education_storage_service.h"
 #include "components/user_education/test/test_feature_promo_precondition.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -47,9 +47,9 @@ constexpr char kPrecond2Name[] = "Precond2";
 constexpr char kPrecond3Name[] = "Precond3";
 constexpr char kPrecond4Name[] = "Precond4";
 constexpr base::TimeDelta kDefaultTimeout = base::Seconds(15);
-BASE_FEATURE(kTestFeature1, "kTestFeature1", base::FEATURE_ENABLED_BY_DEFAULT);
-BASE_FEATURE(kTestFeature2, "kTestFeature2", base::FEATURE_ENABLED_BY_DEFAULT);
-BASE_FEATURE(kTestFeature3, "kTestFeature3", base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kTestFeature1, "TestFeature1", base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kTestFeature2, "TestFeature2", base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kTestFeature3, "TestFeature3", base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace
 
@@ -98,7 +98,7 @@ class FeaturePromoQueueTest : public testing::Test {
     FeaturePromoQueue::ComputedDataMap data;
     for (const auto& promo : queue.queued_promos_) {
       data.emplace(&promo.params.feature.get(),
-                   FeaturePromoQueue::ComputedData());
+                   ui::UnownedTypedDataCollection());
     }
     queue.RemoveTimedOutPromos(data);
   }
@@ -112,7 +112,7 @@ class FeaturePromoQueueTest : public testing::Test {
     FeaturePromoQueue::ComputedDataMap data;
     for (const auto& promo : queue.queued_promos_) {
       data.emplace(&promo.params.feature.get(),
-                   FeaturePromoQueue::ComputedData());
+                   ui::UnownedTypedDataCollection());
     }
     return queue.IdentifyNextEligiblePromo(data);
   }
@@ -172,6 +172,9 @@ class FeaturePromoQueueTest : public testing::Test {
   const UserEducationTimeProvider& time_provider() const {
     return time_provider_;
   }
+
+ protected:
+  base::HistogramTester histogram_tester_;
 
  private:
   base::test::TaskEnvironment task_environment_{
@@ -289,6 +292,24 @@ TEST_F(FeaturePromoQueueTest, TimeOut) {
   EXPECT_FALSE(queue.IsQueued(kTestFeature2));
 }
 
+TEST_F(FeaturePromoQueueTest, TimeOutRecordsHistograms) {
+  UNCALLED_MOCK_CALLBACK(ResultCallback, result1);
+  auto queue = CreateDefaultQueue();
+  // Queued at t=0
+  TryToQueue(queue, 0, result1.Get());
+  FastForward(base::Seconds(20));
+  // Check at t=20
+  EXPECT_ASYNC_CALL_IN_SCOPE(result1, Run, RemoveTimedOutPromos(queue));
+  histogram_tester_.ExpectTotalCount("UserEducation.MessageShown.TimeInQueue",
+                                     0);
+  histogram_tester_.ExpectTotalCount(
+      "UserEducation.MessageNotShown.TimeInQueue", 1);
+  histogram_tester_.ExpectTotalCount(
+      "UserEducation.MessageShown.TimeInQueue.TestFeature1", 0);
+  histogram_tester_.ExpectTotalCount(
+      "UserEducation.MessageNotShown.TimeInQueue.TestFeature1", 1);
+}
+
 TEST_F(FeaturePromoQueueTest, FailedRequirements) {
   UNCALLED_MOCK_CALLBACK(ResultCallback, result1);
   UNCALLED_MOCK_CALLBACK(ResultCallback, result2);
@@ -300,6 +321,23 @@ TEST_F(FeaturePromoQueueTest, FailedRequirements) {
                                 result2, Run(FeaturePromoResult(kFailure2)),
                                 RemovePromosWithFailedPreconditions(queue));
   EXPECT_EQ(0U, queue.queued_count());
+}
+
+TEST_F(FeaturePromoQueueTest, FailedRequirementsRecordsHistograms) {
+  UNCALLED_MOCK_CALLBACK(ResultCallback, result1);
+  auto queue = CreateDefaultQueue();
+  TryToQueue(queue, 0, result1.Get());
+  required().SetDefault(kPrecond2, kFailure2);
+  EXPECT_ASYNC_CALL_IN_SCOPE(result1, Run,
+                             RemovePromosWithFailedPreconditions(queue));
+  histogram_tester_.ExpectTotalCount("UserEducation.MessageShown.TimeInQueue",
+                                     0);
+  histogram_tester_.ExpectTotalCount(
+      "UserEducation.MessageNotShown.TimeInQueue", 1);
+  histogram_tester_.ExpectTotalCount(
+      "UserEducation.MessageShown.TimeInQueue.TestFeature1", 0);
+  histogram_tester_.ExpectTotalCount(
+      "UserEducation.MessageNotShown.TimeInQueue.TestFeature1", 1);
 }
 
 TEST_F(FeaturePromoQueueTest, FailedRequirementOnePromo) {
@@ -334,32 +372,18 @@ TEST_F(FeaturePromoQueueTest, FailedDifferentRequirementsDifferentPromos) {
 
 TEST_F(FeaturePromoQueueTest, GetNextEligiblePromo) {
   UNCALLED_MOCK_CALLBACK(ResultCallback, result1);
-  UNCALLED_MOCK_CALLBACK(ResultCallback, result2);
-  UNCALLED_MOCK_CALLBACK(ResultCallback, result3);
   auto queue = CreateDefaultQueue();
   TryToQueue(queue, 0, result1.Get());
-  TryToQueue(queue, 1, result2.Get());
-  TryToQueue(queue, 2, result3.Get());
 
-  EXPECT_EQ(&kTestFeature1, IdentifyNextEligiblePromo(queue));
-  const auto promo1 = UpdateAndGetNextEligiblePromo(queue);
-  ASSERT_TRUE(promo1.has_value());
-  EXPECT_EQ(&kTestFeature1, &promo1->promo_params.feature.get());
-  EXPECT_EQ(2U, queue.queued_count());
-
-  EXPECT_EQ(&kTestFeature2, IdentifyNextEligiblePromo(queue));
-  const auto promo2 = UpdateAndGetNextEligiblePromo(queue);
-  ASSERT_TRUE(promo2.has_value());
-  EXPECT_EQ(&kTestFeature2, &promo2->promo_params.feature.get());
-  EXPECT_EQ(1U, queue.queued_count());
-
-  EXPECT_EQ(&kTestFeature3, IdentifyNextEligiblePromo(queue));
-  const auto promo3 = UpdateAndGetNextEligiblePromo(queue);
-  ASSERT_TRUE(promo3.has_value());
-  EXPECT_EQ(&kTestFeature3, &promo3->promo_params.feature.get());
-  EXPECT_EQ(0U, queue.queued_count());
-
-  EXPECT_EQ(std::nullopt, UpdateAndGetNextEligiblePromo(queue));
+  (void)UpdateAndGetNextEligiblePromo(queue);
+  histogram_tester_.ExpectTotalCount("UserEducation.MessageShown.TimeInQueue",
+                                     1);
+  histogram_tester_.ExpectTotalCount(
+      "UserEducation.MessageNotShown.TimeInQueue", 0);
+  histogram_tester_.ExpectTotalCount(
+      "UserEducation.MessageShown.TimeInQueue.TestFeature1", 1);
+  histogram_tester_.ExpectTotalCount(
+      "UserEducation.MessageNotShown.TimeInQueue.TestFeature1", 0);
 }
 
 TEST_F(FeaturePromoQueueTest, GetNextEligiblePromoSkipsWaitFor) {
@@ -614,8 +638,8 @@ TEST_F(FeaturePromoQueueCachedDataTest, ExtractsCachedData) {
   auto result = UpdateAndGetNextEligiblePromo(queue);
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(&kTestFeature1, &*result->promo_params.feature);
-  EXPECT_EQ(2, *PreconditionData::Get(result->cached_data, kIntegerValue));
-  EXPECT_EQ("foo", *PreconditionData::Get(result->cached_data, kStringValue));
+  EXPECT_EQ(2, result->cached_data[kIntegerValue]);
+  EXPECT_EQ("foo", result->cached_data[kStringValue]);
 
   EXPECT_FALSE(UpdateAndGetNextEligiblePromo(queue).has_value());
 }

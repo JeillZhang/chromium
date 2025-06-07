@@ -18,7 +18,7 @@ class WebViewSafeBrowsingClient : public SafeBrowsingClient {
   base::WeakPtr<SafeBrowsingClient> AsWeakPtr() override;
   PrefService* GetPrefs() override;
   SafeBrowsingService* GetSafeBrowsingService() override;
-  safe_browsing::RealTimeUrlLookupService* GetRealTimeUrlLookupService()
+  safe_browsing::RealTimeUrlLookupServiceBase* GetRealTimeUrlLookupService()
       override;
   safe_browsing::HashRealTimeService* GetHashRealTimeService() override;
   variations::VariationsService* GetVariationsService() override;
@@ -26,6 +26,7 @@ class WebViewSafeBrowsingClient : public SafeBrowsingClient {
       const security_interstitials::UnsafeResource& resource) const override;
   bool OnMainFrameUrlQueryCancellationDecided(web::WebState* web_state,
                                               const GURL& url) override;
+  bool ShouldForceSyncRealTimeUrlChecks() const override;
 
  private:
   raw_ptr<PrefService> prefs_;

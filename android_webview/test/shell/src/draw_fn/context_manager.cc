@@ -19,8 +19,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/native_library.h"
 #include "base/threading/thread_restrictions.h"
-#include "gpu/vulkan/init/skia_vk_memory_allocator_impl.h"
 #include "gpu/vulkan/init/vulkan_factory.h"
+#include "gpu/vulkan/skia_vk_memory_allocator_impl.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 #include "gpu/vulkan/vulkan_implementation.h"
@@ -671,8 +671,7 @@ void ContextManagerVulkan::DoCreateContext(JNIEnv* env, int width, int height) {
   backend_context.fMaxAPIVersion = vulkan_implementation_->GetVulkanInstance()
                                        ->vulkan_info()
                                        .used_api_version;
-  backend_context.fMemoryAllocator =
-      gpu::CreateSkiaVulkanMemoryAllocator(device_queue_.get());
+  backend_context.fMemoryAllocator = device_queue_->GetSkiaVkMemoryAllocator();
 
   skgpu::VulkanGetProc get_proc = [](const char* proc_name, VkInstance instance,
                                      VkDevice device) {

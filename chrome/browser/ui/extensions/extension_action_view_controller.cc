@@ -14,6 +14,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/api/side_panel/side_panel_service.h"
 #include "chrome/browser/extensions/commands/command_service.h"
@@ -31,6 +32,7 @@
 #include "chrome/browser/ui/extensions/extensions_container.h"
 #include "chrome/browser/ui/extensions/icon_with_badge_image_source.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_delegate.h"
+#include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/web_contents.h"
@@ -45,6 +47,7 @@
 #include "ui/base/models/image_model.h"
 #include "ui/color/color_provider_manager.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/native_theme/native_theme.h"
 
 using extensions::ActionInfo;
@@ -367,7 +370,7 @@ void ExtensionActionViewController::HidePopup() {
 }
 
 gfx::NativeView ExtensionActionViewController::GetPopupNativeView() {
-  return popup_host_ ? popup_host_->view()->GetNativeView() : nullptr;
+  return popup_host_ ? popup_host_->view()->GetNativeView() : gfx::NativeView();
 }
 
 ui::MenuModel* ExtensionActionViewController::GetContextMenu(
@@ -699,11 +702,11 @@ ExtensionActionViewController::GetIconImageSource(
   bool has_side_panel_action =
       side_panel_service &&
       side_panel_service->HasSidePanelActionForTab(*extension(), tab_id);
-  bool grayscale =
+  bool is_grayscale =
       GetSiteInteraction(web_contents) ==
           extensions::SitePermissionsHelper::SiteInteraction::kNone &&
       !action_is_visible && !has_side_panel_action;
-  image_source->set_grayscale(grayscale);
+  image_source->set_grayscale(is_grayscale);
 
   if (base::FeatureList::IsEnabled(
           extensions_features::kExtensionsMenuAccessControl)) {

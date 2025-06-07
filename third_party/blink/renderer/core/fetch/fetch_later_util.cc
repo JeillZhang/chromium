@@ -7,11 +7,11 @@
 #include <algorithm>
 
 #include "base/check.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_features.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/frame/frame_policy.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy_features.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/fetch/fetch_header_list.h"
 #include "third_party/blink/renderer/core/fetch/fetch_request_data.h"
@@ -129,8 +129,14 @@ uint32_t FetchLaterUtil::GetReservedDeferredFetchQuota(const Frame* frame) {
     return kMaxScheduledDeferredBytes - kQuotaReservedForDeferredFetchMinimal;
   }
 
-  // `frame` is not top-level.
-  CHECK(frame->Owner());
+  // TODO(crbug.com/408106277): Until the spec is fixed, a temporarily 0 quota
+  // is returned for non top-level control frames where they also don't have a
+  // frame owner (iframe).
+  if (!frame->Owner()) {
+    return 0;
+  }
+
+  // `frame` must not be top-level and have a frame owner.
   auto container_policy =
       frame->Owner()->GetFramePolicy().deferred_fetch_policy;
   uint32_t container_reserved_quota =
@@ -209,7 +215,8 @@ FetchLaterUtil::GetContainerDeferredFetchPolicyOnNavigation(
                 ->GetSecurityContext()
                 ->GetPermissionsPolicy()
           : nullptr;
-  const auto& feature_list = GetPermissionsPolicyFeatureList(to_url_origin);
+  const auto& feature_list =
+      network::GetPermissionsPolicyFeatureList(to_url_origin);
 
   // 1. Set container’s reserved deferred-fetch quota to 0.
 
@@ -224,7 +231,7 @@ FetchLaterUtil::GetContainerDeferredFetchPolicyOnNavigation(
   auto deferred_fetch_it = feature_list.find(
       network::mojom::PermissionsPolicyFeature::kDeferredFetch);
   CHECK(deferred_fetch_it != feature_list.end());
-  if (PermissionsPolicy::InheritedValueForFeature(
+  if (network::PermissionsPolicy::InheritedValueForFeature(
           to_url_origin, parent_permissions_policy, *deferred_fetch_it,
           container_frame->GetFramePolicy().container_policy)) {
     // then set container’s reserved deferred-fetch quota to normal quota and
@@ -243,7 +250,7 @@ FetchLaterUtil::GetContainerDeferredFetchPolicyOnNavigation(
   auto deferred_fetch_minimal_it = feature_list.find(
       network::mojom::PermissionsPolicyFeature::kDeferredFetchMinimal);
   CHECK(deferred_fetch_minimal_it != feature_list.end());
-  if (!PermissionsPolicy::InheritedValueForFeature(
+  if (!network::PermissionsPolicy::InheritedValueForFeature(
           to_url_origin, parent_permissions_policy, *deferred_fetch_minimal_it,
           container_frame->GetFramePolicy().container_policy)) {
     // then return.
@@ -276,7 +283,7 @@ uint64_t FetchLaterUtil::GetAvailableDeferredFetchQuota(Frame* frame,
   // 1. Let controlDocument be document’s deferred-fetch control document.
   // 2. Let navigable be controlDocument’s node navigable.
   // NOTE: The wording "controlDocument" means `control_frame->GetDocument()`.
-  auto* control_frame = FetchLaterUtil::GetDeferredFetchControlFrame(frame);
+  Frame* control_frame = FetchLaterUtil::GetDeferredFetchControlFrame(frame);
 
   uint64_t quota = GetReservedDeferredFetchQuota(control_frame);
 
@@ -286,7 +293,7 @@ uint64_t FetchLaterUtil::GetAvailableDeferredFetchQuota(Frame* frame,
 
   // 8. For each navigable in controlDocument’s node navigable’s inclusive
   // descendant navigables
-  for (auto* navigable = control_frame; navigable;
+  for (Frame* navigable = control_frame; navigable;
        navigable = navigable->Tree().TraverseNext(control_frame)) {
     // whose active document’s deferred-fetch control document is
     // controlDocument:
@@ -311,8 +318,14 @@ uint64_t FetchLaterUtil::GetAvailableDeferredFetchQuota(Frame* frame,
 
     // 8-2. For each deferred fetch record deferredRecord of controlDocument’s
     // fetch group’s deferred fetch records:
-    auto* scoped_fetcher = GlobalFetch::ScopedFetcher::From(
-        *DynamicTo<LocalDOMWindow>(navigable->DomWindow()));
+    auto* dom_window = DynamicTo<LocalDOMWindow>(navigable->DomWindow());
+    if (!dom_window || !dom_window->GetExecutionContext()) {
+      continue;
+    }
+    auto* scoped_fetcher = GlobalFetch::ScopedFetcher::From(*dom_window);
+    if (!scoped_fetcher) {
+      continue;
+    }
     scoped_fetcher->UpdateDeferredBytesQuota(url, quota_for_request_origin,
                                              quota);
   }

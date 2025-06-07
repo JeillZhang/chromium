@@ -61,7 +61,7 @@ void NetworkHintsHandlerImpl::PrefetchDNS(
   }
   preconnect_manager_->StartPreresolveHosts(
       gurls, GetPendingNetworkAnonymizationKey(render_frame_host),
-      kNetworkHintsTrafficAnnotation);
+      kNetworkHintsTrafficAnnotation, /*storage_partition_config=*/nullptr);
 }
 
 void NetworkHintsHandlerImpl::Preconnect(const url::SchemeHostPort& url,
@@ -84,7 +84,8 @@ void NetworkHintsHandlerImpl::Preconnect(const url::SchemeHostPort& url,
   preconnect_manager_->StartPreconnectUrl(
       url.GetURL(), allow_credentials,
       GetPendingNetworkAnonymizationKey(render_frame_host),
-      kNetworkHintsTrafficAnnotation);
+      kNetworkHintsTrafficAnnotation, /*storage_partition_config=*/nullptr,
+      /*keepalive_config=*/std::nullopt, mojo::NullRemote());
 }
 
 NetworkHintsHandlerImpl::NetworkHintsHandlerImpl(

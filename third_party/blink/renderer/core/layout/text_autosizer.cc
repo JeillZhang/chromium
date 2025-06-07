@@ -44,6 +44,7 @@
 #include "third_party/blink/renderer/core/frame/viewport_data.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/html/forms/html_text_area_element.h"
+#include "third_party/blink/renderer/core/layout/block_node.h"
 #include "third_party/blink/renderer/core/layout/layout_block.h"
 #include "third_party/blink/renderer/core/layout/layout_inline.h"
 #include "third_party/blink/renderer/core/layout/layout_multi_column_flow_thread.h"
@@ -274,6 +275,12 @@ static bool BlockSuppressesAutosizing(const LayoutBlock* block) {
 
   if (BlockHeightConstrained(block))
     return true;
+
+  if (RuntimeEnabledFeatures::TextAutoSizingDisabledOnFlexboxEnabled() &&
+      block->IsFlexItem()) {
+    block->GetDocument().CountUse(WebFeature::kTextAutoSizingDisabledOnFlexbox);
+    return true;
+  }
 
   return false;
 }
@@ -892,8 +899,7 @@ TextAutosizer::Fingerprint TextAutosizer::ComputeFingerprint(
 
     // TODO(kojii): The width can be computed from style only when it's fixed.
     // consider for adding: writing mode, padding.
-    data.width_ =
-        width.IsFixed() ? WTF::NormalizeSign(width.GetFloatValue()) : 0.0f;
+    data.width_ = width.IsFixed() ? WTF::NormalizeSign(width.Pixels()) : 0.0f;
   }
 
   // Use nodeIndex as a rough approximation of column number
@@ -1066,8 +1072,9 @@ float TextAutosizer::WidthFromBlock(const LayoutBlock* block) const {
     float width;
     Length specified_width = block->StyleRef().LogicalWidth();
     if (specified_width.IsFixed()) {
-      if ((width = specified_width.Value()) > 0)
+      if ((width = specified_width.Pixels()) > 0) {
         return width;
+      }
     }
     if (specified_width.HasPercent()) {
       if (float container_width = ContentInlineSize(block->ContainingBlock())) {
@@ -1458,13 +1465,17 @@ TextAutosizer::DeferUpdatePageInfo::DeferUpdatePageInfo(Page* page)
   }
 }
 
-// static
-void TextAutosizer::MaybeRegisterInlineSize(const LayoutBlock& ng_block,
-                                            LayoutUnit inline_size) {
-  if (auto* text_autosizer = ng_block.GetDocument().GetTextAutosizer()) {
-    if (text_autosizer->ShouldHandleLayout())
-      text_autosizer->RegisterInlineSize(ng_block, inline_size);
+void TextAutosizer::ForceInlineSizeForColumn(
+    const BlockNode& multicol_container,
+    LayoutUnit inline_size) {
+  auto* text_autosizer = multicol_container.GetDocument().GetTextAutosizer();
+  if (!text_autosizer || !text_autosizer->ShouldHandleLayout()) {
+    return;
   }
+  auto iter = text_autosizer->inline_size_map_.find(
+      To<LayoutBlock>(multicol_container.GetLayoutBox()));
+  DCHECK(iter != text_autosizer->inline_size_map_.end());
+  iter.Get()->value = inline_size;
 }
 
 TextAutosizer::NGLayoutScope::NGLayoutScope(LayoutBox* box,

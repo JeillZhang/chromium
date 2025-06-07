@@ -33,31 +33,20 @@
 #include "gpu/vulkan/vulkan_util.h"
 #include "ui/gl/gl_angle_util_vulkan.h"
 
-namespace features {
-// Based on Finch experiment results, the VMA block size does not significantly
-// affect performance.  Too small sizes (such as 4KB) result in instability,
-// likely due to running out of allowed allocations (the
-// |maxMemoryAllocationCount| Vulkan limit).  Too large sizes (such as 4MB)
-// result in significant memory waste due to fragmentation.  Finch results
-// have shown that with a block size of 64KB and below, the amount of
-// fragmentation is ~1MB in the 99th percentile.  For 128KB and higher block
-// sizes, the amount of fragmentation exponentially increases (with 2MB for
-// 128KB block size, 4MB for 256KB, etc).
-BASE_FEATURE(kVulkanVMALargeHeapBlockSizeExperiment,
-             "VulkanVMALargeHeapBlockSizeExperiment",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-constexpr base::FeatureParam<int> kVulkanVMALargeHeapBlockSize{
-    &kVulkanVMALargeHeapBlockSizeExperiment, "VulkanVMALargeHeapBlockSize",
-    64 * 1024};
-}  // namespace features
-
 namespace gpu {
 namespace {
 VkDeviceSize GetPreferredVMALargeHeapBlockSize() {
-  const VkDeviceSize block_size =
-      ::features::kVulkanVMALargeHeapBlockSize.Get();
-  DCHECK(std::has_single_bit(block_size));
-  return block_size;
+  // Based on Finch experiment results, the VMA block size does not
+  // significantly affect performance.  Too small sizes (such as 4KB) result in
+  // instability, likely due to running out of allowed allocations (the
+  // |maxMemoryAllocationCount| Vulkan limit).  Too large sizes (such as 4MB)
+  // result in significant memory waste due to fragmentation.  Finch results
+  // have shown that with a block size of 64KB and below, the amount of
+  // fragmentation is ~1MB in the 99th percentile.  For 128KB and higher block
+  // sizes, the amount of fragmentation exponentially increases (with 2MB for
+  // 128KB block size, 4MB for 256KB, etc).
+  constexpr VkDeviceSize kVulkanVMALargeHeapBlockSize = 64 * 1024;
+  return kVulkanVMALargeHeapBlockSize;
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -383,6 +372,9 @@ bool VulkanDeviceQueue::Initialize(
                        &owned_vma_allocator_);
   vma_allocator_ = owned_vma_allocator_;
 
+  skia_vk_memory_allocator_ =
+      sk_make_sp<gpu::SkiaVulkanMemoryAllocator>(vma_allocator_);
+
   cleanup_helper_ = std::make_unique<VulkanFenceHelper>(this);
 
   allow_protected_memory_ = allow_protected_memory;
@@ -431,6 +423,9 @@ bool VulkanDeviceQueue::InitCommon(VkPhysicalDevice vk_physical_device,
     }
 #endif  // BUILDFLAG(IS_ANDROID)
   }
+
+  skia_vk_memory_allocator_ =
+      sk_make_sp<gpu::SkiaVulkanMemoryAllocator>(vma_allocator_);
 
   cleanup_helper_ = std::make_unique<VulkanFenceHelper>(this);
 
@@ -589,12 +584,16 @@ bool VulkanDeviceQueue::OnMemoryDump(
 
   auto* dump = pmd->CreateAllocatorDump(path);
   auto allocated_used = vma::GetTotalAllocatedAndUsedMemory(vma_allocator());
+  uint32_t lazy_allocated_size =
+      skia_vk_memory_allocator_->totalLazyAllocatedMemory();
   // `allocated_size` is memory allocated from the device, used is what is
-  // actually used.
+  // actually used. `lazy_allocated_size` is transient memory that is lazily
+  // allocated by the driver.
   dump->AddScalar("allocated_size", "bytes", allocated_used.first);
   dump->AddScalar("used_size", "bytes", allocated_used.second);
   dump->AddScalar("fragmentation_size", "bytes",
                   allocated_used.first - allocated_used.second);
+  dump->AddScalar("lazy_allocated_size", "bytes", lazy_allocated_size);
   return true;
 }
 

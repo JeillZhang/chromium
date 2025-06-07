@@ -34,7 +34,6 @@
 #include "chrome/browser/ash/arc/icon_decode_request.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/menu_manager_factory.h"
 #include "chrome/common/chrome_paths.h"
@@ -44,6 +43,7 @@
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/services/app_service/public/cpp/app_update.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/manifest_constants.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -213,6 +213,7 @@ class AppContextMenuTest : public AppListTestBase {
     menu_delegate_.reset();
     controller_.reset();
     menu_manager_.reset();
+    AppListTestBase::TearDown();
   }
 
  protected:
@@ -296,8 +297,8 @@ class AppContextMenuTest : public AppListTestBase {
     app_service_test_.SetUp(profile());
 
     scoped_refptr<extensions::Extension> store = MakeApp(app_id, platform_app);
-    service_->AddExtension(store.get());
-    service_->EnableExtension(app_id);
+    registrar()->AddExtension(store.get());
+    registrar()->EnableExtension(app_id);
 
     controller_ = std::make_unique<FakeAppListControllerDelegate>();
     controller_->SetAppPinnable(app_id, pinnable);
@@ -345,7 +346,7 @@ class AppContextMenuTest : public AppListTestBase {
     app_service_test_.SetUp(profile());
 
     scoped_refptr<extensions::Extension> store = MakeChromeApp();
-    service_->AddExtension(store.get());
+    registrar()->AddExtension(store.get());
 
     controller_ = std::make_unique<FakeAppListControllerDelegate>();
     AppServiceContextMenu menu(menu_delegate(), profile(),
@@ -404,7 +405,7 @@ TEST_F(AppContextMenuTest, ChromeAppInRecentAppsList) {
   app_service_test().SetUp(profile());
 
   scoped_refptr<extensions::Extension> app = MakeChromeApp();
-  service_->AddExtension(app.get());
+  registrar()->AddExtension(app.get());
 
   // Simulate a context menu in the recent apps row.
   AppServiceContextMenu menu(menu_delegate(), profile(),

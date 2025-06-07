@@ -23,7 +23,6 @@ export interface SettingsRoutes {
   AUTOFILL_AI: Route;
   BASIC: Route;
   CAPTIONS: Route;
-  CERTIFICATES: Route;
   CHROME_CLEANUP: Route;
   CLEAR_BROWSER_DATA: Route;
   COMPARE: Route;
@@ -32,9 +31,10 @@ export interface SettingsRoutes {
   DOWNLOADS: Route;
   EDIT_DICTIONARY: Route;
   FONTS: Route;
-  GLIC: Route;
+  GEMINI: Route;
+  GLIC_SECTION: Route;
   HISTORY_SEARCH: Route;
-  INCOMPATIBLE_APPLICATIONS: Route;
+  INCOGNITO_TRACKING_PROTECTIONS: Route;
   LANGUAGES: Route;
   MANAGE_PROFILE: Route;
   OFFER_WRITING_HELP: Route;
@@ -82,6 +82,7 @@ export interface SettingsRoutes {
   SITE_SETTINGS_IMAGES: Route;
   SITE_SETTINGS_KEYBOARD_LOCK: Route;
   SITE_SETTINGS_LOCAL_FONTS: Route;
+  SITE_SETTINGS_LOCAL_NETWORK_ACCESS: Route;
   SITE_SETTINGS_MIXEDSCRIPT: Route;
   SITE_SETTINGS_JAVASCRIPT: Route;
   SITE_SETTINGS_JAVASCRIPT_OPTIMIZER: Route;
@@ -113,7 +114,6 @@ export interface SettingsRoutes {
   SYNC: Route;
   SYNC_ADVANCED: Route;
   SYSTEM: Route;
-  TRACKING_PROTECTION: Route;
   TRIGGERED_RESET_DIALOG: Route;
 
   // <if expr="not chromeos_ash">

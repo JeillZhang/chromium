@@ -18,6 +18,7 @@ static_library("wm") {
   ]
 
   deps = [
+    "//ash/constants",
     "//ash/public/cpp",
     "//base",
     "//chrome/browser/ash/app_restore:app_restore",
@@ -29,6 +30,9 @@ static_library("wm") {
     "//chromeos/ash/services/coral/public/mojom",
     "//chromeos/ui/wm",
     "//components/app_constants",
+    "//components/application_locale_storage",
+    "//components/signin/public/identity_manager",
+    "//components/variations/service",
     "//content/public/browser",
   ]
 }

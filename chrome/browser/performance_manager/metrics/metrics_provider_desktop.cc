@@ -13,7 +13,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/timer/timer.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/performance_manager/public/user_tuning/user_performance_tuning_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -21,6 +21,10 @@
 #include "components/prefs/pref_service.h"
 #include "ui/accessibility/ax_mode.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "base/win/registry.h"
+#endif
 
 using performance_manager::user_tuning::prefs::kMemorySaverModeState;
 using performance_manager::user_tuning::prefs::MemorySaverModeState;
@@ -200,6 +204,55 @@ void EmitCpuStatusSamplingTraceEvents(base::TimeTicks posted_at_time,
 }
 #endif  // SHOULD_COLLECT_CPU_FREQUENCY_METRICS()
 
+#if BUILDFLAG(IS_WIN)
+// Reports histograms describing the value of the HKEY_LOCAL_MACHINE ->
+// Software\Microsoft\Windows NT\CurrentVersion\Image File ->
+// FrontEndHeapDebugOptions registry key. We observed locally that the 0x10 bit
+// activates stack collection on heap allocation, which results in unacceptable
+// performance. We want to be sure that this isn't used widely in the field.
+void RecordFrontEndHeapDebugOptionsHistogram() {
+  // Outcome of reading the registry key. These values are persisted to logs.
+  // Entries should not be renumbered and numeric values should never be reused.
+  // LINT.IfChange(FrontEndHeapDebugOptionsOutcome)
+  enum class FrontEndHeapDebugOptionsOutcome {
+    kCannotOpenKey = 0,
+    kCannotReadValue = 1,
+    kSuccess = 2,
+    kMaxValue = kSuccess,
+  };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/performance_manager/enums.xml:FrontEndHeapDebugOptionsOutcome)
+
+  std::optional<FrontEndHeapDebugOptionsOutcome> outcome;
+  base::win::RegKey key;
+  if (key.Open(HKEY_LOCAL_MACHINE,
+               L"Software\\Microsoft\\Windows NT\\CurrentVersion\\Image File "
+               L"Execution Options\\chrome.exe",
+               KEY_QUERY_VALUE | KEY_WOW64_32KEY) == ERROR_SUCCESS) {
+    DWORD value = 0;
+    if (key.ReadValueDW(L"FrontEndHeapDebugOptions", &value) == ERROR_SUCCESS) {
+      base::UmaHistogramSparse(
+          "PerformanceManager.RegistryStats.FrontEndHeapDebugOptionsValue",
+          // Limit the number of distinct values recorded to this histogram, as
+          // recommended by `base::UmaHistogramSparse()` documentation. The
+          // highest bit observed being set in practice is 0x10 (for stack
+          // collection on heap allocation). We set the maximum a little bit
+          // above that, to be aware if higher bits are used in the field.
+          std::clamp(base::saturated_cast<int>(value), 0, 0xff));
+      outcome = FrontEndHeapDebugOptionsOutcome::kSuccess;
+    } else {
+      outcome = FrontEndHeapDebugOptionsOutcome::kCannotReadValue;
+    }
+  } else {
+    outcome = FrontEndHeapDebugOptionsOutcome::kCannotOpenKey;
+  }
+
+  CHECK(outcome.has_value());
+  base::UmaHistogramEnumeration(
+      "PerformanceManager.RegistryStats.FrontEndHeapDebugOptionsOutcome",
+      outcome.value());
+}
+#endif  // BUILDFLAG(IS_WIN)
+
 }  // namespace
 
 // Tracks the proportion of time a specific mode was enabled during this
@@ -341,6 +394,10 @@ void MetricsProviderDesktop::ProvideCurrentSessionData(
   current_mode_ = ComputeCurrentMode();
 
   RecordDiskMetrics();
+
+#if BUILDFLAG(IS_WIN)
+  RecordFrontEndHeapDebugOptionsHistogram();
+#endif  // BUILDFLAG(IS_WIN)
 
   // Request a disk measurement so it's ready for the next interval
   PostDiskMetricsTask();

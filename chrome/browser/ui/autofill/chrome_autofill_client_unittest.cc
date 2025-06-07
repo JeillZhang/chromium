@@ -28,11 +28,11 @@
 #include "components/autofill/content/browser/test_autofill_manager_injector.h"
 #include "components/autofill/content/browser/test_content_autofill_driver.h"
 #include "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/autofill_profile_test_api.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile_test_api.h"
 #include "components/autofill/core/browser/foundations/test_autofill_manager_waiter.h"
 #include "components/autofill/core/browser/foundations/test_browser_autofill_manager.h"
-#include "components/autofill/core/browser/integrators/mock_fast_checkout_client.h"
+#include "components/autofill/core/browser/integrators/fast_checkout/mock_fast_checkout_client.h"
 #include "components/autofill/core/browser/integrators/password_form_classification.h"
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
@@ -407,7 +407,7 @@ TEST_F(ChromeAutofillClientTest,
                    std::string("-1")),
               Pair(plus_addresses::hats::kLastPlusAddressFillingTime,
                    std::string("-1"))),
-          HatsService::NavigationBehaviour::ALLOW_ANY, _, _, _, _));
+          HatsService::NavigationBehavior::ALLOW_ANY, _, _, _, _));
 
   client()->TriggerPlusAddressUserPerceptionSurvey(
       plus_addresses::hats::SurveyType::kAcceptedFirstTimeCreate);
@@ -441,7 +441,7 @@ TEST_F(ChromeAutofillClientTest, TriggerPlusAddressUserPerceptionSurvey) {
                    std::string("-1")),
               Pair(plus_addresses::hats::kLastPlusAddressFillingTime,
                    std::string("-1"))),
-          HatsService::NavigationBehaviour::ALLOW_ANY, _, _, _, _));
+          HatsService::NavigationBehavior::ALLOW_ANY, _, _, _, _));
 
   client()->TriggerPlusAddressUserPerceptionSurvey(
       plus_addresses::hats::SurveyType::kAcceptedFirstTimeCreate);
@@ -522,8 +522,7 @@ TEST_F(ChromeAutofillClientTest,
 }
 
 TEST_F(ChromeAutofillClientTest, AutofillFieldIPH_NotShownByPromoController) {
-  SetUpIphForTesting(
-      feature_engagement::kIPHAutofillPredictionImprovementsFeature);
+  SetUpIphForTesting(feature_engagement::kIPHAutofillAiOptInFeature);
 
   EXPECT_CALL(*autofill_field_promo_controller(), IsMaybeShowing)
       .WillRepeatedly(Return(false));
@@ -533,8 +532,7 @@ TEST_F(ChromeAutofillClientTest, AutofillFieldIPH_NotShownByPromoController) {
 }
 
 TEST_F(ChromeAutofillClientTest, AutofillFieldIPH_IsShown) {
-  SetUpIphForTesting(
-      feature_engagement::kIPHAutofillPredictionImprovementsFeature);
+  SetUpIphForTesting(feature_engagement::kIPHAutofillAiOptInFeature);
 
   InSequence sequence;
   EXPECT_CALL(*autofill_field_promo_controller(), IsMaybeShowing)
@@ -548,8 +546,7 @@ TEST_F(ChromeAutofillClientTest, AutofillFieldIPH_IsShown) {
 }
 
 TEST_F(ChromeAutofillClientTest, AutofillImprovedPredictionsIPH_IsShown) {
-  SetUpIphForTesting(
-      feature_engagement::kIPHAutofillPredictionImprovementsFeature);
+  SetUpIphForTesting(feature_engagement::kIPHAutofillAiOptInFeature);
 
   InSequence sequence;
   EXPECT_CALL(*autofill_field_promo_controller(), IsMaybeShowing)
@@ -564,8 +561,7 @@ TEST_F(ChromeAutofillClientTest, AutofillImprovedPredictionsIPH_IsShown) {
 
 TEST_F(ChromeAutofillClientTest,
        AutofillFieldIPH_HideOnShowAutofillSuggestions) {
-  SetUpIphForTesting(
-      feature_engagement::kIPHAutofillPredictionImprovementsFeature);
+  SetUpIphForTesting(feature_engagement::kIPHAutofillAiOptInFeature);
   auto delegate = std::make_unique<MockAutofillSuggestionDelegate>();
 
   EXPECT_CALL(*autofill_field_promo_controller(), Hide);
@@ -609,11 +605,9 @@ class ChromeAutofillClientTestWithWindow : public BrowserWithTestWindowTest {
 };
 
 TEST_F(ChromeAutofillClientTestWithWindow, AutofillFieldIPH_NotifyFeatureUsed) {
-  EXPECT_CALL(
-      *feature_promo_controller(),
-      EndPromo(
-          Ref(feature_engagement::kIPHAutofillPredictionImprovementsFeature),
-          user_education::EndFeaturePromoReason::kFeatureEngaged));
+  EXPECT_CALL(*feature_promo_controller(),
+              EndPromo(Ref(feature_engagement::kIPHAutofillAiOptInFeature),
+                       user_education::EndFeaturePromoReason::kFeatureEngaged));
   client()->NotifyIphFeatureUsed(AutofillClient::IphFeature::kAutofillAi);
 }
 #endif

@@ -283,6 +283,16 @@ void SodaInstaller::UnregisterLanguages(PrefService* global_prefs) {
   update->clear();
 }
 
+bool SodaInstaller::IsLanguageEnabled(const std::string& language) {
+  return base::Contains(GetLiveCaptionEnabledLanguages(), language);
+}
+
+bool SodaInstaller::IsSodaLanguageDownloading(
+    LanguageCode language_code) const {
+  return (is_soda_downloading_ && IsLanguageInstalled(language_code)) ||
+         base::Contains(language_pack_progress_, language_code);
+}
+
 bool SodaInstaller::IsSodaDownloading(LanguageCode language_code) const {
   return is_soda_downloading_ ||
          base::Contains(language_pack_progress_, language_code);
@@ -307,7 +317,8 @@ bool SodaInstaller::IsAnyFeatureUsingSodaEnabled(PrefService* prefs) {
          prefs->GetString(
              ash::prefs::kClassManagementToolsAvailabilitySetting) == "teacher";
 #else  // !BUILDFLAG(IS_CHROMEOS)
-  return prefs->GetBoolean(prefs::kLiveCaptionEnabled);
+  return prefs->GetBoolean(prefs::kLiveCaptionEnabled) ||
+         prefs->GetBoolean(prefs::kHeadlessCaptionEnabled);
 #endif
 }
 

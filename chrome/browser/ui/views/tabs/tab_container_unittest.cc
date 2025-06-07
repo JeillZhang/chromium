@@ -203,8 +203,11 @@ class TabContainerTest : public ChromeViewsTestBase {
               std::optional<tab_groups::TabGroupId> group = std::nullopt,
               TabActive active = TabActive::kInactive,
               TabPinned pinned = TabPinned::kUnpinned) {
-    Tab* tab = tab_container_->AddTab(
-        std::make_unique<Tab>(tab_slot_controller_.get()), model_index, pinned);
+    std::vector<TabContainer::TabInsertionParams> tabs_params;
+    tabs_params.emplace_back(std::make_unique<Tab>(tab_slot_controller_.get()),
+                             model_index, pinned);
+    Tab* tab = tab_container_->AddTabs(std::move(tabs_params))[0];
+
     tab_strip_controller_->AddTab(model_index, active, pinned);
 
     if (active == TabActive::kActive) {
@@ -342,8 +345,8 @@ class TabContainerTest : public ChromeViewsTestBase {
     }
   }
 
-  // Checks whether |tab| contains |point_in_tab_container_coords|, where the
-  // point is in |tab_container_| coordinates.
+  // Checks whether `tab` contains `point_in_tab_container_coords`, where the
+  // point is in `tab_container_` coordinates.
   bool IsPointInTab(Tab* tab, const gfx::Point& point_in_tab_container_coords) {
     gfx::Point point_in_tab_coords(point_in_tab_container_coords);
     views::View::ConvertPointToTarget(tab_container_.get(), tab,
@@ -367,6 +370,12 @@ class TabContainerTest : public ChromeViewsTestBase {
     tab_container_->SetSize(size);
   }
 
+  int GetWidthOfActiveTab() {
+    return tab_container_
+        ->GetTabAtModelIndex(tab_strip_controller_->GetActiveIndex().value())
+        ->width();
+  }
+
   std::unique_ptr<FakeBaseTabStripController> tab_strip_controller_;
   std::unique_ptr<FakeTabContainerController> tab_container_controller_;
   std::unique_ptr<FakeTabSlotController> tab_slot_controller_;
@@ -385,8 +394,9 @@ TEST_F(TabContainerTest, ExitsClosingModeAtStandardWidth) {
   AddTab(0, std::nullopt, TabActive::kActive);
 
   // Create just enough tabs so tabs are not full size.
-  const int standard_width = TabStyle::Get()->GetStandardWidth();
-  while (tab_container_->GetActiveTabWidth() == standard_width) {
+  const int standard_width =
+      TabStyle::Get()->GetStandardWidth(/*is_split*/ false);
+  while (tab_container_->GetTabAtModelIndex(0)->width() == standard_width) {
     AddTab(0);
     tab_container_->CompleteAnimationAndLayout();
   }
@@ -402,21 +412,22 @@ TEST_F(TabContainerTest, ExitsClosingModeAtStandardWidth) {
   // constraining tab widths to below full size.
   RemoveTab(tab_container_->GetTabCount() - 2);
   tab_container_->CompleteAnimationAndLayout();
-  ASSERT_LT(tab_container_->GetActiveTabWidth(), standard_width);
+  ASSERT_LT(GetWidthOfActiveTab(), standard_width);
 
   // Close the last tab; tab closing mode should allow tabs to resize to full
   // size.
   RemoveTab(tab_container_->GetTabCount() - 1);
   tab_container_->CompleteAnimationAndLayout();
-  EXPECT_EQ(tab_container_->GetActiveTabWidth(), standard_width);
+  EXPECT_EQ(GetWidthOfActiveTab(), standard_width);
 }
 
 TEST_F(TabContainerTest, StaysInClosingModeBelowStandardWidth) {
   AddTab(0, std::nullopt, TabActive::kActive);
 
   // Create just enough tabs so tabs are not full size.
-  const int standard_width = TabStyle::Get()->GetStandardWidth();
-  while (tab_container_->GetActiveTabWidth() == standard_width) {
+  const int standard_width =
+      TabStyle::Get()->GetStandardWidth(/*is_split*/ false);
+  while (tab_container_->GetTabAtModelIndex(0)->width() == standard_width) {
     AddTab(0);
     tab_container_->CompleteAnimationAndLayout();
   }
@@ -436,21 +447,22 @@ TEST_F(TabContainerTest, StaysInClosingModeBelowStandardWidth) {
   // constraining tab widths to below full size.
   RemoveTab(tab_container_->GetTabCount() - 2);
   tab_container_->CompleteAnimationAndLayout();
-  ASSERT_LT(tab_container_->GetActiveTabWidth(), standard_width);
+  ASSERT_LT(GetWidthOfActiveTab(), standard_width);
 
   // Close the last tab; tab closing mode should remain active, as there isn't
   // enough room for tabs to be standard width.
   RemoveTab(tab_container_->GetTabCount() - 1);
   tab_container_->CompleteAnimationAndLayout();
-  EXPECT_LT(tab_container_->GetActiveTabWidth(), standard_width);
+  EXPECT_LT(GetWidthOfActiveTab(), standard_width);
 }
 
 TEST_F(TabContainerTest, ClosingModeAffectsMinWidth) {
   AddTab(0, std::nullopt, TabActive::kActive);
 
   // Create just enough tabs so tabs are not full size.
-  const int standard_width = TabStyle::Get()->GetStandardWidth();
-  while (tab_container_->GetActiveTabWidth() == standard_width) {
+  const int standard_width =
+      TabStyle::Get()->GetStandardWidth(/*is_split*/ false);
+  while (tab_container_->GetTabAtModelIndex(0)->width() == standard_width) {
     AddTab(0);
     tab_container_->CompleteAnimationAndLayout();
   }
@@ -479,12 +491,13 @@ TEST_F(TabContainerTest, RemoveTabInGroupWithTabClosingMode) {
   AddTab(0, std::nullopt, TabActive::kActive);
 
   // Create enough tabs so tabs are not full size.
-  const int standard_width = TabStyle::Get()->GetStandardWidth();
+  const int standard_width =
+      TabStyle::Get()->GetStandardWidth(/*is_split*/ false);
 
   // Set a tab_counter to avoid infinite loop
   int tab_counter = 0;
   while ((tab_counter < 100) &&
-         (tab_container_->GetActiveTabWidth() == standard_width ||
+         (tab_container_->GetTabAtModelIndex(0)->width() == standard_width ||
           tab_container_->GetTabCount() < 10)) {
     AddTab(0);
     tab_container_->CompleteAnimationAndLayout();
@@ -1096,7 +1109,7 @@ TEST_F(TabContainerTest, PreferredWidthNotAffectedByTransferTabTo) {
 
   // Transfer one out, then pretend to animate it.
   std::unique_ptr<views::View> hold_my_tab = std::make_unique<views::View>();
-  hold_my_tab->AddChildView(tab_container_->RemoveTabFromViewModel(1));
+  hold_my_tab->AddChildViewRaw(tab_container_->RemoveTabFromViewModel(1));
   tab_container_controller_->set_is_animating_outside_container(true);
   // Preferred width should be unchanged, even though `owned_tab` is no longer
   // part of `tab_container_`.

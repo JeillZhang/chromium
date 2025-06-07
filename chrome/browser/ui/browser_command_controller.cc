@@ -14,6 +14,7 @@
 #include "base/debug/profiler.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "base/i18n/rtl.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "base/time/time.h"
@@ -24,7 +25,6 @@
 #include "chrome/browser/commerce/browser_utils.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/devtools/devtools_window.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/feedback/public/feedback_source.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
@@ -36,7 +36,6 @@
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/signin/signin_ui_util.h"
-#include "chrome/browser/ui/apps/app_info_dialog.h"
 #include "chrome/browser/ui/bookmarks/bookmark_tab_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_actions.h"
@@ -59,6 +58,7 @@
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/startup/default_browser_prompt/default_browser_prompt_manager.h"
 #include "chrome/browser/ui/startup/default_browser_prompt/default_browser_prompt_prefs.h"
+#include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/tabs/tab_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -102,7 +102,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/profiling.h"
 #include "content/public/common/url_constants.h"
-#include "extensions/browser/extension_system.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/extension_urls.h"
 #include "printing/buildflags/buildflags.h"
 #include "ui/actions/actions.h"
@@ -128,6 +128,7 @@
 #endif
 
 #if BUILDFLAG(IS_LINUX)
+#include "ui/base/ime/text_edit_commands.h"
 #include "ui/base/ime/text_input_flags.h"
 #include "ui/linux/linux_ui.h"
 #endif
@@ -139,6 +140,14 @@
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
 #include "chrome/browser/ui/shortcuts/desktop_shortcuts_utils.h"
 #endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+
+#if BUILDFLAG(ENABLE_GLIC)
+#include "chrome/browser/glic/glic_enabling.h"
+#include "chrome/browser/glic/glic_enums.h"
+#include "chrome/browser/glic/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/glic_pref_names.h"
+#include "chrome/browser/glic/glic_profile_manager.h"
+#endif
 
 using WebExposedIsolationLevel = content::WebExposedIsolationLevel;
 
@@ -252,6 +261,35 @@ BrowserCommandController::BrowserCommandController(Browser* browser)
       base::BindRepeating(
           &BrowserCommandController::UpdateCommandsForFullscreenMode,
           base::Unretained(this)));
+#endif  //! BUILDFLAG(IS_MAC)
+
+#if BUILDFLAG(ENABLE_GLIC)
+  if (glic::GlicEnabling::IsEnabledByFlags()) {
+    auto* glic_service =
+        glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
+    if (glic_service) {
+      glic_enabling_subscription_ = std::make_unique<
+          base::CallbackListSubscription>(
+
+          glic_service->enabling().RegisterAllowedChanged(base::BindRepeating(
+              &BrowserCommandController::UpdateCommandsForEnableGlicChanged,
+              base::Unretained(this))));
+    }
+  }
+#endif  // BUILDFLAG(ENABLE_GLIC)
+
+#if BUILDFLAG(ENABLE_GLIC)
+  if (glic::GlicEnabling::IsEnabledByFlags()) {
+    auto* service =
+        glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
+    if (service) {
+      glic_window_activation_subscription_ =
+          service->window_controller().AddWindowActivationChangedCallback(
+              base::BindRepeating(
+                  &BrowserCommandController::GlicWindowActivationChanged,
+                  base::Unretained(this)));
+    }
+  }
 #endif
 
   InitCommandState();
@@ -276,6 +314,7 @@ BrowserCommandController::~BrowserCommandController() {
   }
   profile_pref_registrar_.RemoveAll();
   local_pref_registrar_.RemoveAll();
+  glic_enabling_subscription_.reset();
   browser_->tab_strip_model()->RemoveObserver(this);
 }
 
@@ -329,8 +368,9 @@ bool BrowserCommandController::IsReservedCommandOrKey(
   // it is not reserved.
   auto* linux_ui = ui::LinuxUi::instance();
   if (linux_ui && event.os_event &&
-      linux_ui->GetTextEditCommandsForEvent(
-          *event.os_event, ui::TEXT_INPUT_FLAG_NONE, nullptr)) {
+      linux_ui->GetTextEditCommandForEvent(*event.os_event,
+                                           ui::TEXT_INPUT_FLAG_NONE) !=
+          ui::TextEditCommand::INVALID_COMMAND) {
     return false;
   }
 #endif
@@ -374,8 +414,24 @@ void BrowserCommandController::LoadingStateChanged(bool is_loading,
   UpdateReloadStopState(is_loading, force);
 }
 
+#if BUILDFLAG(ENABLE_GLIC)
+void BrowserCommandController::GlicWindowActivationChanged(bool active) {
+  UpdateGlicState();
+}
+#endif
+
 void BrowserCommandController::FindBarVisibilityChanged() {
-  if (is_locked_fullscreen_) {
+  // Block find command updates in locked fullscreen mode unless the instance is
+  // locked for OnTask (only relevant for non-web browser scenarios).
+  // TODO(crbug.com/365146870): Remove once we consolidate locked fullscreen
+  // with OnTask.
+  bool should_block_command_update = is_locked_fullscreen_;
+#if BUILDFLAG(IS_CHROMEOS)
+  if (browser_->IsLockedForOnTask()) {
+    should_block_command_update = false;
+  }
+#endif
+  if (should_block_command_update) {
     return;
   }
   UpdateCloseFindOrStop();
@@ -645,9 +701,6 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_AUTOFILL_MANDATORY_REAUTH:
       ShowMandatoryReauthOptInPrompt(browser_);
       break;
-    case IDC_MIGRATE_LOCAL_CREDIT_CARD_FOR_PAGE:
-      MigrateLocalCards(browser_);
-      break;
     case IDC_SAVE_AUTOFILL_ADDRESS:
       SaveAutofillAddress(browser_);
       break;
@@ -688,7 +741,9 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       ShowTabDeclutter(browser_);
       break;
     case IDC_SEND_SHARED_TAB_GROUP_FEEDBACK:
-      OpenFeedbackDialog(browser_, feedback::kFeedbackSourceDesktopTabGroups);
+      OpenFeedbackDialog(browser_, feedback::kFeedbackSourceDesktopTabGroups,
+                         /*description_template=*/std::string(),
+                         /*category_tag=*/"tab_group_share");
       break;
     case IDC_SHOW_TRANSLATE:
       ShowTranslateBubble(browser_);
@@ -899,11 +954,10 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       ShowExtensions(browser_->GetBrowserForOpeningWebUi());
       break;
     case IDC_EXTENSIONS_SUBMENU_MANAGE_EXTENSIONS:
-      CHECK(features::IsExtensionMenuInRootAppMenu());
       ShowExtensions(browser_->GetBrowserForOpeningWebUi());
       break;
     case IDC_EXTENSIONS_SUBMENU_VISIT_CHROME_WEB_STORE:
-      CHECK(features::IsExtensionMenuInRootAppMenu());
+    case IDC_FIND_EXTENSIONS:
       ShowWebStore(browser_, extension_urls::kAppMenuUtmSource);
       break;
     case IDC_PERFORMANCE:
@@ -983,9 +1037,42 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_WINDOW_GROUP_TAB:
       GroupTab(browser_);
       break;
+
+    // Tab group commands.
+    case IDC_FOCUS_NEXT_TAB_GROUP:
+      if (base::i18n::IsRTL()) {
+        FocusPreviousTabGroup(browser_);
+      } else {
+        FocusNextTabGroup(browser_);
+      }
+      base::UmaHistogramEnumeration("TabGroups.Shortcuts",
+                                    TabGroupShortcut::kFocusNextTabGroup);
+      break;
+    case IDC_FOCUS_PREV_TAB_GROUP:
+      if (base::i18n::IsRTL()) {
+        FocusNextTabGroup(browser_);
+      } else {
+        FocusPreviousTabGroup(browser_);
+      }
+      base::UmaHistogramEnumeration("TabGroups.Shortcuts",
+                                    TabGroupShortcut::kFocusPrevTabGroup);
+      break;
+    case IDC_CLOSE_TAB_GROUP:
+      CloseTabGroup(browser_);
+      base::UmaHistogramEnumeration("TabGroups.Shortcuts",
+                                    TabGroupShortcut::kCloseTabGroup);
+      break;
     case IDC_CREATE_NEW_TAB_GROUP:
       CreateNewTabGroup(browser_);
+      base::UmaHistogramEnumeration("TabGroups.Shortcuts",
+                                    TabGroupShortcut::kCreateNewTabGroup);
       break;
+    case IDC_ADD_NEW_TAB_TO_GROUP:
+      AddNewTabToGroup(browser_);
+      base::UmaHistogramEnumeration("TabGroups.Shortcuts",
+                                    TabGroupShortcut::kAddNewTabToGroup);
+      break;
+
     case IDC_WINDOW_CLOSE_TABS_TO_RIGHT:
       CloseTabsToRight(browser_);
       break;
@@ -1131,17 +1218,32 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
             g_browser_process->local_state()->GetInteger(
                 prefs::kDefaultBrowserDeclinedCount) +
                 1);
-        base::UmaHistogramCustomTimes(
-            "DefaultBrowser.AppMenu.TimeToSetDefault",
-            base::Time::Now() - g_browser_process->local_state()->GetTime(
-                                    prefs::kDefaultBrowserFirstShownTime),
-            base::Milliseconds(1), base::Days(7), 50);
       }
       chrome::startup::default_prompt::UpdatePrefsForDismissedPrompt(
           browser_->profile());
       DefaultBrowserPromptManager::GetInstance()->CloseAllPrompts(
           DefaultBrowserPromptManager::CloseReason::kAccept);
       break;
+#endif
+#if BUILDFLAG(ENABLE_GLIC)
+    case IDC_GLIC_TOGGLE_PIN: {
+      PrefService* profile_prefs = profile()->GetPrefs();
+      profile_prefs->SetBoolean(
+          glic::prefs::kGlicPinnedToTabstrip,
+          !profile_prefs->GetBoolean(glic::prefs::kGlicPinnedToTabstrip));
+      break;
+    }
+    case IDC_OPEN_GLIC: {
+      auto* service =
+          glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
+      if (service) {
+        glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile())->ToggleUI(
+            browser_,
+            /*prevent_close=*/true,
+            glic::mojom::InvocationSource::kThreeDotsMenu);
+      }
+      break;
+    }
 #endif
     default:
       LOG(WARNING) << "Received Unimplemented Command: " << id;
@@ -1168,7 +1270,18 @@ void BrowserCommandController::RemoveCommandObserver(
 }
 
 bool BrowserCommandController::UpdateCommandEnabled(int id, bool state) {
-  if (is_locked_fullscreen_) {
+  // Block individual command updates in locked fullscreen mode unless the
+  // instance is locked for OnTask (only relevant for non-web browser
+  // scenarios).
+  // TODO(crbug.com/365146870): Remove once we consolidate locked fullscreen
+  // with OnTask.
+  bool should_block_command_update = is_locked_fullscreen_;
+#if BUILDFLAG(IS_CHROMEOS)
+  if (browser_->IsLockedForOnTask()) {
+    should_block_command_update = false;
+  }
+#endif
+  if (should_block_command_update) {
     return false;
   }
 
@@ -1237,6 +1350,13 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_RELOAD_BYPASSING_CACHE, can_reload);
   command_updater_.UpdateCommandEnabled(IDC_RELOAD_CLEARING_CACHE, can_reload);
 
+  // Tab group commands
+  command_updater_.UpdateCommandEnabled(IDC_ADD_NEW_TAB_TO_GROUP, true);
+  command_updater_.UpdateCommandEnabled(IDC_CREATE_NEW_TAB_GROUP, true);
+  command_updater_.UpdateCommandEnabled(IDC_FOCUS_NEXT_TAB_GROUP, true);
+  command_updater_.UpdateCommandEnabled(IDC_FOCUS_PREV_TAB_GROUP, true);
+  command_updater_.UpdateCommandEnabled(IDC_CLOSE_TAB_GROUP, true);
+
   // Window management commands
   command_updater_.UpdateCommandEnabled(IDC_CLOSE_WINDOW, true);
   command_updater_.UpdateCommandEnabled(
@@ -1249,7 +1369,6 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_EXIT, true);
   command_updater_.UpdateCommandEnabled(IDC_NAME_WINDOW, true);
   command_updater_.UpdateCommandEnabled(IDC_ORGANIZE_TABS, true);
-  command_updater_.UpdateCommandEnabled(IDC_CREATE_NEW_TAB_GROUP, true);
   command_updater_.UpdateCommandEnabled(IDC_DECLUTTER_TABS, true);
 #if BUILDFLAG(IS_CHROMEOS)
   command_updater_.UpdateCommandEnabled(IDC_TOGGLE_MULTITASK_MENU, true);
@@ -1464,6 +1583,13 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(
       IDC_CREATE_NEW_COMPARISON_TABLE_WITH_TAB, true);
 
+#if BUILDFLAG(ENABLE_GLIC)
+  // Glic commands.
+  command_updater_.UpdateCommandEnabled(
+      IDC_GLIC_TOGGLE_PIN, glic::GlicEnabling::IsProfileEligible(profile()));
+  UpdateGlicState();
+#endif
+
   // Initialize other commands whose state changes based on various conditions.
   UpdateCommandsForFullscreenMode();
   UpdateCommandsForContentRestrictionState();
@@ -1495,10 +1621,10 @@ void BrowserCommandController::UpdateSharedCommandsForIncognitoAvailability(
   command_updater->UpdateCommandEnabled(
       IDC_SHOW_BOOKMARK_MANAGER,
       browser_defaults::bookmarks_enabled && !forced_incognito && !is_guest);
-  extensions::ExtensionService* extension_service =
-      extensions::ExtensionSystem::Get(profile)->extension_service();
+  extensions::ExtensionRegistrar* extension_registrar =
+      extensions::ExtensionRegistrar::Get(profile);
   const bool enable_extensions =
-      extension_service && extension_service->extensions_enabled();
+      extension_registrar && extension_registrar->extensions_enabled();
 
   command_updater->UpdateCommandEnabled(IDC_SHOW_FULL_URLS, true);
   command_updater->UpdateCommandEnabled(IDC_SHOW_GOOGLE_LENS_SHORTCUT, true);
@@ -1530,9 +1656,7 @@ void BrowserCommandController::UpdateCommandsForIncognitoAvailability() {
   // be done in UpdateSharedCommandsForIncognitoAvailability as the method is
   // static to also handle states for NSApplication where no browser window are
   // open.
-  if (auto* incognito_action = actions::ActionManager::Get().FindAction(
-          kActionNewIncognitoWindow,
-          browser_->GetActions()->root_action_item())) {
+  if (auto* const incognito_action = FindAction(kActionNewIncognitoWindow)) {
     incognito_action->SetEnabled(
         IncognitoModePrefs::IsIncognitoAllowed(profile()));
   }
@@ -1550,13 +1674,13 @@ void BrowserCommandController::UpdateCommandsForExtensionsMenu() {
     return;
   }
 
-  if (features::IsExtensionMenuInRootAppMenu()) {
-    command_updater_.UpdateCommandEnabled(
-        IDC_EXTENSIONS_SUBMENU_MANAGE_EXTENSIONS,
-        /*state=*/true);
-    command_updater_.UpdateCommandEnabled(
-        IDC_EXTENSIONS_SUBMENU_VISIT_CHROME_WEB_STORE, /*state=*/true);
-  }
+  command_updater_.UpdateCommandEnabled(
+      IDC_EXTENSIONS_SUBMENU_MANAGE_EXTENSIONS,
+      /*state=*/true);
+  command_updater_.UpdateCommandEnabled(
+      IDC_EXTENSIONS_SUBMENU_VISIT_CHROME_WEB_STORE, /*state=*/true);
+  command_updater_.UpdateCommandEnabled(IDC_FIND_EXTENSIONS,
+                                        /*state=*/true);
 }
 
 void BrowserCommandController::UpdateCommandsForTabState() {
@@ -1620,7 +1744,8 @@ void BrowserCommandController::UpdateCommandsForTabState() {
 
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
   command_updater_.UpdateCommandEnabled(
-      IDC_CREATE_SHORTCUT, shortcuts::CanCreateDesktopShortcut(browser_));
+      IDC_CREATE_SHORTCUT,
+      shortcuts::CanCreateDesktopShortcut(current_web_contents));
 #else
   command_updater_.UpdateCommandEnabled(IDC_CREATE_SHORTCUT,
                                         can_create_web_app);
@@ -1647,6 +1772,11 @@ void BrowserCommandController::UpdateCommandsForTabState() {
   command_updater_.UpdateCommandEnabled(
       IDC_OPEN_IN_CHROME,
       IsWebAppOrCustomTab(browser_) && !is_isolated_app && !is_pinned_home_tab);
+
+  command_updater_.UpdateCommandEnabled(
+      IDC_READING_LIST_MENU_ADD_TAB,
+      browser_->tab_strip_model()->IsReadLaterSupportedForAny(
+          {browser_->tab_strip_model()->active_index()}));
 
   command_updater_.UpdateCommandEnabled(
       IDC_TOGGLE_REQUEST_TABLET_SITE,
@@ -1885,14 +2015,16 @@ void BrowserCommandController::UpdateCommandsForLockedFullscreenMode() {
 #if DCHECK_IS_ON()
     NonAllowlistedCommandsAreDisabled(&command_updater_);
 #endif
-    // Enable commands that allow users to switch between tabs if the webapp is
-    // locked for OnTask (only relevant for non-web browser scenarios).
+    // Enable commands that allow users to switch between tabs and find content
+    // within a webpage if the webapp is locked for OnTask
+    // (only relevant for non-web browser scenarios).
     if (browser_->IsLockedForOnTask()) {
       bool supports_tabs =
           browser_->SupportsWindowFeature(Browser::FEATURE_TABSTRIP);
       command_updater_.UpdateCommandEnabled(IDC_SELECT_NEXT_TAB, supports_tabs);
       command_updater_.UpdateCommandEnabled(IDC_SELECT_PREVIOUS_TAB,
                                             supports_tabs);
+      UpdateCommandsForFind();
     }
   } else {
     // Do an init call to re-initialize command state after the
@@ -1914,6 +2046,20 @@ void BrowserCommandController::UpdatePrintingState() {
 #endif
 }
 
+#if BUILDFLAG(ENABLE_GLIC)
+void BrowserCommandController::UpdateGlicState() {
+  if (glic::GlicEnabling::IsEnabledByFlags()) {
+    auto* service =
+        glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile());
+    if (service) {
+      command_updater_.UpdateCommandEnabled(
+          IDC_OPEN_GLIC, glic::GlicEnabling::IsEnabledForProfile(profile()) &&
+                             !service->window_controller().IsShowing());
+    }
+  }
+}
+#endif
+
 void BrowserCommandController::UpdateSaveAsState() {
   if (is_locked_fullscreen_) {
     return;
@@ -1924,7 +2070,17 @@ void BrowserCommandController::UpdateSaveAsState() {
 
 void BrowserCommandController::UpdateReloadStopState(bool is_loading,
                                                      bool force) {
-  if (is_locked_fullscreen_) {
+  // Skip command updates when in locked fullscreen mode unless the instance is
+  // locked for OnTask (only relevant for non-web browser scenarios).
+  // TODO(crbug.com/365146870): Remove once we consolidate locked fullscreen
+  // with OnTask.
+  bool should_skip_command_updates = is_locked_fullscreen_;
+#if BUILDFLAG(IS_CHROMEOS)
+  if (browser_->IsLockedForOnTask()) {
+    should_skip_command_updates = false;
+  }
+#endif
+  if (should_skip_command_updates) {
     return;
   }
 
@@ -2043,11 +2199,16 @@ void BrowserCommandController::UpdateCommandAndActionEnabled(
     actions::ActionId action_id,
     bool enabled) {
   command_updater_.UpdateCommandEnabled(command_id, enabled);
-  if (features::IsToolbarPinningEnabled()) {
-    if (auto* const action = FindAction(action_id)) {
-      action->SetEnabled(enabled);
-    }
+  if (auto* const action = FindAction(action_id)) {
+    action->SetEnabled(enabled);
   }
+}
+
+void BrowserCommandController::UpdateCommandsForEnableGlicChanged() {
+#if BUILDFLAG(ENABLE_GLIC)
+  command_updater_.UpdateCommandEnabled(
+      IDC_OPEN_GLIC, glic::GlicEnabling::IsEnabledForProfile(profile()));
+#endif  //  BUILDFLAG(ENABLE_GLIC)
 }
 
 BrowserWindow* BrowserCommandController::window() {

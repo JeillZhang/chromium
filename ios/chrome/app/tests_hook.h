@@ -14,6 +14,7 @@ class ProfileOAuth2TokenServiceDelegate;
 class ProfileOAuth2TokenService;
 class ShareKitService;
 class SystemIdentityManager;
+class TabGroupService;
 class TrustedVaultClientBackend;
 
 namespace base {
@@ -149,7 +150,8 @@ void DataSharingServiceHooks(
 std::unique_ptr<ShareKitService> CreateShareKitService(
     data_sharing::DataSharingService* data_sharing_service,
     collaboration::CollaborationService* collaboration_service,
-    tab_groups::TabGroupSyncService* sync_service);
+    tab_groups::TabGroupSyncService* sync_service,
+    TabGroupService* tab_group_service);
 
 // Returns a bulk leak check service that should be used when testing. The real
 // factory will be used if this hook returns a nullptr.
@@ -198,6 +200,12 @@ feature_engagement::FeatureActivation FETDemoModeOverride();
 // contents of the `Library` directory at the start of `main()`. This
 // simulates launching the application with a fresh profile.
 void WipeProfileIfRequested(int argc, char* argv[]);
+
+// Delay before which the "Turn on AutoFill" button shown in Password Settings
+// can be re-enabled. If the value is 0, the default value from Password
+// Settings should not be updated.
+base::TimeDelta
+GetOverriddenDelayForRequestingTurningOnCredentialProviderExtension();
 
 }  // namespace tests_hook
 

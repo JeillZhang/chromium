@@ -335,6 +335,8 @@ void DesktopWindowTreeHostLinux::AddAdditionalInitProperties(
 
   DCHECK(!properties->x11_extension_delegate);
   properties->x11_extension_delegate = this;
+
+  properties->prefer_dark_theme = ui::LinuxUiTheme::GetForProfile(nullptr);
 }
 
 base::flat_map<std::string, std::string>
@@ -348,7 +350,7 @@ DesktopWindowTreeHostLinux::GetKeyboardLayoutMap() {
 void DesktopWindowTreeHostLinux::OnCompleteSwapWithNewSize(
     const gfx::Size& size) {
   if (GetX11Extension()) {
-    GetX11Extension()->OnCompleteSwapAfterResize();
+    GetX11Extension()->OnCompleteSwapAfterResize(size);
   }
 }
 

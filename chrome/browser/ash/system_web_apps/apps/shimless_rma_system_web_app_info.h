@@ -7,7 +7,6 @@
 
 #include "ash/webui/shimless_rma/url_constants.h"
 #include "chromeos/ash/experiences/system_web_apps/types/system_web_app_delegate.h"
-#include "ui/gfx/geometry/size.h"
 
 namespace web_app {
 struct WebAppInstallInfo;
@@ -26,9 +25,5 @@ class ShimlessRMASystemAppDelegate : public ash::SystemWebAppDelegate {
   bool ShouldAllowScriptsToCloseWindows() const override;
   bool IsAppEnabled() const override;
 };
-
-// Returns a WebAppInstallInfo used to install the app.
-std::unique_ptr<web_app::WebAppInstallInfo>
-CreateWebAppInfoForShimlessRMASystemWebApp();
 
 #endif  // CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_SHIMLESS_RMA_SYSTEM_WEB_APP_INFO_H_

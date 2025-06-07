@@ -23,26 +23,28 @@ chromium-metrics-reviews@google.com.
 <histograms>
 
 <histogram name="DevTools.ActionTaken" enum="DevToolsAction"
-    expires_after="2025-07-13">
+    expires_after="2025-11-16">
   <owner>yangguo@google.com</owner>
   <owner>bmeurer@google.com</owner>
   <summary>Specified DevTools action has been taken.</summary>
 </histogram>
 
-<histogram base="true" name="DevTools.AidaResponseTime" units="ms"
+<histogram name="DevTools.AidaResponseTime" units="ms"
     expires_after="2024-07-21">
   <owner>yangguo@google.com</owner>
   <owner>danilsomsikov@google.com</owner>
+  <component>1633102</component>
   <summary>
     Measures the time until a full response from AIDA backend is received.
   </summary>
 </histogram>
 
 <histogram name="DevTools.AnimationPlaybackRateChanged"
-    enum="DevToolsAnimationPlaybackRateChanged" expires_after="2025-07-27">
+    enum="DevToolsAnimationPlaybackRateChanged" expires_after="2025-11-30">
   <owner>yangguo@google.com</owner>
   <owner>changhaohan@google.com</owner>
   <owner>ergunsh@google.com</owner>
+  <component>1559716</component>
   <summary>Playback rate is changed in Animations panel in DevTools.</summary>
 </histogram>
 
@@ -58,10 +60,11 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.CDPCommandFrom{ClientType}" enum="CDPCommands"
-    expires_after="2025-07-13">
+    expires_after="2025-11-16">
   <owner>wolfi@google.com</owner>
   <owner>danilsomsikov@google.com</owner>
   <owner>yangguo@google.com</owner>
+  <component>1559716</component>
   <summary>
     Records CDP command usage originating from {ClientType}. This is recorded
     whenever a CDP session receives and handles a command from a CDP client.
@@ -75,7 +78,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.CSSHintShown" enum="DevToolsCSSHintShown"
-    expires_after="2025-08-10">
+    expires_after="2025-10-12">
   <owner>changhaohan@google.com</owner>
   <owner>mathiasb@google.com</owner>
   <owner>yangguo@google.com</owner>
@@ -87,7 +90,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.DeveloperResourceLoaded"
-    enum="DevToolsDeveloperResourceLoaded" expires_after="2025-07-06">
+    enum="DevToolsDeveloperResourceLoaded" expires_after="M140">
   <owner>bmeurer@google.com</owner>
   <owner>danilsomsikov@google.com</owner>
   <summary>
@@ -122,7 +125,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.DeveloperResourceScheme"
-    enum="DevToolsDeveloperResourceScheme" expires_after="2025-07-06">
+    enum="DevToolsDeveloperResourceScheme" expires_after="M140">
   <owner>bmeurer@google.com</owner>
   <owner>danilsomsikov@google.com</owner>
   <summary>
@@ -140,18 +143,18 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.DevToolsDebuggingUserDataDirStatus"
-    enum="DevToolsDebuggingUserDataDirStatus" expires_after="2025-06-30">
+    enum="DevToolsDebuggingUserDataDirStatus" expires_after="2025-11-02">
   <owner>wfh@chromium.org</owner>
   <owner>src/chrome/browser/devtools/OWNERS</owner>
   <summary>
     Records the status of remote debugging (either via port or pipe) and whether
-    or not a default user data dir is in use if debugging has been enabled. This
-    is recorded once during browser startup for non-Android devices.
+    or not a default user data dir is in use if debugging has been requested.
+    This is recorded once during browser startup for non-Android devices.
   </summary>
 </histogram>
 
 <histogram name="DevTools.ExperimentDisabled" enum="DevtoolsExperiments"
-    expires_after="2025-07-13">
+    expires_after="2025-11-16">
   <owner>yangguo@google.com</owner>
   <owner>changhaohan@google.com</owner>
   <summary>
@@ -160,7 +163,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.ExperimentDisabledAtLaunch"
-    enum="DevtoolsExperiments" expires_after="2025-06-22">
+    enum="DevtoolsExperiments" expires_after="2025-10-26">
   <owner>yangguo@google.com</owner>
   <owner>changhaohan@google.com</owner>
   <summary>
@@ -169,7 +172,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.ExperimentEnabled" enum="DevtoolsExperiments"
-    expires_after="2025-07-13">
+    expires_after="2025-11-16">
   <owner>yangguo@google.com</owner>
   <owner>changhaohan@google.com</owner>
   <summary>
@@ -178,7 +181,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.ExperimentEnabledAtLaunch" enum="DevtoolsExperiments"
-    expires_after="2025-07-13">
+    expires_after="2025-11-16">
   <owner>yangguo@google.com</owner>
   <owner>changhaohan@google.com</owner>
   <summary>
@@ -190,6 +193,7 @@ chromium-metrics-reviews@google.com.
     expires_after="2025-11-11">
   <owner>ergunsh@google.com</owner>
   <owner>alexrudenko@google.com</owner>
+  <component>1633102</component>
   <summary>
     The size (in bytes) of the code evaluation output returned by the
     FreestylerAgent.
@@ -200,12 +204,13 @@ chromium-metrics-reviews@google.com.
     expires_after="2025-11-11">
   <owner>ergunsh@google.com</owner>
   <owner>alexrudenko@google.com</owner>
+  <component>1633102</component>
   <summary>
     The length of the query (number of characters) given to the FreestylerAgent.
   </summary>
 </histogram>
 
-<histogram name="DevTools.InspectElement" units="ms" expires_after="2025-07-13">
+<histogram name="DevTools.InspectElement" units="ms" expires_after="2025-11-16">
   <owner>yangguo@google.com</owner>
   <owner>bmeurer@google.com</owner>
   <summary>
@@ -237,9 +242,10 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.IssueCreated" enum="DevToolsIssueCreated"
-    expires_after="2025-07-13">
+    expires_after="2025-09-14">
   <owner>yangguo@google.com</owner>
   <owner>danilsomsikov@google.com</owner>
+  <component>1519296</component>
   <summary>
     Records the issue type when an issue is created for the Issues Panel.
   </summary>
@@ -249,6 +255,7 @@ chromium-metrics-reviews@google.com.
     enum="DevToolsIssuesPanelIssueExpanded" expires_after="2025-08-10">
   <owner>bmeurer@google.com</owner>
   <owner>danilsomsikov@google.com</owner>
+  <component>1519296</component>
   <summary>
     Records which type of issue is expanded in the issues panel.
   </summary>
@@ -258,6 +265,7 @@ chromium-metrics-reviews@google.com.
     enum="DevToolsIssuesPanelOpenedFrom" expires_after="2025-08-10">
   <owner>bmeurer@google.com</owner>
   <owner>danilsomsikov@google.com</owner>
+  <component>1519296</component>
   <summary>
     Records which UI element is being used to open the Issues Panel.
   </summary>
@@ -267,6 +275,7 @@ chromium-metrics-reviews@google.com.
     enum="DevToolsIssuesPanelResourceOpened" expires_after="2025-08-10">
   <owner>bmeurer@google.com</owner>
   <owner>danilsomsikov@google.com</owner>
+  <component>1519296</component>
   <summary>
     Records which resource from what issue category is opened in the issue
     panel.
@@ -306,26 +315,21 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram base="true" name="DevTools.Launch" units="ms"
-    expires_after="2025-06-22">
-<!-- Name completed by histogram_suffixes name="DevToolsLaunchPanels" -->
-
+<histogram name="DevTools.Launch{DevToolsLaunchPanels}" units="ms"
+    expires_after="2025-10-26">
   <owner>yangguo@google.com</owner>
   <owner>bmeurer@google.com</owner>
   <summary>
     Measures the time until a given tool is interactive during a cold start of
-    DevTools.
+    DevTools. {DevToolsLaunchPanels}
   </summary>
-</histogram>
-
-<histogram name="DevTools.LighthouseCategoryUsed"
-    enum="DevToolsLighthouseCategoryUsed" expires_after="2025-06-08">
-  <owner>asraine@google.com</owner>
-  <owner>paulirish@google.com</owner>
-  <owner>cjamcl@google.com</owner>
-  <summary>
-    Records when a Lighthouse category was used to audit the page.
-  </summary>
+  <token key="DevToolsLaunchPanels">
+    <variant name=".Console" summary="DevTools launched to the Console panel"/>
+    <variant name=".Elements"
+        summary="DevTools launched to the Elements panel"/>
+    <variant name=".Network" summary="DevTools launched to the Network panel"/>
+    <variant name=".Sources" summary="DevTools launched to the Sources panel"/>
+  </token>
 </histogram>
 
 <histogram name="DevTools.LighthouseModeRun" enum="DevToolsLighthouseModeRun"
@@ -337,7 +341,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.NetworkPanelResponsePreviewOpened"
-    enum="DevToolsMediaType" expires_after="2025-05-04">
+    enum="DevToolsMediaType" expires_after="2025-11-02">
   <owner>bmeurer@google.com</owner>
   <owner>szuend@google.com</owner>
   <summary>
@@ -347,7 +351,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.OpenedByAction" enum="DevToolsOpenedByAction"
-    expires_after="2025-07-13">
+    expires_after="2025-11-16">
   <owner>changhaohan@google.com</owner>
   <owner>yangguo@google.com</owner>
   <owner>mathiasb@google.com</owner>
@@ -357,18 +361,19 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.PanelShown" enum="DevToolsPanel"
-    expires_after="2025-07-13">
+    expires_after="2025-11-16">
   <owner>yangguo@google.com</owner>
   <owner>bmeurer@google.com</owner>
   <summary>Specified DevTools panel was shown.</summary>
 </histogram>
 
-<histogram name="DevTools.PanelShownInLocation"
-    enum="DevToolsPanelWithLocation" expires_after="2025-05-11">
-  <owner>bmeurer@google.com</owner>
-  <owner>ergunsh@google.com</owner>
+<histogram name="DevTools.PerformanceAI.NetworkSummaryResponseSize"
+    units="count" expires_after="2026-06-16">
+  <owner>jacktfranklin@google.com</owner>
+  <owner>alexrudenko@google.com</owner>
   <summary>
-    Specified DevTools panel was shown in the specified location: Main or Drawer
+    The size (in bytes) of the response of the `getNetworkActivitySummary`
+    function in the Performance Insights agent.
   </summary>
 </histogram>
 
@@ -377,6 +382,7 @@ chromium-metrics-reviews@google.com.
   <owner>alexrudenko@google.com</owner>
   <owner>mathiasb@google.com</owner>
   <owner>yangguo@google.com</owner>
+  <component>1456922</component>
   <summary>Recorded when assertions are used/edited</summary>
 </histogram>
 
@@ -385,6 +391,7 @@ chromium-metrics-reviews@google.com.
   <owner>alexrudenko@google.com</owner>
   <owner>mathiasb@google.com</owner>
   <owner>yangguo@google.com</owner>
+  <component>1456922</component>
   <summary>
     Recorded when the code view for a recording was toggled in Recorder panel.
   </summary>
@@ -395,6 +402,7 @@ chromium-metrics-reviews@google.com.
   <owner>alexrudenko@google.com</owner>
   <owner>mathiasb@google.com</owner>
   <owner>yangguo@google.com</owner>
+  <component>1456922</component>
   <summary>
     Recorded when user copies a recording or step to clipboard in Recorder
     panel.
@@ -406,6 +414,7 @@ chromium-metrics-reviews@google.com.
   <owner>alexrudenko@google.com</owner>
   <owner>mathiasb@google.com</owner>
   <owner>yangguo@google.com</owner>
+  <component>1456922</component>
   <summary>Recorded when a recording is being edited by the user.</summary>
 </histogram>
 
@@ -414,6 +423,7 @@ chromium-metrics-reviews@google.com.
   <owner>alexrudenko@google.com</owner>
   <owner>mathiasb@google.com</owner>
   <owner>yangguo@google.com</owner>
+  <component>1456922</component>
   <summary>Recorded when a recording is exported.</summary>
 </histogram>
 
@@ -422,6 +432,7 @@ chromium-metrics-reviews@google.com.
   <owner>alexrudenko@google.com</owner>
   <owner>mathiasb@google.com</owner>
   <owner>yangguo@google.com</owner>
+  <component>1456922</component>
   <summary>Recorded when a replay is over.</summary>
 </histogram>
 
@@ -431,6 +442,7 @@ chromium-metrics-reviews@google.com.
   <owner>alexrudenko@google.com</owner>
   <owner>mathiasb@google.com</owner>
   <owner>yangguo@google.com</owner>
+  <component>1456922</component>
   <summary>
     Recorded when a recording is being replayed. Used to count number of times
     replay started with which speed.
@@ -442,6 +454,7 @@ chromium-metrics-reviews@google.com.
   <owner>alexrudenko@google.com</owner>
   <owner>mathiasb@google.com</owner>
   <owner>yangguo@google.com</owner>
+  <component>1456922</component>
   <summary>Recorded when a recording is being replayed.</summary>
 </histogram>
 
@@ -450,22 +463,17 @@ chromium-metrics-reviews@google.com.
   <owner>alexrudenko@google.com</owner>
   <owner>mathiasb@google.com</owner>
   <owner>yangguo@google.com</owner>
+  <component>1456922</component>
   <summary>
     Recorded when a recording is started or finished in the Recorder panel.
   </summary>
 </histogram>
 
-<histogram name="DevTools.SidebarPaneShown" enum="DevToolsSidebarPane"
-    expires_after="2025-07-06">
-  <owner>bmeurer@google.com</owner>
-  <owner>changhaohan@google.com</owner>
-  <summary>Specified DevTools sidebar pane was shown.</summary>
-</histogram>
-
 <histogram name="DevTools.SourcesPanelFileDebugged" enum="DevToolsMediaType"
-    expires_after="2025-07-06">
+    expires_after="M140">
   <owner>bmeurer@google.com</owner>
   <owner>szuend@google.com</owner>
+  <component>1456920</component>
   <summary>
     Records the media types of files debugged in the DevTools Sources panel.
     This means the user eiter sets a breakpoint, pauses or steps in a file of
@@ -474,16 +482,17 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="DevTools.SourcesPanelFileOpened" enum="DevToolsMediaType"
-    expires_after="2025-07-06">
+    expires_after="M140">
   <owner>bmeurer@google.com</owner>
   <owner>szuend@google.com</owner>
+  <component>1456920</component>
   <summary>
     Records the media types of files opened in the DevTools Sources panel.
   </summary>
 </histogram>
 
 <histogram name="DevTools.SwatchActivated" enum="DevToolsSwatchActivated"
-    expires_after="2025-07-13">
+    expires_after="2025-11-16">
   <owner>ergunsh@google.com</owner>
   <owner>changhaohan@google.com</owner>
   <owner>bmeurer@google.com</owner>
@@ -501,13 +510,24 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="DevTools.TraceLoad" units="ms" expires_after="2025-06-22">
+<histogram name="DevTools.TraceLoad" units="ms" expires_after="2025-10-26">
   <owner>paulirish@google.com</owner>
   <owner>jacktfranklin@google.com</owner>
   <owner>victorporof@google.com</owner>
   <summary>
     Measures the time a trace is loading. Starts when recording is stopped or
     file/url load was started. Stops after the first render of the flamechart.
+  </summary>
+</histogram>
+
+<histogram name="DevTools.TraceLoad2" units="ms" expires_after="2025-07-18">
+  <owner>paulirish@google.com</owner>
+  <owner>jacktfranklin@google.com</owner>
+  <owner>victorporof@google.com</owner>
+  <summary>
+    Measures the time a trace is loading. Starts when recording is stopped or
+    file/url load was started. Stops after the first render of the flamechart.
+    Supports values over 10s.
   </summary>
 </histogram>
 
@@ -525,6 +545,7 @@ chromium-metrics-reviews@google.com.
     units="count" expires_after="2025-12-01">
   <owner>bmeurer@google.com</owner>
   <owner>hablich@google.com</owner>
+  <component>1456920</component>
   <summary>
     Number of directories within a workspace folder traversed while loading the
     files from the folder.
@@ -535,6 +556,7 @@ chromium-metrics-reviews@google.com.
     expires_after="2025-12-01">
   <owner>bmeurer@google.com</owner>
   <owner>hablich@google.com</owner>
+  <component>1456920</component>
   <summary>
     Number of files loaded from a workspace folder (after the exclusion patterns
     are applied).
@@ -545,6 +567,7 @@ chromium-metrics-reviews@google.com.
     expires_after="2025-12-01">
   <owner>bmeurer@google.com</owner>
   <owner>hablich@google.com</owner>
+  <component>1456920</component>
   <summary>
     Wall clock time elapsed to initially populate a Workspaces folder. Recorded
     in the FileSystem#populate() method of FileSystemWorkspaceBinding.ts.

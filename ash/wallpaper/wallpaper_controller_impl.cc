@@ -71,10 +71,12 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/types/cxx23_to_underlying.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/ash/components/system/statistics_provider.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/account_id/account_id.h"
 #include "components/prefs/pref_service.h"
+#include "components/session_manager/session_manager_types.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
 #include "services/data_decoder/public/mojom/image_decoder.mojom-shared.h"
 #include "ui/compositor/compositor.h"
@@ -212,7 +214,7 @@ bool IsInKioskMode() {
       Shell::Get()->session_controller()->GetUserType();
   // |active_user_type| is empty when there's no active user.
   return active_user_type &&
-         *active_user_type == user_manager::UserType::kKioskApp;
+         *active_user_type == user_manager::UserType::kKioskChromeApp;
 }
 
 // Returns the currently active user session (at index 0).
@@ -899,7 +901,7 @@ bool WallpaperControllerImpl::GetDailyGooglePhotosWallpaperIdCache(
 
 void WallpaperControllerImpl::SetTimeOfDayWallpaper(
     const AccountId& account_id,
-    SetWallpaperCallback callback) {
+    SetTimeOfDayWallpaperCallback callback) {
   set_wallpaper_weak_factory_.InvalidateWeakPtrs();
   GetCustomizationId(base::BindOnce(
       &WallpaperControllerImpl::OnGetCustomizationIdForTimeOfDayWallpaper,
@@ -1039,7 +1041,11 @@ void WallpaperControllerImpl::OnPolicyWallpaperDecoded(
   }
   wallpaper_metrics_manager_->LogWallpaperResult(WallpaperType::kPolicy,
                                                  SetWallpaperResult::kSuccess);
-  bool is_managed_guest = (user_type == user_manager::UserType::kPublicAccount);
+  // Avoid race condition with user session being created by forcing
+  // kPublicGuest users to be considered ephemeral.
+  const bool is_managed_guest =
+      (user_type == user_manager::UserType::kPublicAccount) ||
+      IsEphemeralUser(account_id);
   SaveAndSetWallpaper(account_id, is_managed_guest, kPolicyWallpaperFile,
                       /*file_path=*/"", WallpaperType::kPolicy,
                       WALLPAPER_LAYOUT_CENTER_CROPPED, show_wallpaper, image);
@@ -1179,8 +1185,8 @@ void WallpaperControllerImpl::ShowUserWallpaper(
     const AccountId& account_id,
     const user_manager::UserType user_type) {
   current_account_id_ = account_id;
-  if (user_type == user_manager::UserType::kKioskApp ||
-      user_type == user_manager::UserType::kWebKioskApp ||
+  if (user_type == user_manager::UserType::kKioskChromeApp ||
+      user_type == user_manager::UserType::kKioskWebApp ||
       user_type == user_manager::UserType::kKioskIWA) {
     RepaintWallpaper();
     return;
@@ -1679,10 +1685,13 @@ void WallpaperControllerImpl::OnActiveUserPrefServiceChanged(
   AccountId account_id = GetActiveAccountId();
 
   WallpaperInfo local_info;
-  bool has_local_info =
+  const bool has_local_info =
       pref_manager_->GetLocalWallpaperInfo(account_id, &local_info);
+  const bool is_oobe_or_demo =
+      IsOobeState() || (demo_mode::IsDeviceInDemoMode() &&
+                        features::IsDemoModeWallpaperUpdateEnabled());
   bool should_set_time_of_day_wallpaper =
-      IsOobeState() && has_local_info &&
+      is_oobe_or_demo && has_local_info &&
       local_info.type == WallpaperType::kDefault &&
       features::IsTimeOfDayWallpaperEnabled();
   if (should_set_time_of_day_wallpaper) {
@@ -2785,7 +2794,7 @@ void WallpaperControllerImpl::HandleWallpaperInfoSyncedIn(
 
 void WallpaperControllerImpl::OnGetCustomizationIdForTimeOfDayWallpaper(
     const AccountId& account_id,
-    SetWallpaperCallback set_wallpaper_callback,
+    SetTimeOfDayWallpaperCallback set_time_of_day_wallpaper_callback,
     std::optional<std::string_view> customization_id) {
   const auto unit_id =
       customization_id ==
@@ -2798,16 +2807,21 @@ void WallpaperControllerImpl::OnGetCustomizationIdForTimeOfDayWallpaper(
            << " unit_id: " << unit_id;
 
   OnlineWallpaperVariantInfoFetcher::FetchParamsCallback on_fetch =
-      base::BindOnce(&WallpaperControllerImpl::OnWallpaperVariantsFetched,
-                     set_wallpaper_weak_factory_.GetWeakPtr(),
-                     WallpaperType::kOnline, std::move(set_wallpaper_callback));
+      base::BindOnce(
+          &WallpaperControllerImpl::OnWallpaperVariantsFetched,
+          set_wallpaper_weak_factory_.GetWeakPtr(), WallpaperType::kOnline,
+          base::BindOnce(std::move(set_time_of_day_wallpaper_callback),
+                         unit_id));
 
   variant_info_fetcher_.FetchTimeOfDayWallpaper(account_id, unit_id,
                                                 std::move(on_fetch));
 }
 
-void WallpaperControllerImpl::OnTimeOfDayWallpaperSetAfterOobe(bool success) {
-  wallpaper_metrics_manager_->LogSettingTimeOfDayWallpaperAfterOobe(success);
+void WallpaperControllerImpl::OnTimeOfDayWallpaperSetAfterOobe(
+    const uint64_t unit_id,
+    const bool success) {
+  wallpaper_metrics_manager_->LogSettingTimeOfDayWallpaperAfterOobe(unit_id,
+                                                                    success);
 }
 
 void WallpaperControllerImpl::OnDailyRefreshWallpaperUpdated(

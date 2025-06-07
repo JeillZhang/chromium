@@ -23,7 +23,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/stack_allocated.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/parameter_pack.h"
 #include "base/strings/stringprintf.h"
@@ -252,13 +251,14 @@ void LayerTreeImpl::DidUpdateScrollOffset(
     CHECK_NE(scroll_node->transform_id, kInvalidPropertyNodeId);
     TransformTree& transform_tree = property_trees()->transform_tree_mutable();
     auto* transform_node = transform_tree.Node(scroll_node->transform_id);
-    if (transform_node->scroll_offset !=
+    if (transform_node->scroll_offset() !=
         scroll_tree.current_scroll_offset(id)) {
-      transform_node->scroll_offset = scroll_tree.current_scroll_offset(id);
+      transform_node->SetScrollOffset(scroll_tree.current_scroll_offset(id),
+                                      DamageReason::kCompositorScroll);
       transform_node->needs_local_transform_update = true;
       transform_tree.set_needs_update(true);
     }
-    transform_node->transform_changed = true;
+    transform_node->SetTransformChanged(DamageReason::kCompositorScroll);
     property_trees()->set_changed(true);
     set_needs_update_draw_properties();
   } else if (can_realize_on_pending_tree) {
@@ -778,7 +778,16 @@ void LayerTreeImpl::PullPropertyTreesFrom(
 }
 
 void LayerTreeImpl::PullLayerTreePropertiesFrom(CommitState& commit_state) {
-  set_needs_full_tree_sync(commit_state.needs_full_tree_sync);
+  if (settings().TreesInVizInClientProcess()) {
+    // With TreesInViz, there can be multiple pull operations in between remote
+    // display tree updates. Once a pull operation requires a full tree sync,
+    // that bit must stay sticky until the update is actually processed by
+    // VizLayerContext::UpdateDisplayTreeFrom() (which will reset the bit).
+    set_needs_full_tree_sync(needs_full_tree_sync_ ||
+                             commit_state.needs_full_tree_sync);
+  } else {
+    set_needs_full_tree_sync(commit_state.needs_full_tree_sync);
+  }
 
   if (commit_state.hud_layer_id != Layer::INVALID_ID) {
     LayerImpl* hud_impl = LayerById(commit_state.hud_layer_id);
@@ -873,9 +882,12 @@ void LayerTreeImpl::PushPropertyTreesTo(LayerTreeImpl* target_tree) {
 
   target_tree->SetPropertyTrees(property_trees_, preserve_change_tracking);
 
-  EventMetrics::List events_metrics;
+  EventMetrics::List events_metrics, raster_event_metrics;
   events_metrics.swap(events_metrics_from_main_thread_);
+  raster_event_metrics.swap(event_metrics_from_raster_thread_);
   target_tree->AppendEventsMetricsFromMainThread(std::move(events_metrics));
+  target_tree->AppendEventMetricsFromRasterThread(
+      std::move(raster_event_metrics));
 }
 
 void LayerTreeImpl::PushSurfaceRangesTo(LayerTreeImpl* target_tree) {
@@ -993,8 +1005,10 @@ void LayerTreeImpl::PushPropertiesTo(LayerTreeImpl* target_tree) {
     target_tree->clear_delegated_ink_metadata();
   }
 
-  for (auto& request : TakeViewTransitionRequests())
+  for (auto& request : TakeViewTransitionRequests(
+           /*should_set_needs_update_draw_properties=*/true)) {
     target_tree->AddViewTransitionRequest(std::move(request));
+  }
 
   // Make sure that property tree based changes are moved to layers
   // and draw properties are invalidated.
@@ -1078,20 +1092,27 @@ ElementListType LayerTreeImpl::GetElementTypeForAnimation() const {
   return IsActiveTree() ? ElementListType::ACTIVE : ElementListType::PENDING;
 }
 
+void LayerTreeImpl::ValidateEffectTreeeMapping(ElementId element_id,
+                                               PropertyMutation mutation) {
+  auto count = property_trees()->effect_tree().element_id_to_node_index().count(
+      element_id);
+
+  if (count != 1) {
+    UMA_HISTOGRAM_ENUMERATION(
+        "Compositing.Animation.MissingPropertyNodeForElementId", mutation);
+  }
+}
+
 void LayerTreeImpl::SetTransformMutated(ElementId element_id,
                                         const gfx::Transform& transform) {
-  DCHECK_EQ(1u,
-            property_trees()->transform_tree().element_id_to_node_index().count(
-                element_id));
+  ValidateEffectTreeeMapping(element_id, PropertyMutation::kTransform);
   if (property_trees()->transform_tree_mutable().OnTransformAnimated(element_id,
                                                                      transform))
     set_needs_update_draw_properties();
 }
 
 void LayerTreeImpl::SetOpacityMutated(ElementId element_id, float opacity) {
-  DCHECK_EQ(1u,
-            property_trees()->effect_tree().element_id_to_node_index().count(
-                element_id));
+  ValidateEffectTreeeMapping(element_id, PropertyMutation::kOpacity);
   if (property_trees()->effect_tree_mutable().OnOpacityAnimated(element_id,
                                                                 opacity))
     set_needs_update_draw_properties();
@@ -1099,9 +1120,7 @@ void LayerTreeImpl::SetOpacityMutated(ElementId element_id, float opacity) {
 
 void LayerTreeImpl::SetFilterMutated(ElementId element_id,
                                      const FilterOperations& filters) {
-  DCHECK_EQ(1u,
-            property_trees()->effect_tree().element_id_to_node_index().count(
-                element_id));
+  ValidateEffectTreeeMapping(element_id, PropertyMutation::kFilter);
   if (property_trees()->effect_tree_mutable().OnFilterAnimated(element_id,
                                                                filters))
     set_needs_update_draw_properties();
@@ -1110,9 +1129,7 @@ void LayerTreeImpl::SetFilterMutated(ElementId element_id,
 void LayerTreeImpl::SetBackdropFilterMutated(
     ElementId element_id,
     const FilterOperations& backdrop_filters) {
-  DCHECK_EQ(1u,
-            property_trees()->effect_tree().element_id_to_node_index().count(
-                element_id));
+  ValidateEffectTreeeMapping(element_id, PropertyMutation::kBackdropFilter);
   if (property_trees()->effect_tree_mutable().OnBackdropFilterAnimated(
           element_id, backdrop_filters))
     set_needs_update_draw_properties();
@@ -1292,6 +1309,20 @@ void LayerTreeImpl::PushPageScaleFromMainThread(float page_scale_factor,
                                                 float max_page_scale_factor) {
   PushPageScaleFactorAndLimits(&page_scale_factor, min_page_scale_factor,
                                max_page_scale_factor);
+}
+
+void LayerTreeImpl::SetPageScaleFactorAndLimitsForDisplayTree(
+    float page_scale_factor,
+    float min_page_scale_factor,
+    float max_page_scale_factor) {
+  DCHECK(settings().trees_in_viz_in_viz_process);
+  bool changed_page_scale = page_scale_factor_->SetCurrent(page_scale_factor);
+  changed_page_scale |=
+      SetPageScaleFactorLimits(min_page_scale_factor, max_page_scale_factor);
+
+  if (changed_page_scale) {
+    DidUpdatePageScale();
+  }
 }
 
 void LayerTreeImpl::PushPageScaleFactorAndLimits(const float* page_scale_factor,
@@ -1836,7 +1867,7 @@ void LayerTreeImpl::AddLayerShouldPushProperties(LayerImpl* layer) {
   // into this set when always_push_properties_on_picture_layers() is disabled.
   DCHECK(!always_push_properties_on_picture_layers() ||
          !base::Contains(picture_layers_, layer) ||
-         (IsActiveTree() && settings().UseLayerContextForDisplay()));
+         (IsActiveTree() && settings().TreesInVizInClientProcess()));
   layers_that_should_push_properties_.insert(layer);
 }
 
@@ -1933,6 +1964,10 @@ ImageAnimationController* LayerTreeImpl::image_animation_controller() const {
 
 DroppedFrameCounter* LayerTreeImpl::dropped_frame_counter() const {
   return host_impl_->dropped_frame_counter();
+}
+
+FrameSorter* LayerTreeImpl::frame_sorter() const {
+  return host_impl_->frame_sorter();
 }
 
 MemoryHistory* LayerTreeImpl::memory_history() const {
@@ -2213,7 +2248,7 @@ void LayerTreeImpl::RegisterPictureLayerImpl(PictureLayerImpl* layer) {
 
 void LayerTreeImpl::UnregisterPictureLayerImpl(PictureLayerImpl* layer) {
   auto it = std::ranges::find(picture_layers_, layer);
-  CHECK(it != picture_layers_.end(), base::NotFatalUntil::M130);
+  CHECK(it != picture_layers_.end());
   picture_layers_.erase(it);
 
   // Make sure that |picture_layers_with_paint_worklets_| doesn't get left with
@@ -2229,8 +2264,7 @@ void LayerTreeImpl::NotifyLayerHasPaintWorkletsChanged(PictureLayerImpl* layer,
     DCHECK(insert_pair.second);
   } else {
     auto it = picture_layers_with_paint_worklets_.find(layer);
-    CHECK(it != picture_layers_with_paint_worklets_.end(),
-          base::NotFatalUntil::M130);
+    CHECK(it != picture_layers_with_paint_worklets_.end());
     picture_layers_with_paint_worklets_.erase(it);
   }
 }
@@ -2973,10 +3007,26 @@ void LayerTreeImpl::AppendEventsMetricsFromMainThread(
       std::make_move_iterator(events_metrics.end()));
 }
 
+void LayerTreeImpl::AppendEventMetricsFromRasterThread(
+    EventMetrics::List event_metrics) {
+  event_metrics_from_raster_thread_.reserve(
+      event_metrics_from_raster_thread_.size() + event_metrics.size());
+  event_metrics_from_raster_thread_.insert(
+      event_metrics_from_raster_thread_.end(),
+      std::make_move_iterator(event_metrics.begin()),
+      std::make_move_iterator(event_metrics.end()));
+}
+
 EventMetrics::List LayerTreeImpl::TakeEventsMetrics() {
   EventMetrics::List main_event_metrics_result;
   main_event_metrics_result.swap(events_metrics_from_main_thread_);
   return main_event_metrics_result;
+}
+
+EventMetrics::List LayerTreeImpl::TakeRasterEventsMetrics() {
+  EventMetrics::List raster_event_metrics_result;
+  raster_event_metrics_result.swap(event_metrics_from_raster_thread_);
+  return raster_event_metrics_result;
 }
 
 bool LayerTreeImpl::TakeForceSendMetadataRequest() {
@@ -2986,7 +3036,6 @@ bool LayerTreeImpl::TakeForceSendMetadataRequest() {
 }
 
 void LayerTreeImpl::ResetAllChangeTracking() {
-  layers_that_should_push_properties_.clear();
   // Iterate over all layers, including masks.
   for (auto* layer : *this)
     layer->ResetChangeTracking();
@@ -3021,7 +3070,11 @@ void LayerTreeImpl::AddViewTransitionRequest(
 }
 
 std::vector<std::unique_ptr<ViewTransitionRequest>>
-LayerTreeImpl::TakeViewTransitionRequests() {
+LayerTreeImpl::TakeViewTransitionRequests(
+    bool should_set_needs_update_draw_properties) {
+  if (HasViewTransitionRequests() && should_set_needs_update_draw_properties) {
+    set_needs_update_draw_properties();
+  }
   return std::move(view_transition_requests_);
 }
 
@@ -3035,8 +3088,25 @@ bool LayerTreeImpl::HasViewTransitionSaveRequest() const {
       return true;
     }
   }
-
   return false;
+}
+
+base::flat_set<blink::ViewTransitionToken>
+LayerTreeImpl::GetCaptureViewTransitionTokens() const {
+  base::flat_set<blink::ViewTransitionToken> result;
+  // This effectively disables the new mode, since none of the capture tokens
+  // will apply.
+  if (!base::FeatureList::IsEnabled(
+          features::kViewTransitionCaptureAndDisplay)) {
+    return result;
+  }
+
+  for (const auto& request : view_transition_requests_) {
+    if (request->type() == ViewTransitionRequest::Type::kSave) {
+      result.insert(request->token());
+    }
+  }
+  return result;
 }
 
 void LayerTreeImpl::SetViewTransitionContentRect(

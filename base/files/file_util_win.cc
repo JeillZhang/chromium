@@ -25,6 +25,7 @@
 
 #include "base/check.h"
 #include "base/clang_profiling_buildflags.h"
+#include "base/compiler_specific.h"
 #include "base/feature_list.h"
 #include "base/features.h"
 #include "base/files/file_enumerator.h"
@@ -43,6 +44,7 @@
 #include "base/strings/string_split_win.h"
 #include "base/strings/string_util.h"
 #include "base/strings/string_util_win.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
@@ -383,6 +385,34 @@ OnceClosure GetDeleteFileCallbackInternal(
                   std::move(bound_callback));
 }
 
+// This function checks if the user is an administrator and whether they have a
+// default elevation type. This corresponds to a full administrator such as the
+// SYSTEM user or built in administrator. It will return false for split-token
+// administrators used in UAC and any non-administrator caller. It checks the
+// effective token in case the caller is impersonating an administrator.
+bool IsUserDefaultAdmin() {
+  base::win::Sid admin_sid(base::win::WellKnownSid::kBuiltinAdministrators);
+  BOOL is_member = FALSE;
+  if (!::CheckTokenMembership(nullptr, admin_sid.GetPSID(), &is_member)) {
+    DPLOG(WARNING) << "Error checking token membership";
+    return false;
+  }
+
+  if (!is_member) {
+    return false;
+  }
+
+  TOKEN_ELEVATION_TYPE elevation_type;
+  DWORD ret_length;
+  if (!::GetTokenInformation(::GetCurrentThreadEffectiveToken(),
+                             TokenElevationType, &elevation_type,
+                             sizeof(elevation_type), &ret_length)) {
+    DPLOG(WARNING) << "Cannot get token elevation type";
+    return false;
+  }
+  return elevation_type == TokenElevationTypeDefault;
+}
+
 // This function verifies that no code is attempting to set an ACL on a file
 // that is outside of 'safe' paths. A 'safe' path is defined as one that is
 // within the user data dir, or the temporary directory. This is explicitly to
@@ -423,7 +453,7 @@ bool IsPathSafeToSetAclOn(const FilePath& path) {
   // Admin users create temporary files in SystemTemp; see
   // `CreateNewTempDirectory` below.
   FilePath secure_system_temp;
-  if (::IsUserAnAdmin() &&
+  if (IsUserDefaultAdmin() &&
       PathService::Get(DIR_SYSTEM_TEMP, &secure_system_temp)) {
     valid_paths.push_back(secure_system_temp);
   }
@@ -720,7 +750,7 @@ bool CreateNewTempDirectory(const FilePath::StringType& prefix,
   DCHECK(new_temp_path);
 
   FilePath parent_dir;
-  if (::IsUserAnAdmin() && PathService::Get(DIR_SYSTEM_TEMP, &parent_dir) &&
+  if (IsUserDefaultAdmin() && PathService::Get(DIR_SYSTEM_TEMP, &parent_dir) &&
       CreateTemporaryDirInDir(parent_dir,
                               prefix.empty() ? kDefaultTempDirPrefix : prefix,
                               new_temp_path)) {
@@ -868,7 +898,7 @@ bool DevicePathToDriveLetterPath(const FilePath& nt_device_path,
           device_path.IsParent(nt_device_path)) {
         *out_drive_letter_path =
             FilePath(drive + nt_device_path.value().substr(
-                                 wcslen(device_path_as_string)));
+                                 UNSAFE_TODO(wcslen(device_path_as_string))));
         return true;
       }
     }
@@ -948,9 +978,9 @@ bool GetFileInfo(const FilePath& file_path, File::Info* results) {
 FILE* OpenFile(const FilePath& filename, const char* mode) {
   // 'N' is unconditionally added below, so be sure there is not one already
   // present before a comma in |mode|.
-  DCHECK(
-      strchr(mode, 'N') == nullptr ||
-      (strchr(mode, ',') != nullptr && strchr(mode, 'N') > strchr(mode, ',')));
+  DCHECK(UNSAFE_TODO(strchr(mode, 'N')) == nullptr ||
+         (UNSAFE_TODO(strchr(mode, ',')) != nullptr &&
+          UNSAFE_TODO(strchr(mode, 'N')) > UNSAFE_TODO(strchr(mode, ','))));
   ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   std::wstring w_mode = UTF8ToWide(mode);
   AppendModeCharacter(L'N', &w_mode);

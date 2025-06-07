@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/chrome_content_browser_client.h"
 
@@ -15,6 +11,7 @@
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/path_service.h"
 #include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -23,6 +20,8 @@
 #include "chrome/browser/browser_features.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry_factory.h"
+#include "chrome/browser/enterprise/connectors/analysis/clipboard_request_handler.h"
+#include "chrome/browser/enterprise/connectors/test/fake_clipboard_request_handler.h"
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/instant_service.h"
@@ -46,6 +45,10 @@
 #include "components/custom_handlers/protocol_handler.h"
 #include "components/custom_handlers/protocol_handler_registry.h"
 #include "components/enterprise/buildflags/buildflags.h"
+#include "components/guest_view/browser/guest_view_base.h"
+#include "components/guest_view/browser/guest_view_manager.h"
+#include "components/guest_view/browser/guest_view_manager_delegate.h"
+#include "components/guest_view/browser/test_guest_view_manager.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/policy_pref_names.h"
@@ -74,6 +77,7 @@
 #include "content/public/test/test_frame_navigation_observer.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/url_loader_interceptor.h"
+#include "extensions/browser/api/extensions_api_client.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/http/http_status_code.h"
 #include "net/test/embedded_test_server/controllable_http_response.h"
@@ -107,6 +111,10 @@
 #include "chrome/test/base/launchservices_utils_mac.h"
 #endif
 
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+#include "third_party/blink/public/common/features.h"
+#endif  //  BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+
 #if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 #include "base/files/scoped_temp_dir.h"
 #include "base/test/bind.h"
@@ -121,6 +129,11 @@
 #endif  // BUILDFLAG(ENTERPRISE_LOCAL_CONTENT_ANALYSIS)
 
 #endif  // BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
+
+#if BUILDFLAG(ENABLE_GLIC)
+#include "chrome/browser/glic/test_support/glic_test_environment.h"
+#include "chrome/browser/glic/test_support/glic_test_util.h"
+#endif
 
 namespace {
 
@@ -308,113 +321,6 @@ IN_PROC_BROWSER_TEST_F(OpenWindowFromNTPBrowserTest,
   EXPECT_FALSE(instant_service->IsInstantProcess(
       opened_tab->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID()));
 }
-
-// Test that the System AccentColor keyword is supported ONLY for installed
-// WebApps. Currently this test is appliable ONLY for Windows and ChromeOS, Mac
-// uses it own implementation to derive System AccentColor and doesn't use same
-// pipeline.
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
-class SystemAccentColorTest : public InProcessBrowserTest {
- protected:
-  SystemAccentColorTest() : browser_client_(&test_theme_) {}
-
-  ~SystemAccentColorTest() override {
-    CHECK_EQ(&browser_client_, SetBrowserClientForTesting(original_client_));
-  }
-
-  void SetUpOnMainThread() override {
-    InProcessBrowserTest::SetUpOnMainThread();
-  }
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitchASCII(switches::kEnableBlinkFeatures,
-                                    "CSSAccentColorKeyword");
-  }
-
-  void SetWebAppScope(const GURL web_app_scope) {
-    browser_client_.set_web_app_scope(web_app_scope);
-    original_client_ = content::SetBrowserClientForTesting(&browser_client_);
-    browser()
-        ->tab_strip_model()
-        ->GetActiveWebContents()
-        ->OnWebPreferencesChanged();
-  }
-
-  ui::TestNativeTheme test_theme_;
-
- private:
-  class BrowserClientForAccentColorTest : public ChromeContentBrowserClient {
-   public:
-    explicit BrowserClientForAccentColorTest(const ui::NativeTheme* theme)
-        : theme_(theme) {}
-
-    void set_web_app_scope(const GURL& web_app_scope) {
-      web_app_scope_ = web_app_scope;
-    }
-
-    void OverrideWebPreferences(
-        content::WebContents* web_contents,
-        content::SiteInstance& main_frame_site,
-        blink::web_pref::WebPreferences* web_prefs) override {
-      ChromeContentBrowserClient::OverrideWebPreferences(
-          web_contents, main_frame_site, web_prefs);
-
-      web_prefs->web_app_scope = web_app_scope_;
-    }
-
-   protected:
-    const ui::NativeTheme* GetWebTheme() const override { return theme_; }
-
-   private:
-    const raw_ptr<const ui::NativeTheme> theme_;
-    GURL web_app_scope_;
-  };
-
-  BrowserClientForAccentColorTest browser_client_;
-  raw_ptr<content::ContentBrowserClient> original_client_ = nullptr;
-};
-
-IN_PROC_BROWSER_TEST_F(SystemAccentColorTest,
-                       SystemAccentColorKeywordForInstalledWebApp) {
-  GURL web_app_scope = ui_test_utils::GetTestUrl(
-      base::FilePath(base::FilePath::kCurrentDirectory),
-      base::FilePath(FILE_PATH_LITERAL("system-accent-color.html")));
-  SetWebAppScope(web_app_scope);
-  ui::NativeTheme::GetInstanceForWeb()->set_user_color(
-      SkColorSetRGB(135, 115, 10));
-  ui::NativeTheme::GetInstanceForWeb()->NotifyOnNativeThemeUpdated();
-
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), web_app_scope));
-  // For installled WebApps we expect System AccentColor keyword resolve to
-  // OS-defined accent-color, which are currently pumped for ChromeOS and
-  // Windows.
-  EXPECT_EQ("rgb(135, 115, 10)",
-            EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
-                   base::StringPrintf(
-                       "window.getComputedStyle(document.getElementById('"
-                       "header_element')).backgroundColor")));
-}
-
-IN_PROC_BROWSER_TEST_F(SystemAccentColorTest,
-                       SystemAccentColorKeywordForNonWebApp) {
-  GURL web_app_scope = ui_test_utils::GetTestUrl(
-      base::FilePath(base::FilePath::kCurrentDirectory),
-      base::FilePath(FILE_PATH_LITERAL("system-accent-color.html")));
-  SetWebAppScope(GURL());
-  ui::NativeTheme::GetInstanceForWeb()->set_user_color(
-      SkColorSetRGB(135, 115, 10));
-  ui::NativeTheme::GetInstanceForWeb()->NotifyOnNativeThemeUpdated();
-
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), web_app_scope));
-  // System AccentColor keyword returns a hard coded value (Shade of blue) for
-  // non-installed websites.
-  EXPECT_EQ("rgb(0, 117, 255)",
-            EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
-                   base::StringPrintf(
-                       "window.getComputedStyle(document.getElementById('"
-                       "header_element')).backgroundColor")));
-}
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
 
 // Test for the state of Forced Colors Mode for a given WebContents across
 // various scenarios.
@@ -623,28 +529,50 @@ class PrefersColorSchemeTest
     }
 
     // Pages in regular profiles should follow the browser theme, reflected by
-    // the color mode of the associated ColorProvider, if the feature is
-    // enabled.
-    return base::FeatureList::IsEnabled(
-               features::kContentUsesBrowserThemeColorMode)
-               ? color_provider_color_mode
-               : native_theme_color_mode;
+    // the color mode of the associated ColorProvider.
+    return color_provider_color_mode;
   }
 
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
     original_client_ = SetBrowserClientForTesting(&theme_client_);
     test_theme_.SetDarkMode(GetIsDarkNativeTheme());
+
+#if BUILDFLAG(ENABLE_GLIC)
+    embedded_test_server()->ServeFilesFromDirectory(
+        base::PathService::CheckedGet(base::DIR_ASSETS)
+            .AppendASCII("gen/chrome/test/data/webui/glic/"));
+    ASSERT_TRUE(embedded_test_server()->Start());
+    auto* command_line = base::CommandLine::ForCurrentProcess();
+    command_line->AppendSwitchASCII(
+        ::switches::kGlicGuestURL,
+        embedded_test_server()->GetURL("/glic/test_client/index.html").spec());
+#endif
+
+    guest_view_manager_ =
+        guest_view_manager_factory_.GetOrCreateTestGuestViewManager(
+            browser()->profile(), extensions::ExtensionsAPIClient::Get()
+                                      ->CreateGuestViewManagerDelegate());
+
     browser()
         ->tab_strip_model()
         ->GetActiveWebContents()
         ->SetColorProviderSource(&color_provider_source_);
   }
 
+  void TearDownOnMainThread() override {
+    guest_view_manager_ = nullptr;
+    InProcessBrowserTest::TearDownOnMainThread();
+  }
+
  protected:
   bool GetIsDarkNativeTheme() const { return std::get<0>(GetParam()); }
   bool GetIsDarkColorProviderColorMode() const {
     return std::get<1>(GetParam());
+  }
+
+  guest_view::TestGuestViewManager* guest_view_manager() const {
+    return guest_view_manager_;
   }
 
   ui::TestNativeTheme test_theme_;
@@ -700,9 +628,13 @@ class PrefersColorSchemeTest
     ui::ColorProviderKey key_;
   };
 
-  base::test::ScopedFeatureList feature_list_;
   ChromeContentBrowserClientWithWebTheme theme_client_;
   MockColorProviderSource color_provider_source_;
+#if BUILDFLAG(ENABLE_GLIC)
+  glic::GlicTestEnvironment glic_test_environment_;
+#endif
+  guest_view::TestGuestViewManagerFactory guest_view_manager_factory_;
+  raw_ptr<guest_view::TestGuestViewManager> guest_view_manager_ = nullptr;
 };
 
 IN_PROC_BROWSER_TEST_P(PrefersColorSchemeTest, PrefersColorScheme) {
@@ -737,6 +669,26 @@ IN_PROC_BROWSER_TEST_P(PrefersColorSchemeTest, FeatureOverridesChromeSchemes) {
                  ExpectedColorScheme())));
 }
 
+#if BUILDFLAG(ENABLE_GLIC)
+IN_PROC_BROWSER_TEST_P(PrefersColorSchemeTest, PrefersColorSchemeGlic) {
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIGlicURL)));
+
+  guest_view::GuestViewBase* guest_view =
+      guest_view_manager()->WaitForSingleGuestViewCreated();
+  // Intentionally ignore the return value. It seems that on Windows and Linux
+  // the guest contents could have already been loaded by the time we get here.
+  std::ignore = guest_view_manager()->WaitUntilAttachedAndLoaded(guest_view);
+
+  EXPECT_EQ(
+      true,
+      EvalJs(guest_view->GetGuestMainFrame(),
+             base::StringPrintf(
+                 "window.matchMedia('(prefers-color-scheme: %s)').matches",
+                 ExpectedColorScheme())));
+}
+#endif
+
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 IN_PROC_BROWSER_TEST_P(PrefersColorSchemeTest, FeatureOverridesPdfUI) {
   browser()
@@ -770,8 +722,13 @@ class PreferredRootScrollbarColorSchemeChromeClientTest
   PreferredRootScrollbarColorSchemeChromeClientTest()
       : dark_mode_(std::get<0>(GetParam())),
         uses_custom_theme_(std::get<1>(GetParam())),
-        theme_client_(&test_theme_) {
+        theme_client_(&test_theme_),
+        theme_color_(dark_mode_ ? SK_ColorDKGRAY : SK_ColorLTGRAY) {
     test_theme_.SetDarkMode(dark_mode_);
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+    feature_list_.InitAndEnableFeature(
+        blink::features::kRootScrollbarFollowsBrowserTheme);
+#endif  //  BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
   }
 
   void SetUpOnMainThread() override {
@@ -786,8 +743,7 @@ class PreferredRootScrollbarColorSchemeChromeClientTest
       // or dark), however autogenerated themes don't take color schemes into
       // consideration. So we select which color to use based on the color
       // scheme to simulate this behavior.
-      theme_service->BuildAutogeneratedThemeFromColor(
-          dark_mode_ ? SK_ColorDKGRAY : SK_ColorLTGRAY);
+      theme_service->BuildAutogeneratedThemeFromColor(theme_color_);
     } else {
       theme_service->UseDefaultTheme();
     }
@@ -800,6 +756,38 @@ class PreferredRootScrollbarColorSchemeChromeClientTest
   blink::mojom::PreferredColorScheme ExpectedColorScheme() const {
     return dark_mode_ ? blink::mojom::PreferredColorScheme::kDark
                       : blink::mojom::PreferredColorScheme::kLight;
+  }
+
+  bool ThemeColorMatches() const {
+    const std::optional<SkColor> root_scrollbar_pref =
+        browser()
+            ->tab_strip_model()
+            ->GetActiveWebContents()
+            ->GetOrCreateWebPreferences()
+            .root_scrollbar_theme_color;
+    // If not using a custom theme, `root_scrollbar_theme_color` shouldn't be
+    // set.
+    if (!uses_custom_theme_) {
+      return !root_scrollbar_pref.has_value();
+    }
+    EXPECT_TRUE(root_scrollbar_pref.has_value());
+    const SkColor root_scrollbar_color = root_scrollbar_pref.value();
+    // `root_scrollbar_theme_color` is set based off the toolbar color, which is
+    // generated using the theme's color. Because of this, we can't directly
+    // compare equality between the two colors and we check that they are
+    // similar enough.
+    const double r_diff =
+        std::abs(SkColorGetR(root_scrollbar_color) -
+                 static_cast<double>(SkColorGetR(theme_color_)));
+    const double g_diff =
+        std::abs(SkColorGetG(root_scrollbar_color) -
+                 static_cast<double>(SkColorGetG(theme_color_)));
+    const double b_diff =
+        std::abs(SkColorGetB(root_scrollbar_color) -
+                 static_cast<double>(SkColorGetB(theme_color_)));
+
+    const int kMaxDiff = 20;
+    return r_diff < kMaxDiff && b_diff < kMaxDiff && g_diff < kMaxDiff;
   }
 
  private:
@@ -822,6 +810,8 @@ class PreferredRootScrollbarColorSchemeChromeClientTest
   raw_ptr<content::ContentBrowserClient> original_client_ = nullptr;
   ui::TestNativeTheme test_theme_;
   ChromeContentBrowserClientWithWebTheme theme_client_;
+  const SkColor theme_color_;
+  base::test::ScopedFeatureList feature_list_;
 };
 
 // This test verifies that the preferred color scheme for root scrollbars is set
@@ -837,10 +827,18 @@ IN_PROC_BROWSER_TEST_P(PreferredRootScrollbarColorSchemeChromeClientTest,
             ExpectedColorScheme());
 }
 
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+// This test verifies that the root scrollbar color theme is set correctly only
+// when using a custom theme.
+IN_PROC_BROWSER_TEST_P(PreferredRootScrollbarColorSchemeChromeClientTest,
+                       VerifyRootScrollbarColorTheme) {
+  EXPECT_TRUE(ThemeColorMatches());
+}
+#endif  //  BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+
 INSTANTIATE_TEST_SUITE_P(All,
                          PreferredRootScrollbarColorSchemeChromeClientTest,
-                         testing::Combine(testing::Bool(),
-                                          testing::Bool()));
+                         testing::Combine(testing::Bool(), testing::Bool()));
 
 class PrefersContrastTest
     : public testing::WithParamInterface<ui::NativeTheme::PreferredContrast>,
@@ -1238,30 +1236,14 @@ class ClipboardTestContentAnalysisDelegate
             base::BindRepeating(&ClipboardTestContentAnalysisDelegate::
                                     FakeUploadFileForDeepScanning,
                                 base::Unretained(ret.get()))));
+    enterprise_connectors::ClipboardRequestHandler::SetFactoryForTesting(
+        base::BindRepeating(
+            &enterprise_connectors::test::FakeClipboardRequestHandler::Create,
+            base::Unretained(ret.get())));
     return ret;
   }
 
  private:
-  void UploadTextForDeepScanning(
-      std::unique_ptr<safe_browsing::BinaryUploadService::Request> request)
-      override {
-    ASSERT_EQ(request->reason(),
-              enterprise_connectors::ContentAnalysisRequest::CLIPBOARD_PASTE);
-
-    enterprise_connectors::test::FakeContentAnalysisDelegate::
-        UploadTextForDeepScanning(std::move(request));
-  }
-
-  void UploadImageForDeepScanning(
-      std::unique_ptr<safe_browsing::BinaryUploadService::Request> request)
-      override {
-    ASSERT_EQ(request->reason(),
-              enterprise_connectors::ContentAnalysisRequest::CLIPBOARD_PASTE);
-
-    enterprise_connectors::test::FakeContentAnalysisDelegate::
-        UploadImageForDeepScanning(std::move(request));
-  }
-
   void FakeUploadFileForDeepScanning(
       safe_browsing::BinaryUploadService::Result result,
       const base::FilePath& path,
@@ -2120,186 +2102,6 @@ IN_PROC_BROWSER_TEST_F(TopChromeChromeContentBrowserClientTest,
                                                            random_url));
 }
 
-class ThirdPartyStoragePartitioningOriginTrialTest
-    : public InProcessBrowserTest,
-      public ::testing::WithParamInterface<bool> {
- public:
-  ThirdPartyStoragePartitioningOriginTrialTest()
-      : https_server_(net::EmbeddedTestServer::TYPE_HTTPS) {
-    // The 3PCD tracking protection feature must be disabled so that we can
-    // disable third-party cookies by changing the prefs::kCookieControlsMode
-    // pref.
-    feature_.InitAndDisableFeature(
-        content_settings::features::kTrackingProtection3pcd);
-  }
-
-  // The URL that will be used to load third-party scripts.
-  static constexpr char kThirdPartyScriptUrl[] = "https://127.0.0.1:44445";
-  // A cross-site URL used for Origin Trials.
-  static constexpr char kCrossSiteOriginTrialUrl[] = "https://a.com";
-
-  bool BlockThirdPartyCookies() const { return GetParam(); }
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitchASCII(
-        "origin-trial-public-key",
-        "dRCs+TocuKkocNKa0AtZ4awrt9XKH2SQCI6o4FY6BNA=");
-  }
-
-  void SetUpOnMainThread() override {
-    // Set up the framework that allows us to intercept and inspect any Origin
-    // Trial header requests.
-    url_loader_interceptor_ =
-        std::make_unique<content::URLLoaderInterceptor>(base::BindRepeating(
-            &ThirdPartyStoragePartitioningOriginTrialTest::InterceptURLRequest,
-            base::Unretained(this)));
-    ASSERT_TRUE(https_server()->Start());
-  }
-
-  void TearDownOnMainThread() override {
-    url_loader_interceptor_.reset();
-    InProcessBrowserTest::TearDownOnMainThread();
-  }
-
- protected:
-  void SetOriginTrialToken(const std::string& token) {
-    origin_trial_token_ = token;
-  }
-
-  GURL cross_site_script_meta_tag_origin_trial_url() const {
-    return GURL(base::StrCat({kCrossSiteOriginTrialUrl, "/meta_script.html"}));
-  }
-
-  GURL meta_tag_injecting_javascript_url() const {
-    return GURL(base::StrCat({kThirdPartyScriptUrl, "/meta.js"}));
-  }
-
-  GURL empty_frame_meta_origin_trial_url() const {
-    return GURL(base::StrCat({kThirdPartyScriptUrl, "/empty.html"}));
-  }
-
-  net::EmbeddedTestServer* https_server() { return &https_server_; }
-
- private:
-  bool RespondForEmptyUrl(
-      content::URLLoaderInterceptor::RequestParams* params) {
-    std::string headers = "HTTP/1.1 200 OK\nContent-Type: text/html\n";
-    std::string body = "<html>This page has no title.</html>";
-    content::URLLoaderInterceptor::WriteResponse(headers, body,
-                                                 params->client.get());
-    return true;
-  }
-
-  bool RespondForScriptMetaTagOriginTrialUrl(
-      content::URLLoaderInterceptor::RequestParams* params) {
-    // Construct the origin trial response.
-    std::string headers = "HTTP/1.1 200 OK\nContent-Type: text/html\n";
-    std::string body = base::StrCat(
-        {"<html><head><script src=\"",
-         meta_tag_injecting_javascript_url().spec(),
-         "\"></script></head><body>This page has no title.</body></html>"});
-    content::URLLoaderInterceptor::WriteResponse(headers, body,
-                                                 params->client.get());
-    return true;
-  }
-
-  bool RespondForMetaTagInjectingScriptUrl(
-      content::URLLoaderInterceptor::RequestParams* params) {
-    CHECK(!origin_trial_token_.empty());
-    // Construct the origin trial response.
-    std::string headers =
-        "HTTP/1.1 200 OK\nContent-Type: application/javascript\n";
-    std::string body =
-        base::StrCat({"const otMeta = document.createElement('meta'); "
-                      "otMeta.httpEquiv = 'origin-trial'; "
-                      "otMeta.content = '",
-                      origin_trial_token_,
-                      "'; "
-                      "document.head.append(otMeta); ",
-                      "const iframe = document.createElement('iframe'); ",
-                      "document.head.appendChild(iframe); "});
-    content::URLLoaderInterceptor::WriteResponse(headers, body,
-                                                 params->client.get());
-    return true;
-  }
-
-  // Create the framework to intercept origin trial requests.
-  bool InterceptURLRequest(
-      content::URLLoaderInterceptor::RequestParams* params) {
-    if (params->url_request.url ==
-        cross_site_script_meta_tag_origin_trial_url()) {
-      return RespondForScriptMetaTagOriginTrialUrl(params);
-    }
-    if (params->url_request.url == meta_tag_injecting_javascript_url()) {
-      return RespondForMetaTagInjectingScriptUrl(params);
-    }
-    if (params->url_request.url == empty_frame_meta_origin_trial_url()) {
-      return RespondForEmptyUrl(params);
-    }
-    return false;
-  }
-
-  base::test::ScopedFeatureList feature_;
-  net::EmbeddedTestServer https_server_;
-  std::string origin_trial_token_;
-  std::unique_ptr<content::URLLoaderInterceptor> url_loader_interceptor_;
-};
-
-// Test that the 3PSP deprecation trial only enables third-party storage when
-// the user has explicitly opted into third-party cooking blocking (instead of
-// enabling first-party storage). This test is derived from
-// RenderFrameHostImplWithTokensBrowserTest.ReusedChildFrameNavigatedFromDeprecationTrialIsPartitioned.
-IN_PROC_BROWSER_TEST_P(ThirdPartyStoragePartitioningOriginTrialTest,
-                       ThirdPartyCookieSettingOverridesDeprecationTrial) {
-  // Generated with:
-  // tools/origin_trials/generate_token.py https://127.0.0.1:44445
-  // DisableThirdPartyStoragePartitioning3 --expire-timestamp=2000000000
-  // --is-third-party
-  const char kValidThirdPartyToken[] =
-      "A7BpVOcOsvw3FiZnc4wIJ9pfGSrhUqMyV8GmGkZrm6emdOW5hBe9YN8XKoFa+"
-      "YQkVUxdNR22quD3oCJvuIX2cAoAAACFeyJvcmlnaW4iOiAiaHR0cHM6Ly8xMjcuMC4wLjE6N"
-      "DQ0NDUiLCAiZmVhdHVyZSI6ICJEaXNhYmxlVGhpcmRQYXJ0eVN0b3JhZ2VQYXJ0aXRpb25pb"
-      "mczIiwgImV4cGlyeSI6IDIwMDAwMDAwMDAsICJpc1RoaXJkUGFydHkiOiB0cnVlfQ==";
-
-  SetOriginTrialToken(kValidThirdPartyToken);
-
-  browser()->profile()->GetPrefs()->SetInteger(
-      prefs::kCookieControlsMode,
-      BlockThirdPartyCookies()
-          ? static_cast<int>(
-                content_settings::CookieControlsMode::kBlockThirdParty)
-          : static_cast<int>(content_settings::CookieControlsMode::kOff));
-
-  // Navigate to "a.test" and load a script from a third-party. In that script,
-  // the deprecation trial token above is added via <meta> tag. Then, the script
-  // adds an iframe.
-  EXPECT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), cross_site_script_meta_tag_origin_trial_url()));
-  content::WebContents* contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
-  ASSERT_NE(contents, nullptr);
-
-  content::RenderFrameHost* child_frame =
-      ChildFrameAt(contents->GetPrimaryMainFrame(), 0);
-  ASSERT_TRUE(child_frame);
-  // Navigate the currently empty iframe to a URL that is same-site with the
-  // third-party script.
-  EXPECT_TRUE(NavigateToURLFromRenderer(child_frame,
-                                        empty_frame_meta_origin_trial_url()));
-  // Execute a dummy roundtrip to ensure the <meta> tag trial token has time to
-  // parse and be applied to the iframe.
-  EXPECT_TRUE(content::ExecJs(contents, ";"));
-
-  // Re-obtain the iframe after confirming the navigation is complete.
-  child_frame = ChildFrameAt(contents->GetPrimaryMainFrame(), 0);
-
-  if (BlockThirdPartyCookies()) {
-    EXPECT_TRUE(child_frame->GetStorageKey().IsThirdPartyContext());
-  } else {
-    EXPECT_TRUE(child_frame->GetStorageKey().IsFirstPartyContext());
-  }
-}
-
 class BundledCodeCacheChromeContentBrowserClientTest
     : public InProcessBrowserTest,
       public testing::WithParamInterface<bool> {
@@ -2345,10 +2147,6 @@ IN_PROC_BROWSER_TEST_P(BundledCodeCacheChromeContentBrowserClientTest,
   navigate_and_expect_policy_result(non_top_chrome_url1, false);
   navigate_and_expect_policy_result(non_top_chrome_url1, false);
 }
-
-INSTANTIATE_TEST_SUITE_P(All,
-                         ThirdPartyStoragePartitioningOriginTrialTest,
-                         ::testing::Bool());
 
 INSTANTIATE_TEST_SUITE_P(
     ,

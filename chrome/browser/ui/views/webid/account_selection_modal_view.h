@@ -36,7 +36,7 @@ class AccountSelectionModalView : public views::DialogDelegateView,
 
  public:
   AccountSelectionModalView(
-      const std::u16string& rp_for_display,
+      const content::RelyingPartyData& rp_data,
       const std::optional<std::u16string>& idp_title,
       blink::mojom::RpContext rp_context,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
@@ -50,8 +50,8 @@ class AccountSelectionModalView : public views::DialogDelegateView,
   void ShowMultiAccountPicker(
       const std::vector<IdentityRequestAccountPtr>& accounts,
       const std::vector<IdentityProviderDataPtr>& idp_list,
-      bool show_back_button,
-      bool is_choose_an_account) override;
+      const gfx::Image& rp_icon,
+      bool show_back_button) override;
 
   void ShowVerifyingSheet(const IdentityRequestAccountPtr& account,
                           const std::u16string& title) override;
@@ -72,11 +72,8 @@ class AccountSelectionModalView : public views::DialogDelegateView,
   void ShowRequestPermissionDialog(
       const IdentityRequestAccountPtr& account) override;
 
-  void ShowSingleReturningAccountDialog(
-      const std::vector<IdentityRequestAccountPtr>& accounts,
-      const std::vector<IdentityProviderDataPtr>& idp_list) override;
-
   std::string GetDialogTitle() const override;
+  std::optional<std::string> GetDialogSubtitle() const override;
 
   // views::DialogDelegateView:
   views::View* GetInitiallyFocusedView() override;
@@ -135,13 +132,13 @@ class AccountSelectionModalView : public views::DialogDelegateView,
   // that order, horizontally.
   std::unique_ptr<views::BoxLayoutView> CreateCombinedIconsView();
 
-  // Hides `header_icon_spinner_` and shows `idp_brand_icon_` upon successful
-  // IDP icon fetch.
-  void OnIdpBrandIconFetched();
+  // Hides `header_icon_spinner_` and shows `idp_brand_icon_` upon successfully
+  // setting the IDP icon.
+  void OnIdpBrandIconSet();
 
   // Hides `header_icon_spinner_`, `idp_brand_icon_` and shows `combined_icons_`
-  // upon successful IDP and RP icon fetches.
-  void OnCombinedIconsFetched();
+  // upon successfully setting the IDP and RP icons.
+  void OnCombinedIconsSet();
 
   // Removes all child views and dangling pointers and adjust header with
   // progress bar and body label if needed.
@@ -226,6 +223,9 @@ class AccountSelectionModalView : public views::DialogDelegateView,
 
   // The title for the modal dialog.
   std::u16string title_;
+
+  // The subtitle for the modal dialog.
+  std::u16string subtitle_;
 
   // Used to ensure that callbacks are not run if the AccountSelectionModalView
   // is destroyed.

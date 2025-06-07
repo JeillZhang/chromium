@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/iwa_key_distribution_info_provider.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
+
+#include <variant>
 
 #include "base/base64.h"
 #include "base/containers/extend.h"
@@ -17,12 +19,10 @@
 #include "base/test/scoped_path_override.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/version.h"
 #include "chrome/browser/component_updater/iwa_key_distribution_component_installer.h"
 #include "chrome/browser/web_applications/isolated_web_apps/iwa_identity_validator.h"
-#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/iwa_key_distribution_histograms.h"
-#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/iwa_key_distribution_info_provider.h"
-#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/proto/key_distribution.pb.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/key_distribution/test_utils.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/component_updater/component_updater_paths.h"
@@ -31,6 +31,10 @@
 #include "components/web_package/test_support/signed_web_bundles/signature_verifier_test_utils.h"
 #include "components/web_package/test_support/signed_web_bundles/web_bundle_signer.h"
 #include "components/web_package/web_bundle_builder.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_histograms.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
+#include "components/webapps/isolated_web_apps/proto/key_distribution.pb.h"
+#include "content/public/common/content_features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -67,11 +71,15 @@ IwaKeyDistribution CreateValidData() {
 
   IwaKeyRotations key_rotations;
   IwaKeyRotations::KeyRotationInfo kr_info;
+  IwaAccessControl access_control;
 
   kr_info.set_expected_key(base::Base64Encode(kExpectedKey));
   key_rotations.mutable_key_rotations()->emplace(kWebBundleId,
                                                  std::move(kr_info));
   *key_distribution.mutable_key_rotation_data() = std::move(key_rotations);
+  key_distribution.mutable_iwa_access_control()
+      ->mutable_managed_allowlist()
+      ->emplace(kWebBundleId, IwaAccessControl_ManagedAllowlistItemData());
 
   return key_distribution;
 }
@@ -206,7 +214,7 @@ TEST_F(SignedWebBundleSignatureVerifierWithKeyDistributionTest,
   EXPECT_THAT(ht.GetAllSamples(kIwaKeyRotationInfoSource),
               base::BucketsAre(base::Bucket(KeyRotationInfoSource::kNone, 1)));
 
-  auto expected_key = absl::visit(
+  auto expected_key = std::visit(
       [](const auto& key_pair) -> base::span<const uint8_t> {
         return key_pair.public_key.bytes();
       },
@@ -319,21 +327,22 @@ class IwaIwaKeyDistributionInfoProviderReadinessTest
  protected:
   void RegisterComponentWithExpectationAndCallOnMaybeReadyInOrder(
       auto matcher,
-      IwaKeyDistributionInfoProvider* key_provider,
+      IwaKeyDistributionInfoProvider& key_provider,
       base::OnceClosure task) {
-    bool register_first = GetParam();
-    if (register_first) {
+    if (register_first()) {
       ASSERT_THAT(test::RegisterIwaKeyDistributionComponentAndWaitForLoad(),
                   matcher);
-      key_provider->OnMaybeDownloadedComponentDataReady().Post(FROM_HERE,
-                                                               std::move(task));
+      key_provider.OnMaybeDownloadedComponentDataReady().Post(FROM_HERE,
+                                                              std::move(task));
     } else {
-      key_provider->OnMaybeDownloadedComponentDataReady().Post(FROM_HERE,
-                                                               std::move(task));
+      key_provider.OnMaybeDownloadedComponentDataReady().Post(FROM_HERE,
+                                                              std::move(task));
       ASSERT_THAT(test::RegisterIwaKeyDistributionComponentAndWaitForLoad(),
                   matcher);
     }
   }
+
+  bool register_first() const { return GetParam(); }
 
   base::test::TaskEnvironment& task_environment() { return env_; }
 
@@ -359,8 +368,7 @@ class IwaIwaKeyDistributionInfoProviderReadinessTest
         .WillOnce(ReturnRef(on_demand_updater()));
 
     EXPECT_CALL(on_demand_updater(),
-                OnDemandUpdate("iebhnlpddlcpcfpfalldikcoeakpeoah",
-                               Priority::BACKGROUND, _))
+                OnDemandUpdate("iebhnlpddlcpcfpfalldikcoeakpeoah", _, _))
         .WillOnce(WithoutArgs([&, load_delay] {
           ASSERT_TRUE(installer_);
           InstallComponentAsync(installer_, base::Version("2.0.0"),
@@ -372,8 +380,7 @@ class IwaIwaKeyDistributionInfoProviderReadinessTest
     EXPECT_CALL(component_updater(), GetOnDemandUpdater).Times(0);
 
     EXPECT_CALL(on_demand_updater(),
-                OnDemandUpdate("iebhnlpddlcpcfpfalldikcoeakpeoah",
-                               Priority::BACKGROUND, _))
+                OnDemandUpdate("iebhnlpddlcpcfpfalldikcoeakpeoah", _, _))
         .Times(0);
   }
 
@@ -382,8 +389,7 @@ class IwaIwaKeyDistributionInfoProviderReadinessTest
         .WillOnce(ReturnRef(on_demand_updater()));
 
     EXPECT_CALL(on_demand_updater(),
-                OnDemandUpdate("iebhnlpddlcpcfpfalldikcoeakpeoah",
-                               Priority::BACKGROUND, _));
+                OnDemandUpdate("iebhnlpddlcpcfpfalldikcoeakpeoah", _, _));
   }
 
  private:
@@ -443,8 +449,15 @@ class IwaIwaKeyDistributionInfoProviderReadinessTest
   testing::NiceMock<MockOnDemandUpdater> on_demand_updater_;
 
   std::unique_ptr<base::ScopedTempDir> dir_;
-  base::test::ScopedFeatureList feature_list_{
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  base::test::ScopedFeatureList features_{
       component_updater::kIwaKeyDistributionComponent};
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
+// TODO(crbug.com/393102554): Remove this after launch.
+#if BUILDFLAG(IS_WIN)
+  base::test::ScopedFeatureList features_{features::kIsolatedWebApps};
+#endif  // BUILDFLAG(IS_WIN)
 
   base::ScopedPathOverride user_dir_override_{
       component_updater::DIR_COMPONENT_USER};
@@ -456,10 +469,15 @@ class IwaIwaKeyDistributionInfoProviderReadinessTest
 
 TEST_P(IwaIwaKeyDistributionInfoProviderReadinessTest,
        PreloadedComponentAndOnMaybeReadyCalledUpdateSuccess) {
+  if (!register_first()) {
+    GTEST_SKIP() << "Disabled until IWA become available outside of "
+                    "non-initial profiles";
+  }
+
   WillRegisterAndLoadComponent(/*is_preloaded=*/true);
   WillRequestOnDemandUpdateWithSuccess();
 
-  auto* key_provider = IwaKeyDistributionInfoProvider::GetInstance();
+  auto& key_provider = IwaKeyDistributionInfoProvider::GetInstance();
   base::test::TestFuture<void> future;
 
   RegisterComponentWithExpectationAndCallOnMaybeReadyInOrder(
@@ -474,7 +492,7 @@ TEST_P(IwaIwaKeyDistributionInfoProviderReadinessTest,
   WillRegisterAndLoadComponent(/*is_preloaded=*/false);
   WillNotRequestOnDemandUpdate();
 
-  auto* key_provider = IwaKeyDistributionInfoProvider::GetInstance();
+  auto& key_provider = IwaKeyDistributionInfoProvider::GetInstance();
   base::test::TestFuture<void> future;
 
   RegisterComponentWithExpectationAndCallOnMaybeReadyInOrder(
@@ -486,10 +504,15 @@ TEST_P(IwaIwaKeyDistributionInfoProviderReadinessTest,
 
 TEST_P(IwaIwaKeyDistributionInfoProviderReadinessTest,
        PreloadedComponentAndOnMaybeReadyCalledUpdateFails) {
+  if (!register_first()) {
+    GTEST_SKIP() << "Disabled until IWA become available outside of "
+                    "non-initial profiles";
+  }
+
   WillRegisterAndLoadComponent(/*is_preloaded=*/true);
   WillRequestOnDemandUpdateWithoutSuccess();
 
-  auto* key_provider = IwaKeyDistributionInfoProvider::GetInstance();
+  auto& key_provider = IwaKeyDistributionInfoProvider::GetInstance();
 
   // Not using TestFuture<> here because it advances mock time while waiting,
   // and this is something we'd like to do manually.
@@ -508,10 +531,15 @@ TEST_P(IwaIwaKeyDistributionInfoProviderReadinessTest,
 
 TEST_P(IwaIwaKeyDistributionInfoProviderReadinessTest,
        PreloadedComponentAndOnMaybeReadyCalledUpdateDelayedSuccess) {
+  if (!register_first()) {
+    GTEST_SKIP() << "Disabled until IWA become available outside of "
+                    "non-initial profiles";
+  }
+
   WillRegisterAndLoadComponent(/*is_preloaded=*/true);
   WillRequestOnDemandUpdateWithSuccess(/*load_delay=*/base::Seconds(30));
 
-  auto* key_provider = IwaKeyDistributionInfoProvider::GetInstance();
+  auto& key_provider = IwaKeyDistributionInfoProvider::GetInstance();
   base::test::TestFuture<void> future;
 
   RegisterComponentWithExpectationAndCallOnMaybeReadyInOrder(

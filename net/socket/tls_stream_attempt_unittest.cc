@@ -14,6 +14,7 @@
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
+#include "net/base/tracing.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/http/http_network_session.h"
 #include "net/http/transport_security_state.h"
@@ -50,7 +51,7 @@ void ValidateConnectTiming(
   EXPECT_LE(connect_timing.ssl_end, connect_timing.connect_end);
 }
 
-class TlsStreamAttemptHelper : public TlsStreamAttempt::SSLConfigProvider {
+class TlsStreamAttemptHelper : public TlsStreamAttempt::Delegate {
  public:
   // Pass std::nullopt to `ssl_config` to make SSLConfig not immediately
   // available.
@@ -60,6 +61,7 @@ class TlsStreamAttemptHelper : public TlsStreamAttempt::SSLConfigProvider {
       : attempt_(std::make_unique<TlsStreamAttempt>(
             params,
             IPEndPoint(IPAddress(192, 0, 2, 1), 443),
+            perfetto::Track(),
             HostPortPair("a.test", 443),
             this)),
         ssl_config_(std::move(ssl_config)) {}
@@ -99,11 +101,16 @@ class TlsStreamAttemptHelper : public TlsStreamAttempt::SSLConfigProvider {
     }
   }
 
+  void ResetAttempt() { attempt_.reset(); }
+
   TlsStreamAttempt* attempt() { return attempt_.get(); }
 
   std::optional<int> result() const { return result_; }
 
-  // TlsStreamAttempt::SSLConfigProvider implementation:
+  // TlsStreamAttempt::Delegate implementation:
+
+  void OnTcpHandshakeComplete() override {}
+
   int WaitForSSLConfigReady(CompletionOnceCallback callback) override {
     if (ssl_config_.has_value()) {
       return OK;
@@ -121,6 +128,11 @@ class TlsStreamAttemptHelper : public TlsStreamAttempt::SSLConfigProvider {
     }
 
     return *ssl_config_;
+  }
+
+  CompletionOnceCallback TakeSSLConfigWaitingCallback() {
+    CHECK(request_ssl_config_callback_);
+    return std::move(request_ssl_config_callback_);
   }
 
  private:
@@ -292,6 +304,32 @@ TEST_F(TlsStreamAttemptTest, GetSSLConfigAborted) {
   helper.SetGetSSLConfigError(TlsStreamAttempt::GetSSLConfigError::kAbort);
   rv = helper.WaitForCompletion();
   EXPECT_THAT(rv, IsError(ERR_ABORTED));
+}
+
+// Regression test for crbug.com/402288759. Callback passed to
+// SSLConfigProvider::WaitForSSLConfigReady() could be moved and invoked later.
+TEST_F(TlsStreamAttemptTest, SSLConfigWaitingCallbackInvokedAfterReset) {
+  StaticSocketDataProvider data;
+  data.set_connect_data(MockConnect(ASYNC, OK));
+  socket_factory().AddSocketDataProvider(&data);
+  SSLSocketDataProvider ssl(ASYNC, OK);
+  socket_factory().AddSSLSocketDataProvider(&ssl);
+
+  TlsStreamAttemptHelper helper(params(), /*ssl_config=*/std::nullopt);
+  int rv = helper.Start();
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  ASSERT_EQ(helper.attempt()->GetLoadState(), LOAD_STATE_CONNECTING);
+
+  // We don't provide SSLConfig yet so the attempt should not complete.
+  FastForwardUntilNoTasksRemain();
+  ASSERT_FALSE(helper.result().has_value());
+  ASSERT_EQ(helper.attempt()->GetLoadState(), LOAD_STATE_SSL_HANDSHAKE);
+
+  CompletionOnceCallback callback = helper.TakeSSLConfigWaitingCallback();
+  helper.ResetAttempt();
+
+  // Invoking `callback` should do nothing.
+  std::move(callback).Run(OK);
 }
 
 TEST_F(TlsStreamAttemptTest, TcpFail) {

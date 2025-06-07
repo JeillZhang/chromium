@@ -19,6 +19,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/json/values_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -38,6 +39,7 @@
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/webapps/common/web_app_id.h"
+#include "components/webapps/isolated_web_apps/update_channel.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/net_errors.h"
 

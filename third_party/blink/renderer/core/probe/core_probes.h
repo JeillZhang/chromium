@@ -56,6 +56,10 @@ class OffscreenCanvas;
 class ThreadDebugger;
 
 namespace protocol {
+namespace Network {
+class DirectTCPSocketOptions;
+class DirectUDPSocketOptions;
+}  // namespace Network
 namespace Audits {
 class InspectorIssue;
 }  // namespace Audits

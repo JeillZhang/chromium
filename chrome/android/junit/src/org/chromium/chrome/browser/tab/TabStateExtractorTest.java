@@ -12,10 +12,12 @@ import static org.mockito.Mockito.doReturn;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.UserDataHost;
@@ -36,16 +38,16 @@ public class TabStateExtractorTest {
     private static final String URL = "test_url";
     private static final String REFERRER_URL = "referrer_url";
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private WebContentsStateBridge.Natives mWebContentsBridgeJni;
     @Mock private Tab mTabMock;
     @Mock private WebContents mWebContentsMock;
     @Mock private Origin mMockOrigin;
 
-    private ByteBuffer mByteBuffer = ByteBuffer.allocateDirect(1);
+    private final ByteBuffer mByteBuffer = ByteBuffer.allocateDirect(1);
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         WebContentsStateBridgeJni.setInstanceForTesting(mWebContentsBridgeJni);
 
         doReturn(new UserDataHost()).when(mTabMock).getUserDataHost();

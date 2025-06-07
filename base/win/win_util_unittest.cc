@@ -19,11 +19,10 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/gmock_expected_support.h"
-#include "base/test/gtest_util.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_co_mem.h"
 #include "base/win/scoped_com_initializer.h"
-#include "base/win/scoped_handle.h"
+#include "base/win/windows_handle_util.h"
 #include "base/win/windows_version.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -90,6 +89,12 @@ TEST(BaseWinUtilTest, TestUint32ToInvalidHandle) {
   // and back on 64-bit platforms.
   uint32_t invalid_handle = HandleToUint32(INVALID_HANDLE_VALUE);
   EXPECT_EQ(INVALID_HANDLE_VALUE, Uint32ToHandle(invalid_handle));
+}
+
+TEST(BaseWinUtilTest, PseudoHandles) {
+  EXPECT_TRUE(IsPseudoHandle(::GetCurrentProcess()));
+  EXPECT_TRUE(IsPseudoHandle(::GetCurrentThread()));
+  EXPECT_FALSE(IsPseudoHandle(nullptr));
 }
 
 TEST(BaseWinUtilTest, WStringFromGUID) {
@@ -281,45 +286,6 @@ TEST(GetObjectTypeNameTest, ProcessHandle) {
   ASSERT_EQ(type_name, L"Process");
 }
 
-TEST(TakeHandleOfTypeTest, NullHandle) {
-  auto handle_or_error = TakeHandleOfType(kNullProcessHandle, L"Process");
-  ASSERT_FALSE(handle_or_error.has_value());
-  ASSERT_EQ(handle_or_error.error(), STATUS_INVALID_HANDLE);
-}
-
-TEST(TakeHandleOfTypeTest, InvalidHandle) {
-  auto handle_or_error = TakeHandleOfType(INVALID_HANDLE_VALUE, L"Process");
-  ASSERT_FALSE(handle_or_error.has_value());
-  ASSERT_EQ(handle_or_error.error(), STATUS_INVALID_HANDLE);
-}
-
-TEST(TakeHandleOfTypeTest, CurrentProcess) {
-  auto handle_or_error = TakeHandleOfType(::GetCurrentProcess(), L"Process");
-  ASSERT_FALSE(handle_or_error.has_value());
-  ASSERT_EQ(handle_or_error.error(), STATUS_INVALID_HANDLE);
-}
-
-TEST(TakeHandleOfTypeTest, CrazyHandle) {
-  auto handle_or_error =
-      TakeHandleOfType(Uint32ToHandle(0x12345678U), L"Process");
-  ASSERT_FALSE(handle_or_error.has_value());
-  ASSERT_EQ(handle_or_error.error(), STATUS_INVALID_HANDLE);
-}
-
-TEST(TakeHandleOfTypeTest, ValidTypeMatch) {
-  Process this_process = Process::Open(GetCurrentProcId());
-  HANDLE process_handle = this_process.Handle();
-  ASSERT_OK_AND_ASSIGN(ScopedHandle process,
-                       TakeHandleOfType(this_process.Release(), L"Process"));
-  ASSERT_TRUE(process.is_valid());
-  ASSERT_EQ(process.get(), process_handle);
-}
-
-TEST(TakeHandleOfTypeDeathTest, ValidTypeMismatch) {
-  EXPECT_CHECK_DEATH((void)TakeHandleOfType(
-      Process::Open(GetCurrentProcId()).Release(), L"Section"));
-}
-
 TEST(DeviceConvertibilityTest, None) {
   ScopedCOMInitializer com_initializer;
   ASSERT_TRUE(com_initializer.Succeeded());
@@ -429,6 +395,12 @@ TEST(DeviceConvertibilityTest, DeviceFormAndChassisConvertible) {
   ScopedCOMInitializer com_initializer;
   ASSERT_TRUE(com_initializer.Succeeded());
   EXPECT_FALSE(IsDeviceFormConvertible() || IsChassisConvertible());
+}
+
+TEST(BaseWinUtilTest, GetSerialNumber) {
+  ScopedCOMInitializer com_initializer;
+  ASSERT_OK_AND_ASSIGN(std::wstring serial_number, GetSerialNumber());
+  EXPECT_FALSE(serial_number.empty());
 }
 
 }  // namespace win

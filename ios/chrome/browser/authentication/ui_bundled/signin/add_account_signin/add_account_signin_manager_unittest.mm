@@ -37,13 +37,6 @@ enum class TestCase {
   kResigninWithoutUsername,
 };
 
-UIViewController* CreateTestViewController() {
-  UIViewController* view_controller = [[UIViewController alloc] init];
-  view_controller.view.backgroundColor = UIColor.blueColor;
-  GetAnyKeyWindow().rootViewController = view_controller;
-  return view_controller;
-}
-
 class AddAccountSigninManagerTest
     : public testing::WithParamInterface<TestCase>,
       public PlatformTest {
@@ -76,6 +69,8 @@ class AddAccountSigninManagerTest
         break;
     }
   }
+
+  ~AddAccountSigninManagerTest() { EXPECT_OCMOCK_VERIFY(mock_delegate_); }
 
   AddAccountSigninIntent intent() {
     switch (GetParam()) {
@@ -118,7 +113,7 @@ class AddAccountSigninManagerTest
       OCMStrictProtocolMock(@protocol(AddAccountSigninManagerDelegate));
   AddAccountSigninManager* add_account_signin_manager_ =
       [[AddAccountSigninManager alloc]
-          initWithBaseViewController:CreateTestViewController()
+          initWithBaseViewController:GetAnyKeyWindow().rootViewController
                          prefService:&test_pref_service_
                      identityManager:identity_test_environment_
                                          .identity_manager()
@@ -273,21 +268,11 @@ TEST_P(AddAccountSigninManagerTest, Interrupted) {
         return fake_interaction_manager().isActivityViewPresented;
       }));
 
-  OCMExpect([mock_delegate() addAccountSigninManagerFinishedWithResult:
-                                 SigninAddAccountToDeviceResult::kInterrupted
-                                                              identity:nil
-                                                                 error:nil]);
-  __block BOOL completionCalled = NO;
-  [add_account_signin_manager()
-      interruptWithAction:SigninCoordinatorInterrupt::DismissWithAnimation
-               completion:^{
-                 completionCalled = YES;
-               }];
+  [add_account_signin_manager() interruptAnimated:YES];
   ASSERT_TRUE(base::test::ios::WaitUntilConditionOrTimeout(
       TestTimeouts::action_timeout(), ^bool() {
         return !fake_interaction_manager().isActivityViewPresented;
       }));
-  EXPECT_TRUE(completionCalled);
   histogram_tester.ExpectUniqueSample(
       "Signin.AddAccountToDevice.Result",
       SigninAddAccountToDeviceResult::kInterrupted, 1);

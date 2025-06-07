@@ -56,11 +56,11 @@ class COMPONENT_EXPORT(AX_PLATFORM) BrowserAccessibilityManagerMac
   void FireAriaNotificationEvent(
       BrowserAccessibility* node,
       const std::string& announcement,
-      const std::string& notification_id,
+      ax::mojom::AriaNotificationPriority priority_property,
       ax::mojom::AriaNotificationInterrupt interrupt_property,
-      ax::mojom::AriaNotificationPriority priority_property) override;
+      const std::string& type) override;
 
-  bool OnAccessibilityEvents(const AXUpdatesAndEvents& details) override;
+  bool OnAccessibilityEvents(AXUpdatesAndEvents& details) override;
 
   void FireSentinelEventForTesting() override;
 

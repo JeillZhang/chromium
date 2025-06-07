@@ -4,12 +4,14 @@
 
 package org.chromium.chrome.browser.app.tabmodel;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabObserver;
-import org.chromium.chrome.browser.tabmodel.TabWindowManager;
+import org.chromium.chrome.browser.tabwindow.TabWindowManager;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,6 +21,7 @@ import java.util.List;
  *
  * <p>AllTabObserver will initially notify for all current tabs when constructed.
  */
+@NullMarked
 public class AllTabObserver implements TabWindowManager.Observer, TabModelObserver {
     public interface Observer {
         /** Called when a Tab is added. */

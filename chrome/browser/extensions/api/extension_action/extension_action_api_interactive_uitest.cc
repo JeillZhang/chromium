@@ -19,6 +19,7 @@
 #include "extensions/browser/background_script_executor.h"
 #include "extensions/browser/extension_action.h"
 #include "extensions/browser/extension_action_manager.h"
+#include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_host_registry.h"
 #include "extensions/common/features/feature_channel.h"
 #include "extensions/test/result_catcher.h"
@@ -107,7 +108,7 @@ IN_PROC_BROWSER_TEST_F(ActionAPIInteractiveUITest, OpenPopupInActiveWindow) {
   ASSERT_TRUE(host);
   EXPECT_TRUE(content::WaitForLoadStop(host->host_contents()));
   EXPECT_TRUE(host->has_loaded_once());
-  EXPECT_EQ(extension->GetResourceURL("popup.html"),
+  EXPECT_EQ(extension->ResolveExtensionURL("popup.html"),
             host->main_frame_host()->GetLastCommittedURL());
 }
 
@@ -137,7 +138,7 @@ IN_PROC_BROWSER_TEST_F(ActionAPIInteractiveUITest, OpenPopupInSpecifiedWindow) {
     ASSERT_TRUE(host);
     EXPECT_TRUE(content::WaitForLoadStop(host->host_contents()));
     EXPECT_TRUE(host->has_loaded_once());
-    EXPECT_EQ(extension->GetResourceURL("popup.html"),
+    EXPECT_EQ(extension->ResolveExtensionURL("popup.html"),
               host->main_frame_host()->GetLastCommittedURL());
   }
 

@@ -53,13 +53,16 @@ config("fuzztest_public_config") {
     # efficiently. It's not yet available in Chromium, so disable
     # for now.
     "CENTIPEDE_DISABLE_RIEGELI",
-
-    # In fuzztest's unit-test mode, coverage collection doesn't work
-    # with multiple DSOs, which Chromium needs even in non-component
-    # builds. Note that this doesn't impact actual fuzzing mode e.g.
-    # centipede.
-    "FUZZTEST_NO_LEGACY_COVERAGE",
   ]
+  if (!enable_fuzztest_fuzz) {
+    defines += [
+      # In fuzztest's unit-test mode, coverage collection doesn't work
+      # with multiple DSOs, which Chromium needs even in non-component
+      # builds. Note that this doesn't impact actual fuzzing mode e.g.
+      # centipede.
+      "FUZZTEST_NO_LEGACY_COVERAGE",
+    ]
+  }
   if (use_centipede) {
     defines += [ "FUZZTEST_USE_CENTIPEDE" ]
   } else if (use_fuzzing_engine && fuzzing_engine_supports_custom_main) {
@@ -257,9 +260,9 @@ source_set("fuzztest_internal") {
     "src/fuzztest/internal/domains/aggregate_of_impl.h",
     "src/fuzztest/internal/domains/arbitrary_impl.h",
     "src/fuzztest/internal/domains/bit_flag_combination_of_impl.h",
+    "src/fuzztest/internal/domains/bit_gen_ref.h",
     "src/fuzztest/internal/domains/container_mutation_helpers.h",
     "src/fuzztest/internal/domains/container_of_impl.h",
-    "src/fuzztest/internal/domains/domain_base.cc",
     "src/fuzztest/internal/domains/domain_base.h",
     "src/fuzztest/internal/domains/element_of_impl.h",
     "src/fuzztest/internal/domains/filter_impl.h",
@@ -267,6 +270,7 @@ source_set("fuzztest_internal") {
     "src/fuzztest/internal/domains/in_grammar_impl.cc",
     "src/fuzztest/internal/domains/in_grammar_impl.h",
     "src/fuzztest/internal/domains/in_range_impl.h",
+    "src/fuzztest/internal/domains/in_regexp_impl.cc",
     "src/fuzztest/internal/domains/in_regexp_impl.h",
     "src/fuzztest/internal/domains/map_impl.h",
     "src/fuzztest/internal/domains/one_of_impl.h",
@@ -281,6 +285,8 @@ source_set("fuzztest_internal") {
     "src/fuzztest/internal/domains/variant_of_impl.h",
     "src/fuzztest/internal/fixture_driver.cc",
     "src/fuzztest/internal/fixture_driver.h",
+    "src/fuzztest/internal/fuzzing_bit_gen.cc",
+    "src/fuzztest/internal/fuzzing_bit_gen.h",
     "src/fuzztest/internal/googletest_adaptor.cc",
     "src/fuzztest/internal/googletest_adaptor.h",
     "src/fuzztest/internal/io.cc",
@@ -288,6 +294,8 @@ source_set("fuzztest_internal") {
     "src/fuzztest/internal/logging.cc",
     "src/fuzztest/internal/logging.h",
     "src/fuzztest/internal/meta.h",
+    "src/fuzztest/internal/register_fuzzing_mocks.cc",
+    "src/fuzztest/internal/register_fuzzing_mocks.h",
     "src/fuzztest/internal/registration.h",
     "src/fuzztest/internal/registry.cc",
     "src/fuzztest/internal/registry.h",

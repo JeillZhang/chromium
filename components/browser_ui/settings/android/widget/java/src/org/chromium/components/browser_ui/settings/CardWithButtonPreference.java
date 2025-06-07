@@ -4,8 +4,6 @@
 
 package org.chromium.components.browser_ui.settings;
 
-import static org.chromium.build.NullUtil.assumeNonNull;
-
 import android.content.Context;
 import android.util.AttributeSet;
 import android.widget.Button;
@@ -27,7 +25,7 @@ public class CardWithButtonPreference extends ChromeBasePreference {
      * @param context The context of the preference.
      * @param attrs The attributes of the preference.
      */
-    public CardWithButtonPreference(Context context, AttributeSet attrs) {
+    public CardWithButtonPreference(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
         setLayoutResource(R.layout.card_with_button_preference_layout);
     }
@@ -40,7 +38,6 @@ public class CardWithButtonPreference extends ChromeBasePreference {
         holder.itemView.setClickable(false);
 
         Button button = (Button) holder.findViewById(R.id.card_button);
-        assumeNonNull(button);
         button.setText(mButtonText);
         button.setOnClickListener(
                 (v) -> {

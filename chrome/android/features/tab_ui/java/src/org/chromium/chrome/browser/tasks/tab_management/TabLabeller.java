@@ -10,13 +10,16 @@ import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 
-import androidx.annotation.Nullable;
+import androidx.annotation.ColorInt;
 
 import org.chromium.base.Callback;
 import org.chromium.base.Token;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.widget.async_image.AsyncImageView;
 import org.chromium.components.collaboration.messaging.CollaborationEvent;
 import org.chromium.components.collaboration.messaging.MessageUtils;
@@ -35,6 +38,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /** Pushes label updates to UI for tabs. */
+@NullMarked
 public class TabLabeller extends TabObjectLabeller {
     private final Context mContext;
     private final DataSharingUIDelegate mDataSharingUiDelegate;
@@ -58,7 +62,7 @@ public class TabLabeller extends TabObjectLabeller {
         return mTabGroupIdSupplier.get() != null
                 && Objects.equals(
                         mTabGroupIdSupplier.get(), MessageUtils.extractTabGroupId(message))
-                && message.type == PersistentNotificationType.CHIP
+                && message.type == PersistentNotificationType.DIRTY_TAB
                 && getTabId(message) != Tab.INVALID_TAB_ID
                 && getTextRes(message) != Resources.ID_NULL;
     }
@@ -80,7 +84,7 @@ public class TabLabeller extends TabObjectLabeller {
         if (tabGroupId == null) return Collections.emptyList();
         LocalTabGroupId localTabGroupId = new LocalTabGroupId(tabGroupId);
         EitherGroupId eitherGroupId = EitherGroupId.createLocalId(localTabGroupId);
-        Optional<Integer> messageType = Optional.of(PersistentNotificationType.CHIP);
+        Optional<Integer> messageType = Optional.of(PersistentNotificationType.DIRTY_TAB);
         return mMessagingBackendService.getMessagesForGroup(eitherGroupId, messageType);
     }
 
@@ -99,6 +103,8 @@ public class TabLabeller extends TabObjectLabeller {
                 assert widthPx == heightPx;
                 // Even with a null member a valid bitmap will be produced.
                 @Nullable GroupMember groupMember = MessageUtils.extractMember(message);
+                @ColorInt
+                int fallbackColor = SemanticColorUtils.getDefaultIconColorAccent1(mContext);
                 DataSharingAvatarCallback avatarCallback =
                         (Bitmap bitmap) -> onAvatar(consumer, bitmap);
                 DataSharingAvatarBitmapConfig config =
@@ -106,6 +112,7 @@ public class TabLabeller extends TabObjectLabeller {
                                 .setContext(mContext)
                                 .setGroupMember(groupMember)
                                 .setAvatarSizeInPixels(widthPx)
+                                .setAvatarFallbackColor(fallbackColor)
                                 .setDataSharingAvatarCallback(avatarCallback)
                                 .build();
                 mDataSharingUiDelegate.getAvatarBitmap(config);

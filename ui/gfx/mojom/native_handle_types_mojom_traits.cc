@@ -20,7 +20,7 @@
 
 #if BUILDFLAG(IS_WIN)
 #include "base/memory/unsafe_shared_memory_region.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #endif  // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(IS_ANDROID)
@@ -183,29 +183,21 @@ gfx::mojom::GpuMemoryBufferPlatformHandleDataView::Tag UnionTraits<
       NOTREACHED();  // Handled by `IsNull()` and should never reach here.
     case gfx::SHARED_MEMORY_BUFFER:
       return Tag::kSharedMemoryHandle;
-    case gfx::IO_SURFACE_BUFFER:
 #if BUILDFLAG(IS_APPLE)
+    case gfx::IO_SURFACE_BUFFER:
       return Tag::kMachPort;
-#else
-      NOTREACHED();
 #endif  // BUILDFLAG(IS_APPLE)
-    case gfx::NATIVE_PIXMAP:
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_OZONE)
+    case gfx::NATIVE_PIXMAP:
       return Tag::kNativePixmapHandle;
-#else
-      NOTREACHED();
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_OZONE)
-    case gfx::DXGI_SHARED_HANDLE:
 #if BUILDFLAG(IS_WIN)
+    case gfx::DXGI_SHARED_HANDLE:
       return Tag::kDxgiHandle;
-#else
-      NOTREACHED();
 #endif
-    case gfx::ANDROID_HARDWARE_BUFFER:
 #if BUILDFLAG(IS_ANDROID)
+    case gfx::ANDROID_HARDWARE_BUFFER:
       return Tag::kAndroidHardwareBufferHandle;
-#else
-      NOTREACHED();
 #endif  // BUILDFLAG(IS_ANDROID)
   }
   NOTREACHED();
@@ -241,7 +233,7 @@ bool UnionTraits<gfx::mojom::GpuMemoryBufferPlatformHandleDataView,
   switch (data.tag()) {
     case Tag::kSharedMemoryHandle:
       handle->type = gfx::SHARED_MEMORY_BUFFER;
-      return data.ReadSharedMemoryHandle(&handle->region());
+      return data.ReadSharedMemoryHandle(&handle->region_);
 #if BUILDFLAG(IS_APPLE)
     case Tag::kMachPort:
       handle->type = gfx::IO_SURFACE_BUFFER;
@@ -262,12 +254,12 @@ bool UnionTraits<gfx::mojom::GpuMemoryBufferPlatformHandleDataView,
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_OZONE)
     case Tag::kNativePixmapHandle:
       handle->type = gfx::NATIVE_PIXMAP;
-      return data.ReadNativePixmapHandle(&handle->native_pixmap_handle);
+      return data.ReadNativePixmapHandle(&handle->native_pixmap_handle_);
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_OZONE)
 #if BUILDFLAG(IS_WIN)
     case Tag::kDxgiHandle:
       handle->type = gfx::DXGI_SHARED_HANDLE;
-      return data.ReadDxgiHandle(&handle->dxgi_handle());
+      return data.ReadDxgiHandle(&handle->dxgi_handle_);
 #endif  // BUILDFLAG(IS_WIN)
 #if BUILDFLAG(IS_ANDROID)
     case Tag::kAndroidHardwareBufferHandle:

@@ -22,6 +22,7 @@
 #include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/views/bubble/bubble_dialog_model_host.h"
 #include "ui/views/widget/native_widget.h"
 #include "ui/views/widget/widget.h"
@@ -80,7 +81,15 @@ class ModalDialogHostObserverViews : public ModalDialogHostObserver {
     }
   }
   void OnHostDestroying() override {
+    auto self = weak_ptr_factory_.GetWeakPtr();
     dialog_widget_->Close();
+
+    // Widget::Close() might synchronously destroy the widget and `this`,
+    // e.g. if Widget::MakeCloseSynchronous() is used.
+    if (!self) {
+      return;
+    }
+
     modal_dialog_host_observation_.Reset();
     host_ = nullptr;
   }
@@ -97,6 +106,8 @@ class ModalDialogHostObserverViews : public ModalDialogHostObserver {
 
   base::ScopedObservation<ModalDialogHost, ModalDialogHostObserver>
       modal_dialog_host_observation_{this};
+
+  base::WeakPtrFactory<ModalDialogHostObserverViews> weak_ptr_factory_{this};
 };
 
 gfx::Rect GetModalDialogBounds(views::Widget* widget,
@@ -192,6 +203,28 @@ void ConfigureDesiredBoundsDelegate(views::WidgetDelegate* dialog_delegate,
 
 }  // namespace
 
+class BrowserModalHelper {
+ public:
+  static views::Widget* Show(std::unique_ptr<ui::DialogModel> dialog_model,
+                             gfx::NativeWindow parent) {
+    // TODO(crbug.com/41493925): Remove will_use_custom_frame once native frame
+    // dialogs support autosize.
+    bool will_use_custom_frame = views::DialogDelegate::CanSupportCustomFrame(
+        parent ? CurrentBrowserModalClient()->GetDialogHostView(parent)
+               : gfx::NativeView());
+    auto dialog = views::BubbleDialogModelHost::CreateModal(
+        std::move(dialog_model), ui::mojom::ModalType::kWindow,
+        will_use_custom_frame);
+    dialog->SetOwnedByWidget(views::WidgetDelegate::OwnedByWidgetPassKey());
+    auto* widget = constrained_window::CreateBrowserModalDialogViews(
+        std::move(dialog), parent);
+    CHECK_EQ(widget->widget_delegate()->AsDialogDelegate()->use_custom_frame(),
+             will_use_custom_frame);
+    widget->Show();
+    return widget;
+  }
+};
+
 // static
 void SetConstrainedWindowViewsClient(
     std::unique_ptr<ConstrainedWindowViewsClient> new_client) {
@@ -274,8 +307,15 @@ views::Widget* CreateWebModalDialogViews(views::WidgetDelegate* dialog,
 
   web_modal::ModalDialogHost* const dialog_host =
       manager->delegate()->GetWebContentsModalDialogHost();
+  CHECK(dialog_host);
+
+  // Use desktop widget so that it is not constrained by the boundary of the
+  // host window.
+  dialog->set_use_desktop_widget_override(
+      !dialog_host->ShouldDialogBoundsConstrainedByHost());
+
   views::Widget* widget = views::DialogDelegate::CreateDialogWidget(
-      dialog, nullptr, dialog_host->GetHostView());
+      dialog, gfx::NativeWindow(), dialog_host->GetHostView());
   std::unique_ptr<ModalDialogHostObserver> observer =
       std::make_unique<ModalDialogHostObserverViews>(
           dialog_host, widget, /*auto_update_position=*/false);
@@ -301,9 +341,10 @@ views::Widget* CreateBrowserModalDialogViews(views::DialogDelegate* dialog,
   DCHECK(!parent || CurrentBrowserModalClient());
 
   gfx::NativeView parent_view =
-      parent ? CurrentBrowserModalClient()->GetDialogHostView(parent) : nullptr;
-  views::Widget* widget =
-      views::DialogDelegate::CreateDialogWidget(dialog, nullptr, parent_view);
+      parent ? CurrentBrowserModalClient()->GetDialogHostView(parent)
+             : gfx::NativeView();
+  views::Widget* widget = views::DialogDelegate::CreateDialogWidget(
+      dialog, gfx::NativeWindow(), parent_view);
   widget->SetNativeWindowProperty(
       views::kWidgetIdentifierKey,
       const_cast<void*>(kConstrainedWindowWidgetIdentifier));
@@ -338,21 +379,7 @@ views::Widget* CreateBrowserModalDialogViews(views::DialogDelegate* dialog,
 
 views::Widget* ShowBrowserModal(std::unique_ptr<ui::DialogModel> dialog_model,
                                 gfx::NativeWindow parent) {
-  // TODO(crbug.com/41493925): Remove will_use_custom_frame once native frame
-  // dialogs support autosize.
-  bool will_use_custom_frame = views::DialogDelegate::CanSupportCustomFrame(
-      parent ? CurrentBrowserModalClient()->GetDialogHostView(parent)
-             : nullptr);
-  auto dialog = views::BubbleDialogModelHost::CreateModal(
-      std::move(dialog_model), ui::mojom::ModalType::kWindow,
-      will_use_custom_frame);
-  dialog->SetOwnedByWidget(true);
-  auto* widget = constrained_window::CreateBrowserModalDialogViews(
-      std::move(dialog), parent);
-  CHECK_EQ(widget->widget_delegate()->AsDialogDelegate()->use_custom_frame(),
-           will_use_custom_frame);
-  widget->Show();
-  return widget;
+  return BrowserModalHelper::Show(std::move(dialog_model), parent);
 }
 
 views::Widget* ShowWebModal(std::unique_ptr<ui::DialogModel> dialog_model,

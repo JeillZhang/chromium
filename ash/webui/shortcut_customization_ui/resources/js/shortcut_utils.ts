@@ -57,6 +57,7 @@ export const keyToIconNameMap: {[key: string]: string|undefined} = {
   'BrowserHome': 'browser-home',
   'BrowserRefresh': 'refresh',
   'BrowserSearch': 'browser-search',
+  'CameraAccessToggle': 'camera-access-toggle',
   'ContextMenu': 'menu',
   'DoNotDisturb': 'do-not-disturb',
   'EmojiPicker': 'emoji-picker',
@@ -446,7 +447,7 @@ export const getAriaLabelForStandardAccelerators =
  */
 export const getAriaLabelForTextAccelerators =
     (acceleratorInfos: TextAcceleratorInfo[]): string => {
-      return getTextAcceleratorParts(acceleratorInfos as TextAcceleratorInfo[])
+      return getTextAcceleratorParts(acceleratorInfos)
           .map(part => getKeyDisplay(mojoString16ToString(part.text)))
           .join('');
     };

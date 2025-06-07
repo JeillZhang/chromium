@@ -63,12 +63,6 @@
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_utils.h"
 
-#if BUILDFLAG(IS_WIN)
-#include <windows.h>
-
-#include "base/metrics/histogram_functions.h"
-#endif
-
 namespace {
 
 class FrameGrabHandle : public views::View {
@@ -102,7 +96,7 @@ TabStripRegionView::TabStripRegionView(std::unique_ptr<TabStrip> tab_strip)
                    : nullptr),
       render_tab_search_before_tab_strip_(
           !tabs::GetTabSearchTrailingTabstrip(profile_) &&
-          !features::IsTabstripComboButtonEnabled()),
+          !features::IsTabSearchMoving()),
       tab_search_position_metrics_logger_(
           std::make_unique<TabSearchPositionMetricsLogger>(profile_)) {
   views::SetCascadingColorProviderColor(
@@ -126,27 +120,28 @@ TabStripRegionView::TabStripRegionView(std::unique_ptr<TabStrip> tab_strip)
   std::unique_ptr<ProductSpecificationsButton> product_specifications_button;
   if (browser &&
       (browser->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL)) {
-    if (features::IsTabstripComboButtonEnabled() &&
+    if (features::IsTabSearchMoving() &&
+        !features::HasTabSearchToolbarButton() &&
         ShouldShowNewTabButton(browser)) {
       tab_strip_combo_button =
           std::make_unique<TabStripComboButton>(browser, tab_strip_);
-    } else {
+    } else if (!features::IsTabSearchMoving()) {
       tab_search_container = std::make_unique<TabSearchContainer>(
           tab_strip_->controller(), browser->GetTabStripModel(),
           render_tab_search_before_tab_strip_, this, browser,
-          browser->GetFeatures().tab_declutter_controller(),
-          /*anchor_view=*/nullptr, tab_strip_);
+          browser->GetFeatures().tab_declutter_controller(), tab_strip_);
       tab_search_container->SetProperty(views::kCrossAxisAlignmentKey,
                                         views::LayoutAlignment::kCenter);
     }
 
-    if (features::IsTabstripComboButtonEnabled()) {
+    if (features::IsTabSearchMoving()) {
       tab_strip_action_container = std::make_unique<TabStripActionContainer>(
-          tab_strip_->controller(), this,
+          tab_strip_->controller(),
           browser->GetFeatures().tab_declutter_controller(),
           browser->GetFeatures().glic_nudge_controller());
+
       tab_strip_action_container->SetProperty(views::kCrossAxisAlignmentKey,
-                                              views::LayoutAlignment::kCenter);
+                                              views::LayoutAlignment::kStart);
     } else if (base::FeatureList::IsEnabled(commerce::kProductSpecifications)) {
       product_specifications_button =
           std::make_unique<ProductSpecificationsButton>(
@@ -256,7 +251,6 @@ TabStripRegionView::TabStripRegionView(std::unique_ptr<TabStrip> tab_strip)
         views::kMarginsKey,
         gfx::Insets::TLBR(0, 0, 0, GetLayoutConstant(TAB_STRIP_PADDING)));
   }
-
   if (tab_strip_action_container) {
     tab_strip_action_container_ =
         AddChildView(std::move(tab_strip_action_container));
@@ -293,7 +287,7 @@ bool TabStripRegionView::IsRectInWindowCaption(const gfx::Rect& rect) {
 
   // Perform checks for buttons that should be rendered above the tabstrip.
   views::View* button_painted_to_layer;
-  if (features::IsTabstripComboButtonEnabled()) {
+  if (features::IsTabSearchMoving() && !features::HasTabSearchToolbarButton()) {
     button_painted_to_layer = tab_strip_combo_button_;
   } else {
     button_painted_to_layer = new_tab_button_;
@@ -345,17 +339,11 @@ bool TabStripRegionView::IsRectInWindowCaption(const gfx::Rect& rect) {
   // visual portions of the child view we treat it as a click to the caption.
   for (View* const child : children()) {
     if (child != tab_strip_container_ && child != reserved_grab_handle_space_ &&
+        child->GetVisible() &&
         child->GetLocalBounds().Intersects(get_target_rect(child))) {
       return !child->HitTestRect(get_target_rect(child));
     }
   }
-
-#if BUILDFLAG(IS_WIN)
-  bool rect_in_reserved_space =
-      reserved_grab_handle_space_->GetLocalBounds().Intersects(
-          get_target_rect(reserved_grab_handle_space_));
-  ReportCaptionHitTestInReservedGrabHandleSpace(rect_in_reserved_space);
-#endif
 
   return true;
 }
@@ -365,7 +353,7 @@ bool TabStripRegionView::IsPositionInWindowCaption(const gfx::Point& point) {
 }
 
 views::Button* TabStripRegionView::GetNewTabButton() {
-  if (features::IsTabstripComboButtonEnabled()) {
+  if (features::IsTabSearchMoving() && !features::HasTabSearchToolbarButton()) {
     return tab_strip_combo_button_->new_tab_button();
   } else {
     return new_tab_button_;
@@ -466,7 +454,7 @@ void TabStripRegionView::Layout(PassKey) {
   }
 
   views::View* button_to_paint_to_layer;
-  if (features::IsTabstripComboButtonEnabled()) {
+  if (features::IsTabSearchMoving() && !features::HasTabSearchToolbarButton()) {
     button_to_paint_to_layer = tab_strip_combo_button_;
   } else {
     button_to_paint_to_layer = new_tab_button_;
@@ -549,24 +537,6 @@ views::View* TabStripRegionView::GetDefaultFocusableChild() {
                          : AccessiblePaneView::GetDefaultFocusableChild();
 }
 
-// static
-void TabStripRegionView::ReportCaptionHitTestInReservedGrabHandleSpace(
-    bool in_reserved_grab_handle_space) {
-#if BUILDFLAG(IS_WIN)
-  static bool button_down_previously = false;
-  int primary_mouse_button =
-      ::GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;
-  bool button_down_now =
-      (::GetAsyncKeyState(primary_mouse_button) & 0x8000) != 0;
-  if (button_down_now && !button_down_previously) {
-    base::UmaHistogramBoolean(
-        "Chrome.Frame.MouseDownCaptionHitTestInReservedGrabHandleSpace",
-        in_reserved_grab_handle_space);
-  }
-  button_down_previously = button_down_now;
-#endif
-}
-
 void TabStripRegionView::UpdateButtonBorders() {
   const int extra_vertical_space = GetLayoutConstant(TAB_STRIP_HEIGHT) -
                                    GetLayoutConstant(TABSTRIP_TOOLBAR_OVERLAP) -
@@ -588,10 +558,10 @@ void TabStripRegionView::UpdateButtonBorders() {
   // should be improved, likely by taking the scroll state of the tabstrip into
   // account.
   const auto border_insets = gfx::Insets::TLBR(top_inset, 0, bottom_inset, 0);
+  if (tab_strip_action_container_) {
+    tab_strip_action_container_->UpdateButtonBorders(border_insets);
+  }
   if (tab_strip_combo_button_) {
-    if (tab_strip_action_container_) {
-      tab_strip_action_container_->UpdateButtonBorders(border_insets);
-    }
     tab_strip_combo_button_->new_tab_button()->SetBorder(
         views::CreateEmptyBorder(border_insets));
     tab_strip_combo_button_->tab_search_button()->SetBorder(
@@ -622,7 +592,7 @@ void TabStripRegionView::UpdateTabStripMargin() {
   // the tabstrip right margin to reserve space for it.
   std::optional<int> tab_strip_right_margin;
   views::View* button_to_paint_to_layer;
-  if (features::IsTabstripComboButtonEnabled()) {
+  if (features::IsTabSearchMoving() && !features::HasTabSearchToolbarButton()) {
     button_to_paint_to_layer = tab_strip_combo_button_;
   } else {
     button_to_paint_to_layer = new_tab_button_;
@@ -665,7 +635,8 @@ void TabStripRegionView::UpdateTabStripMargin() {
                             GetLayoutConstant(TAB_STRIP_PADDING) +
                             GetLayoutConstant(TAB_STRIP_PADDING) -
                             TabStyle::Get()->GetBottomCornerRadius();
-  } else if (features::IsTabstripComboButtonEnabled() &&
+  } else if (features::IsTabSearchMoving() &&
+             !features::HasTabSearchToolbarButton() &&
              !tabs::GetDefaultTabSearchRightAligned()) {
     // With the combobutton, this case has no caption buttons on the left side.
     // Leave a padding so the tabstrip is after the corner radius.

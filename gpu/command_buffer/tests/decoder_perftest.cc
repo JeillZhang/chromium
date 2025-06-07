@@ -7,6 +7,7 @@
 #pragma allow_unsafe_buffers
 #endif
 
+#include <array>
 #include <memory>
 
 #include "base/command_line.h"
@@ -248,6 +249,8 @@ class RecordReplayContext : public GpuControl {
     command_buffer_->AdvanceMode();
   }
 
+  void WaitExec() { gles2_helper_->Finish(); }
+
   void StartReplay() {
     DCHECK_EQ(command_buffer_->mode(), RecordReplayCommandBuffer::kRecord);
     gles2_helper_->FlushLazy();
@@ -427,6 +430,8 @@ class DecoderPerfTest : public testing::Test {
   void StartRecord() { context_->StartRecord(); }
 
   void StartReplay() { context_->StartReplay(); }
+
+  void WaitExec() { context_->WaitExec(); }
 
   void Replay() { context_->Replay(); }
 
@@ -631,7 +636,7 @@ TEST_F(DecoderPerfTest, ProgramDraw) {
       "  gl_FragColor = color;\n"
       "}\n";
 
-  GLuint programs[2];
+  std::array<GLuint, 2> programs;
   programs[0] =
       CreateAndLinkProgram(kVertexShader, kFragmentShader, {{"position", 0}});
 
@@ -669,8 +674,9 @@ TEST_F(DecoderPerfTest, ProgramDraw) {
   gl_->Uniform2f(scale_location2, 2.f / N, 2.f / N);
   gl_->Uniform4f(color_location2, 1.f, 0.f, 0.f, 1.f);
 
-  GLint offset_locations[2] = {gl_->GetUniformLocation(programs[0], "offset"),
-                               gl_->GetUniformLocation(programs[1], "offset")};
+  std::array<GLint, 2> offset_locations = {
+      gl_->GetUniformLocation(programs[0], "offset"),
+      gl_->GetUniformLocation(programs[1], "offset")};
 
   StartRecord();
   size_t program = 0;
@@ -684,6 +690,7 @@ TEST_F(DecoderPerfTest, ProgramDraw) {
       program = 1 - program;
     }
   }
+  WaitExec();
 
   StartReplay();
   PerfIterator iterator("program_draw_100", kDefaultRuns, kDefaultIterations);

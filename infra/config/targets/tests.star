@@ -21,10 +21,26 @@ targets.tests.gtest_test(
 )
 
 targets.tests.isolated_script_test(
-    name = "android_blink_wpt_tests",
+    name = "android_chrome_wpt_tests",
     args = [
         "--skipped",
         "always",
+        "--test-type",
+        "testharness",
+        "reftest",
+        "crashtest",
+        "print-reftest",
+    ],
+    binary = "chrome_public_wpt",
+)
+
+targets.tests.isolated_script_test(
+    name = "android_webdriver_wpt_tests",
+    args = [
+        "--skipped",
+        "always",
+        "--test-type",
+        "wdspec",
     ],
     binary = "chrome_public_wpt",
 )
@@ -155,6 +171,7 @@ targets.tests.gtest_test(
     name = "ash_pixeltests",
     mixins = [
         "skia_gold_test",
+        "skia_gold_test_on_linux_gce",
     ],
     args = [
         "--enable-pixel-output-in-tests",
@@ -542,7 +559,7 @@ targets.tests.gtest_test(
         "skia_gold_test",
     ],
     args = [
-        "--annotation=Restriction=Tablet,ImportantFormFactors=Tablet",
+        "--annotation=Restriction=Tablet,Restriction=TabletOrDesktop,ImportantFormFactors=Tablet,ImportantFormFactors=TabletOrDesktop",
     ],
     binary = "chrome_public_test_apk",
 )
@@ -697,6 +714,10 @@ targets.tests.isolated_script_test(
 
 targets.tests.gtest_test(
     name = "components_unittests",
+)
+
+targets.tests.isolated_script_test(
+    name = "component_storage_test",
 )
 
 targets.tests.gtest_test(
@@ -893,6 +914,10 @@ targets.tests.gtest_test(
 
 targets.tests.gtest_test(
     name = "cronet_unittests_android",
+)
+
+targets.tests.isolated_script_test(
+    name = "crossbench_smoketests",
 )
 
 targets.tests.gtest_test(
@@ -1150,6 +1175,10 @@ targets.tests.gtest_test(
         "../../media/test/data/test-25fps.vp9.json",
     ],
     binary = "video_decode_accelerator_tests",
+)
+
+targets.tests.gtest_test(
+    name = "video_encode_accelerator_tests",
 )
 
 targets.tests.gtest_test(
@@ -1624,6 +1653,15 @@ targets.tests.gtest_test(
 )
 
 targets.tests.gtest_test(
+    name = "layer_list_mode_cc_unittests",
+    args = [
+        "--test-launcher-filter-file=../../testing/buildbot/filters/layer_list_mode.cc_unittests.filter",
+        "--enable-features=UseLayerListsByDefault",
+    ],
+    binary = "cc_unittests",
+)
+
+targets.tests.gtest_test(
     name = "latency_unittests",
 )
 
@@ -1951,19 +1989,6 @@ targets.tests.gtest_test(
 )
 
 targets.tests.gtest_test(
-    name = "pixel_experimental_browser_tests",
-    mixins = [
-        "skia_gold_test",
-    ],
-    args = [
-        "--browser-ui-tests-verify-pixels",
-        "--enable-pixel-output-in-tests",
-        "--test-launcher-filter-file=../../testing/buildbot/filters/linux-chromeos.browser_tests.pixel_tests.filter",
-    ],
-    binary = "browser_tests",
-)
-
-targets.tests.gtest_test(
     name = "pixel_interactive_ui_tests",
     mixins = [
         "skia_gold_test",
@@ -2070,6 +2095,10 @@ targets.tests.gpu_telemetry_test(
 
 targets.tests.isolated_script_test(
     name = "polymer_tools_python_unittests",
+)
+
+targets.tests.isolated_script_test(
+    name = "webui_resources_tools_python_unittests",
 )
 
 targets.tests.gtest_test(
@@ -2589,6 +2618,15 @@ targets.tests.gtest_test(
 )
 
 targets.tests.gtest_test(
+    name = "views_ax_chromeos_browser_tests",
+    args = [
+        "--enable-features=ViewsAccessibilitySerializeOnDataChanged",
+        "--test-launcher-filter-file=../../testing/buildbot/filters/views_ax_chromeos.browser_tests.filter",
+    ],
+    binary = "browser_tests",
+)
+
+targets.tests.gtest_test(
     name = "viz_unittests",
 )
 
@@ -2723,6 +2761,62 @@ targets.tests.gpu_telemetry_test(
     ],
 )
 
+targets.tests.gpu_telemetry_test(
+    name = "webrtc_gl_passthrough_ganesh_tests",
+    telemetry_test_name = "webrtc",
+    mixins = [
+        "has_native_resultdb_integration",
+        "gpu_force_command_decoder_passthrough",
+        "gpu_force_angle_gl",
+        "gpu_force_skia_ganesh",
+        "gpu_integration_test_common_args",
+    ],
+)
+
+targets.tests.gpu_telemetry_test(
+    name = "webrtc_metal_passthrough_ganesh_tests",
+    telemetry_test_name = "webrtc",
+    mixins = [
+        "has_native_resultdb_integration",
+        "gpu_force_command_decoder_passthrough",
+        "gpu_force_angle_metal",
+        "gpu_force_skia_ganesh",
+        "gpu_integration_test_common_args",
+    ],
+)
+
+targets.tests.gpu_telemetry_test(
+    name = "webrtc_metal_passthrough_graphite_tests",
+    telemetry_test_name = "webrtc",
+    mixins = [
+        "has_native_resultdb_integration",
+        "gpu_force_command_decoder_passthrough",
+        "gpu_force_angle_metal",
+        "gpu_force_skia_graphite",
+        "gpu_integration_test_common_args",
+    ],
+)
+
+targets.tests.gpu_telemetry_test(
+    name = "webrtc_graphite_tests",
+    telemetry_test_name = "webrtc",
+    mixins = [
+        "has_native_resultdb_integration",
+        "gpu_force_command_decoder_validating",
+        "gpu_force_skia_graphite",
+        "gpu_integration_test_common_args",
+    ],
+)
+
+targets.tests.gpu_telemetry_test(
+    name = "webrtc_tests",
+    telemetry_test_name = "webrtc",
+    mixins = [
+        "has_native_resultdb_integration",
+        "gpu_integration_test_common_args",
+    ],
+)
+
 targets.tests.isolated_script_test(
     name = "webdriver_wpt_tests",
     mixins = [
@@ -2795,7 +2889,7 @@ targets.tests.gpu_telemetry_test(
         "gpu_force_command_decoder_passthrough",
         "gpu_force_angle_metal",
         "gpu_force_skia_graphite",
-        "gpu_force_high_performance_gpu_for_webgl",
+        "gpu_force_high_performance_gpu_for_webgl_metal",
         "gpu_enable_metal_debug_layers",
         "gpu_integration_test_webgl2_args",
         "gpu_integration_test_common_args",
@@ -2916,7 +3010,7 @@ targets.tests.gpu_telemetry_test(
         "gpu_force_command_decoder_passthrough",
         "gpu_force_angle_metal",
         "gpu_force_skia_ganesh",
-        "gpu_force_high_performance_gpu_for_webgl",
+        "gpu_force_high_performance_gpu_for_webgl_metal",
         "gpu_enable_metal_debug_layers",
         "gpu_integration_test_webgl1_args",
         "gpu_integration_test_common_args",
@@ -2931,7 +3025,7 @@ targets.tests.gpu_telemetry_test(
         "gpu_force_command_decoder_passthrough",
         "gpu_force_angle_metal",
         "gpu_force_skia_graphite",
-        "gpu_force_high_performance_gpu_for_webgl",
+        "gpu_force_high_performance_gpu_for_webgl_metal",
         "gpu_enable_metal_debug_layers",
         "gpu_integration_test_webgl1_args",
         "gpu_integration_test_common_args",
@@ -3151,7 +3245,7 @@ targets.tests.gtest_test(
 )
 
 targets.tests.isolated_script_test(
-    name = "webview_blink_wpt_tests",
+    name = "android_webview_wpt_tests",
     args = [
         "--skipped",
         "always",

@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "media/gpu/vaapi/test_utils.h"
 
@@ -22,9 +18,12 @@
 #include "third_party/libdrm/src/include/drm/drm_fourcc.h"
 #include "third_party/libyuv/include/libyuv.h"
 #include "ui/gfx/buffer_format_util.h"
+
+// TODO(crbug.com/421698315): Remove.
 #include "ui/gfx/gpu_memory_buffer.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
+// TODO(crbug.com/421698315): Remove.
 #include "media/gpu/test/local_gpu_memory_buffer_manager.h"
 #endif
 

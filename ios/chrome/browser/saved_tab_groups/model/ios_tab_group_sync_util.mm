@@ -160,8 +160,7 @@ void MoveTabGroupAcrossBrowsers(const TabGroup* source_tab_group,
       destination_tab_group));
   // Check that the source browser has one less group.
   CHECK_EQ(source_group_count,
-           source_browser->GetWebStateList()->GetGroups().size() + 1,
-           base::NotFatalUntil::M128);
+           source_browser->GetWebStateList()->GetGroups().size() + 1);
 }
 
 void MoveTabGroupToBrowser(const TabGroup* source_tab_group,
@@ -293,14 +292,13 @@ bool IsSaveableNavigation(web::NavigationContext* navigation_context) {
 
 bool IsTabGroupShared(const TabGroup* tab_group,
                       TabGroupSyncService* sync_service) {
-  BOOL shared = false;
-  if (sync_service && tab_group) {
-    std::optional<tab_groups::SavedTabGroup> saved_group =
-        sync_service->GetGroup(tab_group->tab_group_id());
-    shared =
-        saved_group.has_value() && saved_group->collaboration_id().has_value();
+  if (!sync_service || !tab_group) {
+    return false;
   }
-  return shared;
+
+  std::optional<tab_groups::SavedTabGroup> saved_group =
+      sync_service->GetGroup(tab_group->tab_group_id());
+  return saved_group.has_value() && saved_group->collaboration_id().has_value();
 }
 
 data_sharing::MemberRole GetUserRoleForGroup(

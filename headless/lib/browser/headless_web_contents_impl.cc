@@ -151,7 +151,7 @@ class HeadlessWebContentsImpl::Delegate : public content::WebContentsDelegate {
                                  ? default_bounds
                                  : window_features.bounds;
     raw_child_contents->SetBounds(bounds);
-    return nullptr;
+    return raw_child_contents->web_contents();
   }
 
   content::WebContents* OpenURLFromTab(
@@ -203,6 +203,7 @@ class HeadlessWebContentsImpl::Delegate : public content::WebContentsDelegate {
   }
 
   bool IsWebContentsCreationOverridden(
+      content::RenderFrameHost* opener,
       content::SiteInstance* source_site_instance,
       content::mojom::WindowContainerType window_container_type,
       const GURL& opener_url,

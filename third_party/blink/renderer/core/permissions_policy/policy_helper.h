@@ -7,13 +7,13 @@
 
 #include "base/memory/stack_allocated.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink-forward.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
 #include "third_party/blink/public/mojom/permissions_policy/document_policy_feature.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/hash_traits.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -40,14 +40,14 @@ class PolicyParserMessageBuffer {
   void Warn(const String& message) {
     if (!discard_message_) {
       message_buffer_.emplace_back(mojom::blink::ConsoleMessageLevel::kWarning,
-                                   prefix_ + message);
+                                   WTF::StrCat({prefix_, message}));
     }
   }
 
   void Error(const String& message) {
     if (!discard_message_) {
       message_buffer_.emplace_back(mojom::blink::ConsoleMessageLevel::kError,
-                                   prefix_ + message);
+                                   WTF::StrCat({prefix_, message}));
     }
   }
 
@@ -108,6 +108,11 @@ const DocumentPolicyFeatureSet& GetAvailableDocumentPolicyFeatures();
 
 // Refresh the set content based on current RuntimeFeatures environment.
 CORE_EXPORT void ResetAvailableDocumentPolicyFeaturesForTest();
+
+// Returns if the given API has been configured as privacy sensitive. If
+// sensitive, access to the feature may be denied in some circumstances.
+bool IsPrivacySensitiveFeature(
+    network::mojom::blink::PermissionsPolicyFeature feature);
 
 // Returns true if this PermissionsPolicyFeature is currently disabled by an
 // origin trial (it is origin trial controlled, and the origin trial is not

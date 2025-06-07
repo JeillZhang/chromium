@@ -17,6 +17,7 @@ import android.view.View;
 import android.view.ViewGroup;
 
 import androidx.annotation.ColorInt;
+import androidx.annotation.ColorRes;
 import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -24,6 +25,7 @@ import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.app.ActivityOptionsCompat;
+import androidx.core.content.ContextCompat;
 
 import org.jni_zero.CheckDiscard;
 
@@ -40,7 +42,7 @@ import org.chromium.base.supplier.OneShotCallback;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.IntentHandler;
-import org.chromium.chrome.browser.app.tabmodel.TabWindowManagerSingleton;
+import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.back_press.BackPressManager;
 import org.chromium.chrome.browser.browserservices.intents.WebappConstants;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
@@ -49,6 +51,7 @@ import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.init.ActivityProfileProvider;
 import org.chromium.chrome.browser.init.AsyncInitializationActivity;
 import org.chromium.chrome.browser.locale.LocaleManager;
+import org.chromium.chrome.browser.metrics.StartupMetricsTracker;
 import org.chromium.chrome.browser.metrics.UmaActivityObserver;
 import org.chromium.chrome.browser.omnibox.BackKeyBehaviorDelegate;
 import org.chromium.chrome.browser.omnibox.LocationBarCoordinator;
@@ -64,6 +67,7 @@ import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.rlz.RevenueStats;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.toolbar.VoiceToolbarButtonController;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager.SnackbarManageable;
@@ -72,9 +76,9 @@ import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.I
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.ResolutionType;
 import org.chromium.chrome.browser.ui.searchactivityutils.SearchActivityExtras.SearchType;
 import org.chromium.chrome.browser.ui.system.StatusBarColorController;
+import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
 import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
 import org.chromium.components.metrics.OmniboxEventProtos.OmniboxEventProto.PageClassification;
-import org.chromium.components.omnibox.OmniboxFeatures;
 import org.chromium.ui.base.ActivityKeyboardVisibilityDelegate;
 import org.chromium.ui.base.ActivityWindowAndroid;
 import org.chromium.ui.modaldialog.ModalDialogManager;
@@ -222,12 +226,15 @@ public class SearchActivity extends AsyncInitializationActivity
     // Incoming intent search type. See {@link SearchActivityUtils#SearchType}.
     @SearchType Integer mSearchType;
 
+    private final StartupMetricsTracker mStartupMetricsTracker;
     private LocationBarCoordinator mLocationBarCoordinator;
     private SearchActivityLocationBarLayout mSearchBox;
     private View mAnchorView;
 
     private SnackbarManager mSnackbarManager;
     private final ObservableSupplierImpl<Profile> mProfileSupplier = new ObservableSupplierImpl<>();
+    private final ObservableSupplierImpl<TabModelSelector> mTabModelSelectorSupplier =
+            new ObservableSupplierImpl<>();
 
     // SearchBoxDataProvider and LocationBarEmbedderUiOverrides are passed to several child
     // components upon construction. Ensure we don't accidentally introduce disconnection by
@@ -239,6 +246,7 @@ public class SearchActivity extends AsyncInitializationActivity
 
     public SearchActivity() {
         mUmaActivityObserver = new UmaActivityObserver(this);
+        mStartupMetricsTracker = new StartupMetricsTracker(mTabModelSelectorSupplier);
         mLocationBarUiOverrides.setForcedPhoneStyleOmnibox();
     }
 
@@ -253,6 +261,7 @@ public class SearchActivity extends AsyncInitializationActivity
                 this,
                 /* listenToActivityState= */ true,
                 new ActivityKeyboardVisibilityDelegate(new WeakReference(this)),
+                /* activityTopResumedSupported= */ false,
                 getIntentRequestTracker(),
                 getInsetObserver(),
                 /* trackOcclusion= */ true) {
@@ -272,7 +281,6 @@ public class SearchActivity extends AsyncInitializationActivity
     @Override
     protected void triggerLayoutInflation() {
         enableHardwareAcceleration();
-        mSnackbarManager = new SnackbarManager(this, findViewById(android.R.id.content), null);
         boolean isIncognito = SearchActivityUtils.getIntentIncognitoStatus(getIntent());
         mSearchBoxDataProvider.initialize(this, isIncognito);
 
@@ -283,23 +291,15 @@ public class SearchActivity extends AsyncInitializationActivity
 
         var contentView = createContentView();
         setContentView(contentView);
+        mStartupMetricsTracker.registerSearchActivityViewObserver(contentView);
+        mSnackbarManager = new SnackbarManager(this, contentView, null);
 
         // Build the search box.
         mSearchBox = contentView.findViewById(R.id.search_location_bar);
         mAnchorView = contentView.findViewById(R.id.toolbar);
 
         // Update the status bar's color based on the toolbar color.
-        Drawable anchorViewBackground = mAnchorView.getBackground();
-        assert anchorViewBackground instanceof GradientDrawable
-                : "Unsupported background drawable.";
-        if (anchorViewBackground instanceof GradientDrawable) {
-            int anchorViewColor =
-                    ((GradientDrawable) anchorViewBackground).getColor().getDefaultColor();
-            StatusBarColorController.setStatusBarColor(
-                    getEdgeToEdgeManager().getEdgeToEdgeSystemBarColorHelper(),
-                    this.getWindow(),
-                    anchorViewColor);
-        }
+        setStatusAndNavBarColors();
 
         BackPressManager backPressManager = new BackPressManager();
         getOnBackPressedDispatcher().addCallback(this, backPressManager.getCallback());
@@ -366,11 +366,12 @@ public class SearchActivity extends AsyncInitializationActivity
                         /* omniboxSuggestionsDropdownScrollListener= */ null,
                         /* tabModelSelectorSupplier= */ null,
                         mLocationBarUiOverrides,
-                        null,
+                        findViewById(R.id.control_container),
                         /* bottomWindowPaddingSupplier */ () -> 0,
                         /* onLongClickListener= */ null,
                         /* browserControlsStateProvider= */ null,
-                        /* isToolbarPositionCustomizationEnabled= */ false);
+                        /* isToolbarPositionCustomizationEnabled= */ false,
+                        (context, tab, fromAppMenu) -> {});
         mLocationBarCoordinator.setUrlBarFocusable(true);
         mLocationBarCoordinator.setShouldShowMicButtonWhenUnfocused(true);
         mLocationBarCoordinator.getOmniboxStub().addUrlFocusChangeListener(this);
@@ -408,10 +409,7 @@ public class SearchActivity extends AsyncInitializationActivity
 
         mSearchBoxDataProvider.setCurrentUrl(SearchActivityUtils.getIntentUrl(intent));
 
-        if (OmniboxFeatures.sAndroidHubSearch.isEnabled()
-                && mSearchBoxDataProvider.isIncognitoBranded()) {
-            setIncognitoColorScheme();
-        }
+        setColorScheme(mSearchBoxDataProvider.isIncognitoBranded());
 
         switch (mIntentOrigin) {
             case IntentOrigin.CUSTOM_TAB:
@@ -517,7 +515,7 @@ public class SearchActivity extends AsyncInitializationActivity
     private void finishNativeInitializationWithProfile(Profile profile) {
         refinePageClassWithProfile(profile);
 
-        if (OmniboxFeatures.sAndroidHubSearch.isEnabled() && mIntentOrigin == IntentOrigin.HUB) {
+        if (mIntentOrigin == IntentOrigin.HUB) {
             setHubSearchBoxUrlBarElements();
         }
 
@@ -649,7 +647,9 @@ public class SearchActivity extends AsyncInitializationActivity
                 isIncognito
                         ? R.string.hub_search_empty_hint_incognito
                         : R.string.hub_search_empty_hint;
-        mLocationBarCoordinator.getUrlBarCoordinator().setUrlBarHintText(hintTextRes);
+        mLocationBarCoordinator
+                .getUrlBarCoordinator()
+                .setUrlBarHintText(getResources().getString(hintTextRes));
     }
 
     /* package */ boolean loadUrl(@NonNull OmniboxLoadUrlParams params, boolean isIncognito) {
@@ -665,8 +665,7 @@ public class SearchActivity extends AsyncInitializationActivity
             intent.putExtra(SearchWidgetProvider.EXTRA_FROM_SEARCH_WIDGET, true);
         }
 
-        if (OmniboxFeatures.sAndroidHubSearch.isEnabled()
-                && mSearchBoxDataProvider.isIncognitoBranded()) {
+        if (mSearchBoxDataProvider.isIncognitoBranded()) {
             intent.putExtra(Browser.EXTRA_APPLICATION_ID, getApplicationContext().getPackageName());
             intent.putExtra(IntentHandler.EXTRA_OPEN_NEW_INCOGNITO_TAB, true);
             IntentUtils.addTrustedIntentExtras(intent);
@@ -695,22 +694,50 @@ public class SearchActivity extends AsyncInitializationActivity
                         });
     }
 
-    private void setIncognitoColorScheme() {
-        @ColorInt
-        int anchorViewBackgroundColor = getColor(R.color.default_bg_color_dark_elev_3_baseline);
-        GradientDrawable anchorViewBackground = (GradientDrawable) mAnchorView.getBackground();
-        anchorViewBackground.setColor(anchorViewBackgroundColor);
-        // Update the status bar's color based on the toolbar color.
-        StatusBarColorController.setStatusBarColor(
-                getEdgeToEdgeManager().getEdgeToEdgeSystemBarColorHelper(),
-                getWindow(),
-                anchorViewBackgroundColor);
-
+    // Set the color scheme of the search box background and anchor view background based on the
+    // current incognito state. In the non incognito state, the color scheme is the same as what is
+    // defined on initialize in {@link SearchActivityLocationBarLayout}.
+    private void setColorScheme(boolean isIncognito) {
+        @ColorRes int anchorViewBackgroundColorRes = R.color.omnibox_suggestion_dropdown_bg;
         GradientDrawable searchBoxBackground =
                 (GradientDrawable) ((LayerDrawable) mSearchBox.getBackground()).getDrawable(0);
-        searchBoxBackground.setTintList(
-                AppCompatResources.getColorStateList(
-                        this, R.color.toolbar_text_box_background_incognito));
+
+        if (isIncognito) {
+            anchorViewBackgroundColorRes = R.color.omnibox_dropdown_bg_incognito;
+            searchBoxBackground.setTintList(
+                    AppCompatResources.getColorStateList(
+                            this, R.color.toolbar_text_box_background_incognito));
+        } else {
+            searchBoxBackground.setTintList(null);
+            searchBoxBackground.setTint(
+                    ContextCompat.getColor(this, R.color.omnibox_suggestion_bg));
+        }
+
+        @ColorInt int anchorViewBackgroundColor = getColor(anchorViewBackgroundColorRes);
+        GradientDrawable anchorViewBackground = (GradientDrawable) mAnchorView.getBackground();
+        anchorViewBackground.setColor(anchorViewBackgroundColor);
+        setStatusAndNavBarColors();
+    }
+
+    /**
+     * Sets the status and nav bar colors to match the background color of mAnchorView.
+     *
+     * <p>Make sure that mAnchorView has the desired background color before you call this method.
+     */
+    private void setStatusAndNavBarColors() {
+        Drawable anchorViewBackground = mAnchorView.getBackground();
+        assert anchorViewBackground instanceof GradientDrawable
+                : "Unsupported background drawable.";
+        int anchorViewColor =
+                ((GradientDrawable) anchorViewBackground).getColor().getDefaultColor();
+        EdgeToEdgeSystemBarColorHelper helper =
+                getEdgeToEdgeManager() != null
+                        ? getEdgeToEdgeManager().getEdgeToEdgeSystemBarColorHelper()
+                        : null;
+        StatusBarColorController.setStatusBarColor(helper, getWindow(), anchorViewColor);
+        if (helper != null) {
+            helper.setNavigationBarColor(anchorViewColor);
+        }
     }
 
     @VisibleForTesting
@@ -888,6 +915,10 @@ public class SearchActivity extends AsyncInitializationActivity
 
     /* package */ void setUmaActivityObserverForTesting(UmaActivityObserver observer) {
         mUmaActivityObserver = observer;
+    }
+
+    /* package */ void setAnchorViewForTesting(View anchorView) {
+        mAnchorView = anchorView;
     }
 
     @Override

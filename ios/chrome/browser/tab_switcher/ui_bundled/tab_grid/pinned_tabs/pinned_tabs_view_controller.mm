@@ -20,12 +20,13 @@
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_context_menu/tab_context_menu_provider.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/legacy_grid_transition_layout.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/tab_grid_transition_item.h"
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_snapshot_and_favicon.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_switcher_item.h"
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_switcher_item_snapshot_and_favicon_data_source.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_utils.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/grit/ios_strings.h"
-#import "ios/public/provider/chrome/browser/modals/modals_api.h"
 #import "ios/web/public/web_state_id.h"
 #import "ui/base/l10n/l10n_util_mac.h"
 
@@ -414,7 +415,7 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
 }
 
 - (void)dismissModals {
-  ios::provider::DismissModalsForCollectionView(self.collectionView);
+  [self.collectionView.contextMenuInteraction dismissMenu];
 }
 
 #pragma mark - UICollectionViewDataSource
@@ -842,20 +843,18 @@ NSIndexPath* CreateIndexPath(NSInteger index) {
   if (item) {
     cell.pinnedItemIdentifier = item.identifier;
     cell.title = item.title;
-    [item fetchFavicon:^(TabSwitcherItem* innerItem, UIImage* icon) {
-      // Only update the icon if the cell is not already reused for another
+
+    auto completion = ^(TabSwitcherItem* innerItem,
+                        TabSnapshotAndFavicon* tabSnapshotAndFavicon) {
+      // Only apply changes if the cell is not already reused for another
       // item.
       if (cell.pinnedItemIdentifier == innerItem.identifier) {
-        cell.icon = icon;
+        cell.icon = tabSnapshotAndFavicon.favicon;
+        cell.snapshot = tabSnapshotAndFavicon.snapshot;
       }
-    }];
-    [item fetchSnapshot:^(TabSwitcherItem* innerItem, UIImage* snapshot) {
-      // Only update the icon if the cell is not already reused for another
-      // item.
-      if (cell.pinnedItemIdentifier == innerItem.identifier) {
-        cell.snapshot = snapshot;
-      }
-    }];
+    };
+    [self.snapshotAndfaviconDataSource fetchTabSnapshotAndFavicon:item
+                                                       completion:completion];
   }
 
   cell.accessibilityIdentifier = [NSString

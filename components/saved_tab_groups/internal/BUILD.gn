@@ -27,6 +27,7 @@ source_set("internal") {
     ":tab_group_sync_bridge",
     "//base",
     "//components/data_sharing/public:features",
+    "//components/data_sharing/public:logger",
     "//components/keyed_service/core",
     "//components/optimization_guide/core",
     "//components/saved_tab_groups/delegate",
@@ -159,6 +160,7 @@ source_set("unit_tests") {
     "saved_tab_group_model_unittest.cc",
     "saved_tab_group_proto_conversion_unittest.cc",
     "saved_tab_group_sync_bridge_unittest.cc",
+    "shared_tab_group_account_data_sync_bridge_unittest.cc",
     "shared_tab_group_data_sync_bridge_unittest.cc",
     "startup_helper_unittest.cc",
     "tab_group_sync_bridge_mediator_unittest.cc",
@@ -173,6 +175,8 @@ source_set("unit_tests") {
     ":tab_group_sync_bridge",
     "//base",
     "//base/test:test_support",
+    "//components/data_sharing/public:features",
+    "//components/data_sharing/public:logger",
     "//components/optimization_guide/core",
     "//components/optimization_guide/core:test_support",
     "//components/pref_registry:pref_registry",
@@ -181,6 +185,7 @@ source_set("unit_tests") {
     "//components/saved_tab_groups/proto",
     "//components/saved_tab_groups/public",
     "//components/saved_tab_groups/test_support",
+    "//components/saved_tab_groups/test_support:test_support_proto",
     "//components/signin/public/identity_manager:test_support",
     "//components/sync",
     "//components/sync:test_support",
@@ -210,11 +215,12 @@ source_set("tab_group_sync_bridge") {
 
     # This is allowed until usage of SavedTabGroupKeyedService has been migrated
     # to TabGroupSyncService.
+    "//chrome/android:browser_test_support",
     "//chrome/browser",
+    "//chrome/browser/sync/test/integration:*",
     "//chrome/browser/ui",
     "//chrome/browser/ui/tabs:tab_group_impl",
-    "//chrome/test:browser_tests",
-    "//chrome/test:sync_integration_tests",
+    "//chrome/test:*",
     "//ios/chrome/browser/saved_tab_groups/model",
     "//ios/chrome/test/app:test_support",
   ]
@@ -224,6 +230,8 @@ source_set("tab_group_sync_bridge") {
     "saved_tab_group_proto_conversions.h",
     "saved_tab_group_sync_bridge.cc",
     "saved_tab_group_sync_bridge.h",
+    "shared_tab_group_account_data_sync_bridge.cc",
+    "shared_tab_group_account_data_sync_bridge.h",
     "shared_tab_group_data_sync_bridge.cc",
     "shared_tab_group_data_sync_bridge.h",
     "sync_bridge_tab_group_model_wrapper.cc",
@@ -236,6 +244,7 @@ source_set("tab_group_sync_bridge") {
 
   deps = [
     ":model",
+    "//components/data_sharing/public:logger",
     "//components/saved_tab_groups/proto",
     "//components/saved_tab_groups/public",
     "//components/tab_groups:tab_groups",

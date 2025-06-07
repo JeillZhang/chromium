@@ -93,6 +93,7 @@ std::vector<std::string> GetTargetUrlsWithoutPorts(
 }
 }  // namespace
 
+using testing::ElementsAre;
 using testing::Eq;
 
 class DebuggerApiTest : public ExtensionApiTest {
@@ -248,15 +249,15 @@ IN_PROC_BROWSER_TEST_F(DebuggerApiTest,
   const Extension* another_extension = LoadExtension(path);
   ASSERT_TRUE(another_extension);
 
-  GURL other_ext_url = another_extension->GetResourceURL("popup.html");
+  GURL other_ext_url = another_extension->ResolveExtensionURL("popup.html");
 
   // This extension should not be able to access another extension.
   EXPECT_TRUE(RunAttachFunction(
       other_ext_url, manifest_errors::kCannotAccessExtensionUrl));
 
   // This extension *should* be able to debug itself.
-  EXPECT_TRUE(RunAttachFunction(extension()->GetResourceURL("test_file.html"),
-                                std::string()));
+  EXPECT_TRUE(RunAttachFunction(
+      extension()->ResolveExtensionURL("test_file.html"), std::string()));
 
   // Append extensions on chrome urls switch. The extension should now be able
   // to debug any extension.
@@ -687,10 +688,9 @@ IN_PROC_BROWSER_TEST_F(CrossProfileDebuggerApiTest, GetTargets) {
             get_targets_function.get(), "[]", profile()));
 
     ASSERT_TRUE(value.is_list());
-    const base::Value::List targets = std::move(value).TakeList();
-    ASSERT_THAT(targets, testing::SizeIs(1));
-    EXPECT_THAT(targets[0].GetDict(), base::test::DictionaryHasValue(
-                                          "url", base::Value("about:blank")));
+    EXPECT_THAT(std::move(value).TakeList(),
+                ElementsAre(base::test::DictionaryHasValue(
+                    "url", base::Value("about:blank"))));
   }
 
   {

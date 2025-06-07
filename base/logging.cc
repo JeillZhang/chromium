@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "base/logging.h"
 
 #include <limits.h>
@@ -28,6 +23,7 @@
 #include "base/base_export.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/containers/stack.h"
 #include "base/debug/alias.h"
 #include "base/debug/crash_logging.h"
@@ -37,7 +33,6 @@
 #include "base/functional/callback.h"
 #include "base/immediate_crash.h"
 #include "base/no_destructor.h"
-#include "base/not_fatal_until.h"
 #include "base/path_service.h"
 #include "base/pending_task.h"
 #include "base/posix/eintr_wrapper.h"
@@ -52,11 +47,13 @@
 #include "base/task/common/task_annotator.h"
 #include "base/test/scoped_logging_settings.h"
 #include "base/threading/platform_thread.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/interned_args_helper.h"
+#include "base/trace_event/typed_macros.h"
 #include "base/vlog.h"
 #include "build/build_config.h"
 #include "third_party/abseil-cpp/absl/base/internal/raw_logging.h"
 #include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
+#include "third_party/perfetto/protos/perfetto/trace/track_event/log_message.pbzero.h"
 
 #if !BUILDFLAG(IS_NACL)
 #include "base/auto_reset.h"
@@ -182,7 +179,7 @@ std::unique_ptr<VlogInfo> VlogInfoFromCommandLine() {
 #endif  // defined(LEAK_SANITIZER)
   return std::make_unique<VlogInfo>(
       command_line->GetSwitchValueASCII(switches::kV),
-      command_line->GetSwitchValueASCII(switches::kVModule), &g_min_log_level);
+      command_line->GetSwitchValueASCII(switches::kVModule), g_min_log_level);
 }
 
 // If the commandline is initialized for the current process this will
@@ -207,7 +204,7 @@ static_assert(LOGGING_NUM_SEVERITIES == std::size(log_severity_names),
 
 const char* log_severity_name(int severity) {
   if (severity >= 0 && severity < LOGGING_NUM_SEVERITIES) {
-    return log_severity_names[severity];
+    return UNSAFE_TODO(log_severity_names[severity]);
   }
   return "UNKNOWN";
 }
@@ -435,7 +432,8 @@ void WriteToFd(int fd, const char* data, size_t length) {
   size_t bytes_written = 0;
   long rv;
   while (bytes_written < length) {
-    rv = HANDLE_EINTR(write(fd, data + bytes_written, length - bytes_written));
+    rv = HANDLE_EINTR(
+        write(fd, UNSAFE_TODO(data + bytes_written), length - bytes_written));
     if (rv < 0) {
       // Give up, nothing we can do now.
       break;
@@ -471,15 +469,15 @@ std::string BuildCrashString(const char* file,
                              const char* message_without_prefix) {
   // Only log last path component.
   if (file) {
-    const char* slash = strrchr(file,
+    const char* slash = UNSAFE_TODO(strrchr(file,
 #if BUILDFLAG(IS_WIN)
-                                '\\'
+                                            '\\'
 #else
-                                '/'
+                                            '/'
 #endif  // BUILDFLAG(IS_WIN)
-    );
+                                            ));
     if (slash) {
-      file = slash + 1;
+      file = UNSAFE_TODO(slash + 1);
     }
   }
 
@@ -553,13 +551,13 @@ bool BaseInitLoggingImpl(const LoggingSettings& settings) {
 
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
   if (settings.log_file) {
-    CHECK(settings.log_file_path.empty(), base::NotFatalUntil::M127);
+    CHECK(settings.log_file_path.empty());
     g_log_file = settings.log_file;
     return true;
   }
 #endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
 
-  CHECK(!settings.log_file_path.empty(), base::NotFatalUntil::M127)
+  CHECK(!settings.log_file_path.empty())
       << "LOG_TO_FILE set but no log_file_path!";
 
   if (!g_log_file_name) {
@@ -943,8 +941,8 @@ void LogMessage::Flush() {
                 static_cast<DWORD>(str_newline.length()), &num_written,
                 nullptr);
 #elif BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
-      std::ignore =
-          fwrite(str_newline.data(), str_newline.size(), 1, g_log_file);
+      std::ignore = UNSAFE_TODO(
+          fwrite(str_newline.data(), str_newline.size(), 1, g_log_file));
       fflush(g_log_file);
 #else
 #error Unsupported platform
@@ -955,7 +953,7 @@ void LogMessage::Flush() {
 
 std::string LogMessage::BuildCrashString() const {
   return logging::BuildCrashString(file(), line(),
-                                   str().c_str() + message_start_);
+                                   UNSAFE_TODO(str().c_str() + message_start_));
 }
 
 // writes the common header info to the stream
@@ -963,11 +961,20 @@ void LogMessage::Init(const char* file, int line) {
   // Don't let actions from this method affect the system error after returning.
   base::ScopedClearLastError scoped_clear_last_error;
 
-  std::string_view filename(file);
-  size_t last_slash_pos = filename.find_last_of("\\/");
-  if (last_slash_pos != std::string_view::npos) {
-    filename.remove_prefix(last_slash_pos + 1);
-  }
+  // Most logging initializes `file` from __FILE__. Unfortunately, because we
+  // build from out/Foo we get a `../../` (or \) prefix for all of our
+  // __FILE__s. This isn't true for base::Location::Current() which already does
+  // the stripping (and is used for some logging, especially CHECKs).
+  //
+  // Here we strip the first 6 (../../ or ..\..\) characters if `file` starts
+  // with `.` but defensively clamp to strlen(file) just in case.
+  //
+  // TODO(pbos): Consider migrating LogMessage and the LOG() macros to use
+  // base::Location directly. See base/check.h for inspiration.
+  const std::string_view filename =
+      file[0] == '.' ? std::string_view(file).substr(
+                           std::min(std::size_t{6}, strlen(file)))
+                     : file;
 
 #if BUILDFLAG(IS_CHROMEOS)
   if (g_log_format == LogFormat::LOG_FORMAT_SYSLOG) {
@@ -1021,7 +1028,7 @@ void LogMessage::Init(const char* file, int line) {
     } else {
       stream_ << "VERBOSE" << -severity_;
     }
-    stream_ << ":" << filename << "(" << line << ")] ";
+    stream_ << ":" << filename << ":" << line << "] ";
   }
   message_start_ = stream_.str().length();
 }
@@ -1029,7 +1036,8 @@ void LogMessage::Init(const char* file, int line) {
 void LogMessage::HandleFatal(size_t stack_start,
                              const std::string& str_newline) const {
   char str_stack[1024];
-  base::strlcpy(str_stack, str_newline.data(), std::size(str_stack));
+  UNSAFE_TODO(
+      base::strlcpy(str_stack, str_newline.data(), std::size(str_stack)));
   base::debug::Alias(&str_stack);
 
   if (!GetLogAssertHandlerStack().empty()) {
@@ -1271,7 +1279,7 @@ void RawLog(int level, const char* message) {
     const size_t message_len = strlen(message);
     WriteToFd(STDERR_FILENO, message, message_len);
 
-    if (message_len > 0 && message[message_len - 1] != '\n') {
+    if (message_len > 0 && UNSAFE_TODO(message[message_len - 1]) != '\n') {
       long rv;
       do {
         rv = HANDLE_EINTR(write(STDERR_FILENO, "\n", 1));
@@ -1319,7 +1327,7 @@ VlogInfo* ScopedVmoduleSwitches::CreateVlogInfoWithSwitches(
   VlogInfo* base_vlog_info = GetVlogInfo();
   if (!base_vlog_info) {
     // Base is |nullptr|, so just create it from scratch.
-    return new VlogInfo(/*v_switch_=*/"", vmodule_switch, &g_min_log_level);
+    return new VlogInfo(/*v_switch_=*/"", vmodule_switch, g_min_log_level);
   }
   return base_vlog_info->WithSwitches(vmodule_switch);
 }

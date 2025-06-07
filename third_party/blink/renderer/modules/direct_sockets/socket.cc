@@ -10,6 +10,7 @@
 #include "net/base/net_errors.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 #include "third_party/blink/public/mojom/frame/lifecycle.mojom-shared.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
@@ -90,6 +91,8 @@ bool Socket::CheckContextAndPermissions(ScriptState* script_state,
 
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
   if (execution_context->IsWindow()) {
+    // TODO(crbug.com/407883159): Replace IsFeatureEnabled() with
+    // CrossOriginIsolatedCapability() once Chrome Apps are deprecated.
     if (!execution_context->IsIsolatedContext() ||
         !execution_context->IsFeatureEnabled(
             network::mojom::PermissionsPolicyFeature::kCrossOriginIsolated)) {
@@ -107,8 +110,11 @@ bool Socket::CheckContextAndPermissions(ScriptState* script_state,
     }
     return true;
   } else if (execution_context->IsWorkerGlobalScope()) {
-    if (!execution_context->CrossOriginIsolatedCapability() ||
-        !execution_context->IsIsolatedContext()) {
+    // TODO(crbug.com/407883159): Replace IsFeatureEnabled() with
+    // CrossOriginIsolatedCapability() once Chrome Apps are deprecated.
+    if (!execution_context->IsIsolatedContext() ||
+        !execution_context->IsFeatureEnabled(
+            network::mojom::PermissionsPolicyFeature::kCrossOriginIsolated)) {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kNotAllowedError,
           "Frame is not sufficiently isolated to use Direct Sockets.");
@@ -137,6 +143,17 @@ void Socket::Trace(Visitor* visitor) const {
 void Socket::ResetServiceAndFeatureHandle() {
   feature_handle_for_scheduler_.reset();
   service_.reset();
+}
+
+// static
+protocol::Network::DirectSocketDnsQueryType Socket::MapProbeDnsQueryType(
+    V8SocketDnsQueryType dns_query_type) {
+  switch (dns_query_type.AsEnum()) {
+    case V8SocketDnsQueryType::Enum::kIpv4:
+      return protocol::Network::DirectSocketDnsQueryTypeEnum::Ipv4;
+    case V8SocketDnsQueryType::Enum::kIpv6:
+      return protocol::Network::DirectSocketDnsQueryTypeEnum::Ipv6;
+  }
 }
 
 }  // namespace blink

@@ -21,6 +21,7 @@
 #include "third_party/perfetto/include/perfetto/tracing/tracing_policy.h"
 
 namespace base {
+class Thread;
 namespace trace_event {
 class TraceConfig;
 }  // namespace trace_event
@@ -96,9 +97,12 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
     // By default, data source callbacks (e.g., Start/StopTracingImpl) are
     // called on PerfettoTracedProcess::GetTaskRunner()'s sequence. This method
     // allows overriding that task runner.
+    // Note: The task_runner's thread may stop and restart for Linux/ChromeOS
+    // sandboxing so the task_runner can change and delayed tasks posted to it
+    // may be silently dropped.
     virtual base::SequencedTaskRunner* GetTaskRunner();
 
-    static void ResetTaskRunnerForTesting(
+    static void ResetTaskRunner(
         scoped_refptr<base::SequencedTaskRunner> task_runner);
 
    protected:
@@ -151,8 +155,17 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
     perfetto::DataSourceConfig data_source_config_;
   };
 
+  // Restarts the trace thread and replaces the task_runner for tracing.
+  void RestartThreadInSandbox();
+
+  // Returns the process-wide ptr to the trace thread, returns nullptr if the
+  // task_runner for tracing is from the thread-pool.
+  static base::Thread* GetTraceThread();
+
   // Creates the process-wide instance of the PerfettoTracedProcess.
   static PerfettoTracedProcess& MaybeCreateInstance();
+  static PerfettoTracedProcess& MaybeCreateInstanceWithThread(
+      bool will_trace_thread_restart);
   static PerfettoTracedProcess& MaybeCreateInstanceForTesting();
 
   // Returns the process-wide instance of the PerfettoTracedProcess.
@@ -219,11 +232,17 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
       const perfetto::TraceConfig& config,
       const perfetto::Tracing::SetupStartupTracingOpts& opts);
 
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
+  void DeferOrConnectProducerSocket(perfetto::CreateSocketCallback cb);
+#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
+
  private:
   friend class base::NoDestructor<PerfettoTracedProcess>;
 
-  PerfettoTracedProcess(
-      scoped_refptr<base::SequencedTaskRunner> task_runner = nullptr);
+  // Default constructor would create a dedicated thread for tracing
+  explicit PerfettoTracedProcess(bool will_trace_thread_restart);
+  explicit PerfettoTracedProcess(
+      scoped_refptr<base::SequencedTaskRunner> task_runner);
 
   // Initialize the Perfetto client library (i.e., perfetto::Tracing) for this
   // process.
@@ -247,7 +266,13 @@ class COMPONENT_EXPORT(TRACING_CPP) PerfettoTracedProcess final
   bool system_consumer_enabled_for_testing_
       GUARDED_BY(allow_system_consumer_lock_) = false;
 
+  std::unique_ptr<base::Thread> trace_process_thread_;
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
+
+  bool will_trace_thread_restart_ = false;
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
+  base::OnceClosure system_tracing_producer_socket_cb_;
+#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
 
   // Platform implementation for the Perfetto client library.
   std::unique_ptr<base::tracing::PerfettoPlatform> platform_;

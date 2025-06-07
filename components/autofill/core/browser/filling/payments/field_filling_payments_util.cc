@@ -8,18 +8,20 @@
 #include <optional>
 
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/types/zip.h"
 #include "components/autofill/core/browser/autofill_field.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/data_model/data_model_utils.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/data_quality/autofill_data_util.h"
 #include "components/autofill/core/browser/field_type_utils.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/filling/field_filling_util.h"
 #include "components/autofill/core/browser/filling/filling_product.h"
 #include "components/autofill/core/browser/filling/form_filler.h"
 #include "components/autofill/core/browser/form_parsing/credit_card_field_parser.h"
 #include "components/autofill/core/browser/form_structure.h"
-#include "components/autofill/core/browser/select_control_util.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/autofill/core/common/credit_card_network_identifiers.h"
@@ -52,14 +54,14 @@ std::u16string GetExpirationMonthSelectControlValue(
   // Trim the whitespace and specific prefixes used in AngularJS from the
   // select values before attempting to convert them to months.
   std::vector<std::u16string> trimmed_values(field_options.size());
-  const std::u16string kNumberPrefix = u"number:";
-  const std::u16string kStringPrefix = u"string:";
-  for (size_t i = 0; i < field_options.size(); ++i) {
-    base::TrimWhitespace(field_options[i].value, base::TRIM_ALL,
-                         &trimmed_values[i]);
-    base::ReplaceFirstSubstringAfterOffset(&trimmed_values[i], 0, kNumberPrefix,
+  static constexpr char16_t kNumberPrefix[] = u"number:";
+  static constexpr char16_t kStringPrefix[] = u"string:";
+  for (auto [field_option, trimmed_value] :
+       base::zip(field_options, trimmed_values)) {
+    base::TrimWhitespace(field_option.value, base::TRIM_ALL, &trimmed_value);
+    base::ReplaceFirstSubstringAfterOffset(&trimmed_value, 0, kNumberPrefix,
                                            u"");
-    base::ReplaceFirstSubstringAfterOffset(&trimmed_values[i], 0, kStringPrefix,
+    base::ReplaceFirstSubstringAfterOffset(&trimmed_value, 0, kStringPrefix,
                                            u"");
   }
 
@@ -92,14 +94,15 @@ std::u16string GetExpirationMonthSelectControlValue(
   }
 
   // Attempt to match the user's `month` with the field's value attributes.
-  for (size_t i = 0; i < trimmed_values.size(); ++i) {
+  for (auto [field_option, trimmed_value] :
+       base::zip(field_options, trimmed_values)) {
     int converted_value = 0;
     // We use the trimmed value to match with `month`, but the original select
     // value to fill the field (otherwise filling wouldn't work).
-    if (data_util::ParseExpirationMonth(trimmed_values[i], app_locale,
+    if (data_util::ParseExpirationMonth(trimmed_value, app_locale,
                                         &converted_value) &&
         month == converted_value) {
-      return field_options[i].value;
+      return field_option.value;
     }
   }
 
@@ -538,7 +541,8 @@ bool WillFillCreditCardNumberOrCvc(
         // to the iframe security policy.
         return FormFiller::GetFillingSkipReasonsForField(
                    *field, autofill_field, trigger_autofill_field, type_count,
-                   std::nullopt, FillingProduct::kCreditCard)
+                   /*type_groups_originally_filled=*/std::nullopt,
+                   /*blocked_fields=*/{}, FillingProduct::kCreditCard)
             .empty();
       };
 

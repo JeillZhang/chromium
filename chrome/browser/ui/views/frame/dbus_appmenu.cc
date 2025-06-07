@@ -20,6 +20,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/branding_buildflags.h"
@@ -50,7 +51,6 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/menu_model.h"
 #include "ui/base/models/menu_separator_types.h"
-#include "ui/events/keycodes/keyboard_code_conversion_x.h"
 #include "ui/gfx/text_elider.h"
 
 // A line in the static menu definitions.
@@ -203,10 +203,13 @@ struct DbusAppmenu::HistoryItem {
   std::vector<raw_ptr<HistoryItem, VectorExperimental>> tabs;
 };
 
-DbusAppmenu::DbusAppmenu(BrowserView* browser_view, uint32_t browser_frame_id)
+DbusAppmenu::DbusAppmenu(BrowserView* browser_view,
+                         ui::PlatformWindow* platform_window,
+                         uint32_t browser_frame_id)
     : browser_(browser_view->browser()),
       profile_(browser_->profile()),
       browser_view_(browser_view),
+      platform_window_(platform_window),
       browser_frame_id_(browser_frame_id),
       tab_restore_service_(nullptr),
       last_command_id_(kFirstUnreservedCommandId - 1) {

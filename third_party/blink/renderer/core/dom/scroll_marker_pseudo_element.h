@@ -13,14 +13,11 @@ class ScrollMarkerGroupPseudoElement;
 
 class ScrollMarkerPseudoElement : public PseudoElement {
  public:
-  explicit ScrollMarkerPseudoElement(Element* originating_element)
-      : PseudoElement(originating_element, kPseudoIdScrollMarker) {
-    SetTabIndexExplicitly();
-  }
+  explicit ScrollMarkerPseudoElement(Element* originating_element);
 
   bool IsScrollMarkerPseudoElement() const final { return true; }
 
-  void SetSelected(bool value);
+  void SetSelected(bool value, bool apply_snap_alignment = true);
   bool IsSelected() const { return is_selected_; }
   int DefaultTabIndex() const override { return 0; }
   void DefaultEventHandler(Event&) override;
@@ -44,6 +41,8 @@ class ScrollMarkerPseudoElement : public PseudoElement {
   void SetHasFocusWithinUpToAncestor(bool has_focus_within,
                                      Element* ancestor,
                                      bool need_snap_container_search) final;
+
+  void ScrollIntoView(bool apply_snap_alignment);
 
  private:
   bool is_selected_ = false;

@@ -240,6 +240,9 @@ HEADLESS_MODE_PROTOCOL_TEST(DISABLED_FocusBlurNotifications,
 HEADLESS_MODE_PROTOCOL_TEST(MAYBE_InputClipboardOps,
                             "input/input-clipboard-ops.js")
 
+HEADLESS_MODE_PROTOCOL_TEST(DocumentFocusOnLoad,
+                            "input/document-focus-on-load.js")
+
 class HeadlessModeInputSelectFileDialogTest
     : public HeadlessModeProtocolBrowserTest {
  public:
@@ -313,13 +316,20 @@ HEADLESS_MODE_PROTOCOL_TEST(FullscreenRestoreWindow,
                             "sanity/fullscreen-restore-window.js")
 #endif  // !BUILDFLAG(IS_MAC)
 
-HEADLESS_MODE_PROTOCOL_TEST(MaximizedWindowSize,
-                            "sanity/maximized-window-size.js")
+// This currently fails on Mac, see https://crbug.com/416088625
+#if !BUILDFLAG(IS_MAC)
+HEADLESS_MODE_PROTOCOL_TEST_WITH_COMMAND_LINE_EXTRAS(
+    MaximizedWindowSize,
+    "sanity/maximized-window-size.js",
+    "--screen-info={1600x1200}")
+#endif  // !BUILDFLAG(IS_MAC)
 
 // This currently fails on Mac, see https://crbug.com/1500046
 #if !BUILDFLAG(IS_MAC)
-HEADLESS_MODE_PROTOCOL_TEST(FullscreenWindowSize,
-                            "sanity/fullscreen-window-size.js")
+HEADLESS_MODE_PROTOCOL_TEST_WITH_COMMAND_LINE_EXTRAS(
+    FullscreenWindowSize,
+    "sanity/fullscreen-window-size.js",
+    "--screen-info={1600x1200}")
 #endif  // !BUILDFLAG(IS_MAC)
 
 HEADLESS_MODE_PROTOCOL_TEST(PrintToPdfTinyPage,
@@ -340,5 +350,63 @@ HEADLESS_MODE_PROTOCOL_TEST_WITH_COMMAND_LINE_EXTRAS(
     "sanity/ozone-screen-size-override.js",
     "--ozone-override-screen-size=1234,5678")
 #endif
+
+// This currently results in an unexpected screen orientation type,
+// see http://crbug.com/398150465.
+HEADLESS_MODE_PROTOCOL_TEST_WITH_COMMAND_LINE_EXTRAS(
+    MultipleScreenDetails,
+    "sanity/multiple-screen-details.js",
+    "--screen-info={label=#1}{600x800 label='#2'}")
+
+// TODO(crbug.com/40283476): MoveWindowBetweenScreens is failing on Mac
+#if !BUILDFLAG(IS_MAC)
+#define MAYBE_MoveWindowBetweenScreens MoveWindowBetweenScreens
+#else
+#define MAYBE_MoveWindowBetweenScreens DISABLED_MoveWindowBetweenScreens
+#endif
+
+HEADLESS_MODE_PROTOCOL_TEST_WITH_COMMAND_LINE_EXTRAS(
+    MAYBE_MoveWindowBetweenScreens,
+    "sanity/move-window-between-screens.js",
+    "--screen-info={label='#1'}{label='#2'}{0,600 label='#3'}{label='#4'}")
+
+HEADLESS_MODE_PROTOCOL_TEST_WITH_COMMAND_LINE_EXTRAS(
+    WindowOpenOnSecondaryScreen,
+    "sanity/window-open-on-secondary-screen.js",
+    "--screen-info={label='#1'}{label='#2'} --disable-popup-blocking")
+
+// TODO(crbug.com/40283476): CreateTargetSecondaryScreen is failing on Mac
+#if !BUILDFLAG(IS_MAC)
+#define MAYBE_CreateTargetSecondaryScreen CreateTargetSecondaryScreen
+#else
+#define MAYBE_CreateTargetSecondaryScreen DISABLED_CreateTargetSecondaryScreen
+#endif
+
+HEADLESS_MODE_PROTOCOL_TEST_WITH_COMMAND_LINE_EXTRAS(
+    MAYBE_CreateTargetSecondaryScreen,
+    "sanity/create-target-secondary-screen.js",
+    "--screen-info={label='#1'}{label='#2'}")
+
+HEADLESS_MODE_PROTOCOL_TEST_WITH_COMMAND_LINE_EXTRAS(
+    WindowOpenPopupPlacement,
+    "sanity/window-open-popup-placement.js",
+    "--screen-info={1600x1200} --disable-popup-blocking")
+
+HEADLESS_MODE_PROTOCOL_TEST_WITH_COMMAND_LINE_EXTRAS(
+    WindowSizeSwitchHandling,
+    "sanity/window-size-switch-handling.js",
+    "--screen-info={1600x1200} --window-size=700,500")
+
+HEADLESS_MODE_PROTOCOL_TEST_WITH_COMMAND_LINE_EXTRAS(
+    WindowSizeSwitchLargerThanScreen,
+    "sanity/window-size-switch-larger-than-screen.js",
+    "--screen-info={800x600} --window-size=1600,1200")
+
+HEADLESS_MODE_PROTOCOL_TEST_WITH_COMMAND_LINE_EXTRAS(
+    WindowScreenAvail,
+    "sanity/window-screen-avail.js",
+    "--screen-info={800x600"
+    " workAreaLeft=10 workAreaRight=90"
+    " workAreaTop=20 workAreaBottom=80}")
 
 }  // namespace headless

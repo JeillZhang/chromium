@@ -6,6 +6,7 @@
 #include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -17,6 +18,7 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/devtools/protocol/devtools_protocol_test_support.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/login_detection/login_detection_util.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
 #include "chrome/browser/tab_contents/navigation_metrics_recorder.h"
@@ -644,6 +646,9 @@ IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest,
 // commit in the error page process when it is redirected to.
 IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest,
                        RedirectErrorPageReloadToAboutBlank) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   GURL url(embedded_test_server()->GetURL("a.com", "/title1.html"));
@@ -734,6 +739,9 @@ IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest,
 IN_PROC_BROWSER_TEST_F(
     ChromeNavigationBrowserTest,
     NavigationInitiatedByCrossSiteSubframeRedirectedToAboutBlank) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   const GURL kOpenerUrl(
       embedded_test_server()->GetURL("opener.com", "/title1.html"));
   const GURL kInitialPopupUrl(embedded_test_server()->GetURL(
@@ -869,6 +877,9 @@ IN_PROC_BROWSER_TEST_F(
 IN_PROC_BROWSER_TEST_F(
     ChromeNavigationBrowserTest,
     NavigationInitiatedByCrossSiteSubframeRedirectedToDataUrl) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   const GURL kOpenerUrl(
       embedded_test_server()->GetURL("opener.com", "/title1.html"));
   const GURL kInitialPopupUrl(embedded_test_server()->GetURL(
@@ -1005,6 +1016,9 @@ IN_PROC_BROWSER_TEST_F(
 // https://crbug.com/40065692.
 IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest,
                        HistoryNavigationRedirectedToDataUrl) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   const GURL kOpenerUrl(
       embedded_test_server()->GetURL("opener.com", "/title1.html"));
   const GURL kRedirectedUrl(
@@ -1268,6 +1282,9 @@ IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest,
 // so the crash won't happen as the navigation is reusing the same SiteInstance.
 IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest,
                        HistoryNavigationRedirectedToAboutBlank_SameSite) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   const GURL kOpenerUrl(
       embedded_test_server()->GetURL("opener.com", "/title1.html"));
   const GURL kRedirectedUrl(
@@ -3227,7 +3244,7 @@ IN_PROC_BROWSER_TEST_F(FencedFrameNavigationBrowserTest,
 
   // Open the link in new tab.
   content::OpenURLParams params(
-      target_url, content::Referrer(), fenced_frame_rfh->GetFrameTreeNodeId(),
+      target_url, content::Referrer(), content::FrameTreeNodeId(),
       WindowOpenDisposition::NEW_BACKGROUND_TAB, ui::PAGE_TRANSITION_LINK,
       /*is_renderer_initiated=*/false);
 

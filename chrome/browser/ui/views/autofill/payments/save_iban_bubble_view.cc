@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/views/autofill/payments/save_iban_bubble_view.h"
 
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/autofill/payments/save_iban_ui.h"
 #include "chrome/browser/ui/views/accessibility/theme_tracking_non_accessible_image_view.h"
 #include "chrome/browser/ui/views/autofill/payments/dialog_view_ids.h"
@@ -12,7 +14,7 @@
 #include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
-#include "components/autofill/core/browser/data_model/iban.h"
+#include "components/autofill/core/browser/data_model/payments/iban.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -272,9 +274,7 @@ void SaveIbanBubbleView::Init() {
 
   if (controller_ &&
       (controller_->GetBubbleType() == IbanBubbleType::kUploadSave ||
-       controller_->GetBubbleType() == IbanBubbleType::kUploadInProgress) &&
-      base::FeatureList::IsEnabled(
-          features::kAutofillEnableSaveCardLoadingAndConfirmation)) {
+       controller_->GetBubbleType() == IbanBubbleType::kUploadInProgress)) {
     loading_row_ = AddChildView(CreateLoadingRow());
     if (controller_->GetBubbleType() == IbanBubbleType::kUploadInProgress) {
       ShowThrobber();
@@ -283,11 +283,8 @@ void SaveIbanBubbleView::Init() {
 }
 
 bool SaveIbanBubbleView::Accept() {
-  bool show_throbber =
-      controller_ &&
-      controller_->GetBubbleType() == IbanBubbleType::kUploadSave &&
-      base::FeatureList::IsEnabled(
-          features::kAutofillEnableSaveCardLoadingAndConfirmation);
+  bool show_throbber = controller_ && controller_->GetBubbleType() ==
+                                          IbanBubbleType::kUploadSave;
 
   if (show_throbber) {
     ShowThrobber();

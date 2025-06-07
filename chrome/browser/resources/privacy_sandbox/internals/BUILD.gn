@@ -16,8 +16,7 @@ build_webui("build") {
     "pref_display.ts",
     "value_display.ts",
   ]
-  non_web_component_files = [ "index.ts" ]
-  html_to_wrapper_template = "native"
+  ts_files = [ "index.ts" ]
 
   mojo_files_deps = [
     "//chrome/browser/ui/webui/privacy_sandbox:mojo_bindings_ts__generator",

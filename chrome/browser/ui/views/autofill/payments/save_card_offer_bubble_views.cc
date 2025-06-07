@@ -10,6 +10,7 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
@@ -24,7 +25,7 @@
 #include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/data_quality/validation.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
 #include "components/autofill/core/browser/metrics/payments/credit_card_save_metrics.h"
@@ -281,7 +282,7 @@ std::unique_ptr<views::View> SaveCardOfferBubbleViews::CreateMainContentView() {
         views::BoxLayout::Orientation::kVertical, gfx::Insets(),
         provider->GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_VERTICAL)));
     cardholder_name_view->AddChildView(std::move(cardholder_name_label_row));
-    cardholder_name_view->AddChildView(cardholder_name_textfield_.get());
+    cardholder_name_view->AddChildViewRaw(cardholder_name_textfield_.get());
     view->AddChildView(std::move(cardholder_name_view));
   }
 
@@ -342,8 +343,8 @@ SaveCardOfferBubbleViews::CreateRequestExpirationDateView() {
   input_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(),
       provider->GetDistanceMetric(DISTANCE_RELATED_CONTROL_HORIZONTAL_SMALL)));
-  input_row->AddChildView(month_input_dropdown_.get());
-  input_row->AddChildView(year_input_dropdown_.get());
+  input_row->AddChildViewRaw(month_input_dropdown_.get());
+  input_row->AddChildViewRaw(year_input_dropdown_.get());
 
   // Set up expiration date label.
   auto expiration_date_label = std::make_unique<views::Label>(

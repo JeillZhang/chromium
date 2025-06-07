@@ -19,7 +19,6 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/media/cast_mirroring_service_host.h"
 #include "chrome/browser/media/cast_remoting_connector.h"
@@ -99,9 +98,9 @@ std::vector<MediaRoute> GetRouteSetDifference(
     std::vector<MediaRoute> routes_a,
     std::vector<MediaRoute> routes_b) {
   std::vector<MediaRoute> routes;
-  for (auto route_a : routes_a) {
+  for (const auto& route_a : routes_a) {
     bool route_seen = false;
-    for (auto route_b : routes_b) {
+    for (const auto& route_b : routes_b) {
       if (route_a.media_route_id() == route_b.media_route_id()) {
         route_seen = true;
       }

@@ -17,6 +17,7 @@
 #include "ash/system/tray/tray_item_view.h"
 #include "ash/system/unified/notification_counter_view.h"
 #include "ash/test/ash_test_base.h"
+#include "base/strings/string_number_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/public/cpp/notification.h"
@@ -73,7 +74,7 @@ class NotificationIconsControllerTest : public AshTestBase {
 
     // Log in.
     constexpr char kUserEmail[] = "user@gmail.com";
-    SimulateUserLogin(kUserEmail);
+    SimulateUserLogin({kUserEmail});
 
     // Set the user's shelf auto-hide preference to always hide.
     auto accountId = AccountId::FromUserEmail(kUserEmail);

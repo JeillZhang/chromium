@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "base/containers/heap_array.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
@@ -210,7 +212,7 @@ ContextResult GLES2DecoderTestBase::MaybeInitDecoderWithWorkarounds(
       new FeatureInfo(workarounds, gpu_feature_info);
 
   group_ = scoped_refptr<ContextGroup>(new ContextGroup(
-      gpu_preferences_, std::move(memory_tracker_), &shader_translator_cache_,
+      gpu_preferences_, memory_tracker_, &shader_translator_cache_,
       &framebuffer_completeness_cache_, feature_info,
       normalized_init.bind_generates_resource, /*progress_reporter=*/nullptr,
       gpu_feature_info, &discardable_manager_, nullptr,
@@ -291,15 +293,17 @@ ContextResult GLES2DecoderTestBase::MaybeInitDecoderWithWorkarounds(
         .RetiresOnSaturation();
   }
 
-  static GLuint attrib_0_id[] = {
-    kServiceAttrib0BufferId,
-  };
-  static GLuint fixed_attrib_buffer_id[] = {
-    kServiceFixedAttribBufferId,
-  };
+  static auto attrib_0_id = std::to_array<GLuint>({
+      kServiceAttrib0BufferId,
+  });
+  static auto fixed_attrib_buffer_id = std::to_array<GLuint>({
+      kServiceFixedAttribBufferId,
+  });
   EXPECT_CALL(*gl_, GenBuffersARB(std::size(attrib_0_id), _))
-      .WillOnce(SetArrayArgument<1>(attrib_0_id,
-                                    attrib_0_id + std::size(attrib_0_id)))
+      .WillOnce(SetArrayArgument<1>(attrib_0_id.data(),
+                                    base::span<GLuint>(attrib_0_id)
+                                        .subspan(std::size(attrib_0_id))
+                                        .data()))
       .RetiresOnSaturation();
   EXPECT_CALL(*gl_, BindBuffer(GL_ARRAY_BUFFER, kServiceAttrib0BufferId))
       .Times(1)
@@ -311,9 +315,11 @@ ContextResult GLES2DecoderTestBase::MaybeInitDecoderWithWorkarounds(
       .Times(1)
       .RetiresOnSaturation();
   EXPECT_CALL(*gl_, GenBuffersARB(std::size(fixed_attrib_buffer_id), _))
-      .WillOnce(SetArrayArgument<1>(
-          fixed_attrib_buffer_id,
-          fixed_attrib_buffer_id + std::size(fixed_attrib_buffer_id)))
+      .WillOnce(
+          SetArrayArgument<1>(fixed_attrib_buffer_id.data(),
+                              base::span<GLuint>(fixed_attrib_buffer_id)
+                                  .subspan(std::size(fixed_attrib_buffer_id))
+                                  .data()))
       .RetiresOnSaturation();
 
   for (GLint tt = 0; tt < TestHelper::kNumTextureUnits; ++tt) {
@@ -334,11 +340,10 @@ ContextResult GLES2DecoderTestBase::MaybeInitDecoderWithWorkarounds(
     }
     if (group_->feature_info()->feature_flags().arb_texture_rectangle) {
       EXPECT_CALL(
-          *gl_,
-          BindTexture(GL_TEXTURE_RECTANGLE_ARB,
-                      use_default_textures
-                          ? TestHelper::kServiceDefaultRectangleTextureId
-                          : 0))
+          *gl_, BindTexture(GL_TEXTURE_RECTANGLE_ANGLE,
+                            use_default_textures
+                                ? TestHelper::kServiceDefaultRectangleTextureId
+                                : 0))
           .Times(1)
           .RetiresOnSaturation();
     }
@@ -379,19 +384,21 @@ ContextResult GLES2DecoderTestBase::MaybeInitDecoderWithWorkarounds(
               GetShaderPrecisionFormat(GL_FRAGMENT_SHADER, GL_HIGH_FLOAT, _, _))
       .RetiresOnSaturation();
 
-  static GLint max_viewport_dims[] = {
-    kMaxViewportWidth,
-    kMaxViewportHeight
-  };
+  static auto max_viewport_dims =
+      std::to_array<GLint>({kMaxViewportWidth, kMaxViewportHeight});
   EXPECT_CALL(*gl_, GetIntegerv(GL_MAX_VIEWPORT_DIMS, _))
-      .WillOnce(SetArrayArgument<1>(
-          max_viewport_dims, max_viewport_dims + std::size(max_viewport_dims)))
+      .WillOnce(SetArrayArgument<1>(max_viewport_dims.data(),
+                                    base::span<GLint>(max_viewport_dims)
+                                        .subspan(std::size(max_viewport_dims))
+                                        .data()))
       .RetiresOnSaturation();
 
-  static GLfloat line_width_range[] = { 1.0f, 2.0f };
+  static auto line_width_range = std::to_array<GLfloat>({1.0f, 2.0f});
   EXPECT_CALL(*gl_, GetFloatv(GL_ALIASED_LINE_WIDTH_RANGE, _))
-      .WillOnce(SetArrayArgument<1>(
-          line_width_range, line_width_range + std::size(line_width_range)))
+      .WillOnce(SetArrayArgument<1>(line_width_range.data(),
+                                    base::span<GLfloat>(line_width_range)
+                                        .subspan(std::size(line_width_range))
+                                        .data()))
       .RetiresOnSaturation();
 
   if (group_->feature_info()->feature_flags().ext_window_rectangles) {
@@ -439,9 +446,16 @@ ContextResult GLES2DecoderTestBase::MaybeInitDecoderWithWorkarounds(
   }
 #endif
 
+  if (init.context_type == CONTEXT_TYPE_WEBGL2 &&
+      group_->feature_info()->gl_version_info().is_es3) {
+    EXPECT_CALL(*gl_, Enable(GL_PRIMITIVE_RESTART_FIXED_INDEX))
+        .Times(1)
+        .RetiresOnSaturation();
+  }
+
   if (context_->HasRobustness()) {
     EXPECT_CALL(*gl_, GetGraphicsResetStatusARB())
-        .WillOnce(Return(init.lose_context_on_init ? GL_GUILTY_CONTEXT_RESET_ARB
+        .WillOnce(Return(init.lose_context_on_init ? GL_GUILTY_CONTEXT_RESET
                                                    : GL_NO_ERROR));
   }
 
@@ -952,9 +966,9 @@ void GLES2DecoderTestBase::SetupExpectationsForFramebufferClearingMulti(
   EXPECT_CALL(*gl_, CheckFramebufferStatusEXT(target))
       .WillOnce(Return(GL_FRAMEBUFFER_COMPLETE))
       .RetiresOnSaturation();
-  if (target == GL_READ_FRAMEBUFFER_EXT) {
-    EXPECT_CALL(*gl_, BindFramebufferEXT(
-        GL_DRAW_FRAMEBUFFER_EXT, read_framebuffer_service_id))
+  if (target == GL_READ_FRAMEBUFFER) {
+    EXPECT_CALL(*gl_, BindFramebufferEXT(GL_DRAW_FRAMEBUFFER,
+                                         read_framebuffer_service_id))
         .Times(1)
         .RetiresOnSaturation();
   }
@@ -990,9 +1004,9 @@ void GLES2DecoderTestBase::SetupExpectationsForFramebufferClearingMulti(
       restore_red, restore_green, restore_blue, restore_alpha, restore_stencil,
       restore_depth, restore_scissor_test, restore_scissor_x, restore_scissor_y,
       restore_scissor_width, restore_scissor_height);
-  if (target == GL_READ_FRAMEBUFFER_EXT) {
-    EXPECT_CALL(*gl_, BindFramebufferEXT(
-        GL_DRAW_FRAMEBUFFER_EXT, draw_framebuffer_service_id))
+  if (target == GL_READ_FRAMEBUFFER) {
+    EXPECT_CALL(*gl_, BindFramebufferEXT(GL_DRAW_FRAMEBUFFER,
+                                         draw_framebuffer_service_id))
         .Times(1)
         .RetiresOnSaturation();
   }
@@ -2055,8 +2069,8 @@ void GLES2DecoderTestBase::SetupShader(
                                       : kProgramOutputsESSL3;
   const size_t kNumProgramOutputs = 1;
   const int kNumUniformBlocks = 2;
-  const int kUniformBlockBinding[] = { 0, 1 };
-  const int kUniformBlockDataSize[] = { 32, 16 };
+  const auto kUniformBlockBinding = std::to_array<int>({0, 1});
+  const auto kUniformBlockDataSize = std::to_array<int>({32, 16});
 
   {
     InSequence s;

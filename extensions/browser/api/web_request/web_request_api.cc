@@ -17,7 +17,6 @@
 #include "base/lazy_instance.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/not_fatal_until.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -90,6 +89,26 @@ namespace extensions {
 namespace web_request = api::web_request;
 
 namespace {
+
+WebRequestAPI::TestObserver* g_test_observer = nullptr;
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+//
+// LINT.IfChange(ProxyDecisionDetailsForExtension)
+enum class ProxyDecisionDetailsForExtension {
+  // Proxy will be used only for WebRequest* permissions.
+  kOnlyForWebRequest = 0,
+  // Proxy will be used only for Declarative{Web|Net}Request* permissions.
+  kOnlyForDeclarativeRequest = 1,
+  // Proxy will be used only for WebView permissions.
+  kOnlyForWebView = 2,
+  // Proxy will be used only for multiple kinds of permissions.
+  kForMixedReasons = 3,
+
+  kMaxValue = kForMixedReasons,
+};
+// LINT.ThenChange(/tools/metrics/histograms/metadata/extensions/enums.xml:WebRequestProxyDecisionDetailsForExtension)
 
 // Converts an HttpHeaders dictionary to a |name|, |value| pair. Returns
 // true if successful.
@@ -213,7 +232,7 @@ void WebRequestAPI::ProxySet::RemoveProxy(Proxy* proxy) {
   }
 
   auto proxy_it = proxies_.find(proxy);
-  CHECK(proxy_it != proxies_.end(), base::NotFatalUntil::M130);
+  CHECK(proxy_it != proxies_.end());
   proxies_.erase(proxy_it);
 }
 
@@ -312,7 +331,7 @@ WebRequestAPI::WebRequestAPI(content::BrowserContext* context)
   // observe the EventRouter for each BrowserContext that has webRequest
   // API event listeners.
   // Observe related events in the EventRouter for the WebRequestEventRouter.
-  for (std::string event_name : WebRequestEventRouter::GetEventNames()) {
+  for (const std::string& event_name : WebRequestEventRouter::GetEventNames()) {
     event_router->RegisterObserver(this, event_name);
   }
   extensions::ExtensionRegistry::Get(browser_context_)->AddObserver(this);
@@ -339,6 +358,15 @@ BrowserContextKeyedAPIFactory<WebRequestAPI>*
 WebRequestAPI::GetFactoryInstance() {
   return g_factory.Pointer();
 }
+
+// static
+void WebRequestAPI::SetObserverForTest(TestObserver* observer) {
+  g_test_observer = observer;
+}
+
+WebRequestAPI::TestObserver::TestObserver() = default;
+
+WebRequestAPI::TestObserver::~TestObserver() = default;
 
 void WebRequestAPI::OnListenerRemoved(const EventListenerInfo& details) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -425,6 +453,30 @@ bool WebRequestAPI::MaybeProxyURLLoaderFactory(
   base::UmaHistogramExactLinear(
       "Extensions.WebRequest.WebViewDependentExtensionCount",
       web_view_extension_count_, kMaxCount);
+
+  if (decision == ProxyDecision::kWillProxyForExtension &&
+      !base::FeatureList::IsEnabled(
+          extensions_features::kForceWebRequestProxyForTest)) {
+    // Check if kWillProxyForExtension is decided only for one type of
+    // permissions, or mixed reasons.
+    ProxyDecisionDetailsForExtension details =
+        ProxyDecisionDetailsForExtension::kForMixedReasons;
+    if (web_request_extension_count_ == 0 &&
+        declarative_request_extension_count_ == 0) {
+      CHECK_NE(web_view_extension_count_, 0);
+      details = ProxyDecisionDetailsForExtension::kOnlyForWebView;
+    } else if (web_view_extension_count_ == 0 &&
+               declarative_request_extension_count_ == 0) {
+      CHECK_NE(web_request_extension_count_, 0);
+      details = ProxyDecisionDetailsForExtension::kOnlyForWebRequest;
+    } else if (web_request_extension_count_ == 0 &&
+               web_view_extension_count_ == 0) {
+      CHECK_NE(declarative_request_extension_count_, 0);
+      details = ProxyDecisionDetailsForExtension::kOnlyForDeclarativeRequest;
+    }
+    base::UmaHistogramEnumeration(
+        "Extensions.WebRequest.ProxyDecisionDetailsForExtension", details);
+  }
   return decision != ProxyDecision::kWillNotProxy;
 }
 
@@ -658,10 +710,17 @@ bool WebRequestAPI::HasExtraHeadersListenerForTesting() {
       ->HasAnyExtraHeadersListener(browser_context_);
 }
 
+void WebRequestAPI::ResetURLLoaderFactories() {
+  browser_context_->GetDefaultStoragePartition()->ResetURLLoaderFactories();
+  if (g_test_observer) {
+    g_test_observer->OnDidResetURLLoaderFactories();
+  }
+}
+
 void WebRequestAPI::UpdateMayHaveProxies() {
   bool may_have_proxies = MayHaveProxies();
   if (!may_have_proxies_ && may_have_proxies) {
-    browser_context_->GetDefaultStoragePartition()->ResetURLLoaderFactories();
+    ResetURLLoaderFactories();
   }
   may_have_proxies_ = may_have_proxies;
 }

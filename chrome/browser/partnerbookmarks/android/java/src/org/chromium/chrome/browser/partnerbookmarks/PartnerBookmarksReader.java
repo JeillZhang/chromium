@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.partnerbookmarks;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 
 import org.jni_zero.CalledByNative;
@@ -12,6 +14,8 @@ import org.jni_zero.NativeMethods;
 
 import org.chromium.base.Log;
 import org.chromium.base.task.AsyncTask;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.partnercustomizations.PartnerBrowserCustomizations;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.ui.base.ViewUtils;
@@ -23,9 +27,10 @@ import java.util.Set;
 import javax.annotation.concurrent.GuardedBy;
 
 /** Reads bookmarks from the partner content provider (if any). */
+@NullMarked
 public class PartnerBookmarksReader {
     private static final String TAG = "PartnerBMReader";
-    private static Set<FaviconUpdateObserver> sFaviconUpdateObservers = new HashSet<>();
+    private static final Set<FaviconUpdateObserver> sFaviconUpdateObservers = new HashSet<>();
     private static final float DESIRED_FAVICON_SIZE_DP = 16.0f;
 
     /** Root bookmark id reserved for the implied root of the bookmarks */
@@ -34,8 +39,8 @@ public class PartnerBookmarksReader {
     /** ID used to indicate an invalid bookmark node. */
     static final long INVALID_BOOKMARK_ID = -1;
 
-    /** Storage for failed favicon retrieval attempts to throttle future requests. * */
-    private PartnerBookmarksFaviconThrottle mFaviconThrottle;
+    /** Storage for failed favicon retrieval attempts to throttle future requests. */
+    private @Nullable PartnerBookmarksFaviconThrottle mFaviconThrottle;
 
     // JNI c++ pointer
     private long mNativePartnerBookmarksReader;
@@ -151,16 +156,17 @@ public class PartnerBookmarksReader {
      * @return NATIVE id of a bookmark
      */
     private long onBookmarkPush(
-            String url,
+            @Nullable String url,
             String title,
             boolean isFolder,
             long parentId,
-            byte[] favicon,
-            byte[] touchicon) {
+            byte @Nullable [] favicon,
+            byte @Nullable [] touchicon) {
         FetchFaviconCallback callback =
                 new FetchFaviconCallback() {
                     @Override
                     public void onFaviconFetched(@FaviconFetchResult int result) {
+                        assumeNonNull(url);
                         synchronized (mProgressLock) {
                             if (result == FaviconFetchResult.SUCCESS_FROM_SERVER) {
                                 // If we've fetched a new favicon from a server, store a flag to
@@ -173,7 +179,7 @@ public class PartnerBookmarksReader {
                                                     .getNativeUrlString(url));
                                 }
                             }
-                            mFaviconThrottle.onFaviconFetched(url, result);
+                            assumeNonNull(mFaviconThrottle).onFaviconFetched(url, result);
                             --mNumFaviconsInProgress;
                             if (canShutdown()) shutDown();
                         }
@@ -196,7 +202,7 @@ public class PartnerBookmarksReader {
                         parentId,
                         favicon,
                         touchicon,
-                        mFaviconThrottle.shouldFetchFromServerIfNecessary(url),
+                        assumeNonNull(mFaviconThrottle).shouldFetchFromServerIfNecessary(url),
                         ViewUtils.dpToPx(mContext, DESIRED_FAVICON_SIZE_DP),
                         callback);
     }
@@ -284,7 +290,7 @@ public class PartnerBookmarksReader {
 
             // Get a snapshot of the bookmarks.
             LinkedHashMap<Long, PartnerBookmark> idMap = new LinkedHashMap<Long, PartnerBookmark>();
-            HashSet<String> urlSet = new HashSet<String>();
+            HashSet<String> urlSet = new HashSet<>();
 
             PartnerBookmark rootBookmarksFolder = createRootBookmarksFolderBookmark();
             idMap.put(ROOT_FOLDER_ID, rootBookmarksFolder);
@@ -326,7 +332,7 @@ public class PartnerBookmarksReader {
                 return null;
             }
 
-            readBookmarkHierarchy(rootBookmarksFolder, new HashSet<PartnerBookmark>());
+            readBookmarkHierarchy(rootBookmarksFolder, new HashSet<>());
 
             return null;
         }
@@ -344,7 +350,7 @@ public class PartnerBookmarksReader {
 
                 // Look for invalid parent ids and self-cycles.
                 if (!idMap.containsKey(bookmark.mParentId) || bookmark.mParentId == bookmark.mId) {
-                    bookmark.mParent = idMap.get(ROOT_FOLDER_ID);
+                    bookmark.mParent = assumeNonNull(idMap.get(ROOT_FOLDER_ID));
                     bookmark.mParent.mEntries.add(bookmark);
                     continue;
                 }
@@ -417,12 +423,12 @@ public class PartnerBookmarksReader {
         long addPartnerBookmark(
                 long nativePartnerBookmarksReader,
                 PartnerBookmarksReader caller,
-                String url,
+                @Nullable String url,
                 String title,
                 boolean isFolder,
                 long parentId,
-                byte[] favicon,
-                byte[] touchicon,
+                byte @Nullable [] favicon,
+                byte @Nullable [] touchicon,
                 boolean fetchUncachedFaviconsFromServer,
                 int desiredFaviconSizePx,
                 FetchFaviconCallback callback);

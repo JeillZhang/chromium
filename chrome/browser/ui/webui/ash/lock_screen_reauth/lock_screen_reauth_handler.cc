@@ -126,7 +126,6 @@ void LockScreenReauthHandler::HandleStartOnlineAuth(
 
 void LockScreenReauthHandler::HandleAuthenticatorLoaded(
     const base::Value::List& value) {
-  AllowJavascript();
   VLOG(1) << "Authenticator finished loading";
   authenticator_state_ = AuthenticatorState::LOADED;
 
@@ -270,8 +269,7 @@ void LockScreenReauthHandler::OnSetCookieForLoadGaiaWithPartition(
   params.Set("hl", app_locale);
   params.Set("email", context.email);
   params.Set("gaiaId", context.gaia_id.ToString());
-  params.Set("extractSamlPasswordAttributes",
-             login::ExtractSamlPasswordAttributesEnabled());
+  params.Set("extractSamlPasswordAttributes", true);
   params.Set("clientVersion", version_info::GetVersionNumber());
   params.Set("readOnlyEmail", true);
   PrefService* local_state = g_browser_process->local_state();
@@ -305,7 +303,6 @@ void LockScreenReauthHandler::CallJavascript(const std::string& function,
 
 void LockScreenReauthHandler::HandleCompleteAuthentication(
     const base::Value::List& params) {
-  AllowJavascript();
   absl::Cleanup run_callback_on_return = [this] {
     auth_flow_auto_reload_manager_.Terminate();
   };
@@ -416,7 +413,6 @@ void LockScreenReauthHandler::CheckCredentials(
 
 void LockScreenReauthHandler::HandleUpdateUserPassword(
     const base::Value::List& value) {
-  AllowJavascript();
   DCHECK(!value.empty());
   std::string old_password = value[0].GetString();
   lock_screen_reauth_manager_->UpdateUserPassword(old_password);
@@ -433,7 +429,6 @@ void LockScreenReauthHandler::ShowSamlConfirmPasswordScreen() {
 
 void LockScreenReauthHandler::HandleOnPasswordTyped(
     const base::Value::List& value) {
-  AllowJavascript();
   OnPasswordTyped(value[0].GetString());
 }
 
@@ -481,7 +476,6 @@ void LockScreenReauthHandler::SamlConfirmPassword(
 }
 
 void LockScreenReauthHandler::HandleWebviewLoadAborted(int error_code) {
-  AllowJavascript();
   if (error_code == net::ERR_BLOCKED_BY_ADMINISTRATOR) {
     // Ignore this error to let the user see the error screen for blocked sites.
     return;
@@ -507,7 +501,6 @@ void LockScreenReauthHandler::HandleWebviewLoadAborted(int error_code) {
 
 void LockScreenReauthHandler::HandleGetDeviceId(
     const std::string& callback_id) {
-  AllowJavascript();
   user_manager::KnownUser known_user{g_browser_process->local_state()};
   ResolveJavascriptCallback(callback_id, GetDeviceId(known_user));
 }

@@ -17,6 +17,7 @@
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
 #import "ios/chrome/browser/incognito_reauth/ui_bundled/incognito_reauth_scene_agent.h"
 #import "ios/chrome/browser/main/ui_bundled/bvc_container_view_controller.h"
+#import "ios/chrome/browser/popup_menu/ui_bundled/popup_menu_coordinator.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/sessions/model/ios_chrome_tab_restore_service_factory.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
@@ -31,7 +32,6 @@
 #import "ios/chrome/browser/signin/model/fake_authentication_service_delegate.h"
 #import "ios/chrome/browser/snapshots/model/snapshot_browser_agent.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_grid_coordinator_delegate.h"
-#import "ios/chrome/browser/ui/popup_menu/popup_menu_coordinator.h"
 #import "ios/chrome/common/ui/reauthentication/reauthentication_module.h"
 #import "ios/chrome/test/block_cleanup_test.h"
 #import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
@@ -109,11 +109,11 @@ class TabGridCoordinatorTest : public BlockCleanupTest {
         AuthenticationServiceFactory::GetInstance(),
         AuthenticationServiceFactory::GetFactoryWithDelegate(
             std::make_unique<FakeAuthenticationServiceDelegate>()));
+    builder.AddTestingFactory(ios::BookmarkModelFactory::GetInstance(),
+                              ios::BookmarkModelFactory::GetDefaultFactory());
     builder.AddTestingFactory(
         tab_groups::TabGroupSyncServiceFactory::GetInstance(),
         tab_groups::TabGroupSyncServiceFactory::GetDefaultFactory());
-    builder.AddTestingFactory(ios::BookmarkModelFactory::GetInstance(),
-                              ios::BookmarkModelFactory::GetDefaultFactory());
     profile_ = std::move(builder).Build();
 
     bookmarks::test::WaitForBookmarkModelToLoad(
@@ -132,15 +132,18 @@ class TabGridCoordinatorTest : public BlockCleanupTest {
 
     incognito_browser_ = std::make_unique<TestBrowser>(
         profile_->GetOffTheRecordProfile(), scene_state_);
+
     AddAgentsToBrowser(incognito_browser_.get());
 
+    id mockApplicationCommandHandler =
+        OCMProtocolMock(@protocol(ApplicationCommands));
     IncognitoReauthSceneAgent* reauth_agent = [[IncognitoReauthSceneAgent alloc]
-        initWithReauthModule:[[ReauthenticationModule alloc] init]];
+              initWithReauthModule:[[ReauthenticationModule alloc] init]
+        applicationCommandsHandler:mockApplicationCommandHandler];
     [scene_state_ addAgent:reauth_agent];
 
     coordinator_ = [[TabGridCoordinator alloc]
-        initWithApplicationCommandEndpoint:OCMProtocolMock(
-                                               @protocol(ApplicationCommands))
+        initWithApplicationCommandEndpoint:mockApplicationCommandHandler
                             regularBrowser:browser_.get()
                            inactiveBrowser:browser_->CreateInactiveBrowser()
                           incognitoBrowser:incognito_browser_.get()];

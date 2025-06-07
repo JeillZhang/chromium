@@ -13,6 +13,7 @@ component("on_device_model_service") {
     "pre_sandbox_init.cc",
   ]
   deps = [
+    "//components/optimization_guide/core:features",
     "//services/on_device_model/fake",
     "//services/on_device_model/ml:ml_no_internal",
 
@@ -41,8 +42,10 @@ component("on_device_model_service") {
   }
 
   if (is_linux || is_chromeos) {
+    deps += [ "//gpu/config" ]
+  }
+  if (!is_fuchsia) {
     deps += [
-      "//gpu/config",
       "//third_party/dawn/include/dawn:cpp_headers",
       "//third_party/dawn/src/dawn:proc",
       "//third_party/dawn/src/dawn/native",
@@ -57,12 +60,16 @@ source_set("tests") {
   deps = [
     ":on_device_model_service",
     "//base/test:test_support",
+    "//mojo/public/cpp/test_support:test_utils",
     "//services/on_device_model/fake",
     "//services/on_device_model/public/cpp/test_support",
     "//services/on_device_model/public/mojom",
     "//testing/gmock",
     "//testing/gtest",
   ]
+  if (enable_constraints) {
+    defines = [ "ENABLE_ON_DEVICE_CONSTRAINTS" ]
+  }
 }
 
 buildflag_header("ml_internal_buildflags") {

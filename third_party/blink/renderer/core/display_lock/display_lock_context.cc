@@ -1338,6 +1338,8 @@ const char* DisplayLockContext::RenderAffectingStateName(int state) const {
       return "DescendantIsViewTransitionElement";
     case RenderAffectingState::kDescendantIsAnchorTarget:
       return "kDescendantIsAnchorTarget";
+    case RenderAffectingState::kHasScrollerWithScrollMarkerGroup:
+      return "kHasScrollerWithScrollMarkerGroup";
     case RenderAffectingState::kNumRenderAffectingStates:
       break;
   }
@@ -1393,6 +1395,11 @@ bool DisplayLockContext::ActivatableDisplayLocksForced() const {
 
 void DisplayLockContext::SetAffectedByAnchorPositioning(bool val) {
   SetRenderAffectingState(RenderAffectingState::kDescendantIsAnchorTarget, val);
+}
+
+bool DisplayLockContext::IsScreenReaderActive() const {
+  return document_->ExistingAXObjectCache() &&
+         document_->ExistingAXObjectCache()->IsScreenReaderActive();
 }
 
 }  // namespace blink

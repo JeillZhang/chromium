@@ -10,12 +10,12 @@
 #include <limits>
 #include <memory>
 #include <utility>
+#include <variant>
 
 #include "base/containers/contains.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
-#include "base/functional/overloaded.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/values.h"
@@ -47,7 +47,6 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extension_web_contents_observer.h"
 #include "extensions/browser/extensions_browser_client.h"
-#include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/browser/message_service_api.h"
 #include "extensions/browser/message_tracker.h"
 #include "extensions/browser/pref_names.h"
@@ -63,7 +62,12 @@
 #include "extensions/common/manifest_handlers/incognito_info.h"
 #include "extensions/common/mojom/message_port.mojom-shared.h"
 #include "extensions/common/permissions/permissions_data.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
+#include "extensions/browser/guest_view/web_view/web_view_guest.h"
+#endif
 
 using content::BrowserContext;
 using content::BrowserThread;
@@ -77,7 +81,7 @@ namespace {
 const char kReceivingEndDoesntExistError[] =
     "Could not establish connection. Receiving end does not exist.";
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS)
+    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
 const char kMissingPermissionError[] =
     "Access to native messaging requires nativeMessaging permission.";
 const char kProhibitedByPoliciesError[] =
@@ -374,8 +378,8 @@ class MessageServiceFactory
  private:
   ChannelEndpoint GetEndpoint(content::BrowserContext* context,
                               const Source& source) {
-    return absl::visit(
-        base::Overloaded{
+    return std::visit(
+        absl::Overload{
             [&](const WorkerId& worker) {
               return ChannelEndpoint(
                   context, worker.render_process_id,
@@ -574,6 +578,7 @@ void MessageService::OpenChannelToExtension(
     source_frame = ExtensionApiFrameIdMap::Get()->GetFrameData(
         source_render_frame_host->GetGlobalId());
   } else {
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
     // Check to see if it was a WebView making the request.
     // Sending messages from WebViews to extensions breaks webview isolation,
     // so only allow component extensions to receive messages from WebViews.
@@ -583,6 +588,7 @@ void MessageService::OpenChannelToExtension(
         Manifest::IsComponentLocation(target_extension->location())) {
       include_guest_process_info = true;
     }
+#endif
   }
 
   std::unique_ptr<OpenChannelParams> params =
@@ -667,7 +673,7 @@ void MessageService::OpenChannelToNativeAppImpl(
     return;
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS)
+    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   bool has_permission = extension->permissions_data()->HasAPIPermission(
       mojom::APIPermissionID::kNativeMessaging);
   if (!has_permission) {
@@ -722,12 +728,12 @@ void MessageService::OpenChannelToNativeAppImpl(
 
   AddChannel(std::move(channel), receiver_port_id);
 #else   // !(BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
-        // BUILDFLAG(IS_CHROMEOS))
+        // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID))
   const char kNativeMessagingNotSupportedError[] =
       "Native Messaging is not supported on this platform.";
   opener_port->DispatchOnDisconnect(kNativeMessagingNotSupportedError);
 #endif  // !(BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
-        // BUILDFLAG(IS_CHROMEOS))
+        // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
 }
 
 void MessageService::OpenChannelToTabImpl(
@@ -772,10 +778,8 @@ void MessageService::OpenChannelToTabImpl(
       receiver_contents->GetPrimaryMainFrame());
 
   const PortId receiver_port_id = source_port_id.GetOppositePortId();
-  std::unique_ptr<MessagePort> receiver =
-      messaging_delegate_->CreateReceiverForTab(
-          weak_factory_.GetWeakPtr(), extension_id, receiver_port_id,
-          receiver_contents, frame_id, document_id);
+  std::unique_ptr<MessagePort> receiver = CreateReceiverForTab(
+      extension_id, receiver_port_id, receiver_contents, frame_id, document_id);
   if (!receiver.get()) {
     opener_port->DispatchOnDisconnect(kReceivingEndDoesntExistError);
     return;
@@ -816,6 +820,55 @@ void MessageService::OpenChannelToTabImpl(
           false);  // Connections to tabs aren't webview guests.
   OpenChannelImpl(receiver_context, std::move(params), extension,
                   false /* did_enqueue */);
+}
+
+std::unique_ptr<MessagePort> MessageService::CreateReceiverForTab(
+    const ExtensionId& extension_id,
+    const PortId& receiver_port_id,
+    content::WebContents* receiver_contents,
+    int receiver_frame_id,
+    const std::string& receiver_document_id) {
+  // Frame ID -1 is every frame in the tab.
+  bool include_child_frames =
+      receiver_frame_id == -1 && receiver_document_id.empty();
+
+  content::RenderFrameHost* receiver_render_frame_host = nullptr;
+  if (include_child_frames) {
+    // The target is the active outermost main frame of the WebContents.
+    receiver_render_frame_host = receiver_contents->GetPrimaryMainFrame();
+  } else if (!receiver_document_id.empty()) {
+    ExtensionApiFrameIdMap::DocumentId document_id =
+        ExtensionApiFrameIdMap::DocumentIdFromString(receiver_document_id);
+
+    // Return early for invalid documentIds.
+    if (!document_id) {
+      return nullptr;
+    }
+
+    receiver_render_frame_host =
+        ExtensionApiFrameIdMap::Get()->GetRenderFrameHostByDocumentId(
+            document_id);
+
+    // If both |document_id| and |receiver_frame_id| are provided they
+    // should find the same RenderFrameHost, if not return early.
+    if (receiver_frame_id != -1 &&
+        ExtensionApiFrameIdMap::GetRenderFrameHostById(receiver_contents,
+                                                       receiver_frame_id) !=
+            receiver_render_frame_host) {
+      return nullptr;
+    }
+  } else {
+    DCHECK_GT(receiver_frame_id, -1);
+    receiver_render_frame_host = ExtensionApiFrameIdMap::GetRenderFrameHostById(
+        receiver_contents, receiver_frame_id);
+  }
+  if (!receiver_render_frame_host) {
+    return nullptr;
+  }
+
+  return ExtensionMessagePort::CreateForTab(
+      weak_factory_.GetWeakPtr(), receiver_port_id, extension_id,
+      receiver_render_frame_host, include_child_frames);
 }
 
 void MessageService::OpenChannelImpl(BrowserContext* browser_context,
@@ -892,6 +945,7 @@ void MessageService::OpenChannelImpl(BrowserContext* browser_context,
 
   int guest_process_id = content::ChildProcessHost::kInvalidUniqueID;
   int guest_render_frame_routing_id = MSG_ROUTING_NONE;
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
   if (params->include_guest_process_info &&
       // TODO(lazyboy): Investigate <webview> SW messaging.
       source.is_for_render_frame()) {
@@ -901,6 +955,7 @@ void MessageService::OpenChannelImpl(BrowserContext* browser_context,
 
     DCHECK(WebViewGuest::FromRenderFrameHost(source.GetRenderFrameHost()));
   }
+#endif
 
   // Send the connect event to the receiver.  Give it the opener's port ID (the
   // opener has the opposite port ID).

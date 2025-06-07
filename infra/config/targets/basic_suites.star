@@ -101,6 +101,24 @@ targets.legacy_basic_suite(
     },
 )
 
+targets.legacy_basic_suite(
+    name = "chromeos_chrome_all_tast_tests_tfc",
+    tests = {
+        "chrome_all_tast_tests": targets.legacy_test_config(
+            skylab = targets.skylab(
+                # TODO(fqj): Remove stub tast_expr.
+                # Currently, recipe_module/chromium_tests has some
+                # tast-specific logic relying on tast_expr to be non-empty.
+                tast_expr = "STUB_STRING_TO_RUN_TAST_TESTS",
+                timeout_sec = 14400,
+                cros_test_names_exclude_from_file = ["chromeos/tast_control_disabled_tests.txt"],
+                cros_test_tags = ["group:mainline", "dep:chrome"],
+                cros_test_tags_exclude = ["informational", "dep:no_chrome_dcheck"],
+            ),
+        ),
+    },
+)
+
 # Test suite for running critical Tast tests.
 targets.legacy_basic_suite(
     name = "chromeos_chrome_criticalstaging_tast_tests",
@@ -860,6 +878,34 @@ targets.legacy_basic_suite(
 )
 
 targets.legacy_basic_suite(
+    name = "gpu_webrtc_telemetry_test",
+    tests = {
+        "webrtc_tests": targets.legacy_test_config(),
+    },
+)
+
+targets.legacy_basic_suite(
+    name = "gpu_webrtc_gl_passthrough_ganesh_telemetry_test",
+    tests = {
+        "webrtc_gl_passthrough_ganesh_tests": targets.legacy_test_config(),
+    },
+)
+
+targets.legacy_basic_suite(
+    name = "gpu_webrtc_metal_passthrough_ganesh_telemetry_test",
+    tests = {
+        "webrtc_metal_passthrough_ganesh_tests": targets.legacy_test_config(),
+    },
+)
+
+targets.legacy_basic_suite(
+    name = "gpu_webrtc_metal_passthrough_graphite_telemetry_test",
+    tests = {
+        "webrtc_metal_passthrough_graphite_tests": targets.legacy_test_config(),
+    },
+)
+
+targets.legacy_basic_suite(
     name = "gpu_webgl2_conformance_d3d11_passthrough_telemetry_tests",
     tests = {
         "webgl2_conformance_d3d11_passthrough_tests": targets.legacy_test_config(
@@ -1075,6 +1121,11 @@ targets.legacy_basic_suite(
         "ui_chromeos_unittests": targets.legacy_test_config(),
         "usage_time_limit_unittests": targets.legacy_test_config(
             experiment_percentage = 100,
+        ),
+        "views_ax_chromeos_browser_tests": targets.legacy_test_config(
+            # TODO(crbug.com/325137417): Promote to non-experimental
+            # once we're sure we have the capacity.
+            experiment_percentage = 10,
         ),
         "wayland_client_perftests": targets.legacy_test_config(),
         "wayland_client_tests": targets.legacy_test_config(),
@@ -1358,6 +1409,19 @@ targets.legacy_basic_suite(
             ],
             linux_args = [
                 "-use-xvfb",
+            ],
+        ),
+    },
+)
+
+targets.legacy_basic_suite(
+    name = "translatekit_script_tests",
+    tests = {
+        "chrome_wpt_tests": targets.legacy_test_config(
+            args = [
+                "-t",
+                "Release",
+                "external/wpt/ai/translator",
             ],
         ),
     },

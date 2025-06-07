@@ -1224,59 +1224,45 @@ IN_PROC_BROWSER_TEST_F(HistoryFencedFrameBrowserTest,
             history_tab_helper->last_load_completion_);
 }
 
-enum TestMode {
-  kPartitionedNoSelfLinks,
-  kPartitionedWithSelfLinks,
-  kPartitionedBothEnabled
-};
-
 // For tests which enable :visited links partitioning.
-class HistoryVisitedLinksBrowserTest
-    : public HistoryBrowserTest,
-      public ::testing::WithParamInterface<TestMode> {
+class HistoryVisitedLinksBrowserTest : public HistoryBrowserTest {
  public:
   HistoryVisitedLinksBrowserTest() {
-    switch (GetParam()) {
-      case TestMode::kPartitionedNoSelfLinks:
-        scoped_feature_list_.InitWithFeatures(
-            {blink::features::kPartitionVisitedLinkDatabase},
-            {blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks});
-        break;
-      case TestMode::kPartitionedWithSelfLinks:
-        scoped_feature_list_.InitWithFeatures(
-            {blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks},
-            {blink::features::kPartitionVisitedLinkDatabase});
-        break;
-      case TestMode::kPartitionedBothEnabled:
-        scoped_feature_list_.InitWithFeatures(
-            {blink::features::kPartitionVisitedLinkDatabase,
-             blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks},
-            {});
-        break;
-    }
+    scoped_feature_list_.InitAndEnableFeature(
+        blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks);
   }
   content::WebContents* web_contents() {
     return browser()->tab_strip_model()->GetActiveWebContents();
   }
 
- private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-INSTANTIATE_TEST_SUITE_P(All,
-                         HistoryVisitedLinksBrowserTest,
-                         testing::Values(TestMode::kPartitionedNoSelfLinks,
-                                         TestMode::kPartitionedWithSelfLinks,
-                                         TestMode::kPartitionedBothEnabled));
-
-IN_PROC_BROWSER_TEST_P(HistoryVisitedLinksBrowserTest, GetSaltForSameOrigin) {
+IN_PROC_BROWSER_TEST_F(HistoryVisitedLinksBrowserTest,
+                       PartitionedGetSaltForSameOrigin) {
   constexpr char kOrigin[] = "foo.com";
   const GURL kUrl(embedded_https_test_server().GetURL(kOrigin, "/empty.html"));
+  int roundtrips = 5;
 
   // Obtain our expected salt value from the history service.
   history::HistoryService* history_service =
       HistoryServiceFactory::GetForProfile(browser()->profile(),
                                            ServiceAccessType::EXPLICIT_ACCESS);
+
+  // crbug.com/391985597: To obtain a salt from the `HistoryService`, the
+  // :visited links hashtable must have completed loading in data from the
+  // `HistoryDatabase`. Even though the `HistoryDatabase` is empty, on Windows
+  // and MacOS trybots, this test was flaky due to delays in switching from
+  // the DB to UI thread. To ensure that we can obtain our expected salt, we
+  // will run a few navigations which the test must wait for their completion
+  // to buy these trybots some more time to finish loading the table. (NOTE:
+  // this would traditionally be done with a waiter, but due to layering
+  // constraints, we cannot directly access the `(Partitioned)VisitedLink::
+  // TableBuilder` to be signaled once loading is complete.)
+  for (int i = 0; i < roundtrips; i++) {
+    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl));
+  }
+
   std::optional<uint64_t> expected_salt =
       history_service->GetOrAddOriginSalt(url::Origin::Create(kUrl));
   ASSERT_TRUE(expected_salt.has_value());
@@ -1284,7 +1270,8 @@ IN_PROC_BROWSER_TEST_P(HistoryVisitedLinksBrowserTest, GetSaltForSameOrigin) {
   // Perform a navigation and assert that we obtain our expected salt value.
   VisitedLinkNavigationThrottleObserver observer(web_contents(), kUrl);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl));
-  EXPECT_EQ(observer.GetVisitedLinkSalt(), expected_salt.value());
+  ASSERT_TRUE(observer.GetVisitedLinkSalt().has_value());
+  EXPECT_EQ(observer.GetVisitedLinkSalt().value(), expected_salt.value());
 
   // Navigate to a same-origin URL. We should receive the same salt as our
   // previous navigation.
@@ -1292,17 +1279,36 @@ IN_PROC_BROWSER_TEST_P(HistoryVisitedLinksBrowserTest, GetSaltForSameOrigin) {
       embedded_https_test_server().GetURL(kOrigin, "/title1.html"));
   VisitedLinkNavigationThrottleObserver observer2(web_contents(), kUrl2);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl2));
-  EXPECT_EQ(observer.GetVisitedLinkSalt(), observer2.GetVisitedLinkSalt());
+  ASSERT_TRUE(observer2.GetVisitedLinkSalt().has_value());
+  EXPECT_EQ(observer.GetVisitedLinkSalt().value(),
+            observer2.GetVisitedLinkSalt().value());
 }
 
-IN_PROC_BROWSER_TEST_P(HistoryVisitedLinksBrowserTest, AddSaltForCrossOrigin) {
+IN_PROC_BROWSER_TEST_F(HistoryVisitedLinksBrowserTest,
+                       PartitionedAddSaltForCrossOrigin) {
   constexpr char kOrigin[] = "foo.com";
   const GURL kUrl(embedded_https_test_server().GetURL(kOrigin, "/empty.html"));
+  int roundtrips = 5;
 
   // Obtain our expected salt value for kOrigin from the history service.
   history::HistoryService* history_service =
       HistoryServiceFactory::GetForProfile(browser()->profile(),
                                            ServiceAccessType::EXPLICIT_ACCESS);
+
+  // crbug.com/391985597: To obtain a salt from the `HistoryService`, the
+  // :visited links hashtable must have completed loading in data from the
+  // `HistoryDatabase`. Even though the `HistoryDatabase` is empty, on Windows
+  // and MacOS trybots, this test was flaky due to delays in switching from
+  // the DB to UI thread. To ensure that we can obtain our expected salt, we
+  // will run a few navigations which the test must wait for their completion
+  // to buy these trybots some more time to finish loading the table. (NOTE:
+  // this would traditionally be done with a waiter, but due to layering
+  // constraints, we cannot directly access the `(Partitioned)VisitedLink::
+  // TableBuilder` to be signaled once loading is complete.)
+  for (int i = 0; i < roundtrips; i++) {
+    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl));
+  }
+
   std::optional<uint64_t> expected_salt =
       history_service->GetOrAddOriginSalt(url::Origin::Create(kUrl));
   ASSERT_TRUE(expected_salt.has_value());
@@ -1311,7 +1317,8 @@ IN_PROC_BROWSER_TEST_P(HistoryVisitedLinksBrowserTest, AddSaltForCrossOrigin) {
   // kOrigin.
   VisitedLinkNavigationThrottleObserver observer(web_contents(), kUrl);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl));
-  EXPECT_EQ(observer.GetVisitedLinkSalt(), expected_salt.value());
+  ASSERT_TRUE(observer.GetVisitedLinkSalt().has_value());
+  EXPECT_EQ(observer.GetVisitedLinkSalt().value(), expected_salt.value());
 
   // Navigate to a cross-origin URL. We should receive a different salt from our
   // previous navigation.
@@ -1320,6 +1327,7 @@ IN_PROC_BROWSER_TEST_P(HistoryVisitedLinksBrowserTest, AddSaltForCrossOrigin) {
       embedded_https_test_server().GetURL(kOrigin2, "/title1.html"));
   VisitedLinkNavigationThrottleObserver observer2(web_contents(), kUrl2);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), kUrl2));
-  EXPECT_NE(observer2.GetVisitedLinkSalt(), std::nullopt);
-  EXPECT_NE(observer.GetVisitedLinkSalt(), observer2.GetVisitedLinkSalt());
+  ASSERT_TRUE(observer2.GetVisitedLinkSalt().has_value());
+  EXPECT_NE(observer.GetVisitedLinkSalt().value(),
+            observer2.GetVisitedLinkSalt().value());
 }

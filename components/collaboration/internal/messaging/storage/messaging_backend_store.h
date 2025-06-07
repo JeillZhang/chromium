@@ -57,9 +57,10 @@ class MessagingBackendStore {
   virtual void ClearDirtyMessage(const base::Uuid uuid,
                                  DirtyType dirty_type) = 0;
 
-  // Get all dirty messages for dirty_type.
+  // Get all dirty messages for dirty_type. If no dirty_type is supplied, all
+  // the messages will be returned.
   virtual std::vector<collaboration_pb::Message> GetDirtyMessages(
-      DirtyType dirty_type) = 0;
+      std::optional<DirtyType> dirty_type) = 0;
 
   // Get the dirty messages for a group.
   virtual std::vector<collaboration_pb::Message> GetDirtyMessagesForGroup(
@@ -88,6 +89,9 @@ class MessagingBackendStore {
 
   // Remove a message from the store.
   virtual void RemoveMessages(const std::set<std::string>& message_ids) = 0;
+
+  // Remove all messages from the store.
+  virtual void RemoveAllMessages() = 0;
 };
 
 }  // namespace collaboration::messaging

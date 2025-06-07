@@ -14,11 +14,13 @@ import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
 import org.robolectric.shadows.ShadowUserManager;
@@ -41,6 +43,7 @@ import org.chromium.components.policy.PolicySwitches;
         shadows = {ShadowPostTask.class, ShadowUserManager.class})
 @LooperMode(LooperMode.Mode.LEGACY)
 public class FirstRunAppRestrictionInfoTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private Bundle mMockBundle;
 
     private boolean mPauseDuringPostTask;
@@ -48,7 +51,6 @@ public class FirstRunAppRestrictionInfoTest {
 
     @Before
     public void setup() {
-        MockitoAnnotations.initMocks(this);
         ShadowPostTask.setTestImpl(
                 new ShadowPostTask.TestImpl() {
                     @Override
@@ -87,7 +89,7 @@ public class FirstRunAppRestrictionInfoTest {
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    AppRestrictionSupplier info = AppRestrictionSupplier.takeMaybeInitialized();
+                    AppRestrictionSupplier info = new AppRestrictionSupplier();
                     info.getHasAppRestriction(appResCallbackHelper::notifyCalled);
                     info.getCompletionElapsedRealtimeMs(
                             (ignored) -> completionCallbackHelper.notifyCalled());
@@ -112,7 +114,7 @@ public class FirstRunAppRestrictionInfoTest {
         mPauseDuringPostTask = true;
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    AppRestrictionSupplier info = AppRestrictionSupplier.takeMaybeInitialized();
+                    AppRestrictionSupplier info = new AppRestrictionSupplier();
                     info.getHasAppRestriction(appResCallbackHelper1::notifyCalled);
                     info.getHasAppRestriction(appResCallbackHelper2::notifyCalled);
                     info.getHasAppRestriction(appResCallbackHelper3::notifyCalled);
@@ -170,13 +172,10 @@ public class FirstRunAppRestrictionInfoTest {
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    AppRestrictionSupplier info = AppRestrictionSupplier.takeMaybeInitialized();
+                    AppRestrictionSupplier info = new AppRestrictionSupplier();
                     info.getHasAppRestriction(appResCallbackHelper::notifyCalled);
                     info.getCompletionElapsedRealtimeMs(
                             (ignored) -> completionCallbackHelper.notifyCalled());
-
-                    // Destroy the object before the async task completes.
-                    info.destroy();
 
                     mPendingPostTask.run();
                 });
@@ -196,7 +195,7 @@ public class FirstRunAppRestrictionInfoTest {
         final PayloadCallbackHelper<Boolean> appResCallbackHelper = new PayloadCallbackHelper<>();
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
-                        AppRestrictionSupplier.takeMaybeInitialized()
+                        new AppRestrictionSupplier()
                                 .getHasAppRestriction(appResCallbackHelper::notifyCalled));
         Assert.assertTrue(appResCallbackHelper.getOnlyPayloadBlocking());
     }

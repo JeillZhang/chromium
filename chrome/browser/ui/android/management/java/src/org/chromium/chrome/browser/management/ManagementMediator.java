@@ -8,6 +8,7 @@ import android.content.Context;
 import android.text.SpannableString;
 import android.text.SpannableStringBuilder;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.enterprise.util.ManagedBrowserUtils;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -24,6 +25,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** A mediator for the {@link ManagementCoordinator} responsible for handling business logic. */
+@NullMarked
 public class ManagementMediator {
     private static final String CHROME_MANAGED_LEARN_MORE_URL =
             "https://support.google.com/chrome/?p=is_chrome_managed";
@@ -62,6 +64,24 @@ public class ManagementMediator {
                         .with(
                                 ManagementProperties.LEGACY_TECH_REPORTING_TEXT,
                                 getLegacyTechReportingClickableText())
+                        .with(
+                                ManagementProperties.URL_FILTERING_ENABLED,
+                                ManagedBrowserUtils.isEnterpriseRealTimeUrlCheckModeEnabled(
+                                        profile))
+                        .with(ManagementProperties.URL_FILTERING_TEXT, getUrlFilteringText())
+                        .with(
+                                ManagementProperties.URL_FILTERING_DESCRIPTION_TEXT,
+                                getUrlFilteringDescriptionText())
+                        .with(
+                                ManagementProperties.SECURITY_EVENT_REPORTING_ENABLED,
+                                ManagedBrowserUtils.isOnSecurityEventEnterpriseConnectorEnabled(
+                                        profile))
+                        .with(
+                                ManagementProperties.SECURITY_EVENT_REPORTING_TEXT,
+                                getSecurityEventReportingText())
+                        .with(
+                                ManagementProperties.SECURITY_EVENT_REPORTING_DESCRIPTION_TEXT,
+                                getSecurityEventReportingDescriptionText())
                         .build();
     }
 
@@ -88,6 +108,10 @@ public class ManagementMediator {
         return bullet;
     }
 
+    private SpannableString buildString(int stringResId) {
+        return new SpannableString(mHost.getContext().getString(stringResId));
+    }
+
     private SpannableStringBuilder getProfileReportingText() {
         SpannableStringBuilder spannableString = new SpannableStringBuilder();
         spannableString
@@ -107,6 +131,34 @@ public class ManagementMediator {
         spannableString.append(learn_more_link);
 
         return spannableString;
+    }
+
+    private SpannableStringBuilder getUrlFilteringText() {
+        return new SpannableStringBuilder()
+                .append(buildString(R.string.management_connectors_event))
+                .append(": ")
+                .append(buildString(R.string.management_page_visited_event));
+    }
+
+    private SpannableStringBuilder getUrlFilteringDescriptionText() {
+        return new SpannableStringBuilder()
+                .append(buildString(R.string.management_connectors_visible_data))
+                .append(": ")
+                .append(buildString(R.string.management_page_visited_visible_data));
+    }
+
+    private SpannableStringBuilder getSecurityEventReportingText() {
+        return new SpannableStringBuilder()
+                .append(buildString(R.string.management_connectors_event))
+                .append(": ")
+                .append(buildString(R.string.management_enterprise_reporting_event));
+    }
+
+    private SpannableStringBuilder getSecurityEventReportingDescriptionText() {
+        return new SpannableStringBuilder()
+                .append(buildString(R.string.management_connectors_visible_data))
+                .append(": ")
+                .append(buildString(R.string.management_enterprise_reporting_visible_data));
     }
 
     private boolean isLegacyTechReportingEnabled(PrefService prefs) {

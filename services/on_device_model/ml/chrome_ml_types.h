@@ -14,6 +14,9 @@
 
 namespace ml {
 
+inline constexpr uint32_t kMinTopK = 1;
+inline constexpr float kMinTemperature = 0.0f;
+
 enum class Token {
   // Prefix for system text.
   kSystem,
@@ -38,12 +41,14 @@ enum class ModelPerformanceHint {
 };
 
 // Type of the backend to run the model.
-enum ModelBackendType {
+enum class ModelBackendType {
   // The default WebGPU backend.
-  kGpuBackend = 0,
+  kGpuBackend,
   // The APU accelerator backend. Only available on devices with APU, and need
   // special APU model files.
-  kApuBackend = 1,
+  kApuBackend,
+  // The CPU backend.
+  kCpuBackend,
 };
 
 }  // namespace ml

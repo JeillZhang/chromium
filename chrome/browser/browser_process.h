@@ -28,7 +28,6 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/common/buildflags.h"
 #include "components/safe_browsing/buildflags.h"
 #include "media/media_buildflags.h"
@@ -218,7 +217,12 @@ class BrowserProcess {
   //
   // Setting the locale updates a few core places where this information is
   // stored, but does not reload any resources or refresh any UI.
+
+  // DEPRECATED: Please use GetFeatures()->application_locale_storage()->Get().
+  // TODO(crbug.com/407832571): Replace existing usages and remove this.
   virtual const std::string& GetApplicationLocale() = 0;
+  // DEPRECATED: Please use GetFeatures()->application_locale_storage()->Set().
+  // TODO(crbug.com/407832571): Replace existing usages and remove this.
   virtual void SetApplicationLocale(const std::string& actual_locale) = 0;
 
   virtual DownloadStatusUpdater* download_status_updater() = 0;
@@ -255,9 +259,7 @@ class BrowserProcess {
   // before the full browser starts.
   virtual StartupData* startup_data() = 0;
 
-// TODO(crbug.com/40118868): Revisit once build flag switch of lacros-chrome is
-// complete.
-#if BUILDFLAG(IS_WIN) || (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
   // This will start a timer that, if Chrome is in persistent mode, will check
   // whether an update is available, and if that's the case, restart the
   // browser. Note that restart code will strip some of the command line keys

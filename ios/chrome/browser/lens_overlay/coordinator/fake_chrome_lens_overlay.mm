@@ -14,6 +14,8 @@
   BOOL _started;
 }
 
+@synthesize visibleAreaLayoutGuide = _visibleAreaLayoutGuide;
+
 - (instancetype)init {
   self = [super init];
   if (self) {
@@ -76,6 +78,22 @@
 
 - (void)disableFlyoutMenu:(BOOL)disable {
   // NO-OP
+}
+
+- (void)setGuidanceRestHeight:(CGFloat)height {
+  // NO-OP
+}
+
+- (void)requestShowOverflowMenuTooltip {
+  // NO-OP
+}
+
+- (CGRect)selectionRect {
+  return CGRectZero;
+}
+
+- (CGSize)imageSize {
+  return CGSizeZero;
 }
 
 #pragma mark - Public

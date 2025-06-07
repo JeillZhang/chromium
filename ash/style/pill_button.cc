@@ -259,7 +259,7 @@ void PillButton::UpdateBackgroundColor() {
   if (enable_background_blur_) {
     blurred_background_->SetColor(background_color);
   } else {
-    SetBackground(views::CreateSolidOrThemedRoundedRectBackground(
+    SetBackground(views::CreateRoundedRectBackground(
         background_color, gfx::RoundedCornersF(corner_radius)));
   }
 }
@@ -396,20 +396,16 @@ void PillButton::Init() {
 }
 
 void PillButton::UpdateTextColor() {
-  SetTextColorId(views::Button::STATE_DISABLED, cros_tokens::kCrosSysDisabled);
+  SetTextColor(views::Button::STATE_DISABLED, cros_tokens::kCrosSysDisabled);
 
   // If custom text color is set, use it to set text color.
   if (text_color_) {
-    if (auto color = text_color_->GetSkColor()) {
-      SetEnabledTextColors(*color);
-    } else {
-      SetEnabledTextColorIds(*text_color_->GetColorId());
-    }
+    SetEnabledTextColors(text_color_);
   } else {
     // Otherwise, use default color ID to set text color.
     auto default_color_id = GetDefaultButtonTextIconColorId(type_);
     DCHECK(default_color_id);
-    SetEnabledTextColorIds(default_color_id.value());
+    SetEnabledTextColors(default_color_id.value());
   }
 }
 
@@ -427,14 +423,9 @@ void PillButton::UpdateIconColor() {
 
   // If custom icon color is set, use it to set icon color.
   if (icon_color_) {
-    if (auto color = icon_color_->GetSkColor()) {
-      SetImageModel(views::Button::STATE_NORMAL,
-                    ui::ImageModel::FromVectorIcon(*icon_, *color, kIconSize));
-    } else {
-      SetImageModel(views::Button::STATE_NORMAL,
-                    ui::ImageModel::FromVectorIcon(
-                        *icon_, *icon_color_->GetColorId(), kIconSize));
-    }
+    SetImageModel(
+        views::Button::STATE_NORMAL,
+        ui::ImageModel::FromVectorIcon(*icon_, *icon_color_, kIconSize));
   } else {
     // Otherwise, use default color ID to set icon color.
     auto default_color_id = GetDefaultButtonTextIconColorId(type_);

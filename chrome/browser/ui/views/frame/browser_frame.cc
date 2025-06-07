@@ -12,6 +12,7 @@
 #include "base/debug/leak_annotations.h"
 #include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
+#include "base/metrics/user_metrics.h"
 #include "build/build_config.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/headless/headless_mode_util.h"
@@ -128,7 +129,8 @@ BrowserFrame::~BrowserFrame() = default;
 void BrowserFrame::InitBrowserFrame() {
   native_browser_frame_ =
       NativeBrowserFrameFactory::CreateNativeBrowserFrame(this, browser_view_);
-  views::Widget::InitParams params = native_browser_frame_->GetWidgetParams();
+  views::Widget::InitParams params = native_browser_frame_->GetWidgetParams(
+      views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
   params.name = "BrowserFrame";
   params.delegate = browser_view_;
   params.headless_mode = headless::IsHeadlessMode();
@@ -151,6 +153,8 @@ void BrowserFrame::InitBrowserFrame() {
 #if BUILDFLAG(IS_OZONE)
   params.inhibit_keyboard_shortcuts =
       browser->is_type_app() || browser->is_type_app_popup();
+
+  params.session_data = browser->platform_session_data();
 #endif
 
   if (native_browser_frame_->ShouldRestorePreviousBrowserWidgetState()) {
@@ -296,8 +300,7 @@ void BrowserFrame::UserChangedTheme(BrowserThemeChangeType theme_change_type) {
     // the other Widgets in the frame's hierarchy may inherit this new theme
     // information in their ColorProviderKeys and thus should also be forwarded
     // theme change notifications.
-    Widget::Widgets widgets;
-    GetAllOwnedWidgets(GetNativeView(), &widgets);
+    Widget::Widgets widgets = GetAllOwnedWidgets(GetNativeView());
     for (Widget* widget : widgets) {
       widget->ThemeChanged();
     }
@@ -418,6 +421,7 @@ void BrowserFrame::ShowContextMenuForViewImpl(
     menu_runner_->RunMenuAt(source->GetWidget(), nullptr,
                             gfx::Rect(p, gfx::Size(0, 0)),
                             views::MenuAnchorPosition::kTopLeft, source_type);
+    base::RecordAction(base::UserMetricsAction("SystemContextMenu_Opened"));
   }
 }
 

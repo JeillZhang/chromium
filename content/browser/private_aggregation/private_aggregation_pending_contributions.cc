@@ -12,16 +12,19 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/numerics/safe_conversions.h"
-#include "content/browser/private_aggregation/private_aggregation_features.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "base/strings/strcat.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/mojom/aggregation_service/aggregatable_report.mojom.h"
 #include "third_party/blink/public/mojom/private_aggregation/private_aggregation_host.mojom.h"
 
@@ -30,9 +33,12 @@ namespace content {
 using PAErrorEvent = blink::mojom::PrivateAggregationErrorEvent;
 
 PrivateAggregationPendingContributions::PrivateAggregationPendingContributions(
-    base::StrictNumeric<size_t> max_contributions)
-    : max_contributions_(max_contributions) {
-  CHECK(base::FeatureList::IsEnabled(kPrivateAggregationApiErrorReporting));
+    base::StrictNumeric<size_t> max_contributions,
+    std::vector<std::string_view> histogram_suffixes)
+    : max_contributions_(max_contributions),
+      histogram_suffixes_(histogram_suffixes) {
+  CHECK(base::FeatureList::IsEnabled(
+      blink::features::kPrivateAggregationApiErrorReporting));
 }
 
 PrivateAggregationPendingContributions::PrivateAggregationPendingContributions(
@@ -47,6 +53,14 @@ PrivateAggregationPendingContributions::
 bool PrivateAggregationPendingContributions::IsEmpty() const {
   return unconditional_contributions_.empty() &&
          conditional_contributions_.empty();
+}
+
+const std::map<
+    blink::mojom::PrivateAggregationErrorEvent,
+    std::vector<blink::mojom::AggregatableReportHistogramContribution>>&
+PrivateAggregationPendingContributions::GetConditionalContributionsForTesting()
+    const {
+  return conditional_contributions_;
 }
 
 void PrivateAggregationPendingContributions::AddUnconditionalContributions(
@@ -176,7 +190,7 @@ PrivateAggregationPendingContributions::CompileFinalUnmergedContributions(
   ApplyTestBudgeterResults(std::move(test_budgeter_results),
                            pending_report_limit_result, null_report_behavior);
 
-  was_error_triggered_[PAErrorEvent::kAlreadyTriggeredNonInternalError] = true;
+  was_error_triggered_[PAErrorEvent::kAlreadyTriggeredExternalError] = true;
 
   std::set<ContributionMergeKey> accepted_merge_keys;
   std::set<ContributionMergeKey> truncated_merge_keys;
@@ -197,14 +211,34 @@ PrivateAggregationPendingContributions::CompileFinalUnmergedContributions(
     conditional_contributions_.erase(error_event);
   }
 
+  size_t num_truncations_due_to_unconditional_contributions = 0;
+  {
+    std::set<ContributionMergeKey> unconditional_contribution_merge_keys;
+    for (const blink::mojom::AggregatableReportHistogramContribution&
+             contribution : unconditional_contributions_) {
+      unconditional_contribution_merge_keys.insert(
+          ContributionMergeKey(contribution));
+    }
+    if (unconditional_contribution_merge_keys.size() > max_contributions_) {
+      num_truncations_due_to_unconditional_contributions =
+          unconditional_contribution_merge_keys.size() - max_contributions_;
+    }
+  }
+
   // Unconditional contributions come last to prioritize successful measurement
   // of errors.
   AddToFinalUnmergedContributions(std::move(unconditional_contributions_),
                                   accepted_merge_keys, truncated_merge_keys);
 
-  // TODO(alemxt): Add support for emitting a histogram of
-  // `accepted_merge_keys.size() + truncated_merge_keys.size()`. Also add
-  // support for emitting a histogram of `final_unmerged_contributions_.size()`.
+  RecordNumberOfContributionMergeKeysHistogram(
+      /*num_merge_keys_sent_or_truncated=*/accepted_merge_keys.size() +
+      truncated_merge_keys.size());
+  RecordNumberOfFinalUnmergedContributionsHistogram(
+      /*num_final_unmerged_contributions=*/final_unmerged_contributions_
+          .size());
+  RecordTruncationHistogram(num_truncations_due_to_unconditional_contributions,
+                            /*total_truncations=*/truncated_merge_keys.size());
+
   return final_unmerged_contributions_;
 }
 
@@ -257,17 +291,67 @@ PrivateAggregationPendingContributions::TakeFinalContributions(
   return final_contributions;
 }
 
+void PrivateAggregationPendingContributions::
+    RecordNumberOfContributionMergeKeysHistogram(
+        size_t num_merge_keys_sent_or_truncated) const {
+  constexpr std::string_view kMergeKeysHistogramBase =
+      "PrivacySandbox.PrivateAggregation.NumContributionMergeKeys";
+
+  base::UmaHistogramCounts10000(kMergeKeysHistogramBase,
+                                num_merge_keys_sent_or_truncated);
+  for (std::string_view histogram_suffix : histogram_suffixes_) {
+    base::UmaHistogramCounts10000(
+        base::StrCat({kMergeKeysHistogramBase, histogram_suffix}),
+        num_merge_keys_sent_or_truncated);
+  }
+}
+
+void PrivateAggregationPendingContributions::
+    RecordNumberOfFinalUnmergedContributionsHistogram(
+        size_t num_final_unmerged_contributions) const {
+  constexpr std::string_view kFinalUnmergedContributionsBase =
+      "PrivacySandbox.PrivateAggregation.NumFinalUnmergedContributions";
+
+  base::UmaHistogramCounts10000(kFinalUnmergedContributionsBase,
+                                num_final_unmerged_contributions);
+  for (std::string_view histogram_suffix : histogram_suffixes_) {
+    base::UmaHistogramCounts10000(
+        base::StrCat({kFinalUnmergedContributionsBase, histogram_suffix}),
+        num_final_unmerged_contributions);
+  }
+}
+
+void PrivateAggregationPendingContributions::RecordTruncationHistogram(
+    size_t num_truncations_due_to_unconditional_contributions,
+    size_t total_truncations) const {
+  TruncationResult truncation_result;
+  if (total_truncations == 0) {
+    truncation_result = TruncationResult::kNoTruncation;
+  } else if (num_truncations_due_to_unconditional_contributions > 0) {
+    truncation_result =
+        TruncationResult::kTruncationDueToUnconditionalContributions;
+  } else {
+    truncation_result =
+        TruncationResult::kTruncationNotDueToUnconditionalContributions;
+  }
+
+  base::UmaHistogramEnumeration(
+      "PrivacySandbox.PrivateAggregation.TruncationResult", truncation_result);
+}
+
 PrivateAggregationPendingContributions::Wrapper::Wrapper(
     PrivateAggregationPendingContributions pending_contributions)
     : contributions_(std::move(pending_contributions)) {
-  CHECK(base::FeatureList::IsEnabled(kPrivateAggregationApiErrorReporting));
+  CHECK(base::FeatureList::IsEnabled(
+      blink::features::kPrivateAggregationApiErrorReporting));
 }
 
 PrivateAggregationPendingContributions::Wrapper::Wrapper(
     std::vector<blink::mojom::AggregatableReportHistogramContribution>
         contributions_vector)
     : contributions_(std::move(contributions_vector)) {
-  CHECK(!base::FeatureList::IsEnabled(kPrivateAggregationApiErrorReporting));
+  CHECK(!base::FeatureList::IsEnabled(
+      blink::features::kPrivateAggregationApiErrorReporting));
 }
 
 PrivateAggregationPendingContributions::Wrapper::Wrapper(
@@ -281,14 +365,16 @@ PrivateAggregationPendingContributions::Wrapper::~Wrapper() = default;
 
 PrivateAggregationPendingContributions&
 PrivateAggregationPendingContributions::Wrapper::GetPendingContributions() {
-  CHECK(base::FeatureList::IsEnabled(kPrivateAggregationApiErrorReporting));
-  return absl::get<0>(contributions_);
+  CHECK(base::FeatureList::IsEnabled(
+      blink::features::kPrivateAggregationApiErrorReporting));
+  return std::get<0>(contributions_);
 }
 
 std::vector<blink::mojom::AggregatableReportHistogramContribution>&
 PrivateAggregationPendingContributions::Wrapper::GetContributionsVector() {
-  CHECK(!base::FeatureList::IsEnabled(kPrivateAggregationApiErrorReporting));
-  return absl::get<1>(contributions_);
+  CHECK(!base::FeatureList::IsEnabled(
+      blink::features::kPrivateAggregationApiErrorReporting));
+  return std::get<1>(contributions_);
 }
 
 }  // namespace content

@@ -79,12 +79,13 @@ BASE_DECLARE_FEATURE(kOnDeviceModelValidation);
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 BASE_DECLARE_FEATURE(kOnDeviceModelFetchPerformanceClassEveryStartup);
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-BASE_DECLARE_FEATURE(kAiSettingsPageRefresh);
+BASE_DECLARE_FEATURE(kAiSettingsPageForceAvailable);
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 BASE_DECLARE_FEATURE(kPrivacyGuideAiSettings);
-
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-extern const base::FeatureParam<bool> kShowAiSettingsForTesting;
+BASE_DECLARE_FEATURE(kAnnotatedPageContentWithActionableElements);
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+BASE_DECLARE_FEATURE(kOptimizationGuideProactivePersonalizedHintsFetching);
 
 // Allows setting feature params for model download configuration, such as
 // minimum performance class for download.
@@ -105,13 +106,30 @@ COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const base::FeatureParam<std::string>
     kLowTierPerformanceClassListForOnDeviceModel;
 
+// Comma-separated list of performance classes that have image input enabled.
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const base::FeatureParam<std::string> kPerformanceClassListForImageInput;
+
+// Comma-separated list of performance classes that have audio input enabled.
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const base::FeatureParam<std::string> kPerformanceClassListForAudioInput;
+
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 BASE_DECLARE_FEATURE(kOptimizationGuideIconView);
+
+// Whether model sessions may be brokered to untrusted processes.
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+BASE_DECLARE_FEATURE(kBrokerModelSessionsForUntrustedProcesses);
 
 typedef base::EnumSet<proto::RequestContext,
                       proto::RequestContext_MIN,
                       proto::RequestContext_MAX>
     RequestContextSet;
+
+typedef base::EnumSet<proto::OptimizationType,
+                      proto::OptimizationType_MIN,
+                      proto::OptimizationType_MAX>
+    OptimizationTypeSet;
 
 // The grace period duration for how long to give outstanding page text dump
 // requests to respond after DidFinishLoad.
@@ -285,6 +303,11 @@ bool ShouldOverrideOptimizationTargetDecisionForMetricsPurposes(
 // Returns requests contexts for which personalized metadata should be enabled.
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 RequestContextSet GetAllowedContextsForPersonalizedMetadata();
+
+// Returns optimization types for which proactive personalization should be
+// enabled.
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+OptimizationTypeSet GetAllowedOptimizationTypesForProactivePersonalization();
 
 // Returns the minimum random delay before starting to fetch for prediction
 // models and host model features.
@@ -508,6 +531,10 @@ double GetOnDeviceModelDefaultTemperature();
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 std::vector<uint32_t> GetOnDeviceModelAllowedAdaptationRanks();
 
+// Whether the on-device model should be limited to running only on the CPU.
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+bool ForceCpuBackendForOnDeviceModel();
+
 // Whether the on-device model will be validated when updated using a set of
 // prompts with expected output.
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
@@ -534,10 +561,6 @@ int GetOnDeviceModelValidationAttemptCount();
 // Returns whether the icon view should be enabled.
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 bool ShouldEnableOptimizationGuideIconView();
-
-// Whether Ai settings page refresh or any dependent feature is enabled.
-COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-bool IsAiSettingsPageRefreshEnabled();
 
 // Whether Ai settings page integration with Privacy Guide is enabled.
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)

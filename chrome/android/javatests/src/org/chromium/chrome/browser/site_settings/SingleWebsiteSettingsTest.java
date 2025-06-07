@@ -24,13 +24,12 @@ import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
 import org.junit.Assume;
-import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.params.ParameterAnnotations.UseMethodParameter;
@@ -41,12 +40,14 @@ import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
+import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.settings.SettingsActivity;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.browser_ui.site_settings.ChosenObjectInfo;
 import org.chromium.components.browser_ui.site_settings.ContentSettingException;
@@ -70,17 +71,17 @@ import java.util.List;
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
 @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
 @Batch(SingleWebsiteSettingsTest.TEST_BATCH_NAME)
+@EnableFeatures({ChromeFeatureList.PRIVACY_SANDBOX_RELATED_WEBSITE_SETS_UI})
 public class SingleWebsiteSettingsTest {
     private static final String EXAMPLE_ADDRESS = "https://example.com";
 
     static final String TEST_BATCH_NAME = "SingleWebsiteSettingsTest";
 
-    @ClassRule
-    public static ChromeTabbedActivityTestRule sCTATestRule = new ChromeTabbedActivityTestRule();
-
     @Rule
-    public BlankCTATabInitialStateRule mBlankCTATabInitialStateRule =
-            new BlankCTATabInitialStateRule(sCTATestRule, false);
+    public AutoResetCtaTransitTestRule mCtaTestRule =
+            ChromeTransitTestRules.fastAutoResetCtaActivityRule();
+
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Mock private SiteSettingsDelegate mSiteSettingsDelegate;
 
@@ -98,11 +99,6 @@ public class SingleWebsiteSettingsTest {
             }
             return testCases;
         }
-    }
-
-    @Before
-    public void setUp() {
-        MockitoAnnotations.initMocks(this);
     }
 
     @Test
@@ -313,8 +309,8 @@ public class SingleWebsiteSettingsTest {
 
     /** Test case class that check whether a toggle exists for a given content setting. */
     private static class SingleExceptionTestCase {
-        @ContentSettingValues int mContentSettingValue;
-        @ContentSettingsType.EnumType int mContentSettingsType;
+        @ContentSettingValues final int mContentSettingValue;
+        @ContentSettingsType.EnumType final int mContentSettingsType;
 
         private SettingsActivity mSettingsActivity;
 

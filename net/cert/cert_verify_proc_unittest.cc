@@ -19,12 +19,14 @@
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "crypto/hash.h"
 #include "crypto/sha2.h"
 #include "net/base/cronet_buildflags.h"
 #include "net/base/net_errors.h"
@@ -77,8 +79,6 @@
 #elif BUILDFLAG(IS_IOS)
 #include "base/ios/ios_util.h"
 #include "net/cert/cert_verify_proc_ios.h"
-#elif BUILDFLAG(IS_MAC)
-#include "base/mac/mac_util.h"
 #endif
 
 #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
@@ -519,8 +519,7 @@ TEST_P(CertVerifyProcInternalTest, EVVerificationMultipleOID) {
   std::string_view spki;
   ASSERT_TRUE(asn1::ExtractSPKIFromDERCert(
       x509_util::CryptoBufferAsStringPiece(root->GetCertBuffer()), &spki));
-  SHA256HashValue spki_sha256;
-  crypto::SHA256HashString(spki, spki_sha256.data, sizeof(spki_sha256.data));
+  SHA256HashValue spki_sha256 = crypto::hash::Sha256(base::as_byte_span(spki));
   SetUpCertVerifyProc(CRLSet::ForTesting(false, &spki_sha256, "", "", {}));
 
   // Consider the root of the test chain a valid EV root for the test policy.
@@ -1353,10 +1352,10 @@ TEST_P(CertVerifyProcInternalTest, TestKnownRoot) {
   int flags = 0;
   CertVerifyResult verify_result;
   int error =
-      Verify(cert_chain.get(), "timberfirepizza.com", flags, &verify_result);
+      Verify(cert_chain.get(), "arabianhorseplay.com", flags, &verify_result);
   EXPECT_THAT(error, IsOk())
       << "This test relies on a real certificate that "
-      << "expires on Nov 09 2025. If failing on/after "
+      << "expires on May 18 2026. If failing on/after "
       << "that date, please disable and file a bug "
       << "against mattm. Current time: " << base::Time::Now();
   EXPECT_TRUE(verify_result.is_issued_by_known_root);
@@ -1494,138 +1493,6 @@ TEST(CertVerifyProcTest, IntranetHostsRejected) {
                               NetLogWithSource());
   EXPECT_THAT(error, IsOk());
   EXPECT_FALSE(verify_result.cert_status & CERT_STATUS_NON_UNIQUE_NAME);
-}
-
-// Tests that certificates issued by Symantec's legacy infrastructure
-// are rejected according to the policies outlined in
-// https://security.googleblog.com/2017/09/chromes-plan-to-distrust-symantec.html
-// unless the caller has explicitly disabled that enforcement.
-TEST(CertVerifyProcTest, SymantecCertsRejected) {
-  constexpr SHA256HashValue kSymantecHashValue = {
-      {0xb2, 0xde, 0xf5, 0x36, 0x2a, 0xd3, 0xfa, 0xcd, 0x04, 0xbd, 0x29,
-       0x04, 0x7a, 0x43, 0x84, 0x4f, 0x76, 0x70, 0x34, 0xea, 0x48, 0x92,
-       0xf8, 0x0e, 0x56, 0xbe, 0xe6, 0x90, 0x24, 0x3e, 0x25, 0x02}};
-  constexpr SHA256HashValue kGoogleHashValue = {
-      {0xec, 0x72, 0x29, 0x69, 0xcb, 0x64, 0x20, 0x0a, 0xb6, 0x63, 0x8f,
-       0x68, 0xac, 0x53, 0x8e, 0x40, 0xab, 0xab, 0x5b, 0x19, 0xa6, 0x48,
-       0x56, 0x61, 0x04, 0x2a, 0x10, 0x61, 0xc4, 0x61, 0x27, 0x76}};
-
-  auto [leaf, root] = CertBuilder::CreateSimpleChain2();
-
-  static constexpr base::Time may_1_2016 = base::Time::FromTimeT(1462060800);
-  leaf->SetValidity(may_1_2016, may_1_2016 + base::Days(1));
-  scoped_refptr<X509Certificate> leaf_pre_june_2016 =
-      leaf->GetX509Certificate();
-
-  static constexpr base::Time june_1_2016 = base::Time::FromTimeT(1464739200);
-  leaf->SetValidity(june_1_2016, june_1_2016 + base::Days(1));
-  scoped_refptr<X509Certificate> leaf_post_june_2016 =
-      leaf->GetX509Certificate();
-
-  static constexpr base::Time dec_20_2017 = base::Time::FromTimeT(1513728000);
-  leaf->SetValidity(dec_20_2017, dec_20_2017 + base::Days(1));
-  scoped_refptr<X509Certificate> leaf_dec_2017 = leaf->GetX509Certificate();
-
-  // Test that certificates from the legacy Symantec infrastructure are
-  // rejected:
-  // leaf_dec_2017: A certificate issued after 2017-12-01, which is rejected
-  //                as of M65
-  // leaf_pre_june_2016: A certificate issued prior to 2016-06-01, which is
-  //                     rejected as of M66.
-  for (X509Certificate* cert :
-       {leaf_dec_2017.get(), leaf_pre_june_2016.get()}) {
-    scoped_refptr<CertVerifyProc> verify_proc;
-    int error = 0;
-
-    // Test that a legacy Symantec certificate is rejected.
-    CertVerifyResult symantec_result;
-    symantec_result.verified_cert = cert;
-    symantec_result.public_key_hashes.push_back(HashValue(kSymantecHashValue));
-    symantec_result.is_issued_by_known_root = true;
-    verify_proc = base::MakeRefCounted<MockCertVerifyProc>(symantec_result);
-
-    CertVerifyResult test_result_1;
-    error = verify_proc->Verify(
-        cert, "www.example.com", /*ocsp_response=*/std::string(),
-        /*sct_list=*/std::string(), 0, &test_result_1, NetLogWithSource());
-    EXPECT_THAT(error, IsError(ERR_CERT_SYMANTEC_LEGACY));
-    EXPECT_TRUE(test_result_1.cert_status & CERT_STATUS_SYMANTEC_LEGACY);
-
-    // ... Unless the Symantec cert chains through a allowlisted intermediate.
-    CertVerifyResult allowlisted_result;
-    allowlisted_result.verified_cert = cert;
-    allowlisted_result.public_key_hashes.push_back(
-        HashValue(kSymantecHashValue));
-    allowlisted_result.public_key_hashes.push_back(HashValue(kGoogleHashValue));
-    allowlisted_result.is_issued_by_known_root = true;
-    verify_proc = base::MakeRefCounted<MockCertVerifyProc>(allowlisted_result);
-
-    CertVerifyResult test_result_2;
-    error = verify_proc->Verify(
-        cert, "www.example.com", /*ocsp_response=*/std::string(),
-        /*sct_list=*/std::string(), 0, &test_result_2, NetLogWithSource());
-    EXPECT_THAT(error, IsOk());
-    EXPECT_FALSE(test_result_2.cert_status & CERT_STATUS_AUTHORITY_INVALID);
-
-    // ... Or the caller disabled enforcement of Symantec policies.
-    CertVerifyResult test_result_3;
-    error = verify_proc->Verify(
-        cert, "www.example.com", /*ocsp_response=*/std::string(),
-        /*sct_list=*/std::string(),
-        CertVerifyProc::VERIFY_DISABLE_SYMANTEC_ENFORCEMENT, &test_result_3,
-        NetLogWithSource());
-    EXPECT_THAT(error, IsOk());
-    EXPECT_FALSE(test_result_3.cert_status & CERT_STATUS_SYMANTEC_LEGACY);
-  }
-
-  // Test that certificates from the legacy Symantec infrastructure issued
-  // after 2016-06-01 appropriately rejected.
-  scoped_refptr<X509Certificate> cert = leaf_post_june_2016;
-
-  scoped_refptr<CertVerifyProc> verify_proc;
-  int error = 0;
-
-  // Test that a legacy Symantec certificate is rejected if the feature
-  // flag is enabled, and accepted if it is not.
-  CertVerifyResult symantec_result;
-  symantec_result.verified_cert = cert;
-  symantec_result.public_key_hashes.push_back(HashValue(kSymantecHashValue));
-  symantec_result.is_issued_by_known_root = true;
-  verify_proc = base::MakeRefCounted<MockCertVerifyProc>(symantec_result);
-
-  CertVerifyResult test_result_1;
-  error = verify_proc->Verify(cert.get(), "www.example.com",
-                              /*ocsp_response=*/std::string(),
-                              /*sct_list=*/std::string(), 0, &test_result_1,
-                              NetLogWithSource());
-  EXPECT_THAT(error, IsError(ERR_CERT_SYMANTEC_LEGACY));
-  EXPECT_TRUE(test_result_1.cert_status & CERT_STATUS_SYMANTEC_LEGACY);
-
-  // ... Unless the Symantec cert chains through a allowlisted intermediate.
-  CertVerifyResult allowlisted_result;
-  allowlisted_result.verified_cert = cert;
-  allowlisted_result.public_key_hashes.push_back(HashValue(kSymantecHashValue));
-  allowlisted_result.public_key_hashes.push_back(HashValue(kGoogleHashValue));
-  allowlisted_result.is_issued_by_known_root = true;
-  verify_proc = base::MakeRefCounted<MockCertVerifyProc>(allowlisted_result);
-
-  CertVerifyResult test_result_2;
-  error = verify_proc->Verify(cert.get(), "www.example.com",
-                              /*ocsp_response=*/std::string(),
-                              /*sct_list=*/std::string(), 0, &test_result_2,
-                              NetLogWithSource());
-  EXPECT_THAT(error, IsOk());
-  EXPECT_FALSE(test_result_2.cert_status & CERT_STATUS_AUTHORITY_INVALID);
-
-  // ... Or the caller disabled enforcement of Symantec policies.
-  CertVerifyResult test_result_3;
-  error = verify_proc->Verify(
-      cert.get(), "www.example.com", /*ocsp_response=*/std::string(),
-      /*sct_list=*/std::string(),
-      CertVerifyProc::VERIFY_DISABLE_SYMANTEC_ENFORCEMENT, &test_result_3,
-      NetLogWithSource());
-  EXPECT_THAT(error, IsOk());
-  EXPECT_FALSE(test_result_3.cert_status & CERT_STATUS_SYMANTEC_LEGACY);
 }
 
 // Test that the certificate returned in CertVerifyResult is able to reorder

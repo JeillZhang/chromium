@@ -9,35 +9,49 @@ import android.graphics.drawable.Drawable;
 
 import androidx.annotation.IntDef;
 
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 /** Interface for the Safety Hub modules' mediators. */
+@NullMarked
 interface SafetyHubModuleMediator {
     /**
      * Order reflects state severity. Lowest being the most severe state and highest being the
-     * safest state. Must be kept in sync with SafetyHubModuleState in settings/enums.xml.
+     * safest state.
      */
-    @IntDef({ModuleState.WARNING, ModuleState.UNAVAILABLE, ModuleState.INFO, ModuleState.SAFE})
+    @IntDef({
+        ModuleState.WARNING,
+        ModuleState.UNAVAILABLE,
+        ModuleState.INFO,
+        ModuleState.LOADING,
+        ModuleState.SAFE
+    })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ModuleState {
         int WARNING = 0;
         int UNAVAILABLE = 1;
         int INFO = 2;
-        int SAFE = 3;
+        int LOADING = 3;
+        int SAFE = 4;
         int MAX_VALUE = SAFE;
     }
 
     /**
-     * Values used in "for" loop below - should start from 0 and can't have gaps, lowest value is
-     * additionally used for starting loop. Order reflects the way modules should be ordered if they
-     * have the same state.
+     * Values used in "switch" statements below - should start from 0 and can't have gaps, lowest
+     * value is additionally used for starting loop. Order reflects the way modules should be
+     * ordered if they have the same state.
      */
     @IntDef({
         ModuleOption.UPDATE_CHECK,
         ModuleOption.ACCOUNT_PASSWORDS,
+        ModuleOption.LOCAL_PASSWORDS,
+        ModuleOption.UNIFIED_PASSWORDS,
         ModuleOption.SAFE_BROWSING,
         ModuleOption.UNUSED_PERMISSIONS,
         ModuleOption.NOTIFICATION_REVIEW,
@@ -46,13 +60,40 @@ interface SafetyHubModuleMediator {
     public @interface ModuleOption {
         int UPDATE_CHECK = 0;
         int ACCOUNT_PASSWORDS = 1;
-        int SAFE_BROWSING = 2;
-        int UNUSED_PERMISSIONS = 3;
-        int NOTIFICATION_REVIEW = 4;
-        int OPTION_FIRST = UPDATE_CHECK;
-        int NUM_ENTRIES = 5;
+        int LOCAL_PASSWORDS = 2;
+        int UNIFIED_PASSWORDS = 3;
+        int SAFE_BROWSING = 4;
+        int UNUSED_PERMISSIONS = 5;
+        int NOTIFICATION_REVIEW = 6;
+        int NUM_ENTRIES = 7;
     }
 
+    /**
+     * State machine for the loading indicator.
+     *
+     * <p>On idle, no indicator is being shown. On showing indicator, the loading indicator is being
+     * shown and cannot be removed from the UI, to avoid flashing. On waiting for results, the
+     * loading indicator is being shown but can be removed as soon as a state change occurs.
+     */
+    @IntDef({
+        IndicatorState.IDLE,
+        IndicatorState.SHOWING_INDICATOR,
+        IndicatorState.WAITING_FOR_RESULTS
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface IndicatorState {
+        int IDLE = 0;
+        int SHOWING_INDICATOR = 1;
+        int WAITING_FOR_RESULTS = 2;
+    }
+
+    public static final int LOADING_MIN_TIME_MS = 1000;
+
+    static final int DEFAULT_LOADING_MAX_TIME_MS = 10000;
+    static final String LOADING_MAX_TIME_PARAM_NAME =
+            "safety-hub-local-passwords-module-loading-timeout-ms";
+
+    @Initializer
     public void setUpModule();
 
     public void updateModule();
@@ -79,12 +120,15 @@ interface SafetyHubModuleMediator {
             case ModuleState.SAFE:
                 setExpandState(false);
                 break;
+            case ModuleState.LOADING:
+                setExpandState(false);
+                break;
             default:
                 throw new IllegalArgumentException();
         }
     }
 
-    default Drawable getIcon(Context context) {
+    default @Nullable Drawable getIcon(Context context) {
         switch (getModuleState()) {
             case ModuleState.SAFE:
                 return SettingsUtils.getTintedIcon(
@@ -102,6 +146,8 @@ interface SafetyHubModuleMediator {
                         ? SafetyHubUtils.getManagedIcon(context)
                         : SettingsUtils.getTintedIcon(
                                 context, R.drawable.ic_error, R.color.default_red);
+            case ModuleState.LOADING:
+                return null;
             default:
                 throw new IllegalArgumentException();
         }
@@ -118,6 +164,7 @@ interface SafetyHubModuleMediator {
         @ModuleOption int option = getOption();
         switch (state) {
             case ModuleState.SAFE:
+            case ModuleState.LOADING:
             case ModuleState.INFO:
             case ModuleState.UNAVAILABLE:
                 return option + (state * ModuleOption.NUM_ENTRIES);
@@ -129,5 +176,17 @@ interface SafetyHubModuleMediator {
             default:
                 throw new IllegalArgumentException();
         }
+    }
+
+    default boolean isLoading() {
+        return getModuleState() == ModuleState.LOADING;
+    }
+
+    // Returns the max loading time in milliseconds.
+    default int getLoadingMaxTime() {
+        return ChromeFeatureList.getFieldTrialParamByFeatureAsInt(
+                ChromeFeatureList.SAFETY_HUB_LOCAL_PASSWORDS_MODULE,
+                LOADING_MAX_TIME_PARAM_NAME,
+                DEFAULT_LOADING_MAX_TIME_MS);
     }
 }

@@ -23,7 +23,6 @@ import org.chromium.base.CommandLineInitUtil;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.EarlyTraceEvent;
 import org.chromium.base.IntentUtils;
-import org.chromium.base.JNIUtils;
 import org.chromium.base.LocaleUtils;
 import org.chromium.base.Log;
 import org.chromium.base.PathUtils;
@@ -163,14 +162,14 @@ public class SplitCompatApplication extends Application {
 
         Log.i(
                 TAG,
-                "version=%s (%s) minSdkVersion=%s isBundle=%s processName=%s isIsolatedProcess=%s",
+                "version=%s (%s) minSdkVersion=%s processName=%s isIsolatedProcess=%s splits=%s",
                 VersionConstants.PRODUCT_VERSION,
                 BuildConfig.VERSION_CODE,
                 BuildConfig.MIN_SDK_VERSION,
-                // BundleUtils uses getApplicationContext, so logging after we init it.
-                BundleUtils.isBundle(),
                 ContextUtils.getProcessName(),
-                isIsolatedProcess);
+                isIsolatedProcess,
+                // BundleUtils uses getApplicationContext, so logging after we init it.
+                BundleUtils.getInstalledSplitNamesForLogging());
 
         if (isBrowserProcess) {
             // This must come as early as possible to avoid early loading of the native library from
@@ -206,12 +205,7 @@ public class SplitCompatApplication extends Application {
             performBrowserProcessPreloading(context);
         }
 
-        // Write installed modules to crash keys. This needs to be done as early as possible so
-        // that these values are set before any crashes are reported.
-        ModuleUtil.updateCrashKeys();
-
         AsyncTask.takeOverAndroidThreadPool();
-        JNIUtils.setClassLoader(getClassLoader());
         ResourceBundle.setAvailablePakLocales(ProductConfig.LOCALES);
         LibraryLoader.getInstance().setLinkerImplementation(ProductConfig.USE_CHROMIUM_LINKER);
 
@@ -255,6 +249,9 @@ public class SplitCompatApplication extends Application {
                 AppLocaleUtils.maybeMigrateOverrideLanguage();
             }
         }
+
+        // Write installed modules to crash keys.
+        ModuleUtil.updateCrashKeys();
 
         // WebView installs its own PureJavaExceptionHandler.
         // Incremental install disables process isolation, so things in this block will

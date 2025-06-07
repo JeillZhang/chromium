@@ -54,6 +54,7 @@
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
 #include "ui/views/bubble/bubble_frame_view.h"
@@ -158,11 +159,7 @@ class ParentPermissionInputSection : public views::TextfieldController {
 
     bool has_more_than_one_parent =
         parent_permission_email_addresses.size() > 1;
-    if (is_extension_permission_dialog &&
-        supervised_user::
-            IsSupervisedUserSkipParentApprovalToInstallExtensionsEnabled() &&
-        base::FeatureList::IsEnabled(
-            supervised_user::kUpdatedSupervisedUserExtensionApprovalStrings)) {
+    if (is_extension_permission_dialog) {
       AddExtensionParentPermissionLabels(
           view.get(), is_extension_permission_dialog, child_name);
     } else {
@@ -295,11 +292,7 @@ class ParentPermissionInputSection : public views::TextfieldController {
   void AddExtensionParentPermissionLabels(views::View* view,
                                           bool is_extension_permission_dialog,
                                           const std::string& child_name) {
-    CHECK(is_extension_permission_dialog &&
-          supervised_user::
-              IsSupervisedUserSkipParentApprovalToInstallExtensionsEnabled() &&
-          base::FeatureList::IsEnabled(
-              supervised_user::kUpdatedSupervisedUserExtensionApprovalStrings));
+    CHECK(is_extension_permission_dialog);
 
     auto parent_account_label = std::make_unique<views::Label>(
         l10n_util::GetStringUTF16(
@@ -554,7 +547,7 @@ void ParentPermissionDialogView::CreateContents() {
 
     // Add this outside the scrolling section, so it can't be obscured by
     // scrolling.
-    AddChildView(permissions_header);
+    AddChildViewRaw(permissions_header);
 
     // Create permissions view.
     auto permissions_view = std::make_unique<ExtensionPermissionsView>();
@@ -684,10 +677,10 @@ void ParentPermissionDialogView::ShowDialogInternal() {
   // from an extension.
   CreateContents();
   views::Widget* widget =
-      params_->window
-          ? constrained_window::CreateBrowserModalDialogViews(this,
-                                                              params_->window)
-          : views::DialogDelegate::CreateDialogWidget(this, nullptr, nullptr);
+      params_->window ? constrained_window::CreateBrowserModalDialogViews(
+                            this, params_->window)
+                      : views::DialogDelegate::CreateDialogWidget(
+                            this, gfx::NativeWindow(), gfx::NativeView());
   widget->Show();
 
   if (test_view_observer) {
@@ -699,16 +692,14 @@ void ParentPermissionDialogView::LoadParentEmailAddresses() {
   supervised_user::SupervisedUserService* service =
       SupervisedUserServiceFactory::GetForProfile(params_->profile);
 
-  std::u16string primary_parent_email =
-      base::UTF8ToUTF16(service->GetCustodianEmailAddress());
-  if (!primary_parent_email.empty()) {
-    parent_permission_email_addresses_.push_back(primary_parent_email);
+  if (service->GetCustodian()) {
+    parent_permission_email_addresses_.push_back(
+        base::UTF8ToUTF16(service->GetCustodian()->GetEmailAddress()));
   }
 
-  std::u16string secondary_parent_email =
-      base::UTF8ToUTF16(service->GetSecondCustodianEmailAddress());
-  if (!secondary_parent_email.empty()) {
-    parent_permission_email_addresses_.push_back(secondary_parent_email);
+  if (service->GetSecondCustodian()) {
+    parent_permission_email_addresses_.push_back(
+        base::UTF8ToUTF16(service->GetSecondCustodian()->GetEmailAddress()));
   }
 }
 
@@ -728,14 +719,16 @@ GaiaId ParentPermissionDialogView::GetParentObfuscatedGaiaID(
   supervised_user::SupervisedUserService* service =
       SupervisedUserServiceFactory::GetForProfile(params_->profile);
 
-  if (service->GetCustodianEmailAddress() == base::UTF16ToUTF8(parent_email)) {
-    return service->GetCustodianObfuscatedGaiaId();
+  if (service->GetCustodian() && service->GetCustodian()->GetEmailAddress() ==
+                                     base::UTF16ToUTF8(parent_email)) {
+    return service->GetCustodian()->GetObfuscatedGaiaId();
   }
 
-  CHECK_EQ(service->GetSecondCustodianEmailAddress(),
-           base::UTF16ToUTF8(parent_email))
+  CHECK(service->GetSecondCustodian() &&
+        service->GetSecondCustodian()->GetEmailAddress() ==
+            base::UTF16ToUTF8(parent_email))
       << "Tried to get obfuscated gaia id for a non-custodian email address";
-  return service->GetSecondCustodianObfuscatedGaiaId();
+  return service->GetSecondCustodian()->GetObfuscatedGaiaId();
 }
 
 void ParentPermissionDialogView::StartReauthAccessTokenFetch(

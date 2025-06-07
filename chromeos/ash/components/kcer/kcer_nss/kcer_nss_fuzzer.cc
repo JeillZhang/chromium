@@ -16,6 +16,7 @@
 #include "base/logging.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/raw_span.h"
+#include "base/strings/string_util.h"
 #include "base/test/allow_check_is_test_for_testing.h"
 #include "base/test/test_future.h"
 #include "base/test/test_timeouts.h"
@@ -478,6 +479,11 @@ void CertGenerator::GenerateCert() {
     while (GetBool()) {
       ip_addresses.push_back(GetIpAddress());
     }
+    if (dns_names.empty() && ip_addresses.empty()) {
+      // `cert_builder_` will fail if both `dns_names` and `ip_addresses` are
+      // empty, add an extra DNS name to prevent that.
+      dns_names.push_back("dns_name" + GetString());
+    }
     cert_builder_->SetSubjectAltNames(dns_names, ip_addresses);
   }
   if (GetBool()) {
@@ -499,8 +505,19 @@ void CertGenerator::GenerateCert() {
   }
   if (GetBool()) {
     std::vector<std::string> policy_oids;
+    CBB policy_identifier;
+    CBB_init(&policy_identifier, /*initial_capacity=*/10);
     while (GetBool()) {
-      policy_oids.push_back(GetString());
+      std::vector<std::string> oid_parts;
+      while (GetBool()) {
+        oid_parts.push_back(base::NumberToString(GetUint64()));
+      }
+      std::string oid = base::JoinString(oid_parts, ".");
+      // Check that the OID will be accepted as valid before adding it.
+      if (CBB_add_asn1_oid_from_text(&policy_identifier, oid.data(),
+                                     oid.size())) {
+        policy_oids.push_back(oid);
+      }
     }
     cert_builder_->SetCertificatePolicies(policy_oids);
   }
@@ -876,6 +893,12 @@ void KcerFuzzer::RunImportCertFromBytesUseValidCert() {
                                key->public_key.GetSpki().value());
   scoped_refptr<net::X509Certificate> cert = cert_generator.GetX509Cert();
   if (!cert) {
+    return;
+  }
+  net::ScopedCERTCertificate nss_cert =
+      net::x509_util::CreateCERTCertificateFromX509Certificate(cert.get());
+  if (!nss_cert) {
+    // NSS doesn't consider the cert valid.
     return;
   }
 

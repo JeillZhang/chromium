@@ -33,7 +33,7 @@ import org.chromium.components.browser_ui.device_lock.DeviceLockActivityLauncher
 import org.chromium.components.signin.AccountManagerFacadeProvider;
 import org.chromium.components.signin.AccountUtils;
 import org.chromium.components.signin.GAIAServiceType;
-import org.chromium.components.signin.base.CoreAccountInfo;
+import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.metrics.AccountConsistencyPromoAction;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.ui.base.WindowAndroid;
@@ -100,16 +100,16 @@ final class SigninBridge {
         Profile profile = tab.getProfile();
         SigninManager signinManager =
                 IdentityServicesProvider.get().getSigninManager(profile.getOriginalProfile());
-        if (!signinManager.isSyncOptInAllowed()) {
+        if (!signinManager.isSigninAllowed()) {
             SigninMetricsUtils.logAccountConsistencyPromoAction(
                     AccountConsistencyPromoAction.SUPPRESSED_SIGNIN_NOT_ALLOWED,
                     SigninAccessPoint.WEB_SIGNIN);
             return;
         }
-        final List<CoreAccountInfo> coreAccountInfos =
-                AccountUtils.getCoreAccountInfosIfFulfilledOrEmpty(
-                        AccountManagerFacadeProvider.getInstance().getCoreAccountInfos());
-        if (coreAccountInfos.isEmpty()) {
+        List<AccountInfo> accounts =
+                AccountUtils.getAccountsIfFulfilledOrEmpty(
+                        AccountManagerFacadeProvider.getInstance().getAccounts());
+        if (accounts.isEmpty()) {
             SigninMetricsUtils.logAccountConsistencyPromoAction(
                     AccountConsistencyPromoAction.SUPPRESSED_NO_ACCOUNTS,
                     SigninAccessPoint.WEB_SIGNIN);

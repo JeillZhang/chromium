@@ -76,6 +76,10 @@
 // Sets the visibility of the Edit button.
 - (void)setEditButtonHidden:(BOOL)hidden;
 
+// Displays the send feedback button. Default hidden.
+// TODO(crbug.com/398183785): Remove once we got feedback.
+- (void)setTabGroupFeedbackVisible:(BOOL)visible;
+
 // Hides components and uses a black background color for tab grid transition
 // animation.
 - (void)hide;
@@ -86,6 +90,11 @@
 - (void)setScrollViewScrolledToEdge:(BOOL)scrolledToEdge;
 // Adds the receiver in the chain before the original next responder.
 - (void)respondBeforeResponder:(UIResponder*)nextResponder;
+// Sets the toolbar background offset to match the content scroll view offset.
+- (void)setBackgroundContentOffset:(CGPoint)backgroundContentOffset
+                          animated:(BOOL)animated;
+// Sets whether the incognito toolbar background should be hidden.
+- (void)setIncognitoBackgroundHidden:(BOOL)hidden;
 
 @end
 

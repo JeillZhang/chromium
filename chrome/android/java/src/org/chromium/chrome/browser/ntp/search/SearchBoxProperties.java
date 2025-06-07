@@ -4,12 +4,14 @@
 
 package org.chromium.chrome.browser.ntp.search;
 
+
 import android.content.res.ColorStateList;
 import android.graphics.drawable.Drawable;
 import android.text.TextWatcher;
 import android.view.View.OnClickListener;
 import android.view.View.OnDragListener;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableBooleanPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableFloatPropertyKey;
@@ -17,15 +19,19 @@ import org.chromium.ui.modelutil.PropertyModel.WritableIntPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
 
 /** The properties required to build the fake search box on new tab page. */
+@NullMarked
 interface SearchBoxProperties {
     WritableFloatPropertyKey ALPHA = new WritableFloatPropertyKey();
-    WritableObjectPropertyKey<Drawable> BACKGROUND = new WritableObjectPropertyKey<>();
     WritableBooleanPropertyKey VISIBILITY = new WritableBooleanPropertyKey();
     WritableBooleanPropertyKey VOICE_SEARCH_VISIBILITY = new WritableBooleanPropertyKey();
     WritableObjectPropertyKey<Drawable> VOICE_SEARCH_DRAWABLE = new WritableObjectPropertyKey<>();
     WritableObjectPropertyKey<ColorStateList> VOICE_SEARCH_COLOR_STATE_LIST =
             new WritableObjectPropertyKey<>();
     WritableObjectPropertyKey<OnClickListener> VOICE_SEARCH_CLICK_CALLBACK =
+            new WritableObjectPropertyKey<>();
+
+    WritableBooleanPropertyKey COMPOSEPLATE_BUTTON_VISIBILITY = new WritableBooleanPropertyKey();
+    WritableObjectPropertyKey<OnClickListener> COMPOSEPLATE_BUTTON_CLICK_CALLBACK =
             new WritableObjectPropertyKey<>();
     WritableBooleanPropertyKey LENS_VISIBILITY = new WritableBooleanPropertyKey();
     WritableObjectPropertyKey<OnClickListener> LENS_CLICK_CALLBACK =
@@ -47,12 +53,13 @@ interface SearchBoxProperties {
     PropertyKey[] ALL_KEYS =
             new PropertyKey[] {
                 ALPHA,
-                BACKGROUND,
                 VISIBILITY,
                 VOICE_SEARCH_VISIBILITY,
                 VOICE_SEARCH_DRAWABLE,
                 VOICE_SEARCH_COLOR_STATE_LIST,
                 VOICE_SEARCH_CLICK_CALLBACK,
+                COMPOSEPLATE_BUTTON_VISIBILITY,
+                COMPOSEPLATE_BUTTON_CLICK_CALLBACK,
                 LENS_VISIBILITY,
                 LENS_CLICK_CALLBACK,
                 SEARCH_TEXT,

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 #include "google/protobuf/descriptor.pb.h"
 #include <gmock/gmock.h>
@@ -55,6 +56,33 @@ MATCHER(MapEntryHasValue, "") {
   return r->HasField(arg, key);
 }
 
+// The following pattern is used to create a monomorphic matcher that matches an
+// input type (to avoid implicit casts between sign and unsigned integers).
+// Intentionally choose a verbose and specific namespace name so that there are
+// no namespace conflicts. MSVC seems to not know how to prioritize
+// ns::internal vs. ns::(anonymous namespace)::internal.
+// Sample error:
+//  D:\a\protobuf\protobuf\src\google/protobuf/map.h(138): error C2872:
+//  'internal': ambiguous symbol
+//  D:\a\protobuf\protobuf\google/protobuf/unittest_no_field_presence.pb.h(46):
+//  note: could be 'google::protobuf::internal'
+//  D:\a\protobuf\protobuf\src\google\protobuf\no_field_presence_map_test.cc(61):
+//  note: or       'google::protobuf::`anonymous-namespace'::internal'
+namespace no_presence_map_test_internal {
+// `MATCHER_P` defines a polymorphic matcher; we monomorphize it for
+// `uint64_t` below to avoid conflicting deduced template arguments.
+MATCHER_P(MapEntryListFieldsSize, expected_size, "") {
+  const Reflection* r = arg.GetReflection();
+
+  std::vector<const FieldDescriptor*> list_fields_output;
+  r->ListFields(arg, &list_fields_output);
+  return list_fields_output.size() == expected_size;
+}
+}  // namespace no_presence_map_test_internal
+// TODO: b/371232929 - can make this `inline constexpr` with C++17 as baseline.
+constexpr auto& MapEntryListFieldsSize =
+    no_presence_map_test_internal::MapEntryListFieldsSize<uint64_t>;
+
 MATCHER(MapEntryKeyExplicitPresence, "") {
   const Descriptor* desc = arg.GetDescriptor();
   const FieldDescriptor* key = desc->map_key();
@@ -91,6 +119,10 @@ TEST(NoFieldPresenceTest, GenCodeMapMissingKeyDeathTest) {
   EXPECT_DEATH(message.map_int32_bytes().at(9), "key not found");
 }
 
+#ifndef NDEBUG
+// This test case tests a DCHECK assertion. If this scenario happens in
+// optimized builds, it's technically UB, so having a test case for it in opt
+// builds is meaningless.
 TEST(NoFieldPresenceTest, GenCodeMapReflectionMissingKeyDeathTest) {
   TestAllMapTypes message;
   const Reflection* r = message.GetReflection();
@@ -98,10 +130,12 @@ TEST(NoFieldPresenceTest, GenCodeMapReflectionMissingKeyDeathTest) {
 
   const FieldDescriptor* field_map_int32_bytes =
       desc->FindFieldByName("map_int32_bytes");
-  // Trying to get an unset map entry would crash in debug mode.
-  EXPECT_DEBUG_DEATH(r->GetRepeatedMessage(message, field_map_int32_bytes, 0),
-                     "index < current_size_");
+
+  // Trying to get an unset map entry would crash with a DCHECK in debug mode.
+  EXPECT_DEATH(r->GetRepeatedMessage(message, field_map_int32_bytes, 0),
+               "index < current_size_");
 }
+#endif
 
 TEST(NoFieldPresenceTest, ReflectionEmptyMapTest) {
   TestAllMapTypes message;
@@ -314,6 +348,7 @@ TEST(NoFieldPresenceTest, TestNonZeroStringMapEntriesPopulatedInReflection) {
   // HasField for both key and value returns true.
   EXPECT_THAT(bytes_map_entry, MapEntryHasKey());
   EXPECT_THAT(bytes_map_entry, MapEntryHasValue());
+  EXPECT_THAT(bytes_map_entry, MapEntryListFieldsSize(2));
 }
 
 TEST(NoFieldPresenceTest, TestNonZeroIntMapEntriesPopulatedInReflection) {
@@ -336,6 +371,7 @@ TEST(NoFieldPresenceTest, TestNonZeroIntMapEntriesPopulatedInReflection) {
   // HasField for both key and value returns true.
   EXPECT_THAT(enum_map_entry, MapEntryHasKey());
   EXPECT_THAT(enum_map_entry, MapEntryHasValue());
+  EXPECT_THAT(enum_map_entry, MapEntryListFieldsSize(2));
 }
 
 TEST(NoFieldPresenceTest,
@@ -357,6 +393,7 @@ TEST(NoFieldPresenceTest,
   // HasField for both key and value returns true.
   EXPECT_THAT(msg_map_entry, MapEntryHasKey());
   EXPECT_THAT(msg_map_entry, MapEntryHasValue());
+  EXPECT_THAT(msg_map_entry, MapEntryListFieldsSize(2));
 
   // For value types that are messages, further test that the message fields
   // show up on reflection.
@@ -383,6 +420,7 @@ TEST(NoFieldPresenceTest,
   // HasField for both key and value returns true.
   EXPECT_THAT(explicit_msg_map_entry, MapEntryHasKey());
   EXPECT_THAT(explicit_msg_map_entry, MapEntryHasValue());
+  EXPECT_THAT(explicit_msg_map_entry, MapEntryListFieldsSize(2));
 
   // For value types that are messages, further test that the message fields
   // show up on reflection.
@@ -595,6 +633,7 @@ TEST(NoFieldPresenceTest, TestEmptyStringMapEntriesPopulatedInReflection) {
   // HasField even though they are zero.
   EXPECT_THAT(bytes_map_entry, MapEntryHasKey());
   EXPECT_THAT(bytes_map_entry, MapEntryHasValue());
+  EXPECT_THAT(bytes_map_entry, MapEntryListFieldsSize(2));
 }
 
 TEST(NoFieldPresenceTest, TestEmptyIntMapEntriesPopulatedInReflection) {
@@ -624,6 +663,7 @@ TEST(NoFieldPresenceTest, TestEmptyIntMapEntriesPopulatedInReflection) {
   // HasField even though they are zero.
   EXPECT_THAT(enum_map_entry, MapEntryHasKey());
   EXPECT_THAT(enum_map_entry, MapEntryHasValue());
+  EXPECT_THAT(enum_map_entry, MapEntryListFieldsSize(2));
 }
 
 TEST(NoFieldPresenceTest, TestEmptySubMessageMapEntriesPopulatedInReflection) {
@@ -653,6 +693,7 @@ TEST(NoFieldPresenceTest, TestEmptySubMessageMapEntriesPopulatedInReflection) {
   // HasField even though they are zero.
   EXPECT_THAT(msg_map_entry, MapEntryHasKey());
   EXPECT_THAT(msg_map_entry, MapEntryHasValue());
+  EXPECT_THAT(msg_map_entry, MapEntryListFieldsSize(2));
 
   // For value types that are messages, further test that the message fields
   // do not show up on reflection.
@@ -688,6 +729,7 @@ TEST(NoFieldPresenceTest,
   // HasField even though they are zero.
   EXPECT_THAT(explicit_msg_map_entry, MapEntryHasKey());
   EXPECT_THAT(explicit_msg_map_entry, MapEntryHasValue());
+  EXPECT_THAT(explicit_msg_map_entry, MapEntryListFieldsSize(2));
 
   // For value types that are messages, further test that the message fields
   // do not show up on reflection.
@@ -707,7 +749,7 @@ bool TestSerialize<std::string>(const MessageLite& message,
 
 template <>
 bool TestSerialize<absl::Cord>(const MessageLite& message, absl::Cord* output) {
-  return message.SerializeToCord(output);
+  return message.SerializeToString(output);
 }
 
 template <typename T>

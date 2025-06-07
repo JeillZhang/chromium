@@ -6,28 +6,37 @@
 
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include "base/barrier_callback.h"
 #include "base/base64.h"
+#include "base/command_line.h"
+#include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
 #include "base/functional/concurrent_callbacks.h"
 #include "base/functional/concurrent_closures.h"
+#include "base/logging.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/field_trial_params.h"
+#include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "base/unguessable_token.h"
 #include "chrome/browser/content_extraction/inner_text.h"
 #include "chrome/browser/history_embeddings/history_embeddings_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
+#include "chrome/common/chrome_switches.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/core/browser/form_processing/optimization_guide_proto_util.h"
 #include "components/autofill/core/browser/form_structure.h"
@@ -38,10 +47,11 @@
 #include "components/history_embeddings/history_embeddings_service.h"
 #include "components/optimization_guide/content/browser/page_content_proto_provider.h"
 #include "components/optimization_guide/core/optimization_guide_proto_util.h"
+#include "components/optimization_guide/proto/features/actions_data.pb.h"
 #include "components/optimization_guide/proto/features/common_quality_data.pb.h"
-#include "components/optimization_guide/proto/features/forms_predictions.pb.h"
 #include "components/optimization_guide/proto/features/model_prototyping.pb.h"
 #include "components/site_engagement/content/site_engagement_service.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -56,12 +66,11 @@
 #include "ui/gfx/geometry/rect.h"
 
 #if !BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/autofill_ai/chrome_autofill_ai_client.h"
+#include "chrome/browser/actor/actor_keyed_service.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "components/tabs/public/tab_group.h"
 #endif
 
 #if BUILDFLAG(ENABLE_PDF)
@@ -79,13 +88,30 @@ constexpr size_t kPdfUploadLimitBytes = 128 * kBytesPerMegabyte;
 
 void OnGotAIPageContentForModelPrototyping(
     AiDataKeyedService::AiDataCallback continue_callback,
-    std::optional<optimization_guide::proto::AnnotatedPageContent> proto) {
+    std::optional<optimization_guide::AIPageContentResult> page_content) {
   TRACE_EVENT("browser", "OnGotAIPageContentForModelPrototyping");
 
   AiDataKeyedService::BrowserData data;
-  if (proto) {
+  if (page_content) {
     *data.mutable_page_context()->mutable_annotated_page_content() =
-        std::move(*proto);
+        std::move(page_content->proto);
+    std::move(continue_callback).Run(std::move(data));
+    return;
+  }
+
+  std::move(continue_callback).Run(std::nullopt);
+}
+
+void OnGotAIPageContentWithActionableElementsForModelPrototyping(
+    AiDataKeyedService::AiDataCallback continue_callback,
+    std::optional<optimization_guide::AIPageContentResult> page_content) {
+  TRACE_EVENT("browser",
+              "OnGotAIPageContentWithActionableElementsForModelPrototyping");
+
+  AiDataKeyedService::BrowserData data;
+  if (page_content) {
+    *data.mutable_action_annotated_page_content() =
+        std::move(page_content->proto);
     std::move(continue_callback).Run(std::move(data));
     return;
   }
@@ -98,11 +124,27 @@ void GetAIPageContentForModelPrototyping(
     AiDataKeyedService::AiDataCallback continue_callback) {
   TRACE_EVENT("browser", "GetAIPageContentForModelPrototyping");
 
+  auto options = optimization_guide::DefaultAIPageContentOptions();
+  options->on_critical_path = true;
   optimization_guide::OnAIPageContentDone callback = base::BindOnce(
       &OnGotAIPageContentForModelPrototyping, std::move(continue_callback));
-  optimization_guide::GetAIPageContent(
-      web_contents, optimization_guide::DefaultAIPageContentOptions(),
-      std::move(callback));
+  optimization_guide::GetAIPageContent(web_contents, std::move(options),
+                                       std::move(callback));
+}
+
+void GetAIPageContentWithActionableElementsForModelPrototyping(
+    content::WebContents* web_contents,
+    AiDataKeyedService::AiDataCallback continue_callback) {
+  TRACE_EVENT("browser",
+              "GetAIPageContentWithActionableElementsForModelPrototyping");
+
+  auto options = optimization_guide::ActionableAIPageContentOptions();
+  options->on_critical_path = true;
+  optimization_guide::OnAIPageContentDone callback = base::BindOnce(
+      &OnGotAIPageContentWithActionableElementsForModelPrototyping,
+      std::move(continue_callback));
+  optimization_guide::GetAIPageContent(web_contents, std::move(options),
+                                       std::move(callback));
 }
 
 // Fills an AiData proto with information from GetInnerText. If no result,
@@ -373,7 +415,8 @@ void GetTabDataForModelPrototyping(
   // Get the browser window that contains the web contents the extension is
   // being targeted on. If there isn't a window, or there isn't a tab strip
   // model, return an empty AiData.
-  Browser* browser = chrome::FindBrowserWithTab(web_contents);
+  tabs::TabInterface* tab = tabs::TabInterface::GetFromContents(web_contents);
+  BrowserWindowInterface* browser = tab->GetBrowserWindowInterface();
   if (!browser || !browser->GetTabStripModel()) {
     return concurrent.CreateCallback().Run(std::nullopt);
   }
@@ -416,36 +459,6 @@ void GetTabDataForModelPrototyping(
   concurrent.CreateCallback().Run(std::move(data));
 }
 
-void GetFormsPredictionsDataForModelPrototyping(
-    content::WebContents* web_contents,
-    AiDataKeyedService::AiDataCallback continue_callback) {
-  AiDataKeyedService::AiData data =
-      std::make_optional<AiDataKeyedService::BrowserData>();
-  tabs::TabInterface* tab = tabs::TabInterface::MaybeGetFromContents(
-      web_contents->GetOutermostWebContents());
-  if (!tab) {
-    std::move(continue_callback).Run(std::move(data));
-    return;
-  }
-  ChromeAutofillAiClient* client =
-      tab->GetTabFeatures()->chrome_autofill_ai_client();
-  if (!client) {
-    std::move(continue_callback).Run(std::move(data));
-    return;
-  }
-  if (std::optional<optimization_guide::proto::FormsPredictionsRequest>
-          request = client->GetModelExecutor()->GetLatestRequest();
-      request) {
-    *data->mutable_forms_predictions_request() = *request;
-  }
-  if (std::optional<optimization_guide::proto::FormsPredictionsResponse>
-          response = client->GetModelExecutor()->GetLatestResponse();
-      response) {
-    *data->mutable_forms_predictions_response() = *response;
-  }
-  std::move(continue_callback).Run(std::move(data));
-}
-
 void GetFormDataByFieldGlobalIdForModelPrototyping(
     content::WebContents* web_contents,
     const optimization_guide::proto::AutofillFieldGlobalId& global_id_proto,
@@ -483,8 +496,8 @@ void GetFormDataByFieldGlobalIdForModelPrototyping(
     return;
   }
   *data->mutable_form_data() = autofill::ToFormDataProto(
-      form_structure->ToFormData(), /*field_eligibility_map=*/{},
-      /*field_value_sensitivity_map=*/{});
+      form_structure->ToFormData(),
+      autofill::FormDataProtoConversionReason::kExtensionAPI);
   std::move(continue_callback).Run(std::move(data));
 }
 #endif
@@ -575,7 +588,6 @@ CreateDefaultPageContextSpecifier(int dom_node_id) {
   page_context_specifier->set_tab_screenshot(true);
   page_context_specifier->set_ax_tree(true);
   page_context_specifier->set_pdf_data(true);
-  page_context_specifier->set_forms_prediction(true);
   return page_context_specifier;
 }
 
@@ -606,6 +618,8 @@ void GetModelPrototypingAiData(AiDataKeyedService::AiDataSpecifier specifiers,
   // collect it.
   GetAIPageContentForModelPrototyping(web_contents,
                                       concurrent.CreateCallback());
+  GetAIPageContentWithActionableElementsForModelPrototyping(
+      web_contents, concurrent.CreateCallback());
   if (page_context_specifier.ax_tree()) {
     RequestAxTreeSnapshotForModelPrototyping(web_contents,
                                              concurrent.CreateCallback());
@@ -644,10 +658,6 @@ void GetModelPrototypingAiData(AiDataKeyedService::AiDataSpecifier specifiers,
     GetTabDataForModelPrototyping(tabs_for_inner_text, web_contents,
                                   concurrent);
   }
-  if (page_context_specifier.forms_prediction()) {
-    GetFormsPredictionsDataForModelPrototyping(web_contents,
-                                               concurrent.CreateCallback());
-  }
   if (page_context_specifier.has_field_global_id()) {
     GetFormDataByFieldGlobalIdForModelPrototyping(
         web_contents, page_context_specifier.field_global_id(),
@@ -669,17 +679,30 @@ void GetModelPrototypingAiData(AiDataKeyedService::AiDataSpecifier specifiers,
                            std::move(data)));
 }
 
-// Feature to add allow listed extensions remotely.
+// Feature to add allow listed extensions remotely for data collection.
 BASE_FEATURE(kAllowlistedAiDataExtensions,
              "AllowlistedAiDataExtensions",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-const base::FeatureParam<std::string> kAllowlistedExtensions{
+const base::FeatureParam<std::string> kAllowlistedExtensionsForData{
     &kAllowlistedAiDataExtensions, "allowlisted_extension_ids",
     /*default_value=*/""};
 
-const base::FeatureParam<std::string> kBlocklistedExtensions{
+const base::FeatureParam<std::string> kBlocklistedExtensionsForData{
     &kAllowlistedAiDataExtensions, "blocked_extension_ids",
+    /*default_value=*/""};
+
+// Feature to add allow listed extensions remotely for actions.
+BASE_FEATURE(kAllowlistedActionsExtensions,
+             "AllowlistedActionsExtensions",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+const base::FeatureParam<std::string> kAllowlistedExtensionsForActions{
+    &kAllowlistedActionsExtensions, "allowlisted_extension_ids",
+    /*default_value=*/""};
+
+const base::FeatureParam<std::string> kBlocklistedExtensionsForActions{
+    &kAllowlistedActionsExtensions, "blocked_extension_ids",
     /*default_value=*/""};
 
 }  // namespace
@@ -692,6 +715,11 @@ AiDataKeyedService::~AiDataKeyedService() = default;
 const base::Feature&
 AiDataKeyedService::GetAllowlistedAiDataExtensionsFeatureForTesting() {
   return kAllowlistedAiDataExtensions;
+}
+
+const base::Feature&
+AiDataKeyedService::GetAllowlistedActionsExtensionsFeatureForTesting() {
+  return kAllowlistedActionsExtensions;
 }
 
 void AiDataKeyedService::GetAiData(int dom_node_id,
@@ -731,29 +759,77 @@ void AiDataKeyedService::GetAiDataWithSpecifier(
                             std::move(callback));
 }
 
-std::vector<std::string> AiDataKeyedService::GetAllowlistedExtensions() {
-  std::vector<std::string> allowlisted_extensions =
-      base::SplitString(kAllowlistedExtensions.Get(), ",",
-                        base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-  static const std::vector<std::string> kHardcodedAllowlistedExtensions = {
-      // https://issues.chromium.org/373645534
-      "hpkopmikdojpadgmioifjjodbmnjjjca",
-      // https://issues.chromium.org/377129777
-      "bgbpcgpcobgjpnpiginpidndjpggappi",
-      // https://issues.chromium.org/376699519
-      "eefninhhiifgcimjkmkongegpoaikmhm"};
-  allowlisted_extensions.insert(allowlisted_extensions.end(),
-                                kHardcodedAllowlistedExtensions.begin(),
-                                kHardcodedAllowlistedExtensions.end());
+bool AiDataKeyedService::IsExtensionAllowlistedForData(
+    const std::string& extension_id) {
   std::vector<std::string> blocklisted_extensions =
-      base::SplitString(kBlocklistedExtensions.Get(), ",",
+      base::SplitString(kBlocklistedExtensionsForData.Get(), ",",
                         base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-  auto it = std::remove_if(
-      allowlisted_extensions.begin(), allowlisted_extensions.end(),
-      [&](const std::string& extension_id) {
-        return base::Contains(blocklisted_extensions, extension_id);
-      });
-  allowlisted_extensions.erase(it, allowlisted_extensions.end());
+  if (base::Contains(blocklisted_extensions, extension_id)) {
+    return false;
+  }
 
-  return allowlisted_extensions;
+  static const base::NoDestructor<std::vector<std::string>>
+      kHardcodedAllowlistedExtensions({// https://issues.chromium.org/373645534
+                                       "hpkopmikdojpadgmioifjjodbmnjjjca",
+                                       // https://issues.chromium.org/377129777
+                                       "bgbpcgpcobgjpnpiginpidndjpggappi",
+                                       // https://issues.chromium.org/376699519
+                                       "eefninhhiifgcimjkmkongegpoaikmhm",
+                                       // https://issues.chromium.org/393435942
+                                       "fjhpgileahdpnmfmaggobehbipojhlce",
+                                       // https://issues.chromium.org/403366603
+                                       "abdciamfdmknaeggbnmafmbdfdmhfgfa",
+                                       // https://issues.chromium.org/414437025
+                                       "fiamdfnbelfkjlacoaeiclobkdmckaoa"});
+  if (base::Contains(*kHardcodedAllowlistedExtensions, extension_id)) {
+    return true;
+  }
+
+  std::vector<std::string> allowlisted_extensions =
+      base::SplitString(kAllowlistedExtensionsForData.Get(), ",",
+                        base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  if (base::Contains(allowlisted_extensions, extension_id)) {
+    return true;
+  }
+
+  return false;
+}
+
+bool AiDataKeyedService::IsExtensionAllowlistedForActions(
+    const std::string& extension_id) {
+  std::vector<std::string> blocklisted_extensions =
+      base::SplitString(kBlocklistedExtensionsForActions.Get(), ",",
+                        base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  if (base::Contains(blocklisted_extensions, extension_id)) {
+    return false;
+  }
+
+  static const base::NoDestructor<std::vector<std::string>>
+      kHardcodedAllowlistedExtensions({});
+  if (base::Contains(*kHardcodedAllowlistedExtensions, extension_id)) {
+    return true;
+  }
+
+  std::vector<std::string> allowlisted_extensions =
+      base::SplitString(kAllowlistedExtensionsForActions.Get(), ",",
+                        base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  if (base::Contains(allowlisted_extensions, extension_id)) {
+    return true;
+  }
+
+  return false;
+}
+
+bool AiDataKeyedService::IsExtensionAllowlistedForStable(
+    const std::string& extension_id) {
+  // Stable channel always requires --experimental-ai-stable-channel flag.
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  if (!command_line->HasSwitch(::switches::kExperimentalAiStableChannel)) {
+    return false;
+  }
+
+  // And the extension must be on this list.
+  static const base::NoDestructor<std::vector<std::string>>
+      kStableChannelAllowlistedIds({});
+  return base::Contains(*kStableChannelAllowlistedIds, extension_id);
 }

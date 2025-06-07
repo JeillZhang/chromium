@@ -9,21 +9,27 @@
 #include "base/time/clock.h"
 #include "base/time/time.h"
 #include "chrome/browser/picture_in_picture/auto_picture_in_picture_safe_browsing_checker_client.h"
-#include "chrome/browser/picture_in_picture/auto_pip_setting_helper.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
+#include "media/base/picture_in_picture_events_info.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "services/media_session/public/mojom/audio_focus.mojom.h"
 #include "services/media_session/public/mojom/media_session.mojom.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "ui/views/bubble/bubble_border.h"
 
+// TODO(crbug.com/421608904): integrate setting helper with auto-pip on Android
+// once permission UX is finalized.
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/picture_in_picture/auto_pip_setting_helper.h"
+#endif  // BUILDFLAG(IS_ANDROID)
+
 namespace permissions {
 class PermissionDecisionAutoBlockerBase;
 }  // namespace permissions
 
-class AutoPictureInPictureTabStripObserverHelper;
+class AutoPictureInPictureTabObserverHelperBase;
 class AutoPipSettingOverlayView;
 class HostContentSettingsMap;
 class MediaEngagementService;
@@ -118,9 +124,11 @@ class AutoPictureInPictureTabHelper
     // If we're clearing the auto blocker, then also drop any setting helper we
     // have, since it might also know about it.  This is intended during test
     // cleanup to prevent dangling raw ptrs.
+#if !BUILDFLAG(IS_ANDROID)
     if (auto_pip_setting_helper_ && !auto_blocker) {
       auto_pip_setting_helper_.reset();
     }
+#endif  //! BUILDFLAG(IS_ANDROID)
   }
 
   // Create and return the allow/block overlay view if we should show it for
@@ -131,11 +139,13 @@ class AutoPictureInPictureTabHelper
   // `close_pip_cb` should be a callback to close the pip window, in case it
   // should be blocked.  This may be called before this returned, or later, or
   // never.  The other parameters are described in AutoPipSettingHelper.
+#if !BUILDFLAG(IS_ANDROID)
   std::unique_ptr<AutoPipSettingOverlayView>
   CreateOverlayPermissionViewIfNeeded(
       base::OnceClosure close_pip_cb,
       views::View* anchor_view,
       views::BubbleBorder::Arrow arrow);
+#endif  //! BUILDFLAG(IS_ANDROID)
 
   // Should be called when the user closes the pip window manually, so that we
   // can keep the auto-pip setting embargo up to date.
@@ -148,6 +158,20 @@ class AutoPictureInPictureTabHelper
   void set_clock_for_testing(const base::TickClock* testing_clock) {
     clock_ = testing_clock;
   }
+
+  void set_auto_pip_trigger_reason_for_testing(
+      media::PictureInPictureEventsInfo::AutoPipReason
+          auto_pip_trigger_reason) {
+    auto_pip_trigger_reason_ = auto_pip_trigger_reason;
+  }
+
+  media::PictureInPictureEventsInfo::AutoPipReason GetAutoPipTriggerReason()
+      const;
+
+  // Returns information related to auto picture in picture. This information
+  // includes the reason for entering picture in picture automatically, if
+  // known, and various conditions that are used to allow/deny autopip requests.
+  media::PictureInPictureEventsInfo::AutoPipInfo GetAutoPipInfo() const;
 
  private:
   explicit AutoPictureInPictureTabHelper(content::WebContents* web_contents);
@@ -216,12 +240,18 @@ class AutoPictureInPictureTabHelper
   void EnsureAutoPipSettingHelper();
 
   // Returns the primary main routed frame for the MediaSession, if it exists.
-  // Otherwise, an empty optional is returned.
+  // Otherwise, the primary main frame for the WebContent. If both do not exist,
+  // an empty optional is returned.
   //
   // This method retrieves the routed frame associated with the WebContents's
   // MediaSession. If a routed frame is found and it resides within the primary
   // main frame, an optional containing a pointer to the RenderFrameHost is
-  // returned. Otherwise, an empty optional is returned.
+  // returned.
+  //
+  // If there is no MediaSession routed frame, an optional containing a pointer
+  // to the WebContent primary main frame is returned. For cases where both, the
+  // MediaSession routed frame and the WebContent, primary main frames do not
+  // exist an empty optional is returned.
   std::optional<content::RenderFrameHost*> GetPrimaryMainRoutedFrame() const;
 
   // Returns the page UKM SourceId associated with the primary main routed frame
@@ -232,9 +262,12 @@ class AutoPictureInPictureTabHelper
   //
   // Note that a media element can meet both, the "video conferencing" and
   // "media playback" conditions. If both conditions are met, this method will
-  // return the "video conferencing" histogram. If no
-  // conditions are met, `AutoPipReason::kUnknown` will be returned.
-  AutoPipSettingHelper::AutoPipReason GetAutoPipReason() const;
+  // return
+  // "media::PictureInPictureEventsInfo::AutoPipReason::kVideoConferencing". If
+  // no conditions are met,
+  // `Autmedia::PictureInPictureEventsInfo::AutoPipReasonPipReason::kUnknown`
+  // will be returned.
+  media::PictureInPictureEventsInfo::AutoPipReason GetAutoPipReason() const;
 
   // Accumulates the total time spent in picture in picture during the lifetime
   // of `this`, separated by the reason for entering auto picture in picture:
@@ -271,8 +304,8 @@ class AutoPictureInPictureTabHelper
 
   // Notifies us when our tab either becomes the active tab on its tabstrip or
   // becomes an inactive tab on its tabstrip.
-  std::unique_ptr<AutoPictureInPictureTabStripObserverHelper>
-      tab_strip_observer_helper_;
+  std::unique_ptr<AutoPictureInPictureTabObserverHelperBase>
+      tab_observer_helper_;
 
   // True if the tab is the activated tab on its tab strip.
   bool is_tab_activated_ = false;
@@ -324,8 +357,10 @@ class AutoPictureInPictureTabHelper
   mojo::Receiver<media_session::mojom::MediaSessionObserver>
       media_session_observer_receiver_{this};
 
+#if !BUILDFLAG(IS_ANDROID)
   // If non-null, this is the setting helper for the permission setting UI.
   std::unique_ptr<AutoPipSettingHelper> auto_pip_setting_helper_;
+#endif  //! BUILDFLAG(IS_ANDROID)
 
   // Implementation of the Safe Browsing client, used to check and report URL
   // safety.
@@ -362,10 +397,9 @@ class AutoPictureInPictureTabHelper
   raw_ptr<const base::TickClock> clock_;
 
   // Stores the reason that triggered auto picture in picture. The value is
-  // updated during `MaybeEnterAutoPictureInPicture` and
-  // `MaybeExitAutoPictureInPicture`.
-  AutoPipSettingHelper::AutoPipReason auto_pip_trigger_reason_ =
-      AutoPipSettingHelper::AutoPipReason::kUnknown;
+  // updated as needed when entering/exiting picture in picture.
+  media::PictureInPictureEventsInfo::AutoPipReason auto_pip_trigger_reason_ =
+      media::PictureInPictureEventsInfo::AutoPipReason::kUnknown;
 
   // Set to true if auto picture in picture was blocked due to content setting
   // or incognito, false otherwise. The value is used to prevent recording

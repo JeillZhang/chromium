@@ -6,9 +6,13 @@
 
 #import "base/check.h"
 #import "base/strings/sys_string_conversions.h"
+#import "components/collaboration/public/collaboration_flow_type.h"
+#import "components/collaboration/public/collaboration_service.h"
 #import "components/feature_engagement/public/feature_constants.h"
 #import "components/feature_engagement/public/tracker.h"
 #import "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/collaboration/model/collaboration_service_factory.h"
+#import "ios/chrome/browser/collaboration/model/ios_collaboration_controller_delegate.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
 #import "ios/chrome/browser/menu/ui_bundled/tab_context_menu_delegate.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
@@ -37,6 +41,20 @@
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/web/public/web_state.h"
 #import "ui/base/l10n/l10n_util.h"
+
+using collaboration::FlowType;
+using collaboration::IOSCollaborationControllerDelegate;
+using ResultCallback =
+    collaboration::CollaborationControllerDelegate::ResultCallback;
+using collaboration::CollaborationControllerDelegate;
+
+@interface BaseGridCoordinator ()
+
+// Callback invoked upon confirming leaving or deleting a shared group.
+@property(nonatomic, copy) void (^leaveOrDeleteCompletion)
+    (CollaborationControllerDelegate::Outcome);
+
+@end
 
 @implementation BaseGridCoordinator {
   // Mutator that handle toolbars changes.
@@ -93,8 +111,7 @@
     return NO;
   }
   GridItemIdentifier* groupIdentifier =
-      [GridItemIdentifier groupIdentifier:tabGroup
-                         withWebStateList:webStateList];
+      [GridItemIdentifier groupIdentifier:tabGroup];
   [self.gridViewController bringItemIntoView:groupIdentifier animated:animated];
   return YES;
 }
@@ -104,29 +121,23 @@
 }
 
 - (BOOL)isSelectedCellVisible {
-  if (IsTabGroupInGridEnabled()) {
-    if (_tabGroupCoordinator) {
-      return _tabGroupCoordinator.viewController.gridViewController
-          .selectedCellVisible;
-    }
+  if (_tabGroupCoordinator) {
+    return _tabGroupCoordinator.viewController.gridViewController
+        .selectedCellVisible;
   }
   return self.gridViewController.selectedCellVisible;
 }
 
 - (UIView*)gridView {
-  if (IsTabGroupInGridEnabled()) {
-    if (_tabGroupCoordinator) {
-      return _tabGroupCoordinator.viewController.gridViewController.view;
-    }
+  if (_tabGroupCoordinator) {
+    return _tabGroupCoordinator.viewController.gridViewController.view;
   }
   return self.gridContainerViewController.view;
 }
 
 - (UIView*)gridContainerForAnimation {
-  if (IsTabGroupInGridEnabled()) {
-    if (_tabGroupCoordinator) {
-      return _tabGroupCoordinator.viewController.gridViewController.view;
-    }
+  if (_tabGroupCoordinator) {
+    return _tabGroupCoordinator.viewController.gridViewController.view;
   }
   return nil;
 }
@@ -196,7 +207,7 @@
                            forProtocol:@protocol(TabGroupsCommands)];
 
   self.mediator.tabGroupsHandler = self;
-  if (!self.browser->GetProfile()->IsOffTheRecord()) {
+  if (!self.isOffTheRecord) {
     self.mediator.tabGridToolbarHandler =
         HandlerForProtocol(dispatcher, TabGridToolbarCommands);
   }
@@ -211,6 +222,7 @@
 }
 
 - (void)stop {
+  [self clearLeaveOrDeleteCompletion];
   [self.browser->GetCommandDispatcher() stopDispatchingToTarget:self];
   if (_tabGroupCoordinator) {
     [self hideTabGroup];
@@ -240,13 +252,11 @@
 
   [_tabGroupCoordinator stop];
   _tabGroupCoordinator = nil;
+  self.mediator.baseDelegate = nil;
 }
 
 - (void)showTabGroupCreationForTabs:
     (const std::set<web::WebStateID>&)identifiers {
-  CHECK(IsTabGroupInGridEnabled())
-      << "You should not be able to create a tab group outside the Tab Groups "
-         "experiment.";
   CHECK(!_tabGroupCreator) << "There is an atemps to create a tab group when a "
                               "creation process is still running.";
 
@@ -266,9 +276,6 @@
 }
 
 - (void)showTabGroupEditionForGroup:(const TabGroup*)tabGroup {
-  CHECK(IsTabGroupInGridEnabled())
-      << "You should not be able to edit a tab group outside the Tab Groups "
-         "experiment.";
   CHECK(!_tabGroupCreator) << "There is an attempt to edit a tab group when a "
                               "creation process is still running.";
   CHECK(tabGroup) << "To edit a tab group you should pass a group.";
@@ -304,6 +311,10 @@
   _tabGroupConfirmationCoordinator.primaryAction = ^{
     [weakSelf takeActionForActionType:actionType weakGroup:tabGroup];
   };
+  _tabGroupConfirmationCoordinator.dismissAction = ^{
+    [weakSelf clearLeaveOrDeleteCompletion];
+  };
+
   _tabGroupConfirmationCoordinator.tabGroupName = tabGroup->GetTitle();
   [_tabGroupConfirmationCoordinator start];
   self.gridViewController.tabGroupConfirmationHandler =
@@ -314,9 +325,11 @@
                                     group:
                                         (base::WeakPtr<const TabGroup>)tabGroup
                          sourceButtonItem:(UIBarButtonItem*)sourceButtonItem {
+  CHECK(!IsContainedTabGroupEnabled());
   if (!tabGroup) {
     return;
   }
+
   _tabGroupConfirmationCoordinator = [[TabGroupConfirmationCoordinator alloc]
       initWithBaseViewController:self.baseViewController
                          browser:self.browser
@@ -326,23 +339,77 @@
   _tabGroupConfirmationCoordinator.primaryAction = ^{
     [weakSelf takeActionForActionType:actionType weakGroup:tabGroup];
   };
+  _tabGroupConfirmationCoordinator.dismissAction = ^{
+    [weakSelf clearLeaveOrDeleteCompletion];
+  };
   _tabGroupConfirmationCoordinator.tabGroupName = tabGroup->GetTitle();
+
   [_tabGroupConfirmationCoordinator start];
   self.gridViewController.tabGroupConfirmationHandler =
       _tabGroupConfirmationCoordinator;
 }
 
+- (void)startLeaveOrDeleteSharedGroup:(base::WeakPtr<const TabGroup>)group
+                            forAction:(TabGroupActionType)actionType
+                           sourceView:(UIView*)sourceView {
+  __weak __typeof(self) weakSelf = self;
+  base::OnceCallback<void(ResultCallback)> completionCallback =
+      base::BindOnce(^(ResultCallback resultCallback) {
+        BaseGridCoordinator* strongSelf = weakSelf;
+        if (!strongSelf) {
+          std::move(resultCallback)
+              .Run(CollaborationControllerDelegate::Outcome::kCancel);
+          return;
+        }
+        auto completionBlock = base::CallbackToBlock(std::move(resultCallback));
+        strongSelf.leaveOrDeleteCompletion =
+            ^(CollaborationControllerDelegate::Outcome outcome) {
+              completionBlock(outcome);
+            };
+
+        [strongSelf showTabGroupConfirmationForAction:actionType
+                                                group:group
+                                           sourceView:sourceView];
+      });
+  [self startLeaveOrDeleteSharedGroup:group
+                   completionCallback:std::move(completionCallback)];
+}
+
+- (void)startLeaveOrDeleteSharedGroup:(base::WeakPtr<const TabGroup>)group
+                            forAction:(TabGroupActionType)actionType
+                     sourceButtonItem:(UIBarButtonItem*)sourceButtonItem {
+  CHECK(!IsContainedTabGroupEnabled());
+  __weak __typeof(self) weakSelf = self;
+  base::OnceCallback<void(ResultCallback)> completionCallback =
+      base::BindOnce(^(ResultCallback resultCallback) {
+        BaseGridCoordinator* strongSelf = weakSelf;
+        if (!strongSelf) {
+          std::move(resultCallback)
+              .Run(CollaborationControllerDelegate::Outcome::kCancel);
+          return;
+        }
+        auto completionBlock = base::CallbackToBlock(std::move(resultCallback));
+        strongSelf.leaveOrDeleteCompletion =
+            ^(CollaborationControllerDelegate::Outcome outcome) {
+              completionBlock(outcome);
+            };
+        [strongSelf showTabGroupConfirmationForAction:actionType
+                                                group:group
+                                     sourceButtonItem:sourceButtonItem];
+      });
+  [self startLeaveOrDeleteSharedGroup:group
+                   completionCallback:std::move(completionCallback)];
+}
+
 - (void)showTabGridTabGroupSnackbarAfterClosingGroups:
     (int)numberOfClosedGroups {
-  if (!IsTabGroupSyncEnabled() ||
-      self.browser->GetProfile()->IsOffTheRecord()) {
+  if (!IsTabGroupSyncEnabled() || self.isOffTheRecord) {
     return;
   }
 
   // Don't show the snackbar if the IPH will be presented.
   feature_engagement::Tracker* tracker =
-      feature_engagement::TrackerFactory::GetForProfile(
-          self.browser->GetProfile());
+      feature_engagement::TrackerFactory::GetForProfile(self.profile);
   if (tracker->WouldTriggerHelpUI(
           feature_engagement::kIPHiOSSavedTabGroupClosed)) {
     return;
@@ -401,9 +468,6 @@
 // Shows the `tabGroup` with animations for `tabGridOpening` or not.
 - (void)showTabGroup:(const TabGroup*)tabGroup
     forTabGridOpening:(BOOL)tabGridOpening {
-  CHECK(IsTabGroupInGridEnabled())
-      << "You should not be able to show a tab group UI outside the "
-         "Tab Groups experiment.";
   if (_tabGroupCoordinator) {
     // There is an attempt to display a tab group when one is already presented.
     return;
@@ -424,6 +488,7 @@
   _tabGroupCoordinator.modeHolder = self.modeHolder;
 
   [_tabGroupCoordinator start];
+  self.mediator.baseDelegate = _tabGroupCoordinator;
 }
 
 // Combines two arrays of inactive items into one. The `primaryInactiveItems`
@@ -458,16 +523,11 @@
       }
       break;
     case TabGroupActionType::kLeaveSharedTabGroup:
-      if (weakGroup) {
-        [self.mediator leaveSharedTabGroup:weakGroup.get()];
-      }
+      [self runLeaveOrDeleteCompletion];
       break;
     case TabGroupActionType::kDeleteSharedTabGroup:
-      if (weakGroup) {
-        [self.mediator deleteSharedTabGroup:weakGroup.get()];
-      }
+      [self runLeaveOrDeleteCompletion];
       break;
-
     case TabGroupActionType::kLeaveOrKeepSharedTabGroup:
     case TabGroupActionType::kDeleteOrKeepSharedTabGroup:
       NOTREACHED();
@@ -478,6 +538,52 @@
   }
   [_tabGroupConfirmationCoordinator stop];
   _tabGroupConfirmationCoordinator = nil;
+}
+
+// Clears `leaveOrDeleteCompletion`. If not nil, calls it with `kCancel`.
+- (void)clearLeaveOrDeleteCompletion {
+  if (self.leaveOrDeleteCompletion) {
+    self.leaveOrDeleteCompletion(
+        CollaborationControllerDelegate::Outcome::kCancel);
+  }
+  self.leaveOrDeleteCompletion = nil;
+}
+
+// Runs `leaveOrDeleteCompletion`. If not nil, calls it with `kSuccess`.
+- (void)runLeaveOrDeleteCompletion {
+  if (self.leaveOrDeleteCompletion) {
+    self.leaveOrDeleteCompletion(
+        CollaborationControllerDelegate::Outcome::kSuccess);
+  }
+  self.leaveOrDeleteCompletion = nil;
+}
+
+// Starts the leave or delete shared tab group flow for the given `group` and
+// `completionCallback`.
+- (void)startLeaveOrDeleteSharedGroup:(base::WeakPtr<const TabGroup>)group
+                   completionCallback:(base::OnceCallback<void(ResultCallback)>)
+                                          completionCallback {
+  Browser* browser = self.browser;
+  collaboration::CollaborationService* collaborationService =
+      collaboration::CollaborationServiceFactory::GetForProfile(
+          browser->GetProfile());
+
+  const TabGroup* tabGroup = group.get();
+  if (!tabGroup || !collaborationService) {
+    return;
+  }
+
+  std::unique_ptr<IOSCollaborationControllerDelegate> delegate =
+      std::make_unique<IOSCollaborationControllerDelegate>(
+          browser,
+          CreateControllerDelegateParamsFromProfile(
+              self.profile, self.baseViewController, FlowType::kLeaveOrDelete));
+  delegate->SetLeaveOrDeleteConfirmationCallback(std::move(completionCallback));
+
+  collaboration::CollaborationServiceLeaveOrDeleteEntryPoint entryPoint =
+      collaboration::CollaborationServiceLeaveOrDeleteEntryPoint::kUnknown;
+  collaborationService->StartLeaveOrDeleteFlow(
+      std::move(delegate), tabGroup->tab_group_id(), entryPoint);
 }
 
 @end

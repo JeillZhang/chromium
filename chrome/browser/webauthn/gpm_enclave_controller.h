@@ -24,6 +24,7 @@
 #include "chrome/browser/webauthn/enclave_manager.h"
 #include "chrome/browser/webauthn/gpm_enclave_transaction.h"
 #include "components/trusted_vault/trusted_vault_connection.h"
+#include "content/public/browser/document_user_data.h"
 #include "content/public/browser/global_routing_id.h"
 #include "google_apis/gaia/gaia_id.h"
 
@@ -43,7 +44,6 @@ enum class FidoRequestType : uint8_t;
 enum class UserVerificationRequirement;
 namespace enclave {
 struct CredentialRequest;
-class ICloudRecoveryKey;
 }  // namespace enclave
 }  // namespace device
 
@@ -51,8 +51,79 @@ namespace sync_pb {
 class WebauthnCredentialSpecifics;
 }  // namespace sync_pb
 
+namespace trusted_vault {
+class ICloudRecoveryKey;
+}  // namespace trusted_vault
+
 enum class EnclaveEnabledStatus;
 class Profile;
+
+// Provides a TrustedVaultConnection for a given RenderFrameHost.
+// This allows tests to override the connection used by GPMEnclaveController.
+class GpmTrustedVaultConnectionProvider
+    : public content::DocumentUserData<GpmTrustedVaultConnectionProvider> {
+ public:
+  ~GpmTrustedVaultConnectionProvider() override;
+
+  // Sets a TrustedVaultConnection override for the document associated with
+  // `rfh`. The next call to GetConnectionForFrame for this document will
+  // return this override.
+  static void SetOverrideForFrame(
+      content::RenderFrameHost* rfh,
+      std::unique_ptr<trusted_vault::TrustedVaultConnection>
+          connection_override);
+
+  // Returns a TrustedVaultConnection for the document associated with `rfh`.
+  // If an override has been set via SetOverrideForFrame, that override is
+  // returned (and ownership is transferred). Otherwise, a new default
+  // TrustedVaultConnection is created. That connection is not associated with
+  // any particular document.
+  static std::unique_ptr<trusted_vault::TrustedVaultConnection> GetConnection(
+      content::RenderFrameHost* rfh,
+      signin::IdentityManager* identity_manager,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
+
+ private:
+  explicit GpmTrustedVaultConnectionProvider(content::RenderFrameHost* rfh);
+
+  friend class content::DocumentUserData<GpmTrustedVaultConnectionProvider>;
+  DOCUMENT_USER_DATA_KEY_DECL();
+
+  std::unique_ptr<trusted_vault::TrustedVaultConnection> connection_override_;
+};
+
+class GpmTickAndTaskRunnerProvider
+    : public content::DocumentUserData<GpmTickAndTaskRunnerProvider> {
+ public:
+  ~GpmTickAndTaskRunnerProvider() override;
+
+  // Sets a TickClock and SequencedTaskRunner override for the document
+  // associated with |rfh|. The next call to GetConnectionForFrame for this
+  // document will return this override.
+  static void SetOverrideForFrame(
+      content::RenderFrameHost* rfh,
+      base::TickClock const* tick_clock,
+      scoped_refptr<base::SequencedTaskRunner> task_runner);
+
+  // Returns the TickClock for the document associated with `rfh` if an override
+  // has been set via SetOverrideForFrame. Otherwise, the default TickClock is
+  // returned.
+  static base::TickClock const* GetTickClock(content::RenderFrameHost* rfh);
+
+  // Returns the SequencedTaskRunner for the document associated with `rfh` if
+  // an override has been set via SetOverrideForFrame. Otherwise, nullptr` is
+  // returned.
+  static scoped_refptr<base::SequencedTaskRunner> GetTaskRunner(
+      content::RenderFrameHost* rfh);
+
+ private:
+  explicit GpmTickAndTaskRunnerProvider(content::RenderFrameHost* rfh);
+  friend class content::DocumentUserData<GpmTickAndTaskRunnerProvider>;
+  DOCUMENT_USER_DATA_KEY_DECL();
+
+  raw_ptr<base::TickClock const> tick_clock_;
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
+};
 
 class GPMEnclaveController : public AuthenticatorRequestDialogModel::Observer,
                              public EnclaveManager::Observer,
@@ -84,18 +155,18 @@ class GPMEnclaveController : public AuthenticatorRequestDialogModel::Observer,
       AuthenticatorRequestDialogModel* model,
       const std::string& rp_id,
       device::FidoRequestType request_type,
-      device::UserVerificationRequirement user_verification_requirement,
-      base::TickClock const* tick_clock,
-      scoped_refptr<base::SequencedTaskRunner> task_runner,
-      // `optional_connection` can be set to override the connection to the
-      // security domain service for testing.
-      std::unique_ptr<trusted_vault::TrustedVaultConnection>
-          optional_connection);
+      device::UserVerificationRequirement user_verification_requirement);
   GPMEnclaveController(const GPMEnclaveController&) = delete;
   GPMEnclaveController& operator=(const GPMEnclaveController&) = delete;
   GPMEnclaveController(GPMEnclaveController&&) = delete;
   GPMEnclaveController& operator=(GPMEnclaveController&&) = delete;
   ~GPMEnclaveController() override;
+
+  // Determines the enclave user verification early depending on the enclave
+  // state and UV requirements. Can return `std::nullopt` if the enclave is not
+  // ready. This is used for immediate mode requests.
+  std::optional<EnclaveUserVerificationMethod>
+  GetEnclaveUserVerificationMethod();
 
   // Returns true if the enclave is active for this request. Crashes the address
   // space if this hasn't yet been resolved.
@@ -114,6 +185,14 @@ class GPMEnclaveController : public AuthenticatorRequestDialogModel::Observer,
   const std::vector<sync_pb::WebauthnCredentialSpecifics>& creds() const;
 
   AccountState account_state_for_testing() const;
+  // Returns true if the account is ready to use.
+  bool is_account_ready() const;
+
+  base::RepeatingCallback<
+      void(std::unique_ptr<device::enclave::CredentialRequest>)>&
+  enclave_request_callback_for_testing() {
+    return enclave_request_callback_;
+  }
 
  private:
   // GPMEnclaveTransaction::Delegate:
@@ -123,6 +202,7 @@ class GPMEnclaveController : public AuthenticatorRequestDialogModel::Observer,
       device::enclave::PINValidationResult result) override;
   void OnPasskeyCreated(
       const sync_pb::WebauthnCredentialSpecifics& passkey) override;
+  EnclaveUserVerificationMethod GetUvMethod() override;
 
   Profile* GetProfile() const;
 
@@ -171,18 +251,18 @@ class GPMEnclaveController : public AuthenticatorRequestDialogModel::Observer,
   // Called when Chrome has retrieved the iCloud recovery keys present in the
   // current device.
   void OnICloudKeysRetrievedForEnrollment(
-      std::vector<std::unique_ptr<device::enclave::ICloudRecoveryKey>>
+      std::vector<std::unique_ptr<trusted_vault::ICloudRecoveryKey>>
           local_icloud_keys);
 
   // Enrolls a specific iCloud keychain recovery key. |key| may be null, in
   // which case we skip to the next step.
   void EnrollICloudRecoveryKey(
-      std::unique_ptr<device::enclave::ICloudRecoveryKey> key);
+      std::unique_ptr<trusted_vault::ICloudRecoveryKey> key);
 
   // Called when Chrome has retrieved the iCloud recovery keys present in the
   // current device.
   void OnICloudKeysRetrievedForRecovery(
-      std::vector<std::unique_ptr<device::enclave::ICloudRecoveryKey>>
+      std::vector<std::unique_ptr<trusted_vault::ICloudRecoveryKey>>
           local_icloud_keys);
 #endif  // BUILDFLAG(IS_MAC)
 
@@ -227,16 +307,6 @@ class GPMEnclaveController : public AuthenticatorRequestDialogModel::Observer,
 
   // Starts a create() or get() action with the enclave.
   void StartTransaction();
-
-  // Called when the UI has reached a state where it needs to do an enclave
-  // operation, and an OAuth token for the enclave has been fetched.
-  void MaybeHashPinAndStartEnclaveTransaction(std::optional<std::string> token);
-
-  // Called when the UI has reached a state where it needs to do an enclave
-  // operation, an OAuth token for the enclave has been fetched, and any PIN
-  // hashing has been completed.
-  void StartEnclaveTransaction(std::optional<std::string> token,
-                               std::unique_ptr<device::enclave::ClaimedPIN>);
 
   // Accessors for the profile pref that counts the number of consecutive failed
   // PIN attempts to know when a lockout will happen.
@@ -290,7 +360,7 @@ class GPMEnclaveController : public AuthenticatorRequestDialogModel::Observer,
   std::optional<std::vector<uint8_t>> selected_cred_id_;
 
   // Contains the bytes of a WrappedPIN structure, downloaded from the security
-  // domain service.
+  // domain service. This is only set if the PIN is usable for recovery.
   std::optional<trusted_vault::GpmPinMetadata> pin_metadata_;
 
   // The list of iCloud recovery key members known to the security domain
@@ -311,10 +381,6 @@ class GPMEnclaveController : public AuthenticatorRequestDialogModel::Observer,
   base::RepeatingCallback<void(
       std::unique_ptr<device::enclave::CredentialRequest>)>
       enclave_request_callback_;
-
-  // Override for test mocking.
-  std::unique_ptr<trusted_vault::TrustedVaultConnection>
-      vault_connection_override_;
 
   // Whether the initial UI is being blocked while enclave state is loaded.
   bool ready_for_ui_ = false;
@@ -347,10 +413,6 @@ class GPMEnclaveController : public AuthenticatorRequestDialogModel::Observer,
 
   // The gaia id of the user at the time the account state was downloaded.
   GaiaId user_gaia_id_;
-
-  raw_ptr<const base::TickClock> tick_clock_ = nullptr;
-
-  scoped_refptr<base::SequencedTaskRunner> timer_task_runner_;
 
   base::WeakPtrFactory<GPMEnclaveController> weak_ptr_factory_{this};
 };

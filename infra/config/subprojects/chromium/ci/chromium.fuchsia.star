@@ -23,11 +23,13 @@ ci.defaults.set(
     os = os.LINUX_DEFAULT,
     gardener_rotations = gardener_rotations.CHROMIUM,
     tree_closing = True,
+    tree_closing_notifiers = ci.DEFAULT_TREE_CLOSING_NOTIFIERS,
     main_console_view = "main",
     cq_mirrors_console_view = "mirrors",
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
     health_spec = health_spec.DEFAULT,
     notifies = ["cr-fuchsia"],
+    reclient_enabled = False,
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
     shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
     siso_enabled = True,
@@ -66,8 +68,6 @@ ci.builder(
     # Runs two builds, which can cause the builder to run out of disk space
     # with standard free space.
     free_space = free_space.high,
-    gardener_rotation_console_category = "ci|x64",
-    gardener_rotation_console_short_name = "det",
     console_view_entry = [
         consoles.console_view_entry(
             category = "det",
@@ -119,6 +119,7 @@ ci.builder(
     targets = targets.bundle(
         targets = [
             "fuchsia_arm64_tests",
+            "gtests_once",
         ],
         additional_compile_targets = [
             "all",

@@ -22,6 +22,10 @@ namespace tabs {
 class TabInterface;
 }  // namespace tabs
 
+namespace ui {
+class BaseWindow;
+}  // namespace ui
+
 namespace views {
 class WebView;
 class View;
@@ -39,11 +43,23 @@ class Browser;
 class BrowserActions;
 class BrowserUserEducationInterface;
 class BrowserWindowFeatures;
+class DesktopBrowserWindowCapabilities;
 class ExclusiveAccessManager;
 class GURL;
+class ImmersiveModeController;
 class Profile;
 class SessionID;
 class TabStripModel;
+class UnownedUserDataHost;
+
+// A feature which wants to show window level call to action UI  should call
+// BrowserWindowInterface::ShowCallToAction and keep alive the instance of
+// ScopedWindowCallToAction for the duration of the window-modal UI.
+class ScopedWindowCallToAction {
+ public:
+  ScopedWindowCallToAction() = default;
+  virtual ~ScopedWindowCallToAction() = default;
+};
 
 class BrowserWindowInterface : public content::PageNavigator {
  public:
@@ -64,7 +80,7 @@ class BrowserWindowInterface : public content::PageNavigator {
                         WindowOpenDisposition disposition) = 0;
 
   // Returns a session-unique ID.
-  virtual const SessionID& GetSessionID() = 0;
+  virtual const SessionID& GetSessionID() const = 0;
 
   virtual TabStripModel* GetTabStripModel() = 0;
 
@@ -76,9 +92,6 @@ class BrowserWindowInterface : public content::PageNavigator {
   // Returns true if the browser controls are hidden due to being in fullscreen.
   virtual bool ShouldHideUIForFullscreen() const = 0;
 
-  // See Browser::IsAttemptingToCloseBrowser() for more details.
-  virtual bool IsAttemptingToCloseBrowser() const = 0;
-
   // Register callbacks invoked when browser has successfully processed its
   // close request and has been scheduled for deletion.
   using BrowserDidCloseCallback =
@@ -88,6 +101,29 @@ class BrowserWindowInterface : public content::PageNavigator {
 
   // Returns the top container view.
   virtual views::View* TopContainer() = 0;
+
+  // WARNING: Many uses of base::WeakPtr are inappropriate and lead to bugs.
+  // An appropriate use case is as a variable passed to an asynchronously
+  // invoked PostTask.
+  // An inappropriate use case is to store as a member of an object that can
+  // outlive BrowserWindowInterface. This leads to inconsistent state machines.
+  // For example (don't do this):
+  // class FooOutlivesBrowser {
+  //   base::WeakPtr<BrowserWindowInterface> bwi_;
+  //   // Conceptually, this member should only be set if bwi_ is set.
+  //   std::optional<SkColor> color_of_browser_;
+  // };
+  // For example (do this):
+  // class FooOutlivesBrowser {
+  //   // Use RegisterBrowserDidClose() to clear both bwi_ and
+  //   // color_of_browser_ prior to bwi_ destruction.
+  //   raw_ptr<BrowserWindowInterface> bwi_;
+  //   std::optional<SkColor> color_of_browser_;
+  // };
+  virtual base::WeakPtr<BrowserWindowInterface> GetWeakPtr() = 0;
+
+  // Returns the view that houses the Lens overlay.
+  virtual views::View* LensOverlayView() = 0;
 
   using ActiveTabChangeCallback =
       base::RepeatingCallback<void(BrowserWindowInterface*)>;
@@ -112,17 +148,23 @@ class BrowserWindowInterface : public content::PageNavigator {
   //   BrowserWindowFeature.
   virtual BrowserWindowFeatures& GetFeatures() = 0;
 
+  // Returns the UnownedUserDataHost associated with this browser window. This
+  // is used to retrieve arbitrary features from the browser window without
+  // requiring BrowserWindowInterface to have knowledge of them.
+  virtual UnownedUserDataHost& GetUnownedUserDataHost() = 0;
+  virtual const UnownedUserDataHost& GetUnownedUserDataHost() const = 0;
+
   // Returns the web contents modal dialog host pertaining to this
   // BrowserWindow.
   virtual web_modal::WebContentsModalDialogHost*
   GetWebContentsModalDialogHostForWindow() = 0;
 
   // Whether the window is active.
-  // This definition needs to be more precise, as "active" has different
-  // semantics and nuance on each platform.
+  // The definition of "active" aligns with the window being painted as active
+  // instead of the top level widget having focus.
   // Note that this does not work correctly for mac PWA windows, as those are
   // hosted in a separate application with a stub in the browser process.
-  virtual bool IsActive() = 0;
+  virtual bool IsActive() const = 0;
 
   // Register for these two callbacks to detect changes to IsActive().
   using DidBecomeActiveCallback =
@@ -136,6 +178,10 @@ class BrowserWindowInterface : public content::PageNavigator {
 
   // This class is responsible for controlling fullscreen and pointer lock.
   virtual ExclusiveAccessManager* GetExclusiveAccessManager() = 0;
+
+  // This class is responsible for controlling the top chrome reveal state while
+  // in immersive fullscreen.
+  virtual ImmersiveModeController* GetImmersiveModeController() = 0;
 
   // This class manages actions that a user can take that are scoped to a
   // browser window (e.g. most of the 3-dot menu actions).
@@ -209,6 +255,25 @@ class BrowserWindowInterface : public content::PageNavigator {
   // //components/web_modal. See crbug.com/377820808.
   virtual void SetWebContentsBlocked(content::WebContents* web_contents,
                                      bool blocked) = 0;
+
+  // Checks if the browser popup is tab modal dialog.
+  virtual bool IsTabModalPopupDeprecated() const = 0;
+
+  // Features that want to show a window level call to action UI can be mutually
+  // exclusive. Before gating on call to action UI first check
+  // `CanShowModCanShowCallToActionalUI`. Then call ShowCallToAction() and keep
+  // `ScopedWindowCallToAction` alive to prevent other features from showing
+  // window level call to action Uis.
+  virtual bool CanShowCallToAction() const = 0;
+  virtual std::unique_ptr<ScopedWindowCallToAction> ShowCallToAction() = 0;
+
+  // Returns the ui::BaseWindow for this browser window. This allows for
+  // generic window actions, such as activation, querying minimize/maximized
+  // state, etc.
+  virtual ui::BaseWindow* GetWindow() = 0;
+
+  virtual DesktopBrowserWindowCapabilities* capabilities() = 0;
+  virtual const DesktopBrowserWindowCapabilities* capabilities() const = 0;
 };
 
 #endif  // CHROME_BROWSER_UI_BROWSER_WINDOW_PUBLIC_BROWSER_WINDOW_INTERFACE_H_

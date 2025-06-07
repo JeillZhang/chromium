@@ -4,6 +4,7 @@
 
 #include "components/autofill/content/renderer/form_autofill_util.h"
 
+#include <variant>
 #include <vector>
 
 #include "base/feature_list.h"
@@ -58,7 +59,6 @@ using ::blink::WebString;
 using ::testing::_;
 using ::testing::AllOf;
 using ::testing::ElementsAre;
-using ::testing::Field;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
@@ -179,17 +179,6 @@ const char* kPoorMansPlaceholderNoHorizontalContainment = R"(
   <span class=overlapping_position_and_size>not a label</span>
 )";
 
-const char* kSelectWithDefaultOption = R"(
-  <select id=target>
-    <option>Select country</option>
-    <hr>
-    <optgroup label=Countries>
-      <option value=AT>Austria</option>
-      <option value=DE>Germany</option>
-    </optgroup>
-  </select>
-)";
-
 auto HasRendererIdOf(const WebFormElement& e) {
   return Property("FormData::renderer_id()", &FormData::renderer_id,
                   GetFormRendererId(e));
@@ -198,6 +187,12 @@ auto HasRendererIdOf(const WebFormElement& e) {
 auto HasRendererIdOf(const WebFormControlElement& e) {
   return Property("FormFieldData::renderer_id()", &FormFieldData::renderer_id,
                   GetFieldRendererId(e));
+}
+
+auto FormControlTypesAre(auto&&... form_control_types) {
+  return ElementsAre(Property("form_control_type",
+                              &FormFieldData::form_control_type,
+                              form_control_types)...);
 }
 
 void VerifyButtonTitleCache(const WebFormElement& form_target,
@@ -223,8 +218,7 @@ class FormAutofillUtilsTest : public content::RenderViewTest {
   FormAutofillUtilsTest() {
     scoped_feature_list_.InitWithFeatures(
         /*enabled_features=*/
-        {features::kAutofillReplaceCachedWebElementsByRendererIds,
-         features::kAutofillInferLabelFromDefaultSelectText},
+        {features::kAutofillReplaceCachedWebElementsByRendererIds},
         /*disabled_features=*/{});
   }
   ~FormAutofillUtilsTest() override = default;
@@ -234,8 +228,9 @@ class FormAutofillUtilsTest : public content::RenderViewTest {
   std::optional<FormData> ExtractFormData(
       WebFormElement form,
       DenseSet<ExtractOption> extract_options = {}) {
-    return form_util::ExtractFormData(GetDocument(), form, field_data_manager(),
-                                      kCallTimerStateDummy, extract_options);
+    return form_util::ExtractFormData(
+        GetDocument(), form, field_data_manager(), kCallTimerStateDummy,
+        /*button_titles_cache=*/nullptr, extract_options);
   }
 
   std::optional<std::pair<FormData, raw_ref<const FormFieldData>>>
@@ -243,7 +238,8 @@ class FormAutofillUtilsTest : public content::RenderViewTest {
       WebFormControlElement control,
       DenseSet<ExtractOption> extract_options = {}) {
     return form_util::FindFormAndFieldForFormControlElement(
-        control, field_data_manager(), kCallTimerStateDummy, extract_options,
+        control, field_data_manager(), kCallTimerStateDummy,
+        /*button_titles_cache=*/nullptr, extract_options,
         /*form_cache=*/{});
   }
 
@@ -254,6 +250,62 @@ class FormAutofillUtilsTest : public content::RenderViewTest {
   scoped_refptr<FieldDataManager> field_data_manager_ =
       base::MakeRefCounted<FieldDataManager>();
 };
+
+// Tests that some form control types are extracted by ExtractFormData() and
+// others are not.
+TEST_F(FormAutofillUtilsTest, ExtractFormData_FormControlTypes) {
+  base::test::ScopedFeatureList feature_list{
+      features::kAutofillExtractInputDate};
+  LoadHTML(R"(
+    <form id=form-id>
+      <!-- These form controls are not extracted. -->
+      <div contenteditable></div>
+      <button type=kButtonButton>Foo</button>
+      <button type=kButtonSubmit>Foo</button>
+      <button type=kButtonReset>Foo</button>
+      <button type=kButtonPopover>Foo</button>
+      <fieldset></fieldset>
+      <input type=button>
+      <input type=color>
+      <input type=datetime-local>
+      <input type=file>
+      <input type=hidden>
+      <input type=image>
+      <input type=range>
+      <input type=reset>
+      <input type=submit>
+      <input type=time>
+      <input type=week>
+      <output>Foo</output>
+      <select multiple><option>Foo</option><option>Bar</option></select>
+
+      <!-- These form controls are extracted. -->
+      <input>
+      <input type=checkbox>
+      <input type=email>
+      <input type=month>
+      <input type=number>
+      <input type=password>
+      <input type=radio>
+      <input type=search>
+      <input type=tel>
+      <input type=text>
+      <input type=url>
+      <input type=date>
+      <select><option>Foo</option><option>Bar</option></select>
+      <textarea>Foo</textarea>
+    </form>
+  )");
+  FormData form_data =
+      *ExtractFormData(GetFormElementById(GetDocument(), "form-id"));
+  using enum FormControlType;
+  EXPECT_THAT(
+      form_data.fields(),
+      FormControlTypesAre(kInputText, kInputCheckbox, kInputEmail, kInputMonth,
+                          kInputNumber, kInputPassword, kInputRadio,
+                          kInputSearch, kInputTelephone, kInputText, kInputUrl,
+                          kInputDate, kSelectOne, kTextArea));
+}
 
 // Tests that WebFormElementToFormData() sets the
 // Form[Field]Data::{name,id_attribute,name_attribute} correctly.
@@ -496,9 +548,7 @@ TEST_F(FormAutofillUtilsTest, InferLabelForElementTest) {
       {"Poor man's placeholder: possibly an error message",
        kPoorMansPlaceholderPossiblyErrorMessage, u""},
       {"Poor man's placeholder: no horizontal containment",
-       kPoorMansPlaceholderNoHorizontalContainment, u""},
-      {"Select with default option", kSelectWithDefaultOption,
-       u"Select country"}};
+       kPoorMansPlaceholderNoHorizontalContainment, u""}};
   for (auto test_case : test_cases) {
     SCOPED_TRACE(test_case.description);
     LoadHTML(test_case.html);
@@ -542,9 +592,7 @@ TEST_F(FormAutofillUtilsTest, InferLabelSourceTest) {
       {"<dl><dt>label</dt><dd><input id='target'></dd></dl>",
        FormFieldData::LabelSource::kDdTag},
       {kPoorMansPlaceholderFullOverlap,
-       FormFieldData::LabelSource::kOverlayingLabel},
-      {kSelectWithDefaultOption,
-       FormFieldData::LabelSource::kDefaultSelectText}};
+       FormFieldData::LabelSource::kOverlayingLabel}};
 
   for (auto test_case : test_cases) {
     SCOPED_TRACE(testing::Message() << test_case.label_source);
@@ -1558,7 +1606,7 @@ TEST_P(FieldFramesTest, ExtractFormData_ExtractFieldsAndFrames) {
     SCOPED_TRACE(testing::Message() << "Checking the " << i
                                     << "th frame (id = " << frame.id << ")");
     auto is_empty = [](auto token) { return token.is_empty(); };
-    EXPECT_FALSE(absl::visit(is_empty, form_data->child_frames()[i].token));
+    EXPECT_FALSE(std::visit(is_empty, form_data->child_frames()[i].token));
     EXPECT_EQ(form_data->child_frames()[i].token, GetFrameToken(doc, frame.id));
     EXPECT_EQ(form_data->child_frames()[i].predecessor, preceding_field_index);
     ++i;

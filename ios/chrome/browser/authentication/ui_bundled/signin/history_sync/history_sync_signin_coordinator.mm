@@ -25,12 +25,12 @@
 }
 
 - (void)start {
-  ProfileIOS* profile = self.browser->GetProfile();
   signin::IdentityManager* identityManager =
-      IdentityManagerFactory::GetForProfile(profile);
+      IdentityManagerFactory::GetForProfile(self.profile);
   CHECK(identityManager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
 
-  syncer::SyncService* syncService = SyncServiceFactory::GetForProfile(profile);
+  syncer::SyncService* syncService =
+      SyncServiceFactory::GetForProfile(self.profile);
   syncer::SyncUserSettings* userSettings = syncService->GetUserSettings();
   BOOL alreadyOptIn = userSettings->GetSelectedTypes().HasAll(
       {syncer::UserSelectableType::kHistory,
@@ -44,30 +44,45 @@
                    showUserEmail:NO
                signOutIfDeclined:NO
                       isOptional:NO
+                    contextStyle:self.contextStyle
                      accessPoint:self.accessPoint];
   _syncPopupCoordinator.delegate = self;
   [_syncPopupCoordinator start];
 }
 
-#pragma mark - SigninCoordinator
+#pragma mark - AnimatedCoordinator
 
-- (void)interruptWithAction:(SigninCoordinatorInterrupt)action
-                 completion:(ProceduralBlock)completion {
-  [_syncPopupCoordinator interruptWithAction:action completion:completion];
+- (void)stopAnimated:(BOOL)animated {
+  [_syncPopupCoordinator stopAnimated:animated];
+  _syncPopupCoordinator.delegate = nil;
+  _syncPopupCoordinator = nil;
+  [super stopAnimated:animated];
 }
 
 #pragma mark - HistorySyncPopupCoordinatorDelegate
 
 - (void)historySyncPopupCoordinator:(HistorySyncPopupCoordinator*)coordinator
-                didFinishWithResult:(SigninCoordinatorResult)result {
-  id<SystemIdentity> identity;
-  if (result == SigninCoordinatorResultSuccess) {
-    AuthenticationService* authService =
-        AuthenticationServiceFactory::GetForProfile(self.browser->GetProfile());
-    identity = authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
+                didFinishWithResult:(HistorySyncResult)result {
+  AuthenticationService* authenticationService =
+      AuthenticationServiceFactory::GetForProfile(
+          self.profile->GetOriginalProfile());
+  id<SystemIdentity> primaryIdentity =
+      authenticationService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
+  SigninCoordinatorResult signinResult;
+  switch (result) {
+    case HistorySyncResult::kSuccess:
+    case HistorySyncResult::kUserCanceled:
+    case HistorySyncResult::kSkipped:
+      signinResult = SigninCoordinatorResultSuccess;
+      CHECK(primaryIdentity, base::NotFatalUntil::M145);
+      break;
+    case HistorySyncResult::kPrimaryIdentityRemoved:
+      signinResult = SigninCoordinatorResultInterrupted;
+      CHECK(!primaryIdentity, base::NotFatalUntil::M145);
+      break;
   }
-
-  [self runCompletionWithSigninResult:result completionIdentity:identity];
+  [self runCompletionWithSigninResult:signinResult
+                   completionIdentity:primaryIdentity];
 }
 
 @end

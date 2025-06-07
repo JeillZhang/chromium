@@ -39,7 +39,7 @@ function validateBid(bid) {
 }
 
 function validateAuctionConfig(auctionConfig) {
-  if (Object.keys(auctionConfig).length !== 15) {
+  if (Object.keys(auctionConfig).length !== 16) {
     throw 'Wrong number of auctionConfig fields ' +
         JSON.stringify(auctionConfig);
   }
@@ -53,16 +53,9 @@ function validateAuctionConfig(auctionConfig) {
     throw 'Wrong decisionLogicURL ' + auctionConfig.decisionLogicURL;
   }
 
-  if (auctionConfig.decisionLogicUrl !==
-      auctionConfig.seller + '/interest_group' +
-          '/component_auction_top_level_decision_argument_validator.js') {
-    throw 'Wrong decisionLogicUrl ' + auctionConfig.decisionLogicUrl;
-  }
-
-  if (auctionConfig.trustedScoringSignalsURL !==
-      auctionConfig.seller + '/interest_group/trusted_scoring_signals.json') {
-      throw 'Wrong trustedScoringSignalsURL ' +
-          auctionConfig.trustedScoringSignalsURL;
+  if (auctionConfig.executionMode !== 'compatibility') {
+    throw 'Wrong executionMode ' +
+    auctionConfig.executionMode;
   }
 
   if (auctionConfig.trustedScoringSignalsUrl !==
@@ -190,7 +183,7 @@ function validateBrowserSignals(browserSignals, isScoreAd) {
 
   // Fields that vary by method.
   if (isScoreAd) {
-    if (Object.keys(browserSignals).length !== 11) {
+    if (Object.keys(browserSignals).length !== 12) {
       throw 'Wrong number of browser signals fields ' +
           JSON.stringify(browserSignals);
     }
@@ -209,6 +202,9 @@ function validateBrowserSignals(browserSignals, isScoreAd) {
     if (browserSignals.forDebuggingOnlyInCooldownOrLockout)
       throw 'Wrong forDebuggingOnlyInCooldownOrLockout ' +
           browserSignals.forDebuggingOnlyInCooldownOrLockout;
+    if (browserSignals.forDebuggingOnlySampling)
+      throw 'Wrong forDebuggingOnlySampling ' +
+          browserSignals.forDebuggingOnlySampling;
   } else {
     if (Object.keys(browserSignals).length !== 11) {
       throw 'Wrong number of browser signals fields ' +

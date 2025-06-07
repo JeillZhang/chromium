@@ -46,7 +46,8 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.CallbackController;
@@ -102,6 +103,8 @@ public class CustomTabActivityIncognitoTest {
     private static int sIdToIncrement = 1;
     private String mTestPage;
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     @Rule
     public IncognitoCustomTabActivityTestRule mCustomTabActivityTestRule =
             new IncognitoCustomTabActivityTestRule();
@@ -111,7 +114,6 @@ public class CustomTabActivityIncognitoTest {
 
     @Before
     public void setUp() throws TimeoutException {
-        MockitoAnnotations.initMocks(this);
 
         // Mock translate bridge so "Translate..." menu item doesn't unexpectedly show up.
         org.chromium.chrome.browser.translate.TranslateBridgeJni.setInstanceForTesting(
@@ -195,7 +197,7 @@ public class CustomTabActivityIncognitoTest {
                 AppMenuTestSupport.getMenuItemPropertyModel(
                                 mCustomTabActivityTestRule.getAppMenuCoordinator(),
                                 R.id.icon_row_menu_id)
-                        .get(AppMenuItemProperties.SUBMENU);
+                        .get(AppMenuItemProperties.ADDITIONAL_ICONS);
 
         int expectedTopActionIconsCount = 4;
         assertEquals(expectedTopActionIconsCount, iconRowModelList.size());
@@ -336,7 +338,7 @@ public class CustomTabActivityIncognitoTest {
     @MediumTest
     public void shareMenuItemByDefaultIsNotVisibile() throws Exception {
         launchAndTestMenuItemIsNotVisible(
-                R.id.share_row_menu_id, "Share menu item not visible by default");
+                R.id.share_menu_id, "Share menu item not visible by default");
     }
 
     @Test
@@ -349,8 +351,7 @@ public class CustomTabActivityIncognitoTest {
 
         assertNotNull(
                 AppMenuTestSupport.getMenuItemPropertyModel(
-                        mCustomTabActivityTestRule.getAppMenuCoordinator(),
-                        R.id.share_row_menu_id));
+                        mCustomTabActivityTestRule.getAppMenuCoordinator(), R.id.share_menu_id));
     }
 
     @Test
@@ -385,7 +386,7 @@ public class CustomTabActivityIncognitoTest {
         assertNotNull(
                 AppMenuTestSupport.getMenuItemPropertyModel(
                         mCustomTabActivityTestRule.getAppMenuCoordinator(),
-                        R.id.request_desktop_site_row_menu_id));
+                        R.id.request_desktop_site_id));
 
         // Check top icons are still the same.
         testTopActionIconsIsVisible();
@@ -420,7 +421,7 @@ public class CustomTabActivityIncognitoTest {
         assertNull(
                 AppMenuTestSupport.getMenuItemPropertyModel(
                         mCustomTabActivityTestRule.getAppMenuCoordinator(),
-                        R.id.request_desktop_site_row_menu_id));
+                        R.id.request_desktop_site_id));
     }
 
     @Test

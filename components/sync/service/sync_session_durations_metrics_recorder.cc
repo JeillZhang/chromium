@@ -98,7 +98,7 @@ void SyncSessionDurationsMetricsRecorder::OnSessionStarted(
   signin_session_timer_ = std::make_unique<base::ElapsedTimer>();
   sync_account_session_timer_ = std::make_unique<base::ElapsedTimer>();
 
-  history_sync_recorder_.OnSessionStarted(session_start);
+  history_sync_recorder_.OnSessionStarted();
 }
 
 void SyncSessionDurationsMetricsRecorder::OnSessionEnded(
@@ -168,6 +168,12 @@ void SyncSessionDurationsMetricsRecorder::OnAccountsInCookieUpdated(
     }
     cookie_signin_status_ = FeatureState::ON;
   }
+}
+
+void SyncSessionDurationsMetricsRecorder::OnIdentityManagerShutdown(
+    signin::IdentityManager* identity_manager) {
+  CHECK_EQ(identity_manager, identity_manager_);
+  identity_manager_observation_.Reset();
 }
 
 void SyncSessionDurationsMetricsRecorder::OnStateChanged(SyncService* sync) {

@@ -251,12 +251,8 @@ class USER_MANAGER_EXPORT UserManager {
 
   // Indicates that a user with the given `account_id` has just logged in.
   // `username_hash` is used to identify homedir mount point.
-  // TODO(crbug.com/278643115): `browser_restart` and `is_child` is no longer
-  // used. Remove them.
   virtual void UserLoggedIn(const AccountId& account_id,
-                            const std::string& username_hash,
-                            bool browser_restart,
-                            bool is_child) = 0;
+                            const std::string& username_hash) = 0;
 
   // If there's no user for the given `account_id`, a new is created with
   // the given `user_type`. `is_ephemeral` is respected only if the `user_type`
@@ -457,16 +453,16 @@ class USER_MANAGER_EXPORT UserManager {
   // Returns true if we're logged in as a Guest.
   virtual bool IsLoggedInAsGuest() const = 0;
 
-  // Returns true if we're logged in as a kiosk app.
-  virtual bool IsLoggedInAsKioskApp() const = 0;
+  // Returns true if we're logged in as a kiosk Chrome app.
+  virtual bool IsLoggedInAsKioskChromeApp() const = 0;
 
-  // Returns true if we're logged in as a Web kiosk app.
-  virtual bool IsLoggedInAsWebKioskApp() const = 0;
+  // Returns true if we're logged in as a kiosk Web app.
+  virtual bool IsLoggedInAsKioskWebApp() const = 0;
 
-  // Returns true if we're logged in as an Isolated web app (IWA) kiosk.
+  // Returns true if we're logged in as a kiosk Isolated web app (IWA).
   virtual bool IsLoggedInAsKioskIWA() const = 0;
 
-  // Returns true if we're logged in as chrome, or Web kiosk app.
+  // Returns true if we're logged in as any kiosk app: chrome, web or IWA.
   virtual bool IsLoggedInAsAnyKioskApp() const = 0;
 
   // Returns true if we're logged in as the stub user used for testing on Linux.

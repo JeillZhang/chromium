@@ -84,7 +84,7 @@ AtomicString SrcSchemeToURL(TestURLScheme scheme) {
 
 class MockWebMediaPlayer : public EmptyWebMediaPlayer {
  public:
-  MOCK_METHOD0(Pause, void());
+  MOCK_METHOD1(Pause, void(PauseReason));
   MOCK_METHOD0(OnTimeUpdate, void());
   MOCK_CONST_METHOD0(Seekable, WebTimeRanges());
   MOCK_METHOD0(OnFrozen, void());
@@ -98,7 +98,7 @@ class MockWebMediaPlayer : public EmptyWebMediaPlayer {
   MOCK_METHOD1(SetLatencyHint, void(double));
   MOCK_METHOD1(SetWasPlayedWithUserActivationAndHighMediaEngagement,
                void(bool));
-  MOCK_METHOD1(EnabledAudioTracksChanged, void(const std::vector<TrackId>&));
+  MOCK_METHOD1(EnabledAudioTracksChanged, void(std::optional<TrackId>));
   MOCK_METHOD1(SelectedVideoTrackChanged, void(std::optional<TrackId>));
   MOCK_METHOD4(
       Load,
@@ -1191,15 +1191,17 @@ TEST_P(HTMLMediaElementTest, WebMediaPlayerIsPaused) {
   Media()->SetSrc(SrcSchemeToURL(TestURLScheme::kHttp));
   test::RunPendingTasks();
 
-  // Prior to HaveMetadat, Play/Pause won't be delivered to the player.
-  EXPECT_CALL(*MockMediaPlayer(), Pause()).Times(0);
+  // Prior to HaveMetadata, Play/Pause won't be delivered to the player.
+  EXPECT_CALL(*MockMediaPlayer(), Pause(_)).Times(0);
   Media()->Play();
   Media()->pause();
   testing::Mock::VerifyAndClearExpectations(MockMediaPlayer());
 
   // After metadata pause should be delivered even if already paused.
   SetReadyState(HTMLMediaElement::kHaveMetadata);
-  EXPECT_CALL(*MockMediaPlayer(), Pause()).Times(2);
+  EXPECT_CALL(*MockMediaPlayer(),
+              Pause(WebMediaPlayer::PauseReason::kPauseCalled))
+      .Times(2);
   Media()->pause();
   Media()->pause();
   testing::Mock::VerifyAndClearExpectations(MockMediaPlayer());
@@ -2394,9 +2396,9 @@ TEST_P(HTMLMediaElementTest, StartVideoWithTrackSelectionFragment) {
   EXPECT_CALL(*MockMediaPlayer(), OnTimeUpdate());
 
   EXPECT_CALL(*MockMediaPlayer(), EnabledAudioTracksChanged(_))
-      .WillOnce([](const std::vector<WebMediaPlayer::TrackId>& tracks) {
-        ASSERT_EQ(tracks.size(), 1u);
-        ASSERT_EQ(tracks[0], "audio2");
+      .WillOnce([](std::optional<WebMediaPlayer::TrackId> tracks) {
+        ASSERT_TRUE(tracks.has_value());
+        ASSERT_EQ(tracks.value(), "audio2");
       });
 
   if (!audio_only) {
@@ -2517,9 +2519,9 @@ TEST_P(HTMLMediaElementTest, StartVideoWithDoubleTrackSelection) {
   EXPECT_CALL(*MockMediaPlayer(), OnTimeUpdate());
 
   EXPECT_CALL(*MockMediaPlayer(), EnabledAudioTracksChanged(_))
-      .WillOnce([](const std::vector<WebMediaPlayer::TrackId>& tracks) {
-        ASSERT_EQ(tracks.size(), 1u);
-        ASSERT_EQ(tracks[0], "audio3");
+      .WillOnce([](std::optional<WebMediaPlayer::TrackId> tracks) {
+        ASSERT_TRUE(tracks.has_value());
+        ASSERT_EQ(tracks.value(), "audio3");
       });
   EXPECT_CALL(*MockMediaPlayer(), SelectedVideoTrackChanged(_)).Times(0);
 

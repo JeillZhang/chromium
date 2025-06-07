@@ -20,11 +20,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_SELECTOR_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_SELECTOR_H_
 
@@ -32,6 +27,7 @@
 #include <utility>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/parser/css_nesting_type.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_mode.h"
@@ -264,6 +260,7 @@ class CORE_EXPORT CSSSelector {
     kPseudoFocusWithin,
     kPseudoFullPageMedia,
     kPseudoHasInterest,
+    kPseudoHasPartialInterest,
     kPseudoHasSlotted,
     kPseudoHorizontal,
     kPseudoHover,
@@ -292,6 +289,7 @@ class CORE_EXPORT CSSSelector {
     kPseudoPermissionElementInvalidStyle,
     kPseudoPermissionElementOccluded,
     kPseudoPermissionGranted,
+    kPseudoPermissionIcon,
     kPseudoPlaceholder,
     kPseudoPlaceholderShown,
     kPseudoReadOnly,
@@ -316,6 +314,8 @@ class CORE_EXPORT CSSSelector {
     kPseudoStart,
     kPseudoState,
     kPseudoTarget,
+    kPseudoTargetOfInterest,
+    kPseudoTargetOfPartialInterest,
     kPseudoUnknown,
     // Something that was unparsable, but contained either a nesting
     // selector (&), or a :scope pseudo-class, and must therefore be kept
@@ -381,9 +381,11 @@ class CORE_EXPORT CSSSelector {
     // The following selectors are used to target pseudo elements created for
     // ViewTransition.
     // See https://drafts.csswg.org/css-view-transitions-1/#pseudo
+    // and https://drafts.csswg.org/css-view-transitions-2
     // for details.
     kPseudoViewTransition,
     kPseudoViewTransitionGroup,
+    kPseudoViewTransitionGroupChildren,
     kPseudoViewTransitionImagePair,
     kPseudoViewTransitionNew,
     kPseudoViewTransitionOld,
@@ -451,11 +453,14 @@ class CORE_EXPORT CSSSelector {
 
   // Selectors are kept in an array by CSSSelectorList. The next component of
   // the selector is the next item in the array.
+  // SAFETY: Performance-sensitive. Trusts that SetLastInComplexSelector()
+  // has been called on the last element in the array to prevent an OOB
+  // access from occurring.
   const CSSSelector* NextSimpleSelector() const {
-    return IsLastInComplexSelector() ? nullptr : this + 1;
+    return IsLastInComplexSelector() ? nullptr : UNSAFE_BUFFERS(this + 1);
   }
   CSSSelector* NextSimpleSelector() {
-    return IsLastInComplexSelector() ? nullptr : this + 1;
+    return IsLastInComplexSelector() ? nullptr : UNSAFE_BUFFERS(this + 1);
   }
 
   static const AtomicString& UniversalSelectorAtom() { return g_null_atom; }
@@ -493,18 +498,15 @@ class CORE_EXPORT CSSSelector {
     return *data_.rare_data_->ident_list_;
   }
   bool ContainsPseudoInsideHasPseudoClass() const {
-    return HasRareData() ? data_.rare_data_->bits_.has_.contains_pseudo_
-                         : false;
+    return HasRareData() && data_.rare_data_->bits_.has_.contains_pseudo_;
   }
   bool ContainsComplexLogicalCombinationsInsideHasPseudoClass() const {
-    return HasRareData() ? data_.rare_data_->bits_.has_
-                               .contains_complex_logical_combinations_
-                         : false;
+    return HasRareData() &&
+           data_.rare_data_->bits_.has_.contains_complex_logical_combinations_;
   }
   bool HasArgumentMatchInShadowTree() const {
-    return HasRareData()
-               ? data_.rare_data_->bits_.has_.argument_match_in_shadow_tree_
-               : false;
+    return HasRareData() &&
+           data_.rare_data_->bits_.has_.argument_match_in_shadow_tree_;
   }
 
 #if DCHECK_IS_ON()
@@ -539,6 +541,10 @@ class CORE_EXPORT CSSSelector {
   bool IsOrContainsHostPseudoClass() const;
   bool IsUserActionPseudoClass() const;
   bool IsIdClassOrAttributeSelector() const;
+  // Support :is(:host) and :is(#foo:host) but not :is(:host, #foo);
+  // see SelectorChecker::MatchForRelation() for explanation about
+  // this limitation.
+  bool IsDeeplyHostPseudoClass() const;
 
   RelationType Relation() const {
     return static_cast<RelationType>(bits_.get<RelationField>());
@@ -583,6 +589,8 @@ class CORE_EXPORT CSSSelector {
   // True if :link or :visited pseudo-classes are found anywhere in
   // the selector.
   bool HasLinkOrVisited() const;
+  // True if :visited pseudo-classes are found anywhere in the selector.
+  bool HasVisited() const;
 
   bool HasRareData() const { return bits_.get<HasRareDataField>(); }
 
@@ -942,8 +950,8 @@ inline CSSSelector::CSSSelector(CSSSelector&& o)
   // constructor (i.e., using similar code as in the copy constructor above)
   // after moving to Oilpan, copying the bits one by one. We already allow
   // memcpy + memset by traits, so we can do it by ourselves, too.
-  memcpy(this, &o, sizeof(*this));
-  memset(&o, 0, sizeof(o));
+  UNSAFE_TODO(memcpy(this, &o, sizeof(*this)));
+  UNSAFE_TODO(memset(&o, 0, sizeof(o)));
 }
 
 inline CSSSelector::~CSSSelector() {
@@ -1008,9 +1016,11 @@ inline bool CSSSelector::IsIdClassOrAttributeSelector() const {
 
 inline void swap(CSSSelector& a, CSSSelector& b) {
   char tmp[sizeof(CSSSelector)];
-  memcpy(tmp, &a, sizeof(CSSSelector));
-  memcpy(&a, &b, sizeof(CSSSelector));
-  memcpy(&b, tmp, sizeof(CSSSelector));
+  UNSAFE_TODO({
+    memcpy(tmp, &a, sizeof(CSSSelector));
+    memcpy(&a, &b, sizeof(CSSSelector));
+    memcpy(&b, tmp, sizeof(CSSSelector));
+  });
 }
 
 // Converts descendant to relative descendant, child to relative child

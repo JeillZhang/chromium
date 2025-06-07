@@ -44,9 +44,9 @@ import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncFeatures;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncFeaturesJni;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
+import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager;
+import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager.MaybeBlockingResult;
 import org.chromium.chrome.browser.tabmodel.TabModelRemover.TabModelRemoverFlowHandler;
-import org.chromium.chrome.browser.tasks.tab_management.ActionConfirmationManager;
-import org.chromium.chrome.browser.tasks.tab_management.ActionConfirmationManager.MaybeBlockingResult;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModel;
 import org.chromium.components.browser_ui.widget.ActionConfirmationResult;
 import org.chromium.components.collaboration.CollaborationService;
@@ -89,7 +89,7 @@ public class TabModelRemoverUnitTest {
     @Mock private TabGroupSyncFeatures.Natives mTabGroupSyncFeaturesJniMock;
     @Mock private Runnable mFinishBlocking;
 
-    @Captor private ArgumentCaptor<Callback<Integer>> mOnResultCaptor;
+    @Captor private ArgumentCaptor<Callback<@ActionConfirmationResult Integer>> mOnResultCaptor;
     @Captor private ArgumentCaptor<Callback<Boolean>> mOnDeleteGroupResultCaptor;
     @Captor private ArgumentCaptor<Callback<MaybeBlockingResult>> mOnMaybeBlockingResultCaptor;
     @Captor private ArgumentCaptor<List<Tab>> mNewTabCreationCaptor;
@@ -122,12 +122,14 @@ public class TabModelRemoverUnitTest {
         mTabModel.setTabCreatorForTesting(mTabCreator);
         mTabModel.setActive(true);
 
-        when(mTabGroupModelFilter.isIncognitoBranded()).thenReturn(false);
+        when(mTabModel.isIncognitoBranded()).thenReturn(false);
         when(mTabGroupModelFilter.getTabModel()).thenReturn(mTabModel);
-        when(mTabGroupModelFilter.getRootIdFromStableId(TAB_GROUP_1.tabGroupId))
+        when(mTabGroupModelFilter.getRootIdFromTabGroupId(TAB_GROUP_1.tabGroupId))
                 .thenReturn(ROOT_ID_1);
-        when(mTabGroupModelFilter.getRootIdFromStableId(TAB_GROUP_2.tabGroupId))
+        when(mTabGroupModelFilter.getRootIdFromTabGroupId(TAB_GROUP_2.tabGroupId))
                 .thenReturn(ROOT_ID_2);
+        when(mTabGroupModelFilter.tabGroupExists(TAB_GROUP_1.tabGroupId)).thenReturn(true);
+        when(mTabGroupModelFilter.tabGroupExists(TAB_GROUP_2.tabGroupId)).thenReturn(true);
         when(mTabGroupModelFilter.getTabGroupTitle(anyInt())).thenReturn(TAB_GROUP_TITLE);
 
         doAnswer(

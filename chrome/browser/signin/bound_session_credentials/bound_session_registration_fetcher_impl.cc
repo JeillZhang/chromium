@@ -146,6 +146,7 @@ void BoundSessionRegistrationFetcherImpl::OnURLLoaderComplete(
   params.set_wrapped_key(wrapped_key_str_);
   *params.mutable_creation_time() =
       bound_session_credentials::TimeToTimestamp(base::Time::Now());
+  params.set_is_wsbeta(registration_params_.is_wsbeta());
 
   if (!bound_session_credentials::AreParamsValid(params)) {
     RunCallbackAndRecordMetrics(
@@ -280,9 +281,9 @@ BoundSessionRegistrationFetcherImpl::ParseJsonResponse(
   // JSON responses normally should start with XSSI-protection prefix which
   // should be removed prior to parsing.
   std::string_view response_json = *response_body;
-  if (base::StartsWith(*response_body, kXSSIPrefix,
-                       base::CompareCase::SENSITIVE)) {
-    response_json = response_json.substr(strlen(kXSSIPrefix));
+  auto remainder = base::RemovePrefix(response_json, kXSSIPrefix);
+  if (remainder) {
+    response_json = *remainder;
   }
   std::optional<base::Value::Dict> maybe_root =
       base::JSONReader::ReadDict(response_json);

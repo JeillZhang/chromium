@@ -8,10 +8,12 @@
 #import <Cocoa/Cocoa.h>
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "base/base64.h"
+#include "base/check_op.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/functional/callback.h"
 #include "base/lazy_instance.h"
@@ -38,6 +40,7 @@
 #include "ui/events/gestures/gesture_types.h"
 #include "ui/gfx/font_list.h"
 #import "ui/gfx/mac/coordinate_conversion.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/native_theme/native_theme_mac.h"
 #import "ui/views/cocoa/drag_drop_client_mac.h"
@@ -193,6 +196,18 @@ void NativeWidgetMac::OnWindowKeyStatusChanged(
   }
 }
 
+void NativeWidgetMac::OnWindowWillStartLiveResize() {
+  if (delegate_) {
+    delegate_->OnNativeWidgetUserResizeStarted();
+  }
+}
+
+void NativeWidgetMac::OnWindowDidEndLiveResize() {
+  if (delegate_) {
+    delegate_->OnNativeWidgetUserResizeEnded();
+  }
+}
+
 int32_t NativeWidgetMac::SheetOffsetY() {
   return 0;
 }
@@ -287,8 +302,21 @@ void NativeWidgetMac::InitNativeWidget(Widget::InitParams params) {
 
   DCHECK(GetWidget()->GetRootView());
   ns_window_host_->SetRootView(GetWidget()->GetRootView());
+
+  std::optional<int> corner_radius;
+  if (params.rounded_corners) {
+    CHECK_EQ(params.rounded_corners->upper_left(),
+             params.rounded_corners->upper_right());
+    CHECK_EQ(params.rounded_corners->upper_left(),
+             params.rounded_corners->lower_left());
+    CHECK_EQ(params.rounded_corners->lower_left(),
+             params.rounded_corners->lower_right());
+    corner_radius = params.rounded_corners->upper_left();
+  }
+
   GetNSWindowMojo()->CreateContentView(ns_window_host_->GetRootViewNSViewId(),
-                                       GetWidget()->GetRootView()->bounds());
+                                       GetWidget()->GetRootView()->bounds(),
+                                       corner_radius);
   if (auto* focus_manager = GetWidget()->GetFocusManager()) {
     GetNSWindowMojo()->MakeFirstResponder();
     // Only one ZoomFocusMonitor is needed per FocusManager, so create one only
@@ -327,7 +355,8 @@ void NativeWidgetMac::ReparentNativeViewImpl(gfx::NativeView new_parent) {
       child_window_host->native_widget_mac()->GetNativeWindow();
   DCHECK(
       [child.GetNativeNSView() isDescendantOf:widget_view.GetNativeNSView()]);
-  DCHECK(widget_window && ![widget_window.GetNativeNSWindow() isSheet]);
+  DCHECK(widget_window);
+  DCHECK(![widget_window.GetNativeNSWindow() isSheet]);
 
   NativeWidgetMacNSWindowHost* new_parent_window_host =
       new_parent ? NativeWidgetMacNSWindowHost::GetFromNativeView(new_parent)
@@ -341,8 +370,7 @@ void NativeWidgetMac::ReparentNativeViewImpl(gfx::NativeView new_parent) {
 
   // First notify all the widgets that they are being disassociated from their
   // previous parent.
-  Widget::Widgets widgets;
-  GetAllChildWidgets(child, &widgets);
+  Widget::Widgets widgets = GetAllChildWidgets(child);
   for (Widget* widget : widgets) {
     widget->NotifyNativeViewHierarchyWillChange();
   }
@@ -357,7 +385,8 @@ void NativeWidgetMac::ReparentNativeViewImpl(gfx::NativeView new_parent) {
 
 std::unique_ptr<NonClientFrameView>
 NativeWidgetMac::CreateNonClientFrameView() {
-  return GetWidget() ? std::make_unique<NativeFrameViewMac>(GetWidget())
+  return GetWidget() ? std::make_unique<NativeFrameViewMac>(GetWidget(),
+                                                            /*client=*/nullptr)
                      : nullptr;
 }
 
@@ -399,11 +428,12 @@ gfx::NativeView NativeWidgetMac::GetNativeView() const {
     return gfx::NativeView(contentView);
   }
   // Returns a BridgedContentView, unless there is no views::RootView set.
-  return [GetNativeWindow().GetNativeNSWindow() contentView];
+  return gfx::NativeView(GetNativeWindow().GetNativeNSWindow().contentView);
 }
 
 gfx::NativeWindow NativeWidgetMac::GetNativeWindow() const {
-  return ns_window_host_ ? ns_window_host_->GetInProcessNSWindow() : nil;
+  return gfx::NativeWindow(
+      ns_window_host_ ? ns_window_host_->GetInProcessNSWindow() : nil);
 }
 
 Widget* NativeWidgetMac::GetTopLevelWidget() {
@@ -533,10 +563,10 @@ void NativeWidgetMac::InitModalType(ui::mojom::ModalType modal_type) {
   // Everything happens upon show.
 }
 
-void NativeWidgetMac::SetColorMode(ui::ColorProviderKey::ColorMode color_mode) {
-  if (ns_window_host_ &&
-      base::FeatureList::IsEnabled(
-          features::kMacWindowFollowsColorProviderColorMode)) {
+void NativeWidgetMac::OnWidgetThemeChanged(
+    ui::ColorProviderKey::ColorMode color_mode,
+    std::optional<SkColor> background_color) {
+  if (ns_window_host_) {
     ns_window_host_->SetColorMode(color_mode);
   }
 }
@@ -734,6 +764,10 @@ void NativeWidgetMac::Hide() {
 
 bool NativeWidgetMac::IsVisible() const {
   return ns_window_host_ && ns_window_host_->IsVisible();
+}
+
+bool NativeWidgetMac::IsVisibleOnScreen() const {
+  return ns_window_host_ && ns_window_host_->IsVisibleOnScreen();
 }
 
 void NativeWidgetMac::Activate() {
@@ -1045,6 +1079,10 @@ bool NativeWidgetMac::AreScreenshotsAllowed() {
   return true;
 }
 
+bool NativeWidgetMac::IsDesktopNativeWidget() const {
+  return true;
+}
+
 std::string NativeWidgetMac::GetName() const {
   return name_;
 }
@@ -1067,6 +1105,7 @@ void NativeWidgetMac::PopulateCreateWindowParams(
   if (widget_params.is_overlay) {
     params->window_class = remote_cocoa::mojom::WindowClass::kOverlay;
   }
+  params->animation_enabled = widget_params.animation_enabled;
 }
 
 NativeWidgetMacNSWindow* NativeWidgetMac::CreateNSWindow(
@@ -1140,16 +1179,11 @@ void NativeWidgetMac::OnDidChangeFocus(View* focused_before,
 }
 
 void NativeWidgetMac::OnFocusManagerDestroying(FocusManager* focus_manager) {
-  // TODO(crbug.com/348369180): An observer of FocusManager is still observing
-  // the manager on the manager's destruction. NativeWidgetMac is the suspect.
+  // TODO(crbug.com/348369180): mac fullscreen overlay widget should be
+  // destroyed before its parent widget, subsequently stopping observing the
+  // parent's focus manager. However, this is not happening for unknown reasons.
   CHECK_EQ(focus_manager, focus_manager_);
   focus_manager->RemoveFocusChangeListener(this);
-
-  // Log the widget name in crash key.
-  static crash_reporter::CrashKeyString<32> window_info_key("widgetName");
-  crash_reporter::ScopedCrashKeyString scopedWindowKey(&window_info_key, name_);
-
-  base::debug::DumpWithoutCrashing();
 }
 
 ui::EventDispatchDetails NativeWidgetMac::DispatchKeyEventPostIME(
@@ -1197,7 +1231,7 @@ void Widget::CloseAllSecondaryWidgets() {
     crash_reporter::ScopedCrashKeyString scopedWindowKey(&window_info_key,
                                                          value);
 
-    Widget* widget = GetWidgetForNativeWindow(window);
+    Widget* widget = GetWidgetForNativeWindow(gfx::NativeWindow(window));
     if (widget && widget->is_secondary_widget()) {
       [window close];
     }
@@ -1218,7 +1252,8 @@ NativeWidgetPrivate* NativeWidgetPrivate::CreateNativeWidget(
 // static
 NativeWidgetPrivate* NativeWidgetPrivate::GetNativeWidgetForNativeView(
     gfx::NativeView native_view) {
-  return GetNativeWidgetForNativeWindow([native_view.GetNativeNSView() window]);
+  return GetNativeWidgetForNativeWindow(
+      gfx::NativeWindow([native_view.GetNativeNSView() window]));
 }
 
 // static
@@ -1253,8 +1288,10 @@ NativeWidgetPrivate* NativeWidgetPrivate::GetTopLevelNativeWidget(
 }
 
 // static
-void NativeWidgetPrivate::GetAllChildWidgets(gfx::NativeView native_view,
-                                             Widget::Widgets* children) {
+Widget::Widgets NativeWidgetPrivate::GetAllChildWidgets(
+    gfx::NativeView native_view) {
+  Widget::Widgets children;
+
   NativeWidgetMacNSWindowHost* window_host =
       NativeWidgetMacNSWindowHost::GetFromNativeView(native_view);
   if (!window_host) {
@@ -1263,22 +1300,24 @@ void NativeWidgetPrivate::GetAllChildWidgets(gfx::NativeView native_view,
     // are. Support returning Widgets that are parented to the NSWindow, except:
     // - Ignore requests for children of an NSView that is not a contentView.
     // - We do not add a Widget for |native_view| to |children| (there is none).
-    if ([[ns_view window] contentView] != ns_view) {
-      return;
+    if (ns_view.window.contentView != ns_view) {
+      return children;
     }
 
     // Collect -sheets and -childWindows. A window should never appear in both,
     // since that causes AppKit to glitch.
-    NSArray* sheet_children = [[ns_view window] sheets];
+    NSArray* sheet_children = ns_view.window.sheets;
     for (NSWindow* native_child in sheet_children) {
-      GetAllChildWidgets([native_child contentView], children);
+      children.merge(
+          GetAllChildWidgets(gfx::NativeView(native_child.contentView)));
     }
 
-    for (NSWindow* native_child in [[ns_view window] childWindows]) {
+    for (NSWindow* native_child in ns_view.window.childWindows) {
       DCHECK(![sheet_children containsObject:native_child]);
-      GetAllChildWidgets([native_child contentView], children);
+      children.merge(
+          GetAllChildWidgets(gfx::NativeView(native_child.contentView)));
     }
-    return;
+    return children;
   }
 
   // If |native_view| is a subview of the contentView, it will share an
@@ -1288,12 +1327,12 @@ void NativeWidgetPrivate::GetAllChildWidgets(gfx::NativeView native_view,
   // a corresponding Widget of its own in this case (and so can't have Widget
   // children of its own on Mac).
   if (window_host->native_widget_mac()->GetNativeView() != native_view) {
-    return;
+    return children;
   }
 
   // Code expects widget for |native_view| to be added to |children|.
   if (window_host->native_widget_mac()->GetWidget()) {
-    children->insert(window_host->native_widget_mac()->GetWidget());
+    children.insert(window_host->native_widget_mac()->GetWidget());
   }
 
   // When the NSWindow *is* a Widget, only consider children(). I.e. do not
@@ -1301,25 +1340,30 @@ void NativeWidgetPrivate::GetAllChildWidgets(gfx::NativeView native_view,
   // above. -childWindows does not support hidden windows, and anything in there
   // which is not in children() would have been added by AppKit.
   for (NativeWidgetMacNSWindowHost* child : window_host->children()) {
-    GetAllChildWidgets(child->native_widget_mac()->GetNativeView(), children);
+    children.merge(
+        GetAllChildWidgets(child->native_widget_mac()->GetNativeView()));
   }
+
+  return children;
 }
 
 // static
-void NativeWidgetPrivate::GetAllOwnedWidgets(gfx::NativeView native_view,
-                                             Widget::Widgets* owned) {
+Widget::Widgets NativeWidgetPrivate::GetAllOwnedWidgets(
+    gfx::NativeView native_view) {
   NativeWidgetMacNSWindowHost* window_host =
       NativeWidgetMacNSWindowHost::GetFromNativeView(native_view);
   if (!window_host) {
-    GetAllChildWidgets(native_view, owned);
-    return;
+    return GetAllChildWidgets(native_view);
   }
   if (window_host->native_widget_mac()->GetNativeView() != native_view) {
-    return;
+    return Widget::Widgets();
   }
+  Widget::Widgets owned;
   for (NativeWidgetMacNSWindowHost* child : window_host->children()) {
-    GetAllChildWidgets(child->native_widget_mac()->GetNativeView(), owned);
+    owned.merge(
+        GetAllChildWidgets(child->native_widget_mac()->GetNativeView()));
   }
+  return owned;
 }
 
 // static
@@ -1333,7 +1377,7 @@ void NativeWidgetPrivate::ReparentNativeView(gfx::NativeView child,
 // static
 gfx::NativeView NativeWidgetPrivate::GetGlobalCapture(
     gfx::NativeView native_view) {
-  return NativeWidgetMacNSWindowHost::GetGlobalCaptureView();
+  return gfx::NativeView(NativeWidgetMacNSWindowHost::GetGlobalCaptureView());
 }
 
 }  // namespace internal

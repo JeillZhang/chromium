@@ -889,8 +889,7 @@ void CrosDisplayConfig::OverscanCalibration(
     case crosapi::mojom::DisplayConfigOperation::kStart: {
       DVLOG(1) << "OverscanCalibrationStart: " << display_id;
       gfx::Insets insets =
-          Shell::Get()->window_tree_host_manager()->GetOverscanInsets(
-              display.id());
+          Shell::Get()->display_manager()->GetOverscanInsets(display.id());
       if (calibrator) {
         DVLOG(1) << "Replacing existing calibrator for id: " << display_id;
       }
@@ -1099,6 +1098,10 @@ void CrosDisplayConfig::DragDisplayDelta(int64_t display_id,
   DCHECK(features::IsDisplayAlignmentAssistanceEnabled());
   Shell::Get()->display_alignment_controller()->DisplayDragged(
       display_id, delta_x, delta_y);
+}
+
+bool CrosDisplayConfig::IsCalibrating() const {
+  return touch_calibrator_ && touch_calibrator_->IsCalibrating();
 }
 
 }  // namespace ash

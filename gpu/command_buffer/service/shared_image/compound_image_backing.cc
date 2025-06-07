@@ -38,7 +38,7 @@
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace gpu {
 namespace {
@@ -257,14 +257,14 @@ class WrappedSkiaGraphiteCompoundImageRepresentation
                                           AccessMode::kWrite);
     return wrapped_->BeginWriteAccess(surface_props, update_rect);
   }
-  std::vector<skgpu::graphite::BackendTexture> BeginWriteAccess() final {
+  std::vector<scoped_refptr<GraphiteTextureHolder>> BeginWriteAccess() final {
     compound_backing()->NotifyBeginAccess(SharedImageAccessStream::kSkia,
                                           AccessMode::kWrite);
     return wrapped_->BeginWriteAccess();
   }
   void EndWriteAccess() final { wrapped_->EndWriteAccess(); }
 
-  std::vector<skgpu::graphite::BackendTexture> BeginReadAccess() final {
+  std::vector<scoped_refptr<GraphiteTextureHolder>> BeginReadAccess() final {
     compound_backing()->NotifyBeginAccess(SharedImageAccessStream::kSkia,
                                           AccessMode::kRead);
     return wrapped_->BeginReadAccess();
@@ -336,9 +336,24 @@ class WrappedOverlayCompoundImageRepresentation
   void EndReadAccess(gfx::GpuFenceHandle release_fence) final {
     return wrapped_->EndReadAccess(std::move(release_fence));
   }
-#if BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_ANDROID)
+  AHardwareBuffer* GetAHardwareBuffer() final {
+    return wrapped_->GetAHardwareBuffer();
+  }
+  std::unique_ptr<base::android::ScopedHardwareBufferFenceSync>
+  GetAHardwareBufferFenceSync() final {
+    return wrapped_->GetAHardwareBufferFenceSync();
+  }
+#elif BUILDFLAG(IS_WIN)
   std::optional<gl::DCLayerOverlayImage> GetDCLayerOverlayImage() final {
     return wrapped_->GetDCLayerOverlayImage();
+  }
+#elif BUILDFLAG(IS_APPLE)
+  gfx::ScopedIOSurface GetIOSurface() const final {
+    return wrapped_->GetIOSurface();
+  }
+  bool IsInUseByWindowServer() const final {
+    return wrapped_->IsInUseByWindowServer();
   }
 #endif
 

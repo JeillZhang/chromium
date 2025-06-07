@@ -81,6 +81,7 @@
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/uuid.h"
 
@@ -88,7 +89,7 @@ namespace blink {
 
 // Constructor for rendering to the audio hardware.
 BaseAudioContext::BaseAudioContext(LocalDOMWindow* window,
-                                   enum ContextType context_type)
+                                   ContextType context_type)
     : ActiveScriptWrappable<BaseAudioContext>({}),
       ExecutionContextLifecycleStateObserver(window),
       InspectorHelperMixin(*AudioGraphTracer::FromWindow(*window), String()),
@@ -231,8 +232,8 @@ void BaseAudioContext::WarnIfContextClosed(const AudioHandler* handler) const {
         MakeGarbageCollected<ConsoleMessage>(
             mojom::ConsoleMessageSource::kOther,
             mojom::ConsoleMessageLevel::kWarning,
-            "Construction of " + handler->NodeTypeName() +
-                " is not useful when context is closed."));
+            WTF::StrCat({"Construction of ", handler->NodeTypeName(),
+                         " is not useful when context is closed."})));
   }
 }
 
@@ -642,6 +643,12 @@ V8AudioContextState BaseAudioContext::state() const {
 
 void BaseAudioContext::SetContextState(V8AudioContextState::Enum new_state) {
   DCHECK(IsMainThread());
+
+  // The closed AudioContext does not accept any state change.
+  if (control_thread_state_ == V8AudioContextState::Enum::kClosed) {
+    return;
+  }
+
   if (!RuntimeEnabledFeatures::AudioContextInterruptedStateEnabled() &&
       new_state == V8AudioContextState::Enum::kInterrupted) {
     return;
@@ -742,9 +749,9 @@ void BaseAudioContext::HandleStoppableSourceNodes() {
     // long as the active nodes eventually get stopped if they're done.
     for (auto handler : *active_source_handlers) {
       switch (handler->GetNodeType()) {
-        case AudioHandler::kNodeTypeAudioBufferSource:
-        case AudioHandler::kNodeTypeOscillator:
-        case AudioHandler::kNodeTypeConstantSource: {
+        case AudioHandler::NodeType::kNodeTypeAudioBufferSource:
+        case AudioHandler::NodeType::kNodeTypeOscillator:
+        case AudioHandler::NodeType::kNodeTypeConstantSource: {
           AudioScheduledSourceHandler* source_handler =
               static_cast<AudioScheduledSourceHandler*>(handler.get());
           source_handler->HandleStoppableSourceNode();

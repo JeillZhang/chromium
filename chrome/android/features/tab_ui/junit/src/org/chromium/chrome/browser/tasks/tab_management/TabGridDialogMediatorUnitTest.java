@@ -15,6 +15,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -36,6 +37,7 @@ import static org.mockito.Mockito.when;
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.DESCRIPTION_TEXT;
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.MESSAGE_SERVICE_ACTION_PROVIDER;
 import static org.chromium.chrome.browser.tasks.tab_management.MessageCardViewProperties.MESSAGE_SERVICE_DISMISS_ACTION_PROVIDER;
+import static org.chromium.chrome.browser.tasks.tab_management.TabGridDialogProperties.SUPPRESS_ACCESSIBILITY;
 import static org.chromium.components.data_sharing.SharedGroupTestHelper.COLLABORATION_ID1;
 import static org.chromium.components.data_sharing.SharedGroupTestHelper.EMAIL1;
 import static org.chromium.components.data_sharing.SharedGroupTestHelper.EMAIL2;
@@ -46,12 +48,14 @@ import static org.chromium.components.data_sharing.SharedGroupTestHelper.GROUP_M
 
 import android.app.Activity;
 import android.graphics.Rect;
+import android.os.SystemClock;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.EditText;
 
-import androidx.annotation.Nullable;
+import androidx.annotation.IdRes;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -67,21 +71,27 @@ import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.FeatureOverrides;
 import org.chromium.base.Token;
+import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.UserActionTester;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.bookmarks.BookmarkModel;
+import org.chromium.chrome.browser.bookmarks.TabBookmarker;
 import org.chromium.chrome.browser.collaboration.CollaborationServiceFactory;
 import org.chromium.chrome.browser.collaboration.messaging.MessagingBackendServiceFactory;
 import org.chromium.chrome.browser.data_sharing.DataSharingServiceFactory;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabManager;
 import org.chromium.chrome.browser.data_sharing.ui.shared_image_tiles.SharedImageTilesCoordinator;
+import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncher;
 import org.chromium.chrome.browser.feedback.HelpAndFeedbackLauncherFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.share.ShareDelegate;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabCreationState;
@@ -90,8 +100,8 @@ import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncFeatures;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncFeaturesJni;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
+import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager;
 import org.chromium.chrome.browser.tab_ui.RecyclerViewPosition;
-import org.chromium.chrome.browser.tab_ui.TabUiThemeUtils;
 import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
@@ -101,10 +111,17 @@ import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabRemover;
 import org.chromium.chrome.browser.tabmodel.TabUiUnitTestUtils;
 import org.chromium.chrome.browser.tasks.tab_management.MessageService.MessageType;
+import org.chromium.chrome.browser.tasks.tab_management.TabGridItemLongPressOrchestrator.CancelLongPressTabItemEventListener;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
+import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
+import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.StateChangeReason;
+import org.chromium.components.browser_ui.bottomsheet.BottomSheetObserver;
 import org.chromium.components.browser_ui.desktop_windowing.AppHeaderState;
 import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateManager;
+import org.chromium.components.browser_ui.util.motion.MotionEventTestUtils;
+import org.chromium.components.browser_ui.widget.list_view.FakeListViewTouchTracker;
+import org.chromium.components.browser_ui.widget.list_view.ListViewTouchTracker;
 import org.chromium.components.collaboration.CollaborationService;
 import org.chromium.components.collaboration.ServiceStatus;
 import org.chromium.components.collaboration.messaging.CollaborationEvent;
@@ -120,14 +137,16 @@ import org.chromium.components.data_sharing.GroupData;
 import org.chromium.components.data_sharing.GroupMember;
 import org.chromium.components.data_sharing.SharedGroupTestHelper;
 import org.chromium.components.data_sharing.member_role.MemberRole;
+import org.chromium.components.feature_engagement.FeatureConstants;
+import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.IdentityManager;
+import org.chromium.components.tab_group_sync.EitherId.EitherGroupId;
 import org.chromium.components.tab_group_sync.LocalTabGroupId;
 import org.chromium.components.tab_group_sync.SavedTabGroup;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.KeyboardVisibilityDelegate;
-import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.TestActivity;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -142,6 +161,7 @@ import java.util.Optional;
 @SuppressWarnings({"ArraysAsListWithZeroOrOneArgument", "ResultOfMethodCallIgnored"})
 @RunWith(BaseRobolectricTestRunner.class)
 @EnableFeatures(ChromeFeatureList.DATA_SHARING)
+@DisableFeatures(ChromeFeatureList.TAB_GROUP_PARITY_BOTTOM_SHEET_ANDROID)
 public class TabGridDialogMediatorUnitTest {
     private static final String TAB1_TITLE = "Tab1";
     private static final String TAB2_TITLE = "Tab2";
@@ -159,6 +179,8 @@ public class TabGridDialogMediatorUnitTest {
     private static final int POSITION2 = 1;
     private static final Token TAB_GROUP_ID = new Token(1L, 2L);
     private static final LocalTabGroupId LOCAL_TAB_GROUP_ID = new LocalTabGroupId(TAB_GROUP_ID);
+    private static final EitherGroupId EITHER_LOCAL_TAB_GROUP_ID =
+            EitherGroupId.createLocalId(LOCAL_TAB_GROUP_ID);
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
@@ -191,7 +213,14 @@ public class TabGridDialogMediatorUnitTest {
     @Mock private MessagingBackendService mMessagingBackendService;
     @Mock private SharedImageTilesCoordinator mSharedImageTilesCoordinator;
     @Mock private DesktopWindowStateManager mDesktopWindowStateManager;
+    @Mock private BottomSheetController mBottomSheetController;
+    @Mock private Tracker mTracker;
     @Mock private HelpAndFeedbackLauncher mHelpAndFeedbackLauncher;
+    @Mock private ObservableSupplier<TabBookmarker> mTabBookmarkerSupplier;
+    @Mock private Supplier<ShareDelegate> mShareDelegateSupplier;
+    @Mock private BookmarkModel mBookmarkModel;
+    @Mock private View mCardView;
+    @Mock private TabGridContextMenuCoordinator mTabGridContextMenuCoordinator;
 
     @Captor private ArgumentCaptor<TabModelObserver> mTabModelObserverCaptor;
     @Captor private ArgumentCaptor<TabGroupModelFilterObserver> mTabGroupModelFilterObserverCaptor;
@@ -204,12 +233,15 @@ public class TabGridDialogMediatorUnitTest {
     private ArgumentCaptor<MessagingBackendService.PersistentMessageObserver>
             mPersistentMessageObserverCaptor;
 
+    @Captor private ArgumentCaptor<BottomSheetObserver> mBottomSheetObserverCaptor;
+
     private final ObservableSupplierImpl<TabGroupModelFilter> mCurrentTabGroupModelFilterSupplier =
             new ObservableSupplierImpl<>();
 
     private UserActionTester mActionTester;
     private Tab mTab1;
     private Tab mTab2;
+    private List<Tab> mTabList;
     private Activity mActivity;
     private PropertyModel mModel;
     private TabGridDialogMediator mMediator;
@@ -219,6 +251,7 @@ public class TabGridDialogMediatorUnitTest {
         mActionTester = new UserActionTester();
 
         TabGroupSyncFeaturesJni.setInstanceForTesting(mTabGroupSyncFeaturesJniMock);
+        BookmarkModel.setInstanceForTesting(mBookmarkModel);
         doReturn(true).when(mTabGroupSyncFeaturesJniMock).isTabGroupSyncEnabled(mProfile);
         when(mProfile.getOriginalProfile()).thenReturn(mProfile);
         when(mProfile.isNativeInitialized()).thenReturn(true);
@@ -232,7 +265,8 @@ public class TabGridDialogMediatorUnitTest {
         when(mServiceStatus.isAllowedToCreate()).thenReturn(true);
         when(mCollaborationService.getServiceStatus()).thenReturn(mServiceStatus);
         MessagingBackendServiceFactory.setForTesting(mMessagingBackendService);
-        mockPersistentMessages(/* added= */ 1, /* navigated= */ 2, /* removed= */ 3);
+        mockPersistentMessages(/* added= */ 1, /* navigated= */ 2, /* removed= */ 4);
+        TrackerFactory.setTrackerForTests(mTracker);
 
         HelpAndFeedbackLauncherFactory.setInstanceForTesting(mHelpAndFeedbackLauncher);
 
@@ -240,20 +274,22 @@ public class TabGridDialogMediatorUnitTest {
         mTab2 = prepareTab(TAB2_ID, TAB2_TITLE);
         List<Tab> tabs1 = new ArrayList<>(Arrays.asList(mTab1));
         List<Tab> tabs2 = new ArrayList<>(Arrays.asList(mTab2));
+        mTabList = new ArrayList<>(Arrays.asList(mTab1, mTab2));
+        when(mTabGroupModelFilter.getRepresentativeTabList()).thenReturn(mTabList);
 
         mCurrentTabGroupModelFilterSupplier.set(mTabGroupModelFilter);
         doReturn(mProfile).when(mTabModel).getProfile();
         doReturn(mTabModel).when(mTabGroupModelFilter).getTabModel();
-        doReturn(POSITION1).when(mTabGroupModelFilter).indexOf(mTab1);
-        doReturn(POSITION2).when(mTabGroupModelFilter).indexOf(mTab2);
-        when(mTabGroupModelFilter.isIncognitoBranded()).thenReturn(false);
+        doReturn(POSITION1).when(mTabGroupModelFilter).representativeIndexOf(mTab1);
+        doReturn(POSITION2).when(mTabGroupModelFilter).representativeIndexOf(mTab2);
+        when(mTabModel.isIncognitoBranded()).thenReturn(false);
         when(mTabModel.getTabRemover()).thenReturn(mTabRemover);
         when(mTabModel.getTabCreator()).thenReturn(mTabCreator);
-        doReturn(mTab1).when(mTabGroupModelFilter).getTabAt(POSITION1);
-        doReturn(mTab2).when(mTabGroupModelFilter).getTabAt(POSITION2);
+        doReturn(mTab1).when(mTabGroupModelFilter).getRepresentativeTabAt(POSITION1);
+        doReturn(mTab2).when(mTabGroupModelFilter).getRepresentativeTabAt(POSITION2);
         doReturn(tabs1).when(mTabGroupModelFilter).getRelatedTabList(TAB1_ID);
         doReturn(tabs2).when(mTabGroupModelFilter).getRelatedTabList(TAB2_ID);
-        doReturn(POSITION1).when(mTabGroupModelFilter).index();
+        doReturn(POSITION1).when(mTabGroupModelFilter).getCurrentRepresentativeTabIndex();
         doReturn(POSITION1).when(mTabModel).index();
         doReturn(2).when(mTabModel).getCount();
         doReturn(mTab1).when(mTabModel).getTabAt(POSITION1);
@@ -297,11 +333,11 @@ public class TabGridDialogMediatorUnitTest {
 
         mModel.get(TabGridDialogProperties.SHARE_BUTTON_CLICK_LISTENER).onClick(null);
         verify(mDataSharingTabManager)
-                .createOrManageFlow(eq(mActivity), eq(null), eq(LOCAL_TAB_GROUP_ID), any());
+                .createOrManageFlow(eq(EITHER_LOCAL_TAB_GROUP_ID), anyInt(), any());
 
         mModel.get(TabGridDialogProperties.SHARE_IMAGE_TILES_CLICK_LISTENER).onClick(null);
         verify(mDataSharingTabManager, times(2))
-                .createOrManageFlow(eq(mActivity), eq(null), eq(LOCAL_TAB_GROUP_ID), any());
+                .createOrManageFlow(eq(EITHER_LOCAL_TAB_GROUP_ID), anyInt(), any());
 
         mModel.get(TabGridDialogProperties.SEND_FEEDBACK_RUNNABLE).run();
         ArgumentCaptor<String> categoryCaptor = ArgumentCaptor.forClass(String.class);
@@ -338,10 +374,13 @@ public class TabGridDialogMediatorUnitTest {
                 ArgumentCaptor.forClass((Class) List.class);
         mMediator.setCurrentTabIdForTesting(TAB1_ID);
         mMediator.onToolbarMenuItemClick(
-                R.id.select_tabs, TAB_GROUP_ID, /* collaborationId= */ null);
+                R.id.select_tabs,
+                TAB_GROUP_ID,
+                /* collaborationId= */ null,
+                /* listViewTouchTracker= */ null);
         verify(mTabListEditorController).configureToolbarWithMenuItems(captor.capture());
         verify(mRecyclerViewPositionSupplier, times(1)).get();
-        verify(mTabListEditorController).show(any(), eq(null));
+        verify(mTabListEditorController).show(any(), eq(new ArrayList<>()), eq(null));
         List<TabListEditorAction> actions = captor.getValue();
         assertThat(actions.get(0), instanceOf(TabListEditorSelectionAction.class));
         assertThat(actions.get(1), instanceOf(TabListEditorCloseAction.class));
@@ -357,20 +396,13 @@ public class TabGridDialogMediatorUnitTest {
 
         View.OnClickListener listener = mModel.get(TabGridDialogProperties.ADD_CLICK_LISTENER);
         listener.onClick(mView);
-        if (!DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity)) {
-            verify(mDialogController).resetWithListOfTabs(null);
-        }
 
         assertThat(mModel.get(TabGridDialogProperties.ANIMATION_SOURCE_VIEW), equalTo(null));
         assertFalse(mModel.get(TabGridDialogProperties.IS_DIALOG_VISIBLE));
 
         // Simulate the animation finishing.
         mModel.get(TabGridDialogProperties.VISIBILITY_LISTENER).finishedHidingDialogView();
-        if (!DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity)) {
-            verify(mDialogController, times(2)).resetWithListOfTabs(null);
-        } else {
-            verify(mDialogController).resetWithListOfTabs(null);
-        }
+        verify(mDialogController).resetWithListOfTabs(null);
         verify(mTabCreator)
                 .createNewTab(
                         isA(LoadUrlParams.class), eq(TabLaunchType.FROM_TAB_GROUP_UI), eq(mTab1));
@@ -391,7 +423,7 @@ public class TabGridDialogMediatorUnitTest {
         // Show the group of {tab1, tab2} in dialog to trigger the set of scrim observer.
         List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2));
         createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
 
         View.OnClickListener listener = mModel.get(TabGridDialogProperties.COLLAPSE_CLICK_LISTENER);
         listener.onClick(mView);
@@ -408,7 +440,7 @@ public class TabGridDialogMediatorUnitTest {
         // Show the group of {tab1, tab2} in dialog to trigger the set of scrim observer.
         List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2));
         createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
 
         Runnable scrimClickRunnable = mModel.get(TabGridDialogProperties.SCRIMVIEW_CLICK_RUNNABLE);
         scrimClickRunnable.run();
@@ -629,7 +661,7 @@ public class TabGridDialogMediatorUnitTest {
         // Current tab ID should not update.
         assertThat(mMediator.getCurrentTabIdForTesting(), equalTo(TAB1_ID));
         assertThat(mModel.get(TabGridDialogProperties.HEADER_TITLE), equalTo(DIALOG_TITLE1));
-        verify(mTabSwitcherResetHandler).resetWithTabList(mTabGroupModelFilter, false);
+        verify(mTabSwitcherResetHandler).resetWithListOfTabs(mTabList);
     }
 
     @Test
@@ -649,7 +681,7 @@ public class TabGridDialogMediatorUnitTest {
         // Current tab ID should be updated to TAB1_ID now.
         assertThat(mMediator.getCurrentTabIdForTesting(), equalTo(TAB1_ID));
         assertThat(mModel.get(TabGridDialogProperties.HEADER_TITLE), equalTo(DIALOG_TITLE1));
-        verify(mTabSwitcherResetHandler).resetWithTabList(mTabGroupModelFilter, false);
+        verify(mTabSwitcherResetHandler).resetWithListOfTabs(mTabList);
     }
 
     @Test
@@ -670,9 +702,9 @@ public class TabGridDialogMediatorUnitTest {
         // Simulate the animation finishing.
         mModel.get(TabGridDialogProperties.VISIBILITY_LISTENER).finishedHidingDialogView();
         verify(mDialogController).resetWithListOfTabs(null);
-        verify(mTabSwitcherResetHandler, never()).resetWithTabList(mTabGroupModelFilter, false);
+        verify(mTabSwitcherResetHandler, never()).resetWithListOfTabs(mTabList);
 
-        mMediator.onReset(null);
+        assertFalse(mMediator.onReset(null));
         assertThat(mMediator.getCurrentTabIdForTesting(), equalTo(Tab.INVALID_TAB_ID));
     }
 
@@ -764,7 +796,7 @@ public class TabGridDialogMediatorUnitTest {
         mTabModelObserverCaptor.getValue().tabClosureUndone(mTab1);
 
         assertThat(mModel.get(TabGridDialogProperties.HEADER_TITLE), equalTo(DIALOG_TITLE1));
-        verify(mTabSwitcherResetHandler).resetWithTabList(mTabGroupModelFilter, false);
+        verify(mTabSwitcherResetHandler).resetWithListOfTabs(mTabList);
         ShadowLooper.runUiThreadTasks();
         verify(mSnackbarManager).dismissSnackbars(eq(mMediator), eq(TAB1_ID));
     }
@@ -788,7 +820,7 @@ public class TabGridDialogMediatorUnitTest {
         // undoing a closure.
         assertThat(
                 mModel.get(TabGridDialogProperties.HEADER_TITLE), equalTo(CUSTOMIZED_DIALOG_TITLE));
-        verify(mTabSwitcherResetHandler).resetWithTabList(mTabGroupModelFilter, false);
+        verify(mTabSwitcherResetHandler).resetWithListOfTabs(mTabList);
         ShadowLooper.runUiThreadTasks();
         verify(mSnackbarManager).dismissSnackbars(eq(mMediator), eq(TAB2_ID));
     }
@@ -805,7 +837,7 @@ public class TabGridDialogMediatorUnitTest {
         assertThat(mModel.get(TabGridDialogProperties.HEADER_TITLE), equalTo(DIALOG_TITLE1));
         // Dialog should still be hidden.
         assertThat(mModel.get(TabGridDialogProperties.IS_DIALOG_VISIBLE), equalTo(false));
-        verify(mTabSwitcherResetHandler, never()).resetWithTabList(mTabGroupModelFilter, false);
+        verify(mTabSwitcherResetHandler, never()).resetWithListOfTabs(mTabList);
         ShadowLooper.runUiThreadTasks();
         verify(mSnackbarManager).dismissSnackbars(eq(mMediator), eq(TAB1_ID));
     }
@@ -1168,7 +1200,7 @@ public class TabGridDialogMediatorUnitTest {
     public void onReset_hideDialog() {
         mModel.set(TabGridDialogProperties.IS_DIALOG_VISIBLE, true);
 
-        mMediator.onReset(null);
+        assertFalse(mMediator.onReset(null));
 
         assertFalse(mModel.get(TabGridDialogProperties.IS_DIALOG_VISIBLE));
 
@@ -1181,7 +1213,7 @@ public class TabGridDialogMediatorUnitTest {
     public void onReset_DialogNotVisible_NoOp() {
         mModel.set(TabGridDialogProperties.IS_DIALOG_VISIBLE, false);
 
-        mMediator.onReset(null);
+        assertFalse(mMediator.onReset(null));
 
         verifyNoMoreInteractions(mDialogController);
     }
@@ -1204,7 +1236,7 @@ public class TabGridDialogMediatorUnitTest {
         // when(mTabGroupModelFilter.getTabGroupColor(mTab1.getRootId())).thenReturn(COLOR_2);
         mModel.set(TabGridDialogProperties.TAB_GROUP_COLOR_ID, COLOR_2);
 
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
         mMediator.setSelectedTabGroupColor(COLOR_3);
 
         // Assert that the color has changed both in the property model and the model filter.
@@ -1226,55 +1258,11 @@ public class TabGridDialogMediatorUnitTest {
 
         when(mTabGroupModelFilter.getTabGroupColorWithFallback(mTab1.getRootId()))
                 .thenReturn(COLOR_2);
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
 
         // Assert that a color and the incognito status were set.
         assertThat(mModel.get(TabGridDialogProperties.IS_INCOGNITO), equalTo(false));
         assertThat(mModel.get(TabGridDialogProperties.TAB_GROUP_COLOR_ID), equalTo(COLOR_2));
-
-        assertNull(mModel.get(TabGridDialogProperties.ANIMATION_BACKGROUND_COLOR));
-
-        assertThat(mModel.get(TabGridDialogProperties.IS_DIALOG_VISIBLE), equalTo(true));
-        // Scrim click runnable should be set as the current scrim runnable.
-        assertThat(
-                mModel.get(TabGridDialogProperties.SCRIMVIEW_CLICK_RUNNABLE),
-                equalTo(mMediator.getScrimClickRunnableForTesting()));
-        // Animation source view should be updated with specific view.
-        assertThat(mModel.get(TabGridDialogProperties.ANIMATION_SOURCE_VIEW), equalTo(mView));
-        // Dialog title should be updated.
-        assertThat(mModel.get(TabGridDialogProperties.HEADER_TITLE), equalTo(DIALOG_TITLE2));
-        // Prepare dialog invoked.
-        verify(mDialogController).prepareDialog();
-    }
-
-    @Test
-    @EnableFeatures({ChromeFeatureList.FORCE_LIST_TAB_SWITCHER})
-    @DisableFeatures({ChromeFeatureList.DISABLE_LIST_TAB_SWITCHER})
-    public void showDialog_FromListGts() {
-        // Mock that the dialog is hidden and animation source view, header title and scrim click
-        // runnable are all null.
-        mModel.set(TabGridDialogProperties.IS_DIALOG_VISIBLE, false);
-        mModel.set(TabGridDialogProperties.ANIMATION_SOURCE_VIEW, null);
-        mModel.set(TabGridDialogProperties.HEADER_TITLE, null);
-        mModel.set(TabGridDialogProperties.SCRIMVIEW_CLICK_RUNNABLE, null);
-        // Mock that tab1 and tab2 are in a group.
-        List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2));
-        createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
-
-        when(mTabGroupModelFilter.getTabGroupColorWithFallback(mTab1.getRootId()))
-                .thenReturn(COLOR_2);
-        mMediator.onReset(tabGroup);
-
-        // Assert that a color and the incognito status were set.
-        assertThat(mModel.get(TabGridDialogProperties.IS_INCOGNITO), equalTo(false));
-        assertThat(mModel.get(TabGridDialogProperties.TAB_GROUP_COLOR_ID), equalTo(COLOR_2));
-
-        int backgroundColor =
-                TabUiThemeUtils.getCardViewBackgroundColor(
-                        mActivity, /* isIncognito= */ false, /* isSelected= */ false);
-        assertEquals(
-                mModel.get(TabGridDialogProperties.ANIMATION_BACKGROUND_COLOR).intValue(),
-                backgroundColor);
 
         assertThat(mModel.get(TabGridDialogProperties.IS_DIALOG_VISIBLE), equalTo(true));
         // Scrim click runnable should be set as the current scrim runnable.
@@ -1304,7 +1292,7 @@ public class TabGridDialogMediatorUnitTest {
         // Mock that we have a stored title stored with reference to root ID of tab1.
         doReturn(CUSTOMIZED_DIALOG_TITLE).when(mTabGroupModelFilter).getTabGroupTitle(TAB1_ID);
 
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
 
         assertThat(mModel.get(TabGridDialogProperties.IS_DIALOG_VISIBLE), equalTo(true));
         // Scrim click runnable should be set as the current scrim runnable.
@@ -1337,7 +1325,7 @@ public class TabGridDialogMediatorUnitTest {
 
         when(mTabGroupModelFilter.getTabGroupColorWithFallback(mTab1.getRootId()))
                 .thenReturn(COLOR_2);
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
 
         // Assert that a color and the incognito status were set.
         assertThat(mModel.get(TabGridDialogProperties.IS_INCOGNITO), equalTo(false));
@@ -1375,7 +1363,7 @@ public class TabGridDialogMediatorUnitTest {
         // Mock that we have a stored title stored with reference to root ID of tab1.
         doReturn(CUSTOMIZED_DIALOG_TITLE).when(mTabGroupModelFilter).getTabGroupTitle(TAB1_ID);
 
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
 
         assertThat(mModel.get(TabGridDialogProperties.IS_DIALOG_VISIBLE), equalTo(true));
         // Scrim observer should be set as the current scrim click runnable.
@@ -1403,7 +1391,7 @@ public class TabGridDialogMediatorUnitTest {
         List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2));
         createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
 
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
 
         assertThat(mModel.get(TabGridDialogProperties.IS_DIALOG_VISIBLE), equalTo(true));
         // Animation source view should be set to null so that dialog will setup basic animation.
@@ -1420,11 +1408,14 @@ public class TabGridDialogMediatorUnitTest {
         createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
 
         mMediator.onToolbarMenuItemClick(
-                R.id.select_tabs, TAB_GROUP_ID, /* collaborationId= */ null);
+                R.id.select_tabs,
+                TAB_GROUP_ID,
+                /* collaborationId= */ null,
+                /* listViewTouchTracker= */ null);
 
         assertThat(mModel.get(TabGridDialogProperties.IS_TITLE_TEXT_FOCUSED), equalTo(false));
         verify(mRecyclerViewPositionSupplier, times(1)).get();
-        verify(mTabListEditorController).show(eq(tabGroup), eq(null));
+        verify(mTabListEditorController).show(eq(tabGroup), eq(new ArrayList<>()), eq(null));
         assertEquals(1, mActionTester.getActionCount("TabGridDialogMenu.SelectTabs"));
     }
 
@@ -1437,7 +1428,10 @@ public class TabGridDialogMediatorUnitTest {
         createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
 
         mMediator.onToolbarMenuItemClick(
-                R.id.edit_group_name, TAB_GROUP_ID, /* collaborationId= */ null);
+                R.id.edit_group_name,
+                TAB_GROUP_ID,
+                /* collaborationId= */ null,
+                /* listViewTouchTracker= */ null);
         assertTrue(mModel.get(TabGridDialogProperties.IS_TITLE_TEXT_FOCUSED));
         assertEquals(1, mActionTester.getActionCount("TabGridDialogMenu.Rename"));
     }
@@ -1449,67 +1443,160 @@ public class TabGridDialogMediatorUnitTest {
         createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
 
         mMediator.onToolbarMenuItemClick(
-                R.id.edit_group_color, TAB_GROUP_ID, /* collaborationId= */ null);
+                R.id.edit_group_color,
+                TAB_GROUP_ID,
+                /* collaborationId= */ null,
+                /* listViewTouchTracker= */ null);
         verify(mShowColorPickerPopupRunnable).run();
         assertEquals(1, mActionTester.getActionCount("TabGridDialogMenu.EditColor"));
     }
 
     @Test
-    public void testDialogToolbarMenu_CloseGroup() {
-        mMediator.setCurrentTabIdForTesting(TAB1_ID);
-        List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2));
-        createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
-
-        mMediator.onToolbarMenuItemClick(
-                R.id.close_tab_group, TAB_GROUP_ID, /* collaborationId= */ null);
-        verify(mTabRemover)
-                .closeTabs(
-                        eq(
-                                TabClosureParams.forCloseTabGroup(mTabGroupModelFilter, TAB1_ID)
-                                        .allowUndo(true)
-                                        .hideTabGroups(true)
-                                        .build()),
-                        /* allowDialog= */ eq(true),
-                        any());
-
-        assertEquals(1, mActionTester.getActionCount("TabGridDialogMenu.Close"));
+    public void testDialogToolbarMenu_CloseGroup_NullListViewTouchTracker() {
+        testDialogToolbarMenu_CloseOrDeleteGroup(
+                R.id.close_tab_group,
+                /* listViewTouchTracker= */ null,
+                /* shouldAllowUndo= */ true,
+                /* shouldHideTabGroups= */ true,
+                /* expectedUserAction= */ "TabGridDialogMenu.Close");
     }
 
     @Test
-    public void testDialogToolbarMenu_DeleteGroup() {
+    public void testDialogToolbarMenu_CloseGroup_ClickWithTouch() {
+        long downMotionTime = SystemClock.uptimeMillis();
+        FakeListViewTouchTracker listViewTouchTracker = new FakeListViewTouchTracker();
+        listViewTouchTracker.setLastSingleTapUpInfo(
+                MotionEventTestUtils.createTouchMotionInfo(
+                        downMotionTime,
+                        /* eventTime= */ downMotionTime + 50,
+                        MotionEvent.ACTION_UP));
+
+        testDialogToolbarMenu_CloseOrDeleteGroup(
+                R.id.close_tab_group,
+                listViewTouchTracker,
+                /* shouldAllowUndo= */ true,
+                /* shouldHideTabGroups= */ true,
+                /* expectedUserAction= */ "TabGridDialogMenu.Close");
+    }
+
+    @Test
+    public void testDialogToolbarMenu_CloseGroup_ClickWithMouse() {
+        long downMotionTime = SystemClock.uptimeMillis();
+        FakeListViewTouchTracker listViewTouchTracker = new FakeListViewTouchTracker();
+        listViewTouchTracker.setLastSingleTapUpInfo(
+                MotionEventTestUtils.createMouseMotionInfo(
+                        downMotionTime,
+                        /* eventTime= */ downMotionTime + 50,
+                        MotionEvent.ACTION_UP));
+
+        testDialogToolbarMenu_CloseOrDeleteGroup(
+                R.id.close_tab_group,
+                listViewTouchTracker,
+                /* shouldAllowUndo= */ false,
+                /* shouldHideTabGroups= */ true,
+                /* expectedUserAction= */ "TabGridDialogMenu.Close");
+    }
+
+    @Test
+    public void testDialogToolbarMenu_DeleteGroup_NullListViewTouchTracker() {
+        testDialogToolbarMenu_CloseOrDeleteGroup(
+                R.id.delete_tab_group,
+                /* listViewTouchTracker= */ null,
+                /* shouldAllowUndo= */ true,
+                /* shouldHideTabGroups= */ false,
+                /* expectedUserAction= */ "TabGridDialogMenu.Delete");
+    }
+
+    @Test
+    public void testDialogToolbarMenu_DeleteGroup_ClickWithTouch() {
+        long downMotionTime = SystemClock.uptimeMillis();
+        FakeListViewTouchTracker listViewTouchTracker = new FakeListViewTouchTracker();
+        listViewTouchTracker.setLastSingleTapUpInfo(
+                MotionEventTestUtils.createTouchMotionInfo(
+                        downMotionTime,
+                        /* eventTime= */ downMotionTime + 50,
+                        MotionEvent.ACTION_UP));
+
+        testDialogToolbarMenu_CloseOrDeleteGroup(
+                R.id.delete_tab_group,
+                listViewTouchTracker,
+                /* shouldAllowUndo= */ true,
+                /* shouldHideTabGroups= */ false,
+                /* expectedUserAction= */ "TabGridDialogMenu.Delete");
+    }
+
+    @Test
+    public void testDialogToolbarMenu_DeleteGroup_ClickWithMouse() {
+        long downMotionTime = SystemClock.uptimeMillis();
+        FakeListViewTouchTracker listViewTouchTracker = new FakeListViewTouchTracker();
+        listViewTouchTracker.setLastSingleTapUpInfo(
+                MotionEventTestUtils.createMouseMotionInfo(
+                        downMotionTime,
+                        /* eventTime= */ downMotionTime + 50,
+                        MotionEvent.ACTION_UP));
+
+        testDialogToolbarMenu_CloseOrDeleteGroup(
+                R.id.delete_tab_group,
+                listViewTouchTracker,
+                /* shouldAllowUndo= */ false,
+                /* shouldHideTabGroups= */ false,
+                /* expectedUserAction= */ "TabGridDialogMenu.Delete");
+    }
+
+    private void testDialogToolbarMenu_CloseOrDeleteGroup(
+            @IdRes int menuId,
+            @Nullable ListViewTouchTracker listViewTouchTracker,
+            boolean shouldAllowUndo,
+            boolean shouldHideTabGroups,
+            String expectedUserAction) {
+        assertTrue(menuId == R.id.close_tab_group || menuId == R.id.delete_tab_group);
+
+        // Setup
         mMediator.setCurrentTabIdForTesting(TAB1_ID);
         List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2));
         createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
 
+        // Act
         mMediator.onToolbarMenuItemClick(
-                R.id.delete_tab_group, TAB_GROUP_ID, /* collaborationId= */ null);
+                menuId, TAB_GROUP_ID, /* collaborationId= */ null, listViewTouchTracker);
+
+        // Assert
         verify(mTabRemover)
                 .closeTabs(
                         eq(
-                                TabClosureParams.forCloseTabGroup(mTabGroupModelFilter, TAB1_ID)
-                                        .allowUndo(true)
-                                        .hideTabGroups(false)
+                                TabClosureParams.forCloseTabGroup(
+                                                mTabGroupModelFilter, TAB_GROUP_ID)
+                                        .allowUndo(shouldAllowUndo)
+                                        .hideTabGroups(shouldHideTabGroups)
                                         .build()),
                         /* allowDialog= */ eq(true),
                         any());
-        assertEquals(1, mActionTester.getActionCount("TabGridDialogMenu.Delete"));
+        assertEquals(1, mActionTester.getActionCount(expectedUserAction));
     }
 
     @Test
     public void testDialogToolbarMenu_ManageSharing() {
         resetForDataSharing(/* isShared= */ true, GROUP_MEMBER1);
 
-        mMediator.onToolbarMenuItemClick(R.id.manage_sharing, TAB_GROUP_ID, COLLABORATION_ID1);
+        mMediator.onToolbarMenuItemClick(
+                R.id.manage_sharing,
+                TAB_GROUP_ID,
+                COLLABORATION_ID1,
+                /* listViewTouchTracker= */ null);
         assertEquals(1, mActionTester.getActionCount("TabGridDialogMenu.ManageSharing"));
         verify(mDataSharingTabManager)
-                .createOrManageFlow(any(), eq(null), eq(LOCAL_TAB_GROUP_ID), eq(null));
+                .createOrManageFlow(eq(EITHER_LOCAL_TAB_GROUP_ID), anyInt(), eq(null));
     }
 
     @Test
     public void testDialogToolbarMenu_RecentActivity() {
         resetForDataSharing(/* isShared= */ true, GROUP_MEMBER1);
 
-        mMediator.onToolbarMenuItemClick(R.id.recent_activity, TAB_GROUP_ID, COLLABORATION_ID1);
+        mMediator.onToolbarMenuItemClick(
+                R.id.recent_activity,
+                TAB_GROUP_ID,
+                COLLABORATION_ID1,
+                /* listViewTouchTracker= */ null);
         assertEquals(1, mActionTester.getActionCount("TabGridDialogMenu.RecentActivity"));
         verify(mDataSharingTabManager).showRecentActivity(mActivity, COLLABORATION_ID1);
         verifyClearDirtyMessagesForGroup();
@@ -1526,9 +1613,12 @@ public class TabGridDialogMediatorUnitTest {
         when(mCollaborationService.getCurrentUserRoleForGroup(COLLABORATION_ID1))
                 .thenReturn(MemberRole.OWNER);
 
-        mMediator.onToolbarMenuItemClick(R.id.delete_shared_group, TAB_GROUP_ID, COLLABORATION_ID1);
-        verify(mActionConfirmationManager).processDeleteSharedGroupAttempt(eq(GROUP_TITLE), any());
-        assertEquals(1, mActionTester.getActionCount("TabGridDialogMenu.DeleteShared"));
+        mMediator.onToolbarMenuItemClick(
+                R.id.delete_shared_group,
+                TAB_GROUP_ID,
+                COLLABORATION_ID1,
+                /* listViewTouchTracker= */ null);
+        verify(mDataSharingTabManager).leaveOrDeleteFlow(eq(EITHER_LOCAL_TAB_GROUP_ID), anyInt());
     }
 
     @Test
@@ -1542,9 +1632,12 @@ public class TabGridDialogMediatorUnitTest {
         when(mCollaborationService.getCurrentUserRoleForGroup(COLLABORATION_ID1))
                 .thenReturn(MemberRole.MEMBER);
 
-        mMediator.onToolbarMenuItemClick(R.id.leave_group, TAB_GROUP_ID, COLLABORATION_ID1);
-        verify(mActionConfirmationManager).processLeaveGroupAttempt(eq(GROUP_TITLE), any());
-        assertEquals(1, mActionTester.getActionCount("TabGridDialogMenu.LeaveShared"));
+        mMediator.onToolbarMenuItemClick(
+                R.id.leave_group,
+                TAB_GROUP_ID,
+                COLLABORATION_ID1,
+                /* listViewTouchTracker= */ null);
+        verify(mDataSharingTabManager).leaveOrDeleteFlow(eq(EITHER_LOCAL_TAB_GROUP_ID), anyInt());
     }
 
     @Test
@@ -1584,13 +1677,15 @@ public class TabGridDialogMediatorUnitTest {
         List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2, newTab));
         createTabGroup(tabGroup, TAB2_ID, TAB_GROUP_ID);
 
+        int groupIndex = 3;
         // Mock that mTab2 is the current tab for the dialog.
-        doReturn(0).when(mTabGroupModelFilter).indexOf(mTab1);
-        doReturn(mTab2).when(mTabGroupModelFilter).getTabAt(0);
+        when(mTabGroupModelFilter.representativeIndexOf(mTab1)).thenReturn(groupIndex);
+        when(mTabGroupModelFilter.getRepresentativeTabAt(groupIndex)).thenReturn(mTab2);
+        when(mTabGroupModelFilter.getCurrentRepresentativeTab()).thenReturn(mTab2);
         doReturn(tabGroup).when(mTabGroupModelFilter).getRelatedTabList(TAB2_ID);
 
         // Reset and confirm scroll index.
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
 
         assertEquals(1, mModel.get(TabGridDialogProperties.INITIAL_SCROLL_INDEX).intValue());
     }
@@ -1601,17 +1696,17 @@ public class TabGridDialogMediatorUnitTest {
         List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2));
         createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
 
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
         // Check that the text indicates that this is not the last tab in the group.
         assertEquals(
-                mActivity.getString(R.string.tab_grid_dialog_remove_from_group),
+                mActivity.getString(R.string.remove_tab_from_group),
                 mModel.get(TabGridDialogProperties.DIALOG_UNGROUP_BAR_TEXT));
 
         // Mock that tab1 is the only tab that remains in the group.
         List<Tab> tabGroupAfterUngroup = new ArrayList<>(Arrays.asList(mTab1));
         doReturn(tabGroupAfterUngroup).when(mTabGroupModelFilter).getRelatedTabList(TAB1_ID);
 
-        mMediator.onReset(tabGroupAfterUngroup);
+        assertTrue(mMediator.onReset(tabGroupAfterUngroup));
         // Check that the text indicates that this is the last tab in the group.
         assertEquals(
                 mActivity.getString(R.string.remove_last_tab_action),
@@ -1628,14 +1723,14 @@ public class TabGridDialogMediatorUnitTest {
 
         // Check that the text indicates that this is not the last tab in the group.
         assertEquals(
-                mActivity.getString(R.string.tab_grid_dialog_remove_from_group),
+                mActivity.getString(R.string.remove_tab_from_group),
                 mModel.get(TabGridDialogProperties.DIALOG_UNGROUP_BAR_TEXT));
 
         // Mock that tab1 is the only tab that remains in the group.
         List<Tab> tabGroupAfterUngroup = new ArrayList<>(Arrays.asList(mTab1));
         doReturn(tabGroupAfterUngroup).when(mTabGroupModelFilter).getRelatedTabList(TAB1_ID);
 
-        mMediator.onReset(tabGroupAfterUngroup);
+        assertTrue(mMediator.onReset(tabGroupAfterUngroup));
         // Check that the text indicates that this is the last tab in the group.
         assertEquals(
                 mActivity.getString(R.string.remove_last_tab_action_member),
@@ -1648,7 +1743,7 @@ public class TabGridDialogMediatorUnitTest {
         List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2));
         createTabGroup(tabGroup, rootId, TAB_GROUP_ID);
 
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
 
         assertNotEquals(mModel.get(TabGridDialogProperties.TAB_GROUP_COLOR_ID), COLOR_3);
 
@@ -1664,7 +1759,7 @@ public class TabGridDialogMediatorUnitTest {
         createTabGroup(tabGroup, rootId, TAB_GROUP_ID);
 
         when(mTabGroupModelFilter.getTabGroupTitle(rootId)).thenReturn(CUSTOMIZED_DIALOG_TITLE);
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
 
         assertEquals(CUSTOMIZED_DIALOG_TITLE, mModel.get(TabGridDialogProperties.HEADER_TITLE));
 
@@ -1695,7 +1790,7 @@ public class TabGridDialogMediatorUnitTest {
         verify(mSharedImageTilesCoordinator)
                 .onGroupMembersChanged(COLLABORATION_ID1, List.of(GROUP_MEMBER1));
 
-        when(mTabGroupModelFilter.isIncognitoBranded()).thenReturn(true);
+        when(mTabModel.isIncognitoBranded()).thenReturn(true);
         resetForDataSharing(/* isShared= */ false);
 
         assertFalse(mModel.get(TabGridDialogProperties.SHOW_SHARE_BUTTON));
@@ -1726,7 +1821,7 @@ public class TabGridDialogMediatorUnitTest {
 
         // Reset with null first as reusing the same TabGroupId does not reset the observer.
         when(mServiceStatus.isAllowedToCreate()).thenReturn(false);
-        mMediator.onReset(null);
+        assertFalse(mMediator.onReset(null));
         when(mDialogController.messageCardExists(MessageType.COLLABORATION_ACTIVITY))
                 .thenReturn(false);
         resetForDataSharing(/* isShared= */ false);
@@ -1740,7 +1835,7 @@ public class TabGridDialogMediatorUnitTest {
         when(mServiceStatus.isAllowedToCreate()).thenReturn(true);
 
         // Reset with null first as reusing the same TabGroupId does not reset the observer.
-        mMediator.onReset(null);
+        assertFalse(mMediator.onReset(null));
         when(mDialogController.messageCardExists(MessageType.COLLABORATION_ACTIVITY))
                 .thenReturn(false);
         resetForDataSharing(/* isShared= */ false);
@@ -1759,23 +1854,20 @@ public class TabGridDialogMediatorUnitTest {
                 .apply();
 
         // Reset with null first as reusing the same TabGroupId does not reset the observer.
-        mMediator.onReset(null);
+        assertFalse(mMediator.onReset(null));
         when(mDialogController.messageCardExists(MessageType.COLLABORATION_ACTIVITY))
                 .thenReturn(false);
         resetForDataSharing(/* isShared= */ true, GROUP_MEMBER1);
         verify(mDialogController)
                 .addMessageCardItem(/* position= */ eq(0), mMessageCardModelCaptor.capture());
-        assertTrue(mModel.get(TabGridDialogProperties.SHOW_SHARE_BUTTON));
+        assertFalse(mModel.get(TabGridDialogProperties.SHOW_SHARE_BUTTON));
         assertFalse(mModel.get(TabGridDialogProperties.SHOW_SEND_FEEDBACK));
-        assertEquals(
-                R.string.tab_grid_manage_button_text,
-                mModel.get(TabGridDialogProperties.SHARE_BUTTON_STRING_RES));
-        assertFalse(mModel.get(TabGridDialogProperties.SHOW_IMAGE_TILES));
+        assertTrue(mModel.get(TabGridDialogProperties.SHOW_IMAGE_TILES));
         String text = mMessageCardModelCaptor.getValue().get(DESCRIPTION_TEXT).toString();
-        assertTrue(text, text.contains("3"));
+        assertTrue(text, text.contains("4"));
 
         reset(mDialogController);
-        mockPersistentMessages(/* added= */ 1, /* navigated= */ 2, /* removed= */ 4);
+        mockPersistentMessages(/* added= */ 1, /* navigated= */ 2, /* removed= */ 5);
         verify(mMessagingBackendService)
                 .addPersistentMessageObserver(mPersistentMessageObserverCaptor.capture());
         mPersistentMessageObserverCaptor
@@ -1784,18 +1876,20 @@ public class TabGridDialogMediatorUnitTest {
         verify(mDialogController)
                 .addMessageCardItem(/* position= */ eq(0), mMessageCardModelCaptor.capture());
         text = mMessageCardModelCaptor.getValue().get(DESCRIPTION_TEXT).toString();
-        assertFalse(text, text.contains("3"));
-        assertTrue(text, text.contains("4"));
+        assertFalse(text, text.contains("4"));
+        assertTrue(text, text.contains("5"));
 
         reset(mDialogController);
-        mockPersistentMessages(/* added= */ 0, /* navigated= */ 2, /* removed= */ 4);
+        mockPersistentMessages(/* added= */ 0, /* navigated= */ 2, /* removed= */ 5);
         mPersistentMessageObserverCaptor
                 .getValue()
                 .hidePersistentMessage(makePersistentMessage(CollaborationEvent.TAB_ADDED));
         verify(mDialogController)
                 .addMessageCardItem(/* position= */ eq(0), mMessageCardModelCaptor.capture());
         text = mMessageCardModelCaptor.getValue().get(DESCRIPTION_TEXT).toString();
-        assertFalse(text, text.contains("1"));
+        // Shows "new" as a combination of added (1 -> 0) and navigated (2 -> 2).
+        assertFalse(text, text.contains("3"));
+        assertTrue(text, text.contains("2"));
     }
 
     @Test
@@ -1835,6 +1929,39 @@ public class TabGridDialogMediatorUnitTest {
         verify(mDialogController, atLeastOnce())
                 .removeMessageCardItem(MessageType.COLLABORATION_ACTIVITY);
         verifyClearDirtyMessagesForGroup();
+    }
+
+    @Test
+    public void testBottomSheetTriggered() {
+        when(mTracker.shouldTriggerHelpUi(FeatureConstants.TAB_GROUP_SHARE_NOTICE_FEATURE))
+                .thenReturn(true);
+        resetForDataSharing(/* isShared= */ true, GROUP_MEMBER1);
+        List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2));
+        createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
+
+        assertTrue(mMediator.onReset(tabGroup));
+        ShadowLooper.runUiThreadTasks();
+
+        // We expect 2 invocations due to the #resetForDataSharing call.
+        verify(mBottomSheetController, times(2)).requestShowContent(any(), eq(true));
+        verify(mTracker, times(2))
+                .shouldTriggerHelpUi(FeatureConstants.TAB_GROUP_SHARE_NOTICE_FEATURE);
+    }
+
+    @Test
+    public void testBottomSheetNotTriggered() {
+        when(mTracker.shouldTriggerHelpUi(FeatureConstants.TAB_GROUP_SHARE_NOTICE_FEATURE))
+                .thenReturn(false);
+
+        resetForDataSharing(/* isShared= */ false, GROUP_MEMBER1);
+        List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2));
+        createTabGroup(tabGroup, TAB1_ID, TAB_GROUP_ID);
+
+        assertTrue(mMediator.onReset(tabGroup));
+        ShadowLooper.runUiThreadTasks();
+
+        verify(mBottomSheetController, never()).requestShowContent(any(), anyBoolean());
+        verify(mTracker, never()).shouldTriggerHelpUi(anyString());
     }
 
     @Test
@@ -1878,19 +2005,21 @@ public class TabGridDialogMediatorUnitTest {
                         mRecyclerViewPositionSupplier,
                         withAnimSource ? mAnimationSourceViewProvider : null,
                         mSnackbarManager,
+                        mBottomSheetController,
                         mSharedImageTilesCoordinator,
                         mDataSharingTabManager,
                         /* componentName= */ "",
                         mShowColorPickerPopupRunnable,
-                        mActionConfirmationManager,
                         mModalDialogManager,
-                        mDesktopWindowStateManager);
+                        mDesktopWindowStateManager,
+                        mTabBookmarkerSupplier,
+                        mShareDelegateSupplier);
     }
 
     @Test
     public void onReset_NullAfterSharedGroup() {
         resetForDataSharing(/* isShared= */ true, GROUP_MEMBER1);
-        mMediator.onReset(null);
+        assertFalse(mMediator.onReset(null));
 
         verify(mDialogController).removeMessageCardItem(MessageType.COLLABORATION_ACTIVITY);
     }
@@ -1909,6 +2038,38 @@ public class TabGridDialogMediatorUnitTest {
         assertThat(mModel.get(TabGridDialogProperties.APP_HEADER_HEIGHT), equalTo(10));
     }
 
+    @Test
+    @EnableFeatures(ChromeFeatureList.TAB_GROUP_PARITY_BOTTOM_SHEET_ANDROID)
+    public void onLongPress_tabGroupParityEnabled() {
+        CancelLongPressTabItemEventListener cancelLongPress =
+                mMediator.onLongPressEvent(TAB1_ID, mCardView, mTabGridContextMenuCoordinator);
+        verify(mTabGridContextMenuCoordinator).showMenu(any(), eq(TAB1_ID));
+
+        assertNotNull(cancelLongPress);
+        cancelLongPress.cancelLongPress();
+        verify(mTabGridContextMenuCoordinator).dismiss();
+    }
+
+    @Test
+    public void onLongPress_tabGroupParityDisabled() {
+        CancelLongPressTabItemEventListener cancelLongPress =
+                mMediator.onLongPressEvent(TAB1_ID, mCardView);
+        verify(mTabGridContextMenuCoordinator, never()).showMenu(any(), eq(TAB1_ID));
+        assertNull(cancelLongPress);
+    }
+
+    @Test
+    public void testSuppressAccessibility() {
+        assertFalse(mModel.get(SUPPRESS_ACCESSIBILITY));
+
+        verify(mBottomSheetController).addObserver(mBottomSheetObserverCaptor.capture());
+        mBottomSheetObserverCaptor.getValue().onSheetOpened(StateChangeReason.NONE);
+        assertTrue(mModel.get(SUPPRESS_ACCESSIBILITY));
+
+        mBottomSheetObserverCaptor.getValue().onSheetClosed(StateChangeReason.NONE);
+        assertFalse(mModel.get(SUPPRESS_ACCESSIBILITY));
+    }
+
     private void resetForDataSharing(boolean isShared, GroupMember... members) {
         int rootId = TAB1_ID;
         List<Tab> tabGroup = new ArrayList<>(Arrays.asList(mTab1, mTab2));
@@ -1923,7 +2084,8 @@ public class TabGridDialogMediatorUnitTest {
 
         setupSyncedGroup(isShared);
 
-        mMediator.onReset(tabGroup);
+        assertTrue(mMediator.onReset(tabGroup));
+        ShadowLooper.runUiThreadTasks();
         verify(mDataSharingService, atLeastOnce())
                 .addObserver(mDataSharingServiceObserverCaptor.capture());
         DataSharingService.Observer observer = mDataSharingServiceObserverCaptor.getValue();
@@ -1948,10 +2110,10 @@ public class TabGridDialogMediatorUnitTest {
         return tab;
     }
 
-    private void createTabGroup(List<Tab> tabs, int rootId, @Nullable Token tabGroupId) {
+    private void createTabGroup(List<Tab> tabs, int rootId, Token tabGroupId) {
         for (Tab tab : tabs) {
             when(mTabGroupModelFilter.getRelatedTabList(tab.getId())).thenReturn(tabs);
-            when(mTabGroupModelFilter.getRelatedTabListForRootId(rootId)).thenReturn(tabs);
+            when(mTabGroupModelFilter.getTabsInGroup(tabGroupId)).thenReturn(tabs);
             when(mTabGroupModelFilter.isTabInTabGroup(tab)).thenReturn(true);
             when(tab.getRootId()).thenReturn(rootId);
             when(tab.getTabGroupId()).thenReturn(tabGroupId);

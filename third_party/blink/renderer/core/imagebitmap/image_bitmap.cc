@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/imagebitmap/image_bitmap.h"
 
 #include <memory>
@@ -39,9 +34,8 @@
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_types.h"
+#include "third_party/blink/renderer/platform/graphics/graphics_context_types.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
-#include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image_transform.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/video_frame_image_util.h"
@@ -51,6 +45,7 @@
 #include "third_party/blink/renderer/platform/scheduler/public/main_thread.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/worker_pool.h"
+#include "third_party/blink/renderer/platform/transforms/affine_transform.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_base.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_gfx.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier_skia.h"
@@ -190,10 +185,9 @@ ImageBitmap::ParsedOptions ParseOptions(const ImageBitmapOptions* options,
                                         std::optional<gfx::Rect> crop_rect,
                                         scoped_refptr<Image> input) {
   const auto info = input->PaintImageForCurrentFrame().GetSkImageInfo();
-  return ParseOptions(options, crop_rect,
-                      gfx::Size(info.width(), info.height()),
-                      input->CurrentFrameOrientation(),
-                      info.alphaType() == kUnpremul_SkAlphaType);
+  return ParseOptions(
+      options, crop_rect, gfx::Size(info.width(), info.height()),
+      input->Orientation(), info.alphaType() == kUnpremul_SkAlphaType);
 }
 
 ImageBitmap::ParsedOptions ParseOptions(
@@ -201,7 +195,7 @@ ImageBitmap::ParsedOptions ParseOptions(
     std::optional<gfx::Rect> crop_rect,
     scoped_refptr<StaticBitmapImage> input) {
   return ParseOptions(options, crop_rect, input->GetSize(),
-                      input->CurrentFrameOrientation(),
+                      input->Orientation(),
                       input->GetAlphaType() == kUnpremul_SkAlphaType);
 }
 
@@ -345,7 +339,7 @@ ImageBitmap::ImageBitmap(ImageElementBase* image,
   }
 
   auto static_input = UnacceleratedStaticBitmapImage::Create(
-      std::move(paint_image), input->CurrentFrameOrientation());
+      std::move(paint_image), input->Orientation());
 
   image_ = ApplyTransformsFromOptions(static_input, parsed_options);
   if (!image_)
@@ -387,9 +381,8 @@ ImageBitmap::ImageBitmap(HTMLCanvasElement* canvas,
                          std::optional<gfx::Rect> crop_rect,
                          const ImageBitmapOptions* options) {
   SourceImageStatus status;
-  scoped_refptr<Image> image_input =
-      canvas->GetSourceImageForCanvas(FlushReason::kCreateImageBitmap, &status,
-                                      gfx::SizeF(), kPremultiplyAlpha);
+  scoped_refptr<Image> image_input = canvas->GetSourceImageForCanvas(
+      FlushReason::kCreateImageBitmap, &status, gfx::SizeF());
   if (status != kNormalSourceImageStatus)
     return;
   DCHECK(IsA<StaticBitmapImage>(image_input.get()));
@@ -663,13 +656,11 @@ ScriptPromise<ImageBitmap> ImageBitmap::CreateAsync(
 
   // apply the orientation from EXIF metadata if needed.
   if (!parsed_options.orientation_from_image &&
-      input->CurrentFrameOrientation() !=
-          ImageOrientationEnum::kOriginTopLeft) {
-    auto affineTransform =
-        input->CurrentFrameOrientation().TransformFromDefault(
-            gfx::SizeF(draw_dst_rect.size()));
-    canvas->concat(AffineTransformToSkM44(affineTransform));
-    if (input->CurrentFrameOrientation().UsesWidthAsHeight()) {
+      input->Orientation() != ImageOrientationEnum::kOriginTopLeft) {
+    auto affineTransform = input->Orientation().TransformFromDefault(
+        gfx::SizeF(draw_dst_rect.size()));
+    canvas->concat(affineTransform.ToSkM44());
+    if (input->Orientation().UsesWidthAsHeight()) {
       draw_dst_rect.set_size(gfx::TransposeSize(draw_dst_rect.size()));
     }
   }
@@ -705,13 +696,6 @@ void ImageBitmap::close() {
   image_ = nullptr;
   is_neutered_ = true;
   UpdateImageBitmapMemoryUsage();
-}
-
-// static
-ImageBitmap* ImageBitmap::Take(ScriptPromiseResolverBase*,
-                               sk_sp<SkImage> image) {
-  return MakeGarbageCollected<ImageBitmap>(
-      UnacceleratedStaticBitmapImage::Create(std::move(image)));
 }
 
 SkImageInfo ImageBitmap::GetBitmapSkImageInfo() const {
@@ -771,18 +755,9 @@ ScriptPromise<ImageBitmap> ImageBitmap::CreateImageBitmap(
 scoped_refptr<Image> ImageBitmap::GetSourceImageForCanvas(
     FlushReason reason,
     SourceImageStatus* status,
-    const gfx::SizeF&,
-    const AlphaDisposition alpha_disposition) {
+    const gfx::SizeF&) {
   *status = kNormalSourceImageStatus;
-  if (!image_)
-    return nullptr;
-
-  scoped_refptr<StaticBitmapImage> image = image_;
-
-  // If the alpha_disposition is already correct, or the image is opaque, this
-  // is a no-op.
-  return StaticBitmapImageTransform::GetWithAlphaDisposition(
-      reason, std::move(image), alpha_disposition);
+  return image_;
 }
 
 gfx::SizeF ImageBitmap::ElementSize(

@@ -46,7 +46,7 @@ function getBookmarkElement(path?: EventTarget[]): BookmarkElement|null {
   }
 
   for (let i = 0; i < path.length; i++) {
-    const element = path![i] as Element;
+    const element = path[i] as Element;
     if (isBookmarkItem(element) || isBookmarkFolderNode(element) ||
         isBookmarkList(element)) {
       return path[i] as BookmarkElement;
@@ -67,7 +67,7 @@ function getDragElement(path: EventTarget[]): BookmarkElement|null {
 }
 
 function getBookmarkNode(bookmarkElement: BookmarkElement): BookmarkNode {
-  return Store.getInstance().data.nodes[bookmarkElement.itemId];
+  return Store.getInstance().data.nodes[bookmarkElement.itemId]!;
 }
 
 function isTextInputElement(element: HTMLElement): boolean {
@@ -125,11 +125,11 @@ export class DragInfo {
       return false;
     }
 
-    let parentId = nodes[itemId].parentId;
+    let parentId = nodes[itemId]!.parentId;
     const parents: ObjectMap<boolean> = {};
     while (parentId) {
       parents[parentId] = true;
-      parentId = nodes[parentId].parentId;
+      parentId = nodes[parentId]!.parentId;
     }
 
     return !!this.dragData && this.dragData.elements.some(function(node) {
@@ -351,7 +351,7 @@ export class DndManager {
       for (const itemId of displayingItems) {
         for (const element of dragData.elements) {
           if (element.id === itemId) {
-            draggedNodes.push(element!.id);
+            draggedNodes.push(element.id);
             break;
           }
         }
@@ -488,7 +488,7 @@ export class DndManager {
       // destination node's parent.
       assert(node.parentId);
       parentId = node.parentId;
-      index = state.nodes[parentId].children!.indexOf(node.id);
+      index = state.nodes[parentId]!.children!.indexOf(node.id);
 
       if (position === DropPosition.BELOW) {
         index++;
@@ -537,7 +537,7 @@ export class DndManager {
     }
 
     return {
-      elements: draggedNodes.map((id) => state.nodes[id]),
+      elements: draggedNodes.map((id) => state.nodes[id]!),
       sameProfile: true,
     };
   }
@@ -664,8 +664,8 @@ export class DndManager {
     // Allow dragging onto empty bookmark lists.
     if (isBookmarkList(overElement)) {
       const state = Store.getInstance().data;
-      return !!state.selectedFolder &&
-          state.nodes[state.selectedFolder].children!.length === 0;
+      return !!state.selectedFolder && !!state.nodes[state.selectedFolder] &&
+          state.nodes[state.selectedFolder]!.children!.length === 0;
     }
 
     // We can only drop on a folder.

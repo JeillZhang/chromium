@@ -239,12 +239,13 @@ TEST_F(ResizeShadowAndCursorTest, DefaultCursorOnBubbleWidgetCorners) {
   child_view->SetBounds(200, 200, 10, 10);
   views::Widget::GetWidgetForNativeWindow(window())
       ->GetRootView()
-      ->AddChildView(child_view);
+      ->AddChildViewRaw(child_view);
 
   // Create the bubble widget.
   views::Widget* bubble(views::BubbleDialogDelegateView::CreateBubble(
-      new views::BubbleDialogDelegateView(child_view,
-                                          views::BubbleBorder::NONE)));
+      new views::BubbleDialogDelegateView(
+          views::BubbleDialogDelegateView::CreatePassKey(), child_view,
+          views::BubbleBorder::NONE)));
   bubble->Show();
 
   // Get the screen rectangle for the bubble frame
@@ -532,7 +533,7 @@ TEST_F(ResizeShadowWithRoundedWindowsTest, ResizeShadowMatchesWindowRoundness) {
   Shell::Get()->resize_shadow_controller()->ShowShadow(window());
 
   // For normal window state, top-level windows have rounded window.
-  EXPECT_TRUE(GetShadow()->is_for_rounded_window());
+  EXPECT_TRUE(GetShadow()->is_for_large_rounded_corners());
   VerifyResizeShadow(true);
 
   // Window in snapped state does not have rounded corners, therefore the resize
@@ -541,13 +542,13 @@ TEST_F(ResizeShadowWithRoundedWindowsTest, ResizeShadowMatchesWindowRoundness) {
   window_state->OnWMEvent(&snap_event);
 
   ASSERT_TRUE(window_state->IsSnapped());
-  EXPECT_FALSE(GetShadow()->is_for_rounded_window());
+  EXPECT_FALSE(GetShadow()->is_for_large_rounded_corners());
   VerifyResizeShadow(true);
 
   window_state->Restore();
 
   ASSERT_TRUE(window_state->IsNormalStateType());
-  EXPECT_TRUE(GetShadow()->is_for_rounded_window());
+  EXPECT_TRUE(GetShadow()->is_for_large_rounded_corners());
   VerifyResizeShadow(true);
 
   // Ensure that shadow variant is correct after restoring from a state that has
@@ -557,7 +558,7 @@ TEST_F(ResizeShadowWithRoundedWindowsTest, ResizeShadowMatchesWindowRoundness) {
 
   window_state->Restore();
   ASSERT_TRUE(window_state->IsNormalStateType());
-  EXPECT_TRUE(GetShadow()->is_for_rounded_window());
+  EXPECT_TRUE(GetShadow()->is_for_large_rounded_corners());
 }
 
 // Tests that shadow gets updated when the window's state changed.

@@ -21,7 +21,6 @@
 #include "chrome/browser/ash/arc/extensions/fake_arc_support.h"
 #include "chrome/browser/ash/arc/optin/arc_optin_preference_handler.h"
 #include "chrome/browser/ash/ownership/owner_settings_service_ash_factory.h"
-#include "chrome/browser/ash/policy/core/device_policy_builder.h"
 #include "chrome/browser/ash/settings/device_settings_test_helper.h"
 #include "chrome/browser/ash/settings/stats_reporting_controller.h"
 #include "chrome/browser/consent_auditor/consent_auditor_factory.h"
@@ -32,6 +31,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
+#include "chromeos/ash/components/policy/device_policy/device_policy_builder.h"
 #include "chromeos/ash/experiences/arc/arc_prefs.h"
 #include "components/consent_auditor/fake_consent_auditor.h"
 #include "components/metrics/metrics_service.h"
@@ -202,10 +202,10 @@ class ArcTermsOfServiceDefaultNegotiatorTest
         ConsentAuditorFactory::GetForProfile(profile()));
   }
 
-  CoreAccountId GetAuthenticatedAccountId() {
+  GaiaId GetAuthenticatedGaiaId() {
     return IdentityManagerFactory::GetForProfile(profile())
         ->GetPrimaryAccountInfo(signin::ConsentLevel::kSync)
-        .account_id;
+        .gaia;
   }
 
   bool GetUserMetricsState() {
@@ -336,7 +336,7 @@ TEST_P(ArcTermsOfServiceDefaultNegotiatorTest, Accept) {
 
   ArcPlayTermsOfServiceConsent play_consent = CreateBasePlayConsent();
   play_consent.set_status(UserConsentTypes::GIVEN);
-  EXPECT_CALL(*auditor, RecordArcPlayConsent(GetAuthenticatedAccountId(),
+  EXPECT_CALL(*auditor, RecordArcPlayConsent(GetAuthenticatedGaiaId(),
                                              ArcPlayConsentEq(play_consent)));
 
   ArcBackupAndRestoreConsent backup_and_restore_consent =
@@ -344,7 +344,7 @@ TEST_P(ArcTermsOfServiceDefaultNegotiatorTest, Accept) {
   backup_and_restore_consent.set_status(UserConsentTypes::GIVEN);
   EXPECT_CALL(*auditor,
               RecordArcBackupAndRestoreConsent(
-                  GetAuthenticatedAccountId(),
+                  GetAuthenticatedGaiaId(),
                   ArcBackupAndRestoreConsentEq(backup_and_restore_consent)));
   ArcGoogleLocationServiceConsent google_location_service_consent =
       CreateBaseGoogleLocationServiceConsent();
@@ -352,7 +352,7 @@ TEST_P(ArcTermsOfServiceDefaultNegotiatorTest, Accept) {
   EXPECT_CALL(
       *auditor,
       RecordArcGoogleLocationServiceConsent(
-          GetAuthenticatedAccountId(),
+          GetAuthenticatedGaiaId(),
           ArcGoogleLocationServiceConsentEq(google_location_service_consent)));
 
   // Show Terms of service page.
@@ -495,7 +495,7 @@ TEST_P(ArcTermsOfServiceDefaultNegotiatorTest, AcceptWithUnchecked) {
 
   ArcPlayTermsOfServiceConsent play_consent = CreateBasePlayConsent();
   play_consent.set_status(UserConsentTypes::GIVEN);
-  EXPECT_CALL(*ca, RecordArcPlayConsent(GetAuthenticatedAccountId(),
+  EXPECT_CALL(*ca, RecordArcPlayConsent(GetAuthenticatedGaiaId(),
                                         ArcPlayConsentEq(play_consent)));
 
   ArcBackupAndRestoreConsent backup_and_restore_consent =
@@ -504,7 +504,7 @@ TEST_P(ArcTermsOfServiceDefaultNegotiatorTest, AcceptWithUnchecked) {
   backup_and_restore_consent.set_status(UserConsentTypes::NOT_GIVEN);
   EXPECT_CALL(*ca,
               RecordArcBackupAndRestoreConsent(
-                  GetAuthenticatedAccountId(),
+                  GetAuthenticatedGaiaId(),
                   ArcBackupAndRestoreConsentEq(backup_and_restore_consent)));
 
   ArcGoogleLocationServiceConsent google_location_service_consent =
@@ -512,10 +512,9 @@ TEST_P(ArcTermsOfServiceDefaultNegotiatorTest, AcceptWithUnchecked) {
   google_location_service_consent.clear_status();
   google_location_service_consent.set_status(UserConsentTypes::NOT_GIVEN);
   EXPECT_CALL(
-      *ca,
-      RecordArcGoogleLocationServiceConsent(
-          GetAuthenticatedAccountId(),
-          ArcGoogleLocationServiceConsentEq(google_location_service_consent)));
+      *ca, RecordArcGoogleLocationServiceConsent(
+               GetAuthenticatedGaiaId(), ArcGoogleLocationServiceConsentEq(
+                                             google_location_service_consent)));
 
   // Show Terms of service page.
   Status status = Status::PENDING;
@@ -650,7 +649,7 @@ TEST_P(ArcTermsOfServiceDefaultNegotiatorTest, AcceptWithManagedToS) {
   play_consent.clear_play_terms_of_service_text_length();
   play_consent.clear_play_terms_of_service_hash();
   play_consent.set_status(UserConsentTypes::GIVEN);
-  EXPECT_CALL(*auditor, RecordArcPlayConsent(GetAuthenticatedAccountId(),
+  EXPECT_CALL(*auditor, RecordArcPlayConsent(GetAuthenticatedGaiaId(),
                                              ArcPlayConsentEq(play_consent)));
 
   ArcGoogleLocationServiceConsent google_location_service_consent =
@@ -659,7 +658,7 @@ TEST_P(ArcTermsOfServiceDefaultNegotiatorTest, AcceptWithManagedToS) {
   EXPECT_CALL(
       *auditor,
       RecordArcGoogleLocationServiceConsent(
-          GetAuthenticatedAccountId(),
+          GetAuthenticatedGaiaId(),
           ArcGoogleLocationServiceConsentEq(google_location_service_consent)));
 
   // Verifies that we record an empty ToS consent if the ToS is not shown due to
@@ -705,7 +704,7 @@ TEST_P(ArcTermsOfServiceDefaultNegotiatorTest, Cancel) {
 
   ArcPlayTermsOfServiceConsent play_consent = CreateBasePlayConsent();
   play_consent.set_status(UserConsentTypes::NOT_GIVEN);
-  EXPECT_CALL(*auditor, RecordArcPlayConsent(GetAuthenticatedAccountId(),
+  EXPECT_CALL(*auditor, RecordArcPlayConsent(GetAuthenticatedGaiaId(),
                                              ArcPlayConsentEq(play_consent)));
 
   ArcBackupAndRestoreConsent backup_and_restore_consent =
@@ -713,7 +712,7 @@ TEST_P(ArcTermsOfServiceDefaultNegotiatorTest, Cancel) {
   backup_and_restore_consent.set_status(UserConsentTypes::NOT_GIVEN);
   EXPECT_CALL(*auditor,
               RecordArcBackupAndRestoreConsent(
-                  GetAuthenticatedAccountId(),
+                  GetAuthenticatedGaiaId(),
                   ArcBackupAndRestoreConsentEq(backup_and_restore_consent)));
 
   ArcGoogleLocationServiceConsent google_location_service_consent =
@@ -722,7 +721,7 @@ TEST_P(ArcTermsOfServiceDefaultNegotiatorTest, Cancel) {
   EXPECT_CALL(
       *auditor,
       RecordArcGoogleLocationServiceConsent(
-          GetAuthenticatedAccountId(),
+          GetAuthenticatedGaiaId(),
           ArcGoogleLocationServiceConsentEq(google_location_service_consent)));
 
   // Show Terms of service page.

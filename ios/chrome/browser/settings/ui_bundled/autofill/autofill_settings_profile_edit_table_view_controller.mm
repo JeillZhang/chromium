@@ -7,12 +7,16 @@
 #import "base/apple/foundation_util.h"
 #import "base/feature_list.h"
 #import "base/strings/sys_string_conversions.h"
+#import "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#import "components/autofill/core/common/autofill_features.h"
 #import "components/autofill/ios/common/features.h"
 #import "ios/chrome/browser/autofill/ui_bundled/address_editor/autofill_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/autofill/autofill_settings_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/autofill/autofill_settings_profile_edit_table_view_controller_delegate.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/settings_image_detail_text_item.h"
 #import "ios/chrome/browser/settings/ui_bundled/settings_navigation_controller.h"
+#import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
+#import "ios/chrome/browser/shared/public/commands/open_new_tab_command.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_text_item.h"
@@ -21,6 +25,7 @@
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ui/base/l10n/l10n_util.h"
+#import "url/gurl.h"
 
 namespace {
 
@@ -45,6 +50,9 @@ const CGFloat kSymbolSize = 22;
   // If YES, denotes that the view shown is to edit the incomplete profiles so
   // that it can migrated to account.
   BOOL _editIncompleteProfileForAccountView;
+
+  // If `YES`, denotes that the migration to account was clicked.
+  BOOL _migrationToAccountSectionWasClicked;
 }
 
 #pragma mark - Initialization
@@ -61,6 +69,7 @@ const CGFloat kSymbolSize = 22;
     _showMigrateToAccountSection = showMigrateToAccount;
     _userEmail = userEmail;
     _editIncompleteProfileForAccountView = NO;
+    _migrationToAccountSectionWasClicked = NO;
   }
 
   return self;
@@ -149,6 +158,24 @@ const CGFloat kSymbolSize = 22;
 #pragma mark - SettingsRootTableViewController
 
 - (void)editButtonPressed {
+  if (base::FeatureList::IsEnabled(
+          autofill::features::kAutofillEnableSupportForHomeAndWork)) {
+    autofill::AutofillProfile::RecordType type = [_delegate accountRecordType];
+    if (type == autofill::AutofillProfile::RecordType::kAccountHome) {
+      OpenNewTabCommand* command = [OpenNewTabCommand
+          commandWithURLFromChrome:GURL(kGoogleMyAccountHomeAddressURL)];
+      [self.applicationHandler closePresentedViewsAndOpenURL:command];
+      return;
+    }
+
+    if (type == autofill::AutofillProfile::RecordType::kAccountWork) {
+      OpenNewTabCommand* command = [OpenNewTabCommand
+          commandWithURLFromChrome:GURL(kGoogleMyAccountWorkAddressURL)];
+      [self.applicationHandler closePresentedViewsAndOpenURL:command];
+      return;
+    }
+  }
+
   [super editButtonPressed];
 
   if (!self.tableView.editing) {
@@ -162,21 +189,22 @@ const CGFloat kSymbolSize = 22;
       [_delegate didEditAutofillProfileFromSettings];
     }
   }
+  [self reloadData];
+}
 
-  [self loadModel];
-  [self.handler reconfigureCells];
-  if (_showMigrateToAccountSection &&
-      base::FeatureList::IsEnabled(
-          kAutofillDynamicallyLoadsFieldsForAddressInput)) {
-    [self reconfigureCellsForItems:
-              [self.tableViewModel
-                  itemsInSectionWithIdentifier:
-                      AutofillProfileDetailsSectionIdentifierMigrationButton]];
-  }
+- (BOOL)editButtonEnabled {
+  return !_migrationToAccountSectionWasClicked ||
+         _showMigrateToAccountSection || [_delegate isMinimumAddress];
 }
 
 - (BOOL)showCancelDuringEditing {
-  return YES;
+  SettingsNavigationController* navigationController =
+      base::apple::ObjCCast<SettingsNavigationController>(
+          self.navigationController);
+
+  return navigationController &&
+         navigationController.viewControllers.count > 0 &&
+         navigationController.viewControllers.firstObject == self;
 }
 
 #pragma mark - UITableViewDataSource
@@ -282,7 +310,7 @@ const CGFloat kSymbolSize = 22;
   TableViewTextItem* item = [[TableViewTextItem alloc]
       initWithType:AutofillProfileDetailsItemTypeMigrateToAccountButton];
   item.text = l10n_util::GetNSString(
-      IDS_IOS_SETTINGS_AUTOFILL_MIGRATE_ADDRESS_TO_ACCOUNT_BUTTON_TITLE);
+      IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_BATCH_UPLOAD_BUTTON_ITEM);
   item.textColor = self.tableView.editing
                        ? [UIColor colorNamed:kTextSecondaryColor]
                        : [UIColor colorNamed:kBlueColor];
@@ -335,6 +363,7 @@ const CGFloat kSymbolSize = 22;
       }
                         completion:onCompletion];
   _showMigrateToAccountSection = NO;
+  _migrationToAccountSectionWasClicked = YES;
 }
 
 // Removes the given section if it exists.

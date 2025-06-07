@@ -58,10 +58,6 @@
 #include "services/network/test/test_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "components/signin/internal/identity_manager/child_account_info_fetcher_android.h"
-#endif
-
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/ash/components/account_manager/account_manager_factory.h"
 #include "components/account_manager_core/account.h"
@@ -356,10 +352,6 @@ class IdentityManagerTest : public testing::Test {
 
     ASSERT_TRUE(temp_profile_dir_.CreateUniqueTempDir());
 
-#if BUILDFLAG(IS_ANDROID)
-    // Required to create AccountTrackerService on Android.
-    SetUpMockAccountManagerFacade();
-#endif
     auto account_tracker_service = std::make_unique<AccountTrackerService>();
     account_tracker_service->Initialize(&pref_service_,
                                         temp_profile_dir_.GetPath());
@@ -571,6 +563,11 @@ TEST_F(IdentityManagerTest, PrimaryAccountInfoAtStartup) {
 // observer callback and the IdentityManager's state being updated.
 TEST_F(IdentityManagerTest, PrimaryAccountInfoAfterSignin) {
   ClearPrimaryAccount(identity_manager());
+#if BUILDFLAG(IS_IOS)
+  EXPECT_EQ(identity_manager_observer()
+                ->GetOnEndBatchOfPrimaryAccountChangesCalledCount(),
+            1ul);
+#endif  // BUILDFLAG(IS_IOS)
 
   SetPrimaryAccount(identity_manager(), kTestEmail, ConsentLevel::kSync);
   auto event = identity_manager_observer()->GetPrimaryAccountChangedEvent();
@@ -578,6 +575,11 @@ TEST_F(IdentityManagerTest, PrimaryAccountInfoAfterSignin) {
             event.GetEventTypeFor(ConsentLevel::kSync));
   EXPECT_EQ(PrimaryAccountChangeEvent::Type::kSet,
             event.GetEventTypeFor(ConsentLevel::kSignin));
+#if BUILDFLAG(IS_IOS)
+  EXPECT_EQ(identity_manager_observer()
+                ->GetOnEndBatchOfPrimaryAccountChangesCalledCount(),
+            2ul);
+#endif  // BUILDFLAG(IS_IOS)
 
   CoreAccountInfo primary_account_from_set_callback =
       event.GetCurrentState().primary_account;
@@ -606,13 +608,28 @@ TEST_F(IdentityManagerTest, PrimaryAccountInfoAfterSignin) {
 // observer callback and the IdentityManager's state being updated.
 TEST_F(IdentityManagerTest, PrimaryAccountInfoAfterSigninAndSignout) {
   ClearPrimaryAccount(identity_manager());
+#if BUILDFLAG(IS_IOS)
+  EXPECT_EQ(identity_manager_observer()
+                ->GetOnEndBatchOfPrimaryAccountChangesCalledCount(),
+            1ul);
+#endif  // BUILDFLAG(IS_IOS)
   // First ensure that the user is signed in from the POV of the
   // IdentityManager.
   SetPrimaryAccount(identity_manager(), kTestEmail, ConsentLevel::kSync);
+#if BUILDFLAG(IS_IOS)
+  EXPECT_EQ(identity_manager_observer()
+                ->GetOnEndBatchOfPrimaryAccountChangesCalledCount(),
+            2ul);
+#endif  // BUILDFLAG(IS_IOS)
 
   // Sign the user out and check that the IdentityManager responds
   // appropriately.
   ClearPrimaryAccount(identity_manager());
+#if BUILDFLAG(IS_IOS)
+  EXPECT_EQ(identity_manager_observer()
+                ->GetOnEndBatchOfPrimaryAccountChangesCalledCount(),
+            3ul);
+#endif  // BUILDFLAG(IS_IOS)
   auto event = identity_manager_observer()->GetPrimaryAccountChangedEvent();
   EXPECT_EQ(PrimaryAccountChangeEvent::Type::kCleared,
             event.GetEventTypeFor(ConsentLevel::kSync));
@@ -1737,7 +1754,7 @@ TEST_F(IdentityManagerTest, IdentityManagerGetsTokensLoadedEvent) {
   // we fake the credentials loaded state and force another load in
   // order to be able to capture the TokensLoaded event.
   token_service()->set_all_credentials_loaded_for_testing(false);
-  token_service()->LoadCredentials(CoreAccountId(), /*is_syncing=*/false);
+  token_service()->LoadCredentials(CoreAccountId());
   run_loop.Run();
 }
 
@@ -2338,7 +2355,7 @@ TEST_F(IdentityManagerTest, AreRefreshTokensLoaded) {
   // order to test AreRefreshTokensLoaded.
   token_service()->set_all_credentials_loaded_for_testing(false);
   EXPECT_FALSE(identity_manager()->AreRefreshTokensLoaded());
-  token_service()->LoadCredentials(CoreAccountId(), /*is_syncing=*/false);
+  token_service()->LoadCredentials(CoreAccountId());
   run_loop.Run();
   EXPECT_TRUE(identity_manager()->AreRefreshTokensLoaded());
 }
@@ -2393,11 +2410,6 @@ TEST_F(IdentityManagerTest, TestPickAccountIdForAccount) {
 
 #if BUILDFLAG(IS_ANDROID)
 TEST_F(IdentityManagerTest, RefreshAccountInfoIfStale) {
-  // The flow of this test results in an interaction with
-  // ChildAccountInfoFetcherAndroid, which requires initialization of
-  // AccountManagerFacade in java code to avoid a crash.
-  SetUpMockAccountManagerFacade();
-
   identity_manager()->GetAccountFetcherService()->OnNetworkInitialized();
   AccountInfo account_info =
       MakeAccountAvailable(identity_manager(), kTestEmail2);
@@ -2419,6 +2431,52 @@ TEST_F(IdentityManagerTest, RefreshAccountInfoIfStale) {
   EXPECT_EQ(kTestLocale, refreshed_account_info.locale);
   EXPECT_EQ(kTestPictureUrl, refreshed_account_info.picture_url);
 }
-#endif
+#endif  // BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(IS_IOS)
+// Tests `OnEndBatchOfPrimaryAccountChanges()` with
+// `StartBatchOfPrimaryAccountChanges()`.
+TEST_F(IdentityManagerTest, BatchOfPrimaryAccountChanges) {
+  size_t on_primary_account_changed_called = 0ul;
+  base::RepeatingCallback<void(PrimaryAccountChangeEvent)>
+      primary_account_callback = base::BindRepeating(
+          [](size_t* on_primary_account_changed_called,
+             PrimaryAccountChangeEvent event) {
+            ++*on_primary_account_changed_called;
+          },
+          &on_primary_account_changed_called);
+  identity_manager_observer()->SetOnPrimaryAccountChangedCallback(
+      primary_account_callback);
+
+  base::ScopedClosureRunner scoped_closure_runner =
+      identity_manager()->StartBatchOfPrimaryAccountChanges();
+  EXPECT_EQ(on_primary_account_changed_called, 0ul);
+  ClearPrimaryAccount(identity_manager());
+  EXPECT_EQ(on_primary_account_changed_called, 1ul);
+  identity_manager_observer()->SetOnPrimaryAccountChangedCallback(
+      primary_account_callback);
+  SetPrimaryAccount(identity_manager(), kTestEmail, ConsentLevel::kSync);
+  EXPECT_EQ(identity_manager_observer()
+                ->GetOnEndBatchOfPrimaryAccountChangesCalledCount(),
+            0ul);
+  EXPECT_EQ(on_primary_account_changed_called, 2ul);
+  identity_manager_observer()->SetOnPrimaryAccountChangedCallback(
+      primary_account_callback);
+
+  scoped_closure_runner.RunAndReset();
+  EXPECT_EQ(identity_manager_observer()
+                ->GetOnEndBatchOfPrimaryAccountChangesCalledCount(),
+            1ul);
+  EXPECT_EQ(on_primary_account_changed_called, 2ul);
+  EXPECT_EQ(identity_manager_observer()
+                ->GetOnEndBatchOfPrimaryAccountChangesCalledCount(),
+            1ul);
+  ClearPrimaryAccount(identity_manager());
+  EXPECT_EQ(on_primary_account_changed_called, 3ul);
+  EXPECT_EQ(identity_manager_observer()
+                ->GetOnEndBatchOfPrimaryAccountChangesCalledCount(),
+            2ul);
+}
+#endif  // BUILDFLAG(IS_IOS)
 
 }  // namespace signin

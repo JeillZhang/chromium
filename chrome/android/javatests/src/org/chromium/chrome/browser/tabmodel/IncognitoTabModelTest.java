@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -16,7 +17,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import androidx.test.filters.MediumTest;
 import androidx.test.filters.SmallTest;
 
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -38,7 +38,9 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tab.TabStateExtractor;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.content_public.browser.LoadUrlParams;
 
 import java.util.concurrent.TimeoutException;
@@ -50,21 +52,21 @@ public class IncognitoTabModelTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Mock Callback<Tab> mTabSupplierObserver;
     @Mock Callback<Integer> mTabCountSupplierObserver;
 
     private TabModel mRegularTabModel;
     private TabModel mIncognitoTabModel;
+    private WebPageStation mPage;
 
     @Before
     public void setUp() throws InterruptedException {
-        mActivityTestRule.startMainActivityOnBlankPage();
-        mRegularTabModel =
-                mActivityTestRule.getActivity().getTabModelSelectorSupplier().get().getModel(false);
-        mIncognitoTabModel =
-                mActivityTestRule.getActivity().getTabModelSelectorSupplier().get().getModel(true);
+        mPage = mActivityTestRule.startOnBlankPage();
+        mRegularTabModel = mPage.getActivity().getTabModelSelectorSupplier().get().getModel(false);
+        mIncognitoTabModel = mPage.getActivity().getTabModelSelectorSupplier().get().getModel(true);
     }
 
     private class CloseAllDuringAddTabTabModelObserver implements TabModelObserver {
@@ -110,12 +112,12 @@ public class IncognitoTabModelTest {
     @Feature({"OffTheRecord"})
     public void testCloseAllDuringAddTabDoesNotCrash() {
         createTabOnUiThread();
-        Assert.assertEquals(1, mIncognitoTabModel.getCount());
+        assertEquals(1, mIncognitoTabModel.getCount());
         ThreadUtils.runOnUiThreadBlocking(
                 () -> mIncognitoTabModel.addObserver(new CloseAllDuringAddTabTabModelObserver()));
 
         createTabOnUiThread();
-        Assert.assertEquals(1, mIncognitoTabModel.getCount());
+        assertEquals(1, mIncognitoTabModel.getCount());
     }
 
     @Test

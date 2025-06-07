@@ -30,7 +30,7 @@ SafeBrowsingService* WebViewSafeBrowsingClient::GetSafeBrowsingService() {
       ->GetSafeBrowsingService();
 }
 
-safe_browsing::RealTimeUrlLookupService*
+safe_browsing::RealTimeUrlLookupServiceBase*
 WebViewSafeBrowsingClient::GetRealTimeUrlLookupService() {
   // ios/web_view does not support real time lookups, for now.
   return nullptr;
@@ -58,4 +58,10 @@ bool WebViewSafeBrowsingClient::OnMainFrameUrlQueryCancellationDecided(
     const GURL& url) {
   // ios/web_view does not support OnMainFrameUrlQueryCancellationDecided.
   return true;
+}
+
+bool WebViewSafeBrowsingClient::ShouldForceSyncRealTimeUrlChecks() const {
+  // This setting only applies if real time lookups are supported. ios/web_view
+  // does not support real time lookups, for now.
+  return false;
 }

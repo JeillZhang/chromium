@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/memory/weak_ptr.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/passwords/password_cross_domain_confirmation_popup_controller_interface.h"
 #include "chrome/browser/ui/passwords/ui_utils.h"
@@ -49,8 +50,7 @@ PasswordCrossDomainConfirmationPopupViewViews::
     : autofill::PopupBaseView(controller,
                               parent_widget,
                               views::Widget::InitParams::Activatable::kYes) {
-  SetBackground(
-      views::CreateThemedSolidBackground(ui::kColorDropdownBackground));
+  SetBackground(views::CreateSolidBackground(ui::kColorDropdownBackground));
 
   auto* layout_provider = ChromeLayoutProvider::Get();
   SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -68,7 +68,7 @@ PasswordCrossDomainConfirmationPopupViewViews::
       std::make_unique<views::ImageView>(ui::ImageModel::FromVectorIcon(
           GooglePasswordManagerVectorIcon(), ui::kColorIcon,
           layout_provider->GetDistanceMetric(
-              DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE))));
+              views::DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE))));
   headline->AddChildView(
       views::Builder<views::Label>()
           .SetText(controller->GetTitleText())
@@ -88,7 +88,7 @@ PasswordCrossDomainConfirmationPopupViewViews::
           .SetText(controller->GetBodyText())
           .SetMultiLine(true)
           .SetTextStyle(views::style::TextStyle::STYLE_BODY_3)
-          .SetEnabledColorId(ui::kColorLabelForegroundSecondary)
+          .SetEnabledColor(ui::kColorLabelForegroundSecondary)
           .SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT)
           .Build());
   EmphasizeTokens(label, views::style::TextStyle::STYLE_BODY_3_BOLD,

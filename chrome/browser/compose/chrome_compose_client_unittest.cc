@@ -29,6 +29,7 @@
 #include "chrome/browser/ui/hats/survey_config.h"
 #include "chrome/common/compose/compose.mojom.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
@@ -63,6 +64,7 @@
 #include "components/optimization_guide/core/optimization_guide_proto_util.h"
 #include "components/optimization_guide/proto/features/compose.pb.h"
 #include "components/optimization_guide/proto/model_execution.pb.h"
+#include "components/optimization_guide/proto/model_quality_metadata.pb.h"
 #include "components/optimization_guide/proto/model_quality_service.pb.h"
 #include "components/segmentation_platform/public/constants.h"
 #include "components/segmentation_platform/public/testing/mock_segmentation_platform_service.h"
@@ -83,20 +85,21 @@
 namespace {
 
 using ::base::test::EqualsProto;
-using base::test::RunOnceCallback;
-using testing::_;
-using testing::NiceMock;
-using ComposeCallback = base::OnceCallback<void(const std::u16string&)>;
-using optimization_guide::MockSession;
-using optimization_guide::ModelQualityLogEntry;
-using optimization_guide::OptimizationGuideModelExecutionError;
-using optimization_guide::
+using ::base::test::RunOnceCallback;
+using ::testing::_;
+using ::testing::NiceMock;
+using ComposeCallback = ::base::OnceCallback<void(const std::u16string&)>;
+using ::optimization_guide::MockSession;
+using ::optimization_guide::ModelQualityLogEntry;
+using ::optimization_guide::OptimizationGuideModelExecutionError;
+using ::optimization_guide::
     OptimizationGuideModelExecutionResultStreamingCallback;
-using optimization_guide::OptimizationGuideModelStreamingExecutionResult;
-using optimization_guide::StreamingResponse;
-using optimization_guide::TestModelQualityLogsUploaderService;
-using optimization_guide::proto::LogAiDataRequest;
-using segmentation_platform::MockSegmentationPlatformService;
+using ::optimization_guide::OptimizationGuideModelStreamingExecutionResult;
+using ::optimization_guide::StreamingResponse;
+using ::optimization_guide::TestModelQualityLogsUploaderService;
+using ::optimization_guide::proto::LogAiDataRequest;
+using ::optimization_guide::proto::ModelExecutionInfo;
+using ::segmentation_platform::MockSegmentationPlatformService;
 
 const uint64_t kSessionIdHigh = 1234;
 const uint64_t kSessionIdLow = 5678;
@@ -164,7 +167,7 @@ class ChromeComposeClientTest : public BrowserWithTestWindowTest {
     scoped_feature_list_.InitWithFeatures(
         {compose::features::kEnableCompose,
          optimization_guide::features::kOptimizationGuideModelExecution},
-        {optimization_guide::features::kAiSettingsPageRefresh});
+        {});
     // Needed for feature params to reset.
     compose::ResetConfigForTesting();
     ukm_recorder_ = std::make_unique<ukm::TestAutoSetUkmRecorder>();
@@ -205,13 +208,14 @@ class ChromeComposeClientTest : public BrowserWithTestWindowTest {
                         callback) {
               base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
                   FROM_HERE,
-                  base::BindOnce(std::move(callback),
-                                 OptimizationGuideModelStreamingExecutionResult(
-                                     base::ok(OptimizationGuideResponse(
-                                         ComposeResponse(true, "Cucumbers"))),
-                                     /*provided_by_on_device=*/false,
-                                     std::make_unique<ModelQualityLogEntry>(
-                                         logs_uploader().GetWeakPtr()))));
+                  base::BindOnce(
+                      std::move(callback),
+                      OptimizationGuideModelStreamingExecutionResult(
+                          base::ok(OptimizationGuideResponse(
+                              ComposeResponse(true, "Cucumbers"))),
+                          /*provided_by_on_device=*/false,
+                          std::make_unique<optimization_guide::proto::
+                                               ModelExecutionInfo>())));
             })));
 
     ON_CALL(GetSegmentationPlatformService(),
@@ -417,11 +421,10 @@ class ChromeComposeClientTest : public BrowserWithTestWindowTest {
   OptimizationGuideStreamingResult(
       const optimization_guide::proto::ComposeResponse compose_response,
       bool is_complete = true,
-      bool provided_by_on_device = false,
-      std::unique_ptr<ModelQualityLogEntry> log_entry = nullptr) {
+      bool provided_by_on_device = false) {
     return OptimizationGuideModelStreamingExecutionResult(
         base::ok(OptimizationGuideResponse(compose_response, is_complete)),
-        provided_by_on_device, std::move(log_entry));
+        provided_by_on_device);
   }
 
   const base::HistogramTester& histograms() const { return histogram_tester_; }
@@ -1474,9 +1477,7 @@ TEST_F(ChromeComposeClientTest, TestComposeGenericServerError) {
                             FromModelExecutionError(
                                 OptimizationGuideModelExecutionError::
                                     ModelExecutionError::kGenericFailure)),
-                    false,
-                    std::make_unique<ModelQualityLogEntry>(
-                        logs_uploader().GetWeakPtr())));
+                    false, std::make_unique<ModelExecutionInfo>()));
           })));
 
   base::test::TestFuture<compose::mojom::ComposeResponsePtr> test_future;
@@ -1545,9 +1546,7 @@ TEST_F(ChromeComposeClientTest, TestComposeSetTriggeredFromModifierOnError) {
                             FromModelExecutionError(
                                 OptimizationGuideModelExecutionError::
                                     ModelExecutionError::kGenericFailure)),
-                    false,
-                    std::make_unique<ModelQualityLogEntry>(
-                        logs_uploader().GetWeakPtr())));
+                    false, std::make_unique<ModelExecutionInfo>()));
           })));
   page_handler()->Rewrite(compose::mojom::StyleModifier::kRetry);
 
@@ -2386,9 +2385,13 @@ TEST_F(ChromeComposeClientTest, BugReportOpensCorrectURL) {
             new_tab_webcontents->GetController().GetPendingEntry()->GetURL());
 }
 
-// TODO(crbug.com/362225975): Remove after AiSettingsPageRefresh and
-// ComposeProactiveNudge are launched.
+// TODO(crbug.com/400504728): Remove after ComposeProactiveNudge is launched.
 TEST_F(ChromeComposeClientTest, LearnMoreLinkOpensCorrectURL) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      {compose::features::kEnableCompose},
+      {compose::features::kEnableComposeProactiveNudge});
+
   GURL learn_more_url("https://support.google.com/chrome?p=help_me_write");
 
   ShowDialogAndBindMojo();
@@ -3765,8 +3768,7 @@ TEST_F(ChromeComposeClientTest, TestComposeQualityLoggedOnSubsequentError) {
                                 OptimizationGuideModelExecutionError::
                                     ModelExecutionError::kGenericFailure)),
                     /*provided_by_on_device=*/false,
-                    std::make_unique<ModelQualityLogEntry>(
-                        logs_uploader().GetWeakPtr())));
+                    std::make_unique<ModelExecutionInfo>()));
           })));
 
   base::test::TestFuture<compose::mojom::ComposeResponsePtr> compose_future;
@@ -4457,8 +4459,7 @@ TEST_F(ChromeComposeClientTest, TestOfflineError) {
                                     OptimizationGuideModelExecutionError::
                                         ModelExecutionError::kGenericFailure)),
                     /*provided_by_on_device=*/false,
-                    std::make_unique<ModelQualityLogEntry>(
-                        logs_uploader().GetWeakPtr())));
+                    std::make_unique<ModelExecutionInfo>()));
           })));
 
   base::test::TestFuture<compose::mojom::ComposeResponsePtr> test_future;

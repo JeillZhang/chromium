@@ -11,7 +11,7 @@ build_webui("build") {
 
   web_component_files = [ "info_view.ts" ]
 
-  non_web_component_files = [
+  ts_files = [
     "browser_bridge.ts",
     "gpu_internals.ts",
     "vulkan_info.ts",
@@ -22,8 +22,6 @@ build_webui("build") {
     "${root_gen_dir}/gpu/ipc/common/vulkan_info.mojom-webui.ts",
     "${root_gen_dir}/gpu/ipc/common/vulkan_types.mojom-webui.ts",
   ]
-
-  html_to_wrapper_template = "native"
 
   ts_deps = [
     "//ui/webui/resources/js:build_ts",

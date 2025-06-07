@@ -27,14 +27,16 @@ class CanvasRenderingContext;
 class CanvasResource;
 class CanvasResourceDispatcher;
 class ComputedStyle;
-class FontSelector;
 class KURL;
+class LayoutLocale;
+class PlainTextPainter;
 class StaticBitmapImage;
+class UniqueFontSelector;
 
-class CORE_EXPORT CanvasRenderingContextHost : public CanvasResourceHost,
+class CORE_EXPORT CanvasRenderingContextHost : public GarbageCollectedMixin,
+                                               public CanvasResourceHost,
                                                public CanvasImageSource,
-                                               public ImageBitmapSource,
-                                               public GarbageCollectedMixin {
+                                               public ImageBitmapSource {
  public:
   enum class HostType {
     kNone,
@@ -42,6 +44,7 @@ class CORE_EXPORT CanvasRenderingContextHost : public CanvasResourceHost,
     kOffscreenCanvasHost,
   };
   CanvasRenderingContextHost(HostType host_type, const gfx::Size& size);
+  void Trace(Visitor* visitor) const override;
 
   void RecordCanvasSizeToUMA();
 
@@ -58,6 +61,7 @@ class CORE_EXPORT CanvasRenderingContextHost : public CanvasResourceHost,
   virtual void SetOriginTainted() = 0;
   virtual CanvasRenderingContext* RenderingContext() const = 0;
   virtual CanvasResourceDispatcher* GetOrCreateResourceDispatcher() = 0;
+  virtual void DiscardResourceDispatcher() = 0;
 
   virtual ExecutionContext* GetTopExecutionContext() const = 0;
   virtual DispatchEventResult HostDispatchEvent(Event*) = 0;
@@ -76,7 +80,8 @@ class CORE_EXPORT CanvasRenderingContextHost : public CanvasResourceHost,
   // computed style for the host. If nullptr is passed, the style will be
   // computed within the method.
   virtual TextDirection GetTextDirection(const ComputedStyle*) = 0;
-  virtual FontSelector* GetFontSelector() = 0;
+  virtual const LayoutLocale* GetLocale() const = 0;
+  virtual UniqueFontSelector* GetFontSelector() = 0;
 
   virtual bool ShouldAccelerate2dContext() const = 0;
 
@@ -85,6 +90,7 @@ class CORE_EXPORT CanvasRenderingContextHost : public CanvasResourceHost,
 
   virtual UkmParameters GetUkmParameters() = 0;
 
+  bool IsValidImageSize() const;
   bool IsPaintable() const;
 
   bool PrintedInCurrentTask() const final;
@@ -95,11 +101,12 @@ class CORE_EXPORT CanvasRenderingContextHost : public CanvasResourceHost,
 
   // Partial CanvasResourceHost implementation
   void InitializeForRecording(cc::PaintCanvas*) const final;
-  CanvasResourceProvider* GetOrCreateCanvasResourceProviderImpl(
-      RasterModeHint hint) final;
-  CanvasResourceProvider* GetOrCreateCanvasResourceProvider(
-      RasterModeHint hint) override;
+  CanvasResourceProvider* GetOrCreateCanvasResourceProviderForCanvas2D()
+      override;
   void PageVisibilityChanged() override;
+
+  CanvasResourceProvider* GetOrCreateCanvasResourceProviderForWebGL();
+  CanvasResourceProvider* GetOrCreateCanvasResourceProviderForWebGPU();
 
   bool IsWebGL() const;
   bool IsWebGPU() const;
@@ -107,10 +114,9 @@ class CORE_EXPORT CanvasRenderingContextHost : public CanvasResourceHost,
   bool IsImageBitmapRenderingContext() const;
 
   SkAlphaType GetRenderingContextAlphaType() const;
-  SkColorType GetRenderingContextSkColorType() const;
   viz::SharedImageFormat GetRenderingContextFormat() const;
-  sk_sp<SkColorSpace> GetRenderingContextSkColorSpace() const;
   gfx::ColorSpace GetRenderingContextColorSpace() const;
+  PlainTextPainter& GetPlainTextPainter();
 
   // blink::CanvasImageSource
   bool IsOffscreenCanvas() const override;
@@ -127,17 +133,20 @@ class CORE_EXPORT CanvasRenderingContextHost : public CanvasResourceHost,
   // layer bridge will be destroyed and recreated; when this occurs, any
   // existing pointers to these objects will be invalidated. If the canvas
   // resource provider did not exist at all, it may be created.
-  virtual bool EnableAcceleration() = 0;
+  virtual bool EnableAccelerationForCanvas2D() = 0;
+
+  bool IsContextLost() const override;
+
+  // Can be called only when the context is 2D.
+  CanvasResourceProvider* GetResourceProviderForCanvas2D() {
+    CHECK(IsRenderingContext2D());
+    return ResourceProvider();
+  }
 
  protected:
   ~CanvasRenderingContextHost() override = default;
 
-  scoped_refptr<StaticBitmapImage> CreateTransparentImage(
-      const gfx::Size&) const;
-
-  void CreateCanvasResourceProvider2D(RasterModeHint hint);
-  void CreateCanvasResourceProviderWebGL();
-  void CreateCanvasResourceProviderWebGPU();
+  scoped_refptr<StaticBitmapImage> CreateTransparentImage() const;
 
   bool ContextHasOpenLayers(const CanvasRenderingContext*) const;
 
@@ -147,9 +156,17 @@ class CORE_EXPORT CanvasRenderingContextHost : public CanvasResourceHost,
   IdentifiableToken IdentifiabilityInputDigest(
       const CanvasRenderingContext* const context) const;
 
+  Member<PlainTextPainter> plain_text_painter_;
+  Member<UniqueFontSelector> unique_font_selector_;
   // `did_fail_to_create_resource_provider_` prevents repeated attempts in
   // allocating resources after the first attempt failed.
   bool did_fail_to_create_resource_provider_ = false;
+
+ private:
+  CanvasResourceProvider* CreateCanvasResourceProvider2D();
+  CanvasResourceProvider* CreateCanvasResourceProviderWebGL();
+  CanvasResourceProvider* CreateCanvasResourceProviderWebGPU();
+
   bool did_record_canvas_size_to_uma_ = false;
   HostType host_type_ = HostType::kNone;
 };

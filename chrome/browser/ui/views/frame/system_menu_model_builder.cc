@@ -40,6 +40,11 @@
 #include "ui/ozone/public/ozone_platform.h"
 #endif
 
+#if BUILDFLAG(ENABLE_GLIC)
+#include "chrome/browser/glic/glic_enabling.h"
+#include "chrome/browser/glic/resources/grit/glic_browser_resources.h"
+#endif
+
 SystemMenuModelBuilder::SystemMenuModelBuilder(
     ui::AcceleratorProvider* provider,
     Browser* browser)
@@ -80,6 +85,18 @@ void SystemMenuModelBuilder::BuildSystemMenuForBrowserWindow(
   model->AddItemWithStringId(IDC_RESTORE_TAB, IDS_RESTORE_TAB);
   model->AddItemWithStringId(IDC_BOOKMARK_ALL_TABS, IDS_BOOKMARK_ALL_TABS);
   model->AddItemWithStringId(IDC_NAME_WINDOW, IDS_NAME_WINDOW);
+#if BUILDFLAG(ENABLE_GLIC)
+#if BUILDFLAG(IS_WIN)
+  // On Windows we can not remove an item when showing the menu. So only add
+  // the glic toggle option if glic is enabled when building the menu.
+  if (glic::GlicEnabling::IsEnabledForProfile(browser()->profile())) {
+#endif  // BUILDFLAG(IS_WIN)
+    model->AddSeparator(ui::NORMAL_SEPARATOR);
+    model->AddItemWithStringId(IDC_GLIC_TOGGLE_PIN, IDS_GLIC_PIN);
+#if BUILDFLAG(IS_WIN)
+  }
+#endif  // BUILDFLAG(IS_WIN)
+#endif  // BUILDFLAG(ENABLE_GLIC)
   if (chrome::CanOpenTaskManager()) {
     model->AddSeparator(ui::NORMAL_SEPARATOR);
     model->AddItemWithStringId(IDC_TASK_MANAGER_CONTEXT_MENU, IDS_TASK_MANAGER);

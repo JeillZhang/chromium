@@ -4,9 +4,12 @@
 
 #include "chrome/browser/enterprise/signin/oidc_authentication_signin_interceptor.h"
 
+#include <variant>
+
 #include "base/files/file_util.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -166,7 +169,7 @@ class FakeUserPolicyOidcSigninService
 
   FakeUserPolicyOidcSigninService(
       Profile* profile,
-      absl::variant<UserCloudPolicyManager*, ProfileCloudPolicyManager*>
+      std::variant<UserCloudPolicyManager*, ProfileCloudPolicyManager*>
           policy_manager,
       bool will_policy_fetch_succeed)
       : policy::MockUserPolicyOidcSigninService(profile,
@@ -253,13 +256,13 @@ class UnittestProfileManager : public FakeProfileManager {
     builder.SetDelegate(delegate);
     builder.SetCreateMode(create_mode);
 
-    if (absl::holds_alternative<std::unique_ptr<UserCloudPolicyManager>>(
+    if (std::holds_alternative<std::unique_ptr<UserCloudPolicyManager>>(
             policy_manager_)) {
       builder.SetUserCloudPolicyManager(std::move(
-          absl::get<std::unique_ptr<UserCloudPolicyManager>>(policy_manager_)));
+          std::get<std::unique_ptr<UserCloudPolicyManager>>(policy_manager_)));
     } else {
       builder.SetProfileCloudPolicyManager(
-          std::move(absl::get<std::unique_ptr<ProfileCloudPolicyManager>>(
+          std::move(std::get<std::unique_ptr<ProfileCloudPolicyManager>>(
               policy_manager_)));
     }
 
@@ -287,9 +290,8 @@ class UnittestProfileManager : public FakeProfileManager {
   }
 
   void SetPolicyManagerForNextProfile(
-      absl::variant<std::unique_ptr<UserCloudPolicyManager>,
-                    std::unique_ptr<ProfileCloudPolicyManager>>
-          policy_manager) {
+      std::variant<std::unique_ptr<UserCloudPolicyManager>,
+                   std::unique_ptr<ProfileCloudPolicyManager>> policy_manager) {
     policy_manager_ = std::move(policy_manager);
   }
 
@@ -298,8 +300,8 @@ class UnittestProfileManager : public FakeProfileManager {
   }
 
  private:
-  absl::variant<std::unique_ptr<UserCloudPolicyManager>,
-                std::unique_ptr<ProfileCloudPolicyManager>>
+  std::variant<std::unique_ptr<UserCloudPolicyManager>,
+               std::unique_ptr<ProfileCloudPolicyManager>>
       policy_manager_;
   bool will_policy_fetch_succeed_on_new_profile_;
   bool will_id_service_succeed_on_new_profile_;
@@ -574,9 +576,9 @@ class OidcAuthenticationSigninInterceptorTest
     }
 
     base::RunLoop run_loop;
-    interceptor_->MaybeInterceptOidcAuthentication(web_contents(), oidc_tokens,
-                                                   issuer_id, subject_id,
-                                                   run_loop.QuitClosure());
+    interceptor_->MaybeInterceptOidcAuthentication(
+        web_contents(), oidc_tokens, issuer_id, subject_id, std::string(),
+        run_loop.QuitClosure());
 
     if (fake_bubble_handle_) {
       fake_bubble_handle_->SimulateClick();

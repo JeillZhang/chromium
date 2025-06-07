@@ -25,6 +25,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/metrics/statistics_recorder.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -70,6 +71,11 @@
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
 namespace {
+
+// When enabled Cronet advertises zstd support. Suffixed with V2 to avoid
+// clashing with previous feature flag that was rolled back in
+// https://crrev.com/c/6458938.
+BASE_FEATURE(kEnableZstd, "EnableZstdV2", base::FEATURE_DISABLED_BY_DEFAULT);
 
 // This class wraps a NetLog that also contains network change events.
 class NetLogWithNetworkChangeEvents {
@@ -212,7 +218,7 @@ CronetContext::CronetContext(
           new NetworkTasks(std::move(context_config), std::move(callback))),
       network_task_runner_(network_task_runner) {
   if (!network_task_runner_) {
-    network_thread_ = std::make_unique<base::Thread>("network");
+    network_thread_ = std::make_unique<base::Thread>("CronetNet");
     base::Thread::Options options;
     options.message_pump_type = base::MessagePumpType::IO;
     network_thread_->StartWithOptions(std::move(options));
@@ -460,6 +466,7 @@ void CronetContext::NetworkTasks::SetSharedURLRequestContextBuilderConfig(
 
   context_builder->set_check_cleartext_permitted(true);
   context_builder->set_enable_brotli(context_config_->enable_brotli);
+  context_builder->set_enable_zstd(base::FeatureList::IsEnabled(kEnableZstd));
   context_builder->set_enable_shared_dictionary(context_config_->enable_brotli);
 }
 
@@ -711,7 +718,7 @@ int CronetContext::default_load_flags() const {
 base::Thread* CronetContext::GetFileThread() {
   DCHECK(OnInitThread());
   if (!file_thread_) {
-    file_thread_ = std::make_unique<base::Thread>("Network File Thread");
+    file_thread_ = std::make_unique<base::Thread>("CronetFile");
     file_thread_->Start();
   }
   return file_thread_.get();

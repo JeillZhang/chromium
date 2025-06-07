@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/run_loop.h"
@@ -485,6 +486,30 @@ TEST_F(ArcMetricsServiceTest, ReportApkCacheHit) {
   tester.ExpectTotalCount("Arc.AppInstall.CacheHit", 2);
 }
 
+TEST_F(ArcMetricsServiceTest, ReportCertificateSigningResult_ResultOk) {
+  base::HistogramTester tester;
+
+  service()->ReportCertificateSigningResult(
+      arc::mojom::CertificateSigningResult::kOk);
+
+  tester.ExpectUniqueSample(
+      "Arc.Attestation.CertificateSigning.Result",
+      static_cast<int>(mojom::CertificateSigningResult::kOk), 1);
+}
+
+TEST_F(ArcMetricsServiceTest,
+       ReportCertificateSigningResult_ResultDeviceNotRegistered) {
+  base::HistogramTester tester;
+
+  service()->ReportCertificateSigningResult(
+      arc::mojom::CertificateSigningResult::kDeviceNotRegistered);
+
+  tester.ExpectUniqueSample(
+      "Arc.Attestation.CertificateSigning.Result",
+      static_cast<int>(mojom::CertificateSigningResult::kDeviceNotRegistered),
+      1);
+}
+
 class ArcVmArcMetricsServiceTest
     : public ArcMetricsServiceTest,
       public testing::WithParamInterface<
@@ -539,7 +564,7 @@ static std::optional<vm_tools::concierge::ListVmsResponse> VmsList(
 
 struct KillCounterInfo {
   const char* name;
-  uint32_t mojom::LowMemoryKillCounts::*const member;
+  uint32_t mojom::LowMemoryKillCounts::* const member;
 };
 
 // Store a list of the different kill counter names and which field in the
@@ -799,7 +824,7 @@ TEST_P(ArcVmArcMetricsServiceTest, AppLowMemoryDailyKills) {
       if (!vm.has_vm_info()) {
         continue;
       }
-      printf(" %s", VmKillCounterPrefix(vm.vm_info().vm_type()));
+      UNSAFE_TODO(printf(" %s", VmKillCounterPrefix(vm.vm_info().vm_type())));
     }
   }
 

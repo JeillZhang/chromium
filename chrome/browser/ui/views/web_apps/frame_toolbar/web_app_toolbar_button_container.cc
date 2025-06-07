@@ -21,6 +21,7 @@
 #include "chrome/browser/ui/views/page_action/action_ids.h"
 #include "chrome/browser/ui/views/page_action/page_action_icon_controller.h"
 #include "chrome/browser/ui/views/page_action/page_action_icon_params.h"
+#include "chrome/browser/ui/views/page_action/page_action_properties_provider.h"
 #include "chrome/browser/ui/views/page_action/page_action_view_params.h"
 #include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions_container.h"
 #include "chrome/browser/ui/views/web_apps/frame_toolbar/system_app_accessible_name.h"
@@ -157,10 +158,13 @@ WebAppToolbarButtonContainer::WebAppToolbarButtonContainer(
         // The toolbar button container already sets spacing between child
         // views.
         .should_bridge_containers = false,
+        // On space constraint, the page action should get hidden.
+        .hide_icon_on_space_constraint = true,
     };
     page_action_container_ =
         AddChildView(std::make_unique<page_actions::PageActionContainerView>(
-            page_action_items, page_action_params));
+            page_action_items, page_actions::PageActionPropertiesProvider(),
+            page_action_params));
     views::SetHitTestComponent(page_action_container_,
                                static_cast<int>(HTCLIENT));
   }
@@ -182,10 +186,12 @@ WebAppToolbarButtonContainer::WebAppToolbarButtonContainer(
   page_action_icon_controller_->Init(params, this);
 
   bool create_extensions_container = true;
-  auto display_mode =
-      base::FeatureList::IsEnabled(features::kDesktopPWAsElidedExtensionsMenu)
-          ? ExtensionsToolbarContainer::DisplayMode::kAutoHide
-          : ExtensionsToolbarContainer::DisplayMode::kCompact;
+  auto display_mode = (base::FeatureList::IsEnabled(
+                           features::kDesktopPWAsElidedExtensionsMenu) ||
+                       // Extensions are not supported inside Isolated Web Apps.
+                       app_controller->IsIsolatedWebApp())
+                          ? ExtensionsToolbarContainer::DisplayMode::kAutoHide
+                          : ExtensionsToolbarContainer::DisplayMode::kCompact;
 #if BUILDFLAG(IS_CHROMEOS)
   // Let the system web app decide if it needs to show the extensions container.
   // Use compact display mode because we do not render the app menu for system
@@ -221,16 +227,13 @@ WebAppToolbarButtonContainer::WebAppToolbarButtonContainer(
                                static_cast<int>(HTCLIENT));
   }
 
+  // Pinned buttons are not shown in web apps but buttons can be shown
+  // ephemerally in this container and should have the same flex behavior as
+  // other toolbar buttons.
   pinned_toolbar_actions_container_ = AddChildView(
       std::make_unique<PinnedToolbarActionsContainer>(browser_view_));
-
-  if (download::IsDownloadBubbleEnabled() &&
-      !base::FeatureList::IsEnabled(features::kPinnableDownloadsButton)) {
-    download_button_ = AddChildView(
-        std::make_unique<DownloadToolbarButtonView>(browser_view_));
-    views::SetHitTestComponent(download_button_, static_cast<int>(HTCLIENT));
-    ConfigureWebAppToolbarButton(download_button_, toolbar_button_provider_);
-  }
+  views::SetHitTestComponent(pinned_toolbar_actions_container_,
+                             static_cast<int>(HTCLIENT));
 
 #if !BUILDFLAG(IS_CHROMEOS)
   if (app_controller->HasProfileMenuButton()) {
@@ -317,11 +320,8 @@ views::FlexRule WebAppToolbarButtonContainer::GetFlexRule() const {
 }
 
 ToolbarButton* WebAppToolbarButtonContainer::GetDownloadButton() {
-  if (base::FeatureList::IsEnabled(features::kPinnableDownloadsButton)) {
     return pinned_toolbar_actions_container_->GetButtonFor(
         kActionShowDownloads);
-  }
-  return download_button_.get();
 }
 
 void WebAppToolbarButtonContainer::DisableAnimationForTesting(bool disable) {

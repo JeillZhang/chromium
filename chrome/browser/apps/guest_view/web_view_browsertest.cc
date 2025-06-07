@@ -2,14 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include <memory>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -27,6 +23,8 @@
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
@@ -83,7 +81,6 @@
 #include "components/no_state_prefetch/browser/no_state_prefetch_link_manager.h"
 #include "components/performance_manager/public/graph/frame_node.h"
 #include "components/performance_manager/public/performance_manager.h"
-#include "components/performance_manager/test_support/run_in_graph.h"
 #include "components/permissions/mock_chooser_controller_view.h"
 #include "components/permissions/test/mock_permission_prompt_factory.h"
 #include "components/prefs/pref_service.h"
@@ -161,6 +158,7 @@
 #include "services/device/public/cpp/test/scoped_geolocation_overrider.h"
 #include "services/device/public/mojom/hid.mojom.h"
 #include "services/device/public/mojom/serial.mojom.h"
+#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
@@ -864,8 +862,8 @@ class WebViewTestBase : public extensions::PlatformAppBrowserTest {
         testing::UnitTest::GetInstance()->current_test_info();
 
     // SpeechRecognition test specific SetUp.
-    const char* name = "SpeechRecognitionAPI_HasPermissionAllow";
-    return !strncmp(test_info->name(), name, strlen(name));
+    constexpr std::string_view name = "SpeechRecognitionAPI_HasPermissionAllow";
+    return std::string_view(test_info->name()).starts_with(name);
   }
 
   std::unique_ptr<device::ScopedGeolocationOverrider> geolocation_overrider_;
@@ -2228,28 +2226,35 @@ class WebViewSSLErrorTest : public WebViewTest {
   // asserts the security interstitial is displayed within the guest instead of
   // through the embedder's WebContents.
   void SSLTestHelper() {
-    // Starts a HTTPS server so we can load a page with a SSL error inside
-    // guest.
-    net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-    https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_MISMATCHED_NAME);
-    https_server.ServeFilesFromSourceDirectory(GetChromeTestDataDir());
-    ASSERT_TRUE(https_server.Start());
+    // Configures the HTTPS server so we can load a page with a SSL error inside
+    // a guest.
+    https_server_.SetSSLConfig(net::EmbeddedTestServer::CERT_MISMATCHED_NAME);
+    https_server_.ServeFilesFromSourceDirectory(GetChromeTestDataDir());
+    ASSERT_TRUE(https_server_.Start());
 
     LoadAndLaunchPlatformApp("web_view/ssl", "EmbedderLoaded");
 
     LoadEmptyGuest();
 
-    const auto target_url = https_server.GetURL(
+    const auto target_url = https_server_.GetURL(
         "/extensions/platform_apps/web_view/ssl/https_page.html");
     SetGuestURL(target_url, /*expect_successful_navigation=*/false);
 
     // Guest's `target_url` is served by an HTTP server with a cert error.
     // A security error within a guest should not cause an interstitial to be
     // shown in the embedder.
-    ASSERT_FALSE(chrome_browser_interstitials::IsShowingInterstitial(
-        GetFirstAppWindowWebContents()));
-
+    // Note: for the InnerWebContents case, the guest and the embedder will have
+    // different WebContents, so we don't expect the interstitial to be
+    // associated with the embedder's WebContents. But in the MPArch case,
+    // there's only one WebContents, so the guest's interstitial page is
+    // associated with the embedder's WebContents.
     auto* guest = GetGuestViewManager()->GetLastGuestViewCreated();
+    ASSERT_EQ(GetParam(),
+              GetFirstAppWindowWebContents() == guest->web_contents());
+    ASSERT_EQ(GetFirstAppWindowWebContents() == guest->web_contents(),
+              chrome_browser_interstitials::IsShowingInterstitial(
+                  GetFirstAppWindowWebContents()));
+
     ASSERT_TRUE(guest->GetGuestMainFrame()->IsErrorDocument());
     ASSERT_TRUE(chrome_browser_interstitials::IsShowingInterstitial(
         guest->web_contents()));
@@ -2291,7 +2296,7 @@ class WebViewSSLErrorTest : public WebViewTest {
       ASSERT_EQ(guest_navi_obs.last_net_error_code(), net::Error::OK);
       ASSERT_EQ(guest_navi_obs.last_committed_url(), guest_url);
     } else {
-      // `https_server` in `WebViewSSLErrorTest::SSLTestHelper` is configured
+      // `https_server_` in `WebViewSSLErrorTest::SSLTestHelper` is configured
       // with `CERT_MISMATCHED_NAME`.
       ASSERT_EQ(guest_navi_obs.last_net_error_code(),
                 net::Error::ERR_CERT_COMMON_NAME_INVALID);
@@ -2300,6 +2305,11 @@ class WebViewSSLErrorTest : public WebViewTest {
       ASSERT_EQ(guest_navi_obs.last_committed_url(), GURL());
     }
   }
+
+ protected:
+  // Starts a HTTPS server so we can load HTTPS pages, possibly with SSL errors,
+  // inside guests.
+  net::EmbeddedTestServer https_server_{net::EmbeddedTestServer::TYPE_HTTPS};
 };
 
 INSTANTIATE_TEST_SUITE_P(/* no prefix */,
@@ -2316,8 +2326,6 @@ INSTANTIATE_TEST_SUITE_P(/* no prefix */,
 #define MAYBE_ShowInterstitialForSSLError ShowInterstitialForSSLError
 #endif
 IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, MAYBE_ShowInterstitialForSSLError) {
-  SKIP_FOR_MPARCH();  // TODO(crbug.com/40202416): Enable test for MPArch.
-
   SSLTestHelper();
 }
 
@@ -2327,35 +2335,9 @@ IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, MAYBE_ShowInterstitialForSSLError) {
 // known-safe page used to navigate back from such interstitials when there's
 // no other page in history to go to).  See https://crbug.com/1444221.
 IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, NavigateBackFromSSLError) {
-  SKIP_FOR_MPARCH();  // TODO(crbug.com/40202416): Enable test for MPArch.
+  SSLTestHelper();
 
-  // Starts a HTTPS server so we can load a page with a SSL error inside a
-  // guest.
-  net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_MISMATCHED_NAME);
-  https_server.ServeFilesFromSourceDirectory(GetChromeTestDataDir());
-  ASSERT_TRUE(https_server.Start());
-
-  LoadAndLaunchPlatformApp("web_view/ssl", "EmbedderLoaded");
-
-  const auto failure_url = https_server.GetURL(
-      "/extensions/platform_apps/web_view/ssl/https_page.html");
-  EXPECT_TRUE(content::ExecJs(
-      GetFirstAppWindowWebContents(),
-      content::JsReplace("var w = document.createElement('webview');"
-                         "w.src = $1;"
-                         "document.body.appendChild(w);",
-                         failure_url)));
-  GetGuestViewManager()->WaitForSingleGuestRenderFrameHostCreated();
   auto* guest = GetGuestViewManager()->GetLastGuestViewCreated();
-  GetGuestViewManager()->WaitUntilAttached(guest);
-
-  // The navigation should fail and show an interstitial in the guest.
-  EXPECT_FALSE(WaitForLoadStop(guest->web_contents()));
-  ASSERT_TRUE(guest->GetGuestMainFrame()->IsErrorDocument());
-  ASSERT_TRUE(chrome_browser_interstitials::IsShowingInterstitial(
-      guest->web_contents()));
-
   // Simulate invoking the "Back to safety" button.  This should dismiss the
   // interstitial and navigate the guest to a known safe URL that can always
   // load in a guest (in this case, about:blank).
@@ -2363,16 +2345,77 @@ IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, NavigateBackFromSSLError) {
       security_interstitials::SecurityInterstitialTabHelper::FromWebContents(
           guest->web_contents());
   ASSERT_TRUE(helper);
-  auto* interstitial =
-      helper->GetBlockingPageForCurrentlyCommittedNavigationForTesting();
+  auto* interstitial = helper->GetBlockingPageForFrame(
+      guest->GetGuestMainFrame()->GetFrameTreeNodeId());
   ASSERT_TRUE(interstitial);
+
+  // Set observers for the navigation
+  content::TestNavigationObserver nav_observer(guest->web_contents(), 1);
+  nav_observer.set_wait_event(
+      content::TestNavigationObserver::WaitEvent::kNavigationFinished);
+  content::TestFrameNavigationObserver frame_nav_observer(
+      guest->GetGuestMainFrame());
+
+  // Give command to go back.
   interstitial->CommandReceived(base::NumberToString(
       security_interstitials::SecurityInterstitialCommand::CMD_DONT_PROCEED));
 
-  EXPECT_TRUE(WaitForLoadStop(guest->web_contents()));
+  if (GetParam()) {
+    frame_nav_observer.Wait();
+  } else {
+    nav_observer.Wait();
+  }
+
   ASSERT_FALSE(guest->GetGuestMainFrame()->IsErrorDocument());
   ASSERT_FALSE(chrome_browser_interstitials::IsShowingInterstitial(
       guest->web_contents()));
+
+  // We should be at the "safe" url now.
+  EXPECT_EQ(GURL(url::kAboutBlankURL),
+            guest->GetGuestMainFrame()->GetLastCommittedURL());
+}
+
+IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, NavigateThroughSSLError) {
+  SSLTestHelper();
+  // Recreate `target_url` for use outside SSLTestHelper.
+  const auto target_url = https_server_.GetURL(
+      "/extensions/platform_apps/web_view/ssl/https_page.html");
+
+  auto* guest = GetGuestViewManager()->GetLastGuestViewCreated();
+  // Simulate invoking the "proceed" button.  This should dismiss the
+  // interstitial and navigate the guest to the unsafe URL that was the target
+  // of the initial navigation.
+  security_interstitials::SecurityInterstitialTabHelper* helper =
+      security_interstitials::SecurityInterstitialTabHelper::FromWebContents(
+          guest->web_contents());
+  ASSERT_TRUE(helper);
+  auto* interstitial = helper->GetBlockingPageForFrame(
+      guest->GetGuestMainFrame()->GetFrameTreeNodeId());
+  ASSERT_TRUE(interstitial);
+
+  // Set observers for the navigation
+  content::TestNavigationObserver nav_observer(guest->web_contents(), 1);
+  nav_observer.set_wait_event(
+      content::TestNavigationObserver::WaitEvent::kNavigationFinished);
+  content::TestFrameNavigationObserver frame_nav_observer(
+      guest->GetGuestMainFrame());
+
+  // Give command to proceed.
+  interstitial->CommandReceived(base::NumberToString(
+      security_interstitials::SecurityInterstitialCommand::CMD_PROCEED));
+
+  if (GetParam()) {
+    frame_nav_observer.Wait();
+  } else {
+    nav_observer.Wait();
+  }
+
+  ASSERT_FALSE(guest->GetGuestMainFrame()->IsErrorDocument());
+  ASSERT_FALSE(chrome_browser_interstitials::IsShowingInterstitial(
+      guest->web_contents()));
+
+  // Make sure that "proceeding" took us to the expected url.
+  EXPECT_EQ(target_url, guest->GetGuestMainFrame()->GetLastCommittedURL());
 }
 
 // Test makes sure that the interstitial is registered in the
@@ -2384,8 +2427,6 @@ IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, NavigateBackFromSSLError) {
 #define MAYBE_InterstitialPageRouteEvents InterstitialPageRouteEvents
 #endif
 IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, MAYBE_InterstitialPageRouteEvents) {
-  SKIP_FOR_MPARCH();  // TODO(crbug.com/40202416): Enable test for MPArch.
-
   SSLTestHelper();
 
   std::vector<content::RenderWidgetHostView*> hosts =
@@ -2410,8 +2451,6 @@ IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, MAYBE_InterstitialPageRouteEvents) {
 #define MAYBE_InterstitialPageDetach InterstitialPageDetach
 #endif
 IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, MAYBE_InterstitialPageDetach) {
-  SKIP_FOR_MPARCH();  // TODO(crbug.com/40202416): Enable test for MPArch.
-
   SSLTestHelper();
 
   // Navigate to about:blank
@@ -2428,8 +2467,6 @@ IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, MAYBE_InterstitialPageDetach) {
 #define MAYBE_InterstitialTearDown InterstitialTearDown
 #endif
 IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, MAYBE_InterstitialTearDown) {
-  SKIP_FOR_MPARCH();  // TODO(crbug.com/40202416): Enable test for MPArch.
-
   SSLTestHelper();
 
   // Now close the app while the interstitial is being shown in the guest.
@@ -2441,8 +2478,6 @@ IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, MAYBE_InterstitialTearDown) {
 // down while an interstitial is being shown in guest.
 IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest,
                        InterstitialTearDownOnBrowserShutdown) {
-  SKIP_FOR_MPARCH();  // TODO(crbug.com/40202416): Enable test for MPArch.
-
   SSLTestHelper();
 
   // Now close the app while the interstitial is being shown in the guest.
@@ -2519,15 +2554,12 @@ IN_PROC_BROWSER_TEST_P(WebViewSafeBrowsingTest,
 // enabled doesn't crash nor shows error page.
 // Regression test for crbug.com/1233889
 IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, GuestLoadsHttpsWithoutError) {
-  SKIP_FOR_MPARCH();  // TODO(crbug.com/40202416): Enable test for MPArch.
-
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kHttpsOnlyModeEnabled,
                                                true);
 
-  net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  https_server.ServeFilesFromSourceDirectory(GetChromeTestDataDir());
-  ASSERT_TRUE(https_server.Start());
-  GURL guest_url = https_server.GetURL("/simple.html");
+  https_server_.ServeFilesFromSourceDirectory(GetChromeTestDataDir());
+  ASSERT_TRUE(https_server_.Start());
+  GURL guest_url = https_server_.GetURL("/simple.html");
   LoadAndLaunchPlatformApp("web_view/ssl", "EmbedderLoaded");
   LoadEmptyGuest();
   SetGuestURL(guest_url, /*expect_successful_navigation=*/true);
@@ -2547,8 +2579,6 @@ IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, GuestLoadsHttpsWithoutError) {
 // Tests that loading an HTTP page in a guest <webview> with HTTPS-First Mode
 // enabled doesn't crash and doesn't trigger the error page.
 IN_PROC_BROWSER_TEST_P(WebViewSSLErrorTest, GuestLoadsHttpWithoutError) {
-  SKIP_FOR_MPARCH();  // TODO(crbug.com/40202416): Enable test for MPArch.
-
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kHttpsOnlyModeEnabled,
                                                true);
 
@@ -5863,6 +5893,44 @@ IN_PROC_BROWSER_TEST_P(ChromeSignInWebViewTest,
   run_loop.Run();
 }
 
+// Ensure that WebRequest events are not dispatched to pages that are not the
+// embedder of the source webview.
+// See also testWebRequestAPIOnlyForInstance.
+IN_PROC_BROWSER_TEST_P(ChromeSignInWebViewTest,
+                       TestWebRequestOnlyDispatchToEmbedder) {
+  SKIP_FOR_MPARCH();  // TODO(crbug.com/40202416): Enable test for MPArch.
+
+  ASSERT_TRUE(StartEmbeddedTestServer());
+
+  // Load a WebUI with a webview. For testing convenience, we use the existing
+  // chrome signin page.
+  const GURL signin_url{"chrome://chrome-signin/?reason=5"};
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), signin_url));
+  WaitForWebViewInDom();
+  content::WebContents* tab_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+
+  // Set an onBeforeRequest handler on the WebUI's webview.
+  EXPECT_TRUE(content::ExecJs(
+      tab_contents,
+      "let wv = document.querySelector( "
+      "    'inline-login-app').shadowRoot.querySelector('webview'); "
+      "window.sawRequest = false; "
+      "wv.request.onBeforeRequest.addListener((details) => { "
+      "  console.log('Unexpected request event', details.url); "
+      "  window.sawRequest = true; "
+      "  return {cancel: true}; "
+      "}, {types: ['main_frame'], urls: ['<all_urls>']}, "
+      "['blocking']);"));
+
+  // Launch an app that creates and loads its own webview. The app will get
+  // WebRequest events for its webview.
+  TestHelper("testWebRequestAPI", "web_view/shim", NO_TEST_SERVER);
+
+  // The WebUI should not see the events for the app's webview.
+  EXPECT_EQ(false, content::EvalJs(tab_contents, "window.sawRequest;"));
+}
+
 // This test class makes "isolated.com" an isolated origin, to be used in
 // testing isolated origins inside of a WebView.
 class IsolatedOriginWebViewTest : public WebViewTest {
@@ -6120,12 +6188,21 @@ IN_PROC_BROWSER_TEST_F(GuestViewExtensionNameCollisionTest,
   EXPECT_EQ("PASSED", test_passed);
 }
 
-class PrivateNetworkAccessWebViewTest : public WebViewTest {
+class LocalNetworkAccessWebViewTest : public WebViewTest {
  public:
-  PrivateNetworkAccessWebViewTest() {
-    features_.InitWithFeatureStates(
-        {{features::kBlockInsecurePrivateNetworkRequests, true},
-         {features::kGuestViewMPArch, GetParam()}});
+  LocalNetworkAccessWebViewTest() {
+    std::vector<base::test::FeatureRefAndParams> enabled_features = {
+        {network::features::kLocalNetworkAccessChecks,
+         {{"LocalNetworkAccessChecksWarn", "false"}}}};
+    std::vector<base::test::FeatureRef> disabled_features;
+    if (GetParam()) {
+      enabled_features.push_back({features::kGuestViewMPArch, {}});
+
+    } else {
+      disabled_features.push_back(features::kGuestViewMPArch);
+    }
+    features_.InitWithFeaturesAndParameters(std::move(enabled_features),
+                                            std::move(disabled_features));
   }
 
  private:
@@ -6133,18 +6210,18 @@ class PrivateNetworkAccessWebViewTest : public WebViewTest {
 };
 
 INSTANTIATE_TEST_SUITE_P(/* no prefix */,
-                         PrivateNetworkAccessWebViewTest,
+                         LocalNetworkAccessWebViewTest,
                          testing::Bool(),
-                         PrivateNetworkAccessWebViewTest::DescribeParams);
+                         LocalNetworkAccessWebViewTest::DescribeParams);
 
-// Verify that Private Network Access has the correct understanding of guests.
-// The local/private/public classification should not be affected by being
+// Verify that Local Network Access has the correct understanding of guests.
+// The loopback/local/public classification should not be affected by being
 // within a guest. See https://crbug.com/1167698 for details.
 //
 // Note: This test is put in this file for convenience of reusing the entire
 // app testing infrastructure. Other similar tests that do not require that
-// infrastructure live in PrivateNetworkAccessBrowserTest.*
-IN_PROC_BROWSER_TEST_P(PrivateNetworkAccessWebViewTest, ClassificationInGuest) {
+// infrastructure live in LocalNetworkAccessBrowserTest.*
+IN_PROC_BROWSER_TEST_P(LocalNetworkAccessWebViewTest, ClassificationInGuest) {
   LoadAppWithGuest("web_view/simple");
   content::RenderFrameHost* guest_frame_host = GetGuestRenderFrameHost();
   ASSERT_TRUE(guest_frame_host);
@@ -6160,12 +6237,11 @@ IN_PROC_BROWSER_TEST_P(PrivateNetworkAccessWebViewTest, ClassificationInGuest) {
   // The webview "simple" page is a first navigation to a raw data url. It is
   // currently considered public (internally
   // `network::mojom::IPAddressSpace::kUnknown`).
-  // For now, unknown -> local is not blocked, so this fetch succeeds. See also
-  // https://crbug.com/1178814.
-  EXPECT_EQ(true, content::EvalJs(guest_frame_host,
-                                  content::JsReplace(
-                                      "fetch($1).then(response => response.ok)",
-                                      fetch_url)));
+  EXPECT_THAT(content::EvalJs(
+                  guest_frame_host,
+                  content::JsReplace("fetch($1).then(response => response.ok)",
+                                     fetch_url)),
+              content::EvalJsResult::IsError());
 }
 
 // Verify that navigating a <webview> subframe to a disallowed extension
@@ -6183,7 +6259,8 @@ IN_PROC_BROWSER_TEST_P(WebViewTest, LoadDisallowedExtensionURLInSubframe) {
   const extensions::Extension* extension = LoadExtension(
       test_data_dir_.AppendASCII("web_accessible_resources/subframe"));
   ASSERT_TRUE(extension);
-  GURL extension_url = extension->GetResourceURL("web_accessible_page.html");
+  GURL extension_url =
+      extension->ResolveExtensionURL("web_accessible_page.html");
 
   GURL iframe_url(embedded_test_server()->GetURL("/title1.html"));
 
@@ -6518,7 +6595,7 @@ class SitePerProcessWebViewTest : public WebViewTest {
 
       return load_observer.last_navigation_succeeded();
     } else {
-      return NavigateToURL(guest->web_contents(), url);
+      return content::NavigateToURL(guest->web_contents(), url);
     }
   }
 };
@@ -7140,11 +7217,16 @@ IN_PROC_BROWSER_TEST_P(SitePerProcessWebViewTest, SubframeProcessReuse) {
 
 // Helper class to turn off strict site isolation while still using site
 // isolation paths for <webview>.  This forces <webview> to use the default
-// SiteInstance paths. The helper also defines one isolated origin at
-// isolated.com, which takes precedence over the command-line switch to disable
-// site isolation and can be used to test a combination of SiteInstances that
-// require and don't require dedicated processes.
-class WebViewWithDefaultSiteInstanceTest : public SitePerProcessWebViewTest {
+// SiteInstance or default SiteInstanceGroup paths. The helper also defines one
+// isolated origin at isolated.com, which takes precedence over the command-line
+// switch to disable site isolation and can be used to test a combination of
+// SiteInstances that require and don't require dedicated processes.
+// This test is parameterized to run in MPArch or InnerWebContents mode, and
+// DefaultSiteInstance or DefaultSiteInstanceGroup mode, totaling 4
+// configurations.
+class WebViewWithDefaultSiteInstanceTest
+    : public WebViewTestBase,
+      public testing::WithParamInterface<testing::tuple<bool, bool>> {
  public:
   WebViewWithDefaultSiteInstanceTest() = default;
   ~WebViewWithDefaultSiteInstanceTest() override = default;
@@ -7157,28 +7239,42 @@ class WebViewWithDefaultSiteInstanceTest : public SitePerProcessWebViewTest {
     command_line->AppendSwitch(switches::kDisableSiteIsolation);
     command_line->AppendSwitchASCII(switches::kIsolateOrigins,
                                     "http://isolated.com");
-    SitePerProcessWebViewTest::SetUpCommandLine(command_line);
+    feature_list_.InitWithFeatureStates(
+        {{features::kGuestViewMPArch, testing::get<0>(GetParam())},
+         {features::kDefaultSiteInstanceGroups, testing::get<1>(GetParam())}});
+
+    WebViewTestBase::SetUpCommandLine(command_line);
   }
 
   content::test::FencedFrameTestHelper& fenced_frame_test_helper() {
     return fenced_frame_test_helper_;
   }
 
+  static std::string DescribeParams(
+      const testing::TestParamInfo<ParamType>& info) {
+    const auto [mparch, site_instance_group] = info.param;
+    return base::StringPrintf("%s_%s", mparch ? "MPArch" : "InnerWebContents",
+                              site_instance_group ? "DefaultSiteInstanceGroups"
+                                                  : "DefaultSiteInstances");
+  }
+
  private:
   content::test::FencedFrameTestHelper fenced_frame_test_helper_;
+  base::test::ScopedFeatureList feature_list_;
 };
 
 INSTANTIATE_TEST_SUITE_P(/* no prefix */,
                          WebViewWithDefaultSiteInstanceTest,
-                         testing::Bool(),
+                         testing::Combine(testing::Bool(), testing::Bool()),
                          WebViewWithDefaultSiteInstanceTest::DescribeParams);
 
-// Check that when strict site isolation is turned off (via a command-line flag
-// or from chrome://flags), the <webview> site isolation paths still work. In
-// particular, <webview> navigations should use a default SiteInstance which
-// should still be considered a guest SiteInstance in the guest's
-// StoragePartition.  Cross-site navigations in the guest should stay in the
-// same SiteInstance, and the guest process shouldn't be locked.
+// Check that when strict site isolation is turned off (via a command-line
+// flag or from chrome://flags), the <webview> site isolation paths still
+// work. In particular, <webview> navigations should use a default
+// SiteInstance or default SiteInstanceGroup which should still be considered
+// a guest SiteInstance in the guest's StoragePartition. Cross-site
+// navigations in the guest should stay in the same SiteInstance or
+// SiteInstanceGroup, and the guest process shouldn't be locked.
 IN_PROC_BROWSER_TEST_P(WebViewWithDefaultSiteInstanceTest, SimpleNavigations) {
   ASSERT_TRUE(StartEmbeddedTestServer());
 
@@ -7210,27 +7306,40 @@ IN_PROC_BROWSER_TEST_P(WebViewWithDefaultSiteInstanceTest, SimpleNavigations) {
     load_observer.Wait();
   }
 
-  // Expect that we stayed in the same (default) SiteInstance.
+  // Expect that we stayed in the same (default) SiteInstance or
+  // SiteInstanceGroup.
   main_frame = GetGuestRenderFrameHost();
   ASSERT_TRUE(main_frame);
-  if (!main_frame->ShouldChangeRenderFrameHostOnSameSiteNavigation()) {
-    // The RenderFrameHost will stay the same when we don't change
-    // RenderFrameHosts on same-SiteInstance navigations.
-    EXPECT_EQ(main_frame->GetGlobalId(), original_id);
+  if (base::FeatureList::IsEnabled(features::kDefaultSiteInstanceGroups)) {
+    EXPECT_NE(starting_instance, main_frame->GetSiteInstance());
+    EXPECT_EQ(starting_instance->GetSiteInstanceGroupId(),
+              main_frame->GetSiteInstance()->GetSiteInstanceGroupId());
+  } else {
+    EXPECT_EQ(starting_instance, main_frame->GetSiteInstance());
+    if (!main_frame->ShouldChangeRenderFrameHostOnSameSiteNavigation()) {
+      // The RenderFrameHost will stay the same when we don't change
+      // RenderFrameHosts on same-SiteInstance navigations.
+      EXPECT_EQ(main_frame->GetGlobalId(), original_id);
+    }
   }
-  EXPECT_EQ(starting_instance, main_frame->GetSiteInstance());
   EXPECT_FALSE(main_frame->GetSiteInstance()->RequiresDedicatedProcess());
   EXPECT_FALSE(main_frame->GetProcess()->IsProcessLockedToSiteForTesting());
 
   // Navigate <webview> subframe cross-site.  Check that it stays in the same
-  // SiteInstance and process.
+  // process, and SiteInstance/Group.
   const GURL frame_url =
       embedded_test_server()->GetURL("b.test", "/title1.html");
   content::RenderFrameHost* subframe = content::ChildFrameAt(main_frame, 0);
   ASSERT_TRUE(subframe);
   EXPECT_TRUE(NavigateToURLFromRenderer(subframe, frame_url));
   subframe = content::ChildFrameAt(main_frame, 0);
-  EXPECT_EQ(main_frame->GetSiteInstance(), subframe->GetSiteInstance());
+  if (base::FeatureList::IsEnabled(features::kDefaultSiteInstanceGroups)) {
+    EXPECT_NE(main_frame->GetSiteInstance(), subframe->GetSiteInstance());
+    EXPECT_EQ(main_frame->GetSiteInstance()->GetSiteInstanceGroupId(),
+              subframe->GetSiteInstance()->GetSiteInstanceGroupId());
+  } else {
+    EXPECT_EQ(main_frame->GetSiteInstance(), subframe->GetSiteInstance());
+  }
   EXPECT_EQ(main_frame->GetProcess(), subframe->GetProcess());
   EXPECT_TRUE(subframe->GetSiteInstance()->IsGuest());
   EXPECT_FALSE(subframe->GetSiteInstance()->RequiresDedicatedProcess());
@@ -7238,10 +7347,11 @@ IN_PROC_BROWSER_TEST_P(WebViewWithDefaultSiteInstanceTest, SimpleNavigations) {
 }
 
 // Similar to the test above, but also exercises navigations to an isolated
-// origin, which takes precedence over switches::kDisableSiteIsolation. In this
-// setup, navigations to the isolated origin should use a normal SiteInstance
-// that requires a dedicated process, while all other navigations should use
-// the default SiteInstance and an unlocked process.
+// origin, which takes precedence over switches::kDisableSiteIsolation. In
+// this setup, navigations to the isolated origin should use a normal
+// SiteInstance that requires a dedicated process, while all other navigations
+// should use the default SiteInstance or default SiteInstanceGroup and an
+// unlocked process.
 IN_PROC_BROWSER_TEST_P(WebViewWithDefaultSiteInstanceTest, IsolatedOrigin) {
   ASSERT_TRUE(StartEmbeddedTestServer());
 
@@ -7384,6 +7494,10 @@ IN_PROC_BROWSER_TEST_P(WebViewFencedFrameTest, ZoomFencedFrame) {
   auto* fenced_frame_rwh = fenced_frame->GetRenderWidgetHost();
   // See Javascript fcn testZoomFencedFrame for source of the 0.95 zoom factor.
   double expected_zoom_level = blink::ZoomFactorToZoomLevel(0.95);
+  // Guest has `expected_zoom_level`.
+  EXPECT_DOUBLE_EQ(expected_zoom_level, content::GetPendingZoomLevel(
+                                            guest_rfh->GetRenderWidgetHost()));
+  // FencedFrame has `expected_zoom_level`.
   EXPECT_DOUBLE_EQ(expected_zoom_level,
                    content::GetPendingZoomLevel(fenced_frame_rwh));
 
@@ -7799,14 +7913,12 @@ IN_PROC_BROWSER_TEST_P(WebViewTest, PerformanceManager) {
           guest->GetGuestMainFrame());
   ASSERT_TRUE(inner_root_frame_node);
 
-  // Jump into the graph and make sure guest view does not have a
-  // parent frame node.
-  performance_manager::RunInGraph([main_frame_node, inner_root_frame_node]() {
-    // <webviews> have an outer document instead of a parent frame node.
-    EXPECT_EQ(inner_root_frame_node->GetParentFrameNode(), nullptr);
+  // Make sure the guest view node does not have a parent frame node.
 
-    // The outer document of the guest view is available.
-    EXPECT_EQ(inner_root_frame_node->GetParentOrOuterDocumentOrEmbedder(),
-              main_frame_node.get());
-  });
+  // <webviews> have an outer document instead of a parent frame node.
+  EXPECT_EQ(inner_root_frame_node->GetParentFrameNode(), nullptr);
+
+  // The outer document of the guest view is available.
+  EXPECT_EQ(inner_root_frame_node->GetParentOrOuterDocumentOrEmbedder(),
+            main_frame_node.get());
 }

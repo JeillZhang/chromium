@@ -137,7 +137,7 @@ class TabStripTestBase : public ChromeViewsTestBase {
             views::kFlexBehaviorKey,
             views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
                                      views::MaximumFlexSizeRule::kPreferred));
-    tab_strip_parent->AddChildView(tab_strip_.get());
+    tab_strip_parent->AddChildViewRaw(tab_strip_.get());
     // The tab strip is free to use all of the space in its parent view, since
     // there are no sibling controls such as the NTB in the test context.
     tab_strip_->SetAvailableWidthCallback(base::BindRepeating(
@@ -184,9 +184,6 @@ class TabStripTestBase : public ChromeViewsTestBase {
     // Resize the tabstrip based on the current tab states.
     views::test::RunScheduledLayout(tab_strip_parent_.get());
   }
-
-  int GetActiveTabWidth() { return tab_strip_->GetActiveTabWidth(); }
-  int GetInactiveTabWidth() { return tab_strip_->GetInactiveTabWidth(); }
 
   // End any outstanding drag and animate tabs back to their ideal bounds.
   void StopDragging() { tab_strip_->GetDragContext()->StoppedDragging(); }
@@ -254,7 +251,7 @@ TEST_P(TabStripTest, GetModelCount) {
 }
 
 TEST_P(TabStripTest, AccessibilityEvents) {
-  views::test::AXEventCounter ax_counter(views::AXEventManager::Get());
+  views::test::AXEventCounter ax_counter(views::AXUpdateNotifier::Get());
 
   controller_->AddTab(0, TabActive::kInactive);
   controller_->AddTab(1, TabActive::kActive);
@@ -464,31 +461,6 @@ TEST_P(TabStripTest, CloseButtonHiddenWhenLockedForOnTask) {
 }
 #endif
 
-// The cached widths are private, but if they give incorrect results it can
-// cause subtle errors in other tests. Therefore it's prudent to test them.
-TEST_P(TabStripTest, CachedWidthsReportCorrectSize) {
-  controller_->AddTab(0, TabActive::kInactive);
-  controller_->AddTab(1, TabActive::kActive);
-  controller_->AddTab(2, TabActive::kInactive);
-
-  const int standard_width = TabStyle::Get()->GetStandardWidth();
-
-  SetMaxTabStripWidth(1000);
-
-  EXPECT_EQ(standard_width, GetActiveTabWidth());
-  EXPECT_EQ(standard_width, GetInactiveTabWidth());
-
-  SetMaxTabStripWidth(240);
-
-  EXPECT_LT(GetActiveTabWidth(), standard_width);
-  EXPECT_EQ(GetInactiveTabWidth(), GetActiveTabWidth());
-
-  SetMaxTabStripWidth(50);
-
-  EXPECT_EQ(TabStyle::Get()->GetMinimumActiveWidth(), GetActiveTabWidth());
-  EXPECT_EQ(TabStyle::Get()->GetMinimumInactiveWidth(), GetInactiveTabWidth());
-}
-
 // The active tab should always be at least as wide as its minimum width.
 // http://crbug.com/587688
 TEST_P(TabStripTest, ActiveTabWidthWhenTabsAreTiny) {
@@ -499,7 +471,8 @@ TEST_P(TabStripTest, ActiveTabWidthWhenTabsAreTiny) {
 
   // Create a lot of tabs in order to make inactive tabs tiny.
   const int min_inactive_width = TabStyle::Get()->GetMinimumInactiveWidth();
-  while (GetInactiveTabWidth() != min_inactive_width) {
+  while (tab_strip_->GetTabCount() == 0 ||
+         tab_strip_->tab_at(0)->width() != min_inactive_width) {
     controller_->CreateNewTab();
     CompleteAnimationAndLayout();
   }
@@ -517,7 +490,7 @@ TEST_P(TabStripTest, ActiveTabWidthWhenTabsAreTiny) {
   while (tab_strip_->GetTabCount() > 0) {
     active_index = tab_strip_->GetActiveIndex().value();
     EXPECT_GE(tab_strip_->tab_at(active_index)->bounds().width(),
-              TabStyle::Get()->GetMinimumActiveWidth());
+              TabStyle::Get()->GetMinimumActiveWidth(/*is_split*/ false));
     tab_strip_->CloseTab(tab_strip_->tab_at(active_index),
                          CloseTabSource::kFromMouse);
     CompleteAnimationAndLayout();
@@ -532,8 +505,11 @@ TEST_P(TabStripTest, InactiveTabWidthWhenTabsAreTiny) {
   // Create a lot of tabs in order to make inactive tabs smaller than active
   // tab but not the minimum.
   const int min_inactive_width = TabStyle::Get()->GetMinimumInactiveWidth();
-  const int min_active_width = TabStyle::Get()->GetMinimumActiveWidth();
-  while (GetInactiveTabWidth() >= (min_inactive_width + min_active_width) / 2) {
+  const int min_active_width =
+      TabStyle::Get()->GetMinimumActiveWidth(/*is_split*/ false);
+  while (tab_strip_->GetTabCount() == 0 ||
+         tab_strip_->tab_at(0)->width() >=
+             (min_inactive_width + min_active_width) / 2) {
     controller_->CreateNewTab();
     CompleteAnimationAndLayout();
   }
@@ -545,12 +521,12 @@ TEST_P(TabStripTest, InactiveTabWidthWhenTabsAreTiny) {
   // remaining one will be active and there will be no inactive tabs,
   // so we stop at 2.
   while (tab_strip_->GetTabCount() > 2) {
-    const int last_inactive_width = GetInactiveTabWidth();
+    const int last_inactive_width = tab_strip_->tab_at(0)->width();
     tab_strip_->CloseTab(
         tab_strip_->tab_at(tab_strip_->GetActiveIndex().value()),
         CloseTabSource::kFromMouse);
     CompleteAnimationAndLayout();
-    EXPECT_GE(GetInactiveTabWidth(), last_inactive_width);
+    EXPECT_GE(tab_strip_->tab_at(0)->width(), last_inactive_width);
   }
 }
 
@@ -561,12 +537,14 @@ TEST_P(TabStripTest, ResetBoundsForDraggedTabs) {
 
   // Create a lot of tabs in order to make inactive tabs tiny.
   const int min_inactive_width = TabStyle::Get()->GetMinimumInactiveWidth();
-  while (GetInactiveTabWidth() != min_inactive_width) {
+  while (tab_strip_->GetTabCount() == 0 ||
+         tab_strip_->tab_at(0)->width() != min_inactive_width) {
     controller_->CreateNewTab();
     CompleteAnimationAndLayout();
   }
 
-  const int min_active_width = TabStyle::Get()->GetMinimumActiveWidth();
+  const int min_active_width =
+      TabStyle::Get()->GetMinimumActiveWidth(/*is_split*/ false);
 
   int dragged_tab_index = tab_strip_->GetActiveIndex().value();
   ASSERT_GE(tab_strip_->tab_at(dragged_tab_index)->bounds().width(),
@@ -634,9 +612,7 @@ TEST_P(TabStripTest, TabNeedsAttentionGeneric) {
 TEST_P(TabStripTest, TabGroupNeedsAttention) {
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitWithFeatures(
-      {tab_groups::kTabGroupsSaveV2,
-       data_sharing::features::kDataSharingFeature},
-      {});
+      {data_sharing::features::kDataSharingFeature}, {});
   controller_->AddTab(0, TabActive::kInactive);
   controller_->AddTab(1, TabActive::kActive);
 
@@ -672,7 +648,7 @@ TEST_P(TabStripTest, EventsOnClosingTab) {
   tab_strip_->CloseTab(first_tab, CloseTabSource::kFromMouse);
   EXPECT_EQ(first_tab, tab_strip_->GetEventHandlerForPoint(tab_center));
 
-  // Closing |first_tab| again should forward to |second_tab| instead.
+  // Closing `first_tab` again should forward to `second_tab` instead.
   tab_strip_->CloseTab(first_tab, CloseTabSource::kFromMouse);
   EXPECT_TRUE(second_tab->closing());
 }
@@ -722,14 +698,14 @@ TEST_P(TabStripTest, CloseTabInGroupWhilePreviousTabAnimatingClosed) {
 
   // We have the following tabs:
   // 1. An ungrouped tab with model index 0
-  // 2. A tab in |group_id| with model index 1
-  // 3. A tab in |group_id| with model index 2
+  // 2. A tab in `group_id` with model index 1
+  // 3. A tab in `group_id` with model index 2
   controller_->RemoveTab(1);
 
   // After closing the first tab, we now have:
   // 1. An ungrouped tab with model index 0
-  // 2. A closing tab in |group_id| with no model index
-  // 3. A tab in |group_id| with model index 1.
+  // 2. A closing tab in `group_id` with no model index
+  // 3. A tab in `group_id` with model index 1.
   //
   // Closing the tab at model index 1 should result in (3) above being
   // closed.
@@ -737,8 +713,8 @@ TEST_P(TabStripTest, CloseTabInGroupWhilePreviousTabAnimatingClosed) {
 
   // We should now have:
   // 1. An ungrouped tab with model index 0
-  // 2. A closing tab in |group_id| with no model index
-  // 3. A closing tab in |group_id| with no model index.
+  // 2. A closing tab in `group_id` with no model index
+  // 3. A closing tab in `group_id` with no model index.
 
   CompleteAnimationAndLayout();
 
@@ -828,7 +804,7 @@ TEST_P(TabStripTest, RelayoutAfterDraggedTabBoundsUpdate) {
   dragged_tab->set_dragging(true);
 
   constexpr int kXOffset = 20;
-  std::vector<raw_ptr<TabSlotView, VectorExperimental>> tabs{dragged_tab};
+  std::vector<TabSlotView*> tabs{dragged_tab};
   std::vector<gfx::Rect> bounds{gfx::Rect({kXOffset, 0}, dragged_tab->size())};
   SizeChangeObserver view_observer(tab_strip_);
   tab_strip_->GetDragContext()->SetBoundsForDrag(tabs, bounds);

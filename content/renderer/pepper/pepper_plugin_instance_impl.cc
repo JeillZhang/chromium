@@ -19,7 +19,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_offset_string_conversions.h"
@@ -1775,13 +1774,13 @@ void PepperPluginInstanceImpl::UpdateLayer(bool force_creation) {
     bool opaque = false;
     if (want_3d_layer) {
       DCHECK(bound_graphics_3d_.get());
-      texture_layer_ = cc::TextureLayer::CreateForMailbox(nullptr);
+      texture_layer_ = cc::TextureLayer::Create(nullptr);
       opaque = bound_graphics_3d_->IsOpaque();
 
       PassCommittedTextureToTextureLayer();
     } else {
       DCHECK(bound_graphics_2d_platform_);
-      texture_layer_ = cc::TextureLayer::CreateForMailbox(this);
+      texture_layer_ = cc::TextureLayer::Create(this);
       bound_graphics_2d_platform_->AttachedToNewLayer();
       opaque = bound_graphics_2d_platform_->IsAlwaysOpaque();
     }
@@ -2703,7 +2702,7 @@ bool PepperPluginInstanceImpl::DecrementTextureReferenceCount(
     const viz::TransferableResource& resource) {
   auto it = std::ranges::find(texture_ref_counts_, resource.mailbox(),
                               &MailboxRefCount::first);
-  CHECK(it != texture_ref_counts_.end(), base::NotFatalUntil::M130);
+  CHECK(it != texture_ref_counts_.end());
 
   if (it->second == 1) {
     texture_ref_counts_.erase(it);

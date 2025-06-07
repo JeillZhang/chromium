@@ -45,6 +45,7 @@
 #include "third_party/blink/renderer/core/inspector/protocol/accessibility.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
 #include "third_party/blink/renderer/core/scroll/scroll_alignment.h"
+#include "third_party/blink/renderer/modules/accessibility/ax_block_flow_iterator.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_enums.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
@@ -249,7 +250,7 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   };
 
  protected:
-  explicit AXObject(AXObjectCacheImpl&);
+  explicit AXObject(AXObjectCacheImpl&, bool is_node_object = false);
 
 #if DCHECK_IS_ON()
   bool is_initializing_ = false;
@@ -300,7 +301,7 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   // When the corresponding WebCore object that this AXObject
   // wraps is deleted, it must be detached.
   virtual void Detach();
-  bool IsDetached() const;
+  bool IsDetached() const { return !ax_object_cache_; }
 
   // Updates the cached attribute values. This may be recursive, so to prevent
   // deadlocks, functions called here may only search up the tree (ancestors),
@@ -315,7 +316,7 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   // modification count.
   // To instead invalidate on all objects in a subtree, call
   // AXObjectCacheImpl::InvalidateCachedValuesOnSubtree().
-  void InvalidateCachedValues();
+  void InvalidateCachedValues(TreeUpdateReason reason);
   bool NeedsToUpdateCachedValues() const { return cached_values_need_update_; }
   bool ChildrenNeedToUpdateCachedValues() const {
     return child_cached_values_need_update_;
@@ -334,18 +335,21 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   // Wrappers that retrieve either an Accessibility Object Model property,
   // or the equivalent ARIA attribute, in that order.
   virtual AbstractInlineTextBox* GetInlineTextBox() const { return nullptr; }
+  virtual std::optional<AXBlockFlowIterator::FragmentIndex> GetFragmentIndex()
+      const {
+    return std::nullopt;
+  }
 
-  static const HeapVector<Member<Element>>* ElementsFromAttributeOrInternals(
-      const Element* from,
-      const QualifiedName& attribute);
+  static const GCedHeapVector<Member<Element>>*
+  ElementsFromAttributeOrInternals(const Element* from,
+                                   const QualifiedName& attribute);
   static Element* ElementFromAttributeOrInternals(
       const Element* from,
       const QualifiedName& attribute);
 
   // Serialize the properties of this node into |node_data|.
   void Serialize(ui::AXNodeData* node_data,
-                 ui::AXMode accessibility_mode,
-                 bool is_snapshot = false) const;
+                 ui::AXMode accessibility_mode) const;
 
   // Determine subclass type.
   virtual bool IsImageMapLink() const;
@@ -356,6 +360,8 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   virtual bool IsAXRadioInput() const;
   virtual bool IsSlider() const;
   virtual bool IsValidationMessage() const;
+
+  bool IsNodeObject() const { return is_node_object_; }
 
   // Returns true if this object is an ARIA text field, i.e. it is neither an
   // <input> nor a <textarea>, but it has an ARIA role of textbox, searchbox or
@@ -535,6 +541,19 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   bool HasIndirectChildren() const;
   bool IsExcludedByFormControlsFilter() const;
 
+  void SetIsOnScreen(bool visibility) { cached_is_on_screen_ = visibility; }
+  bool WasEverOnScreen() const {
+    return cached_is_on_screen_ ? cached_is_on_screen_.value() : false;
+  }
+
+  // A node can oly flip from off-screen to on-screen if it was explicitly
+  // marked as off-screen at some point. Since we keep track if a node was ever
+  // on-screen, it can't also flip from on-screen to off-screen because of this
+  // reason.
+  bool CanFlipFromOffScreenToOnScreen() const {
+    return cached_is_on_screen_ && !cached_is_on_screen_.value();
+  }
+
   //
   // Accessible name calculation
   //
@@ -691,8 +710,6 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   // false. Must be called with clean layout.
   virtual void LoadInlineTextBoxes();
   virtual void LoadInlineTextBoxesHelper();
-  // When adding children to this node, consider inline textboxes.
-  virtual bool ShouldLoadInlineTextBoxes() const { return false; }
 
   // Walk the AXObjects on the same line.
   virtual AXObject* NextOnLine() const;
@@ -919,8 +936,16 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   // added to the aria-details list.
   AXObject* GetPositionedObjectForAnchor(ui::AXNodeData* node_data) const;
 
+  // Scroll marker pseudo-elements target their originating element which
+  // is located under a different parent in the layout tree.
+  AXObject* GetScrollMarkerTarget() const;
+
   // Heuristic to get the listbox for an <input role="combobox">.
   AXObject* GetControlsListboxForTextfieldCombobox() const;
+
+  // Scroll buttons and scroll marker groups are controls for the scrolling
+  // element.
+  AXObject* GetControlsForOverflowNavigation() const;
 
   // Returns true if this object is within or at the root of an editable region,
   // such as a contenteditable. Also, returns true if this object is an atomic
@@ -1006,12 +1031,6 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
 
   // Get the bounds in frame-relative coordinates as a PhysicalRect.
   PhysicalRect GetBoundsInFrameCoordinates() const;
-
-  // Explicitly set an object's bounding rect and offset container.
-  void SetElementRect(const PhysicalRect& r, AXObject* container) {
-    explicit_element_rect_ = r;
-    explicit_container_id_ = container->AXObjectID();
-  }
 
   // Hit testing.
   // Called on the root AX object to return the deepest available element.
@@ -1311,12 +1330,16 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   // If this object is associated with generated content, or a list marker,
   // returns a pseudoelement. It does not return the node that generated the
   // content or the list marker.
-  virtual Node* GetNode() const;
+  //
+  // This function is manually inlined because it is very hot and LTO/PGO
+  // doesn't manage to inline it. To call it, you will need to include
+  // ax_object-inl.h.
+  ALWAYS_INLINE Node* GetNode() const;
   // Looks for the first ancestor AXObject (inclusive) that has a node, and
   // returns that node.
-  Node* GetClosestNode() const {
-    return GetNode() ? GetNode() : ParentObject()->GetClosestNode();
-  }
+  //
+  // To call this function, you will need to include ax_object-inl.h.
+  ALWAYS_INLINE Node* GetClosestNode() const;
   // Looks for the first ancestor AXObject (inclusive) that has an element, and
   // returns that element.
   Element* GetClosestElement() const;
@@ -1475,10 +1498,15 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   void PreSerializationConsistencyCheck() const;
 
   // Returns a string representation of this object.
-  String ToString(bool verbose = true) const;
+  // Must only be used after `init()`has been called.
+  virtual String ToString(bool verbose = true) const;
+  static String GetNodeString(Node* node);
 
   void PopulateAXRelativeBounds(ui::AXRelativeBounds& bounds,
                                 bool* clips_children) const;
+
+  // Should inline text boxes be considered when adding children to this node.
+  bool ShouldLoadInlineTextBoxes() const;
 
  protected:
   AXID id_;
@@ -1490,9 +1518,6 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
 
   // The final role, taking into account the ARIA role and native role.
   ax::mojom::blink::Role role_;
-
-  PhysicalRect explicit_element_rect_;
-  AXID explicit_container_id_;
 
   virtual void AddChildren() = 0;
 
@@ -1524,7 +1549,7 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
                              bool* found_text_alternative) const;
   String TextFromElements(bool in_aria_labelledby_traversal,
                           AXObjectSet& visited,
-                          const HeapVector<Member<Element>>& elements,
+                          base::span<const Member<Element>> elements,
                           AXRelatedObjectVector* related_objects) const;
   static bool HasAriaLabelledbyElements(Element* from);
 
@@ -1586,9 +1611,22 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   void SerializeTextInsertionDeletionOffsetAttributes(
       ui::AXNodeData* node_data) const;
 
-  const std::optional<ui::AXTreeID>& child_tree_id() const {
-    return child_tree_id_;
+  void SetCachedValuesNeedUpdate(
+      bool cached_values_need_update,
+      std::optional<TreeUpdateReason> reason = std::nullopt);
+  void SetAXObjectCacheForTest(AXObjectCacheImpl& ax_object_cache) {
+    ax_object_cache_ = &ax_object_cache;
   }
+
+  // Is it possible for inline textboxes to be attached to these type of node?
+  bool CanHaveInlineTextBoxChildren(const blink::AXObject* obj) const;
+
+#if defined(REDUCE_AX_INLINE_TEXTBOXES)
+  // Used on Android. On other platforms, this is effectively always true.
+  void SetAlwaysLoadInlineTextBoxes(bool should_load) {
+    always_load_inline_text_boxes_ = should_load;
+  }
+#endif
 
  private:
   bool ComputeCanSetFocusAttribute();
@@ -1600,6 +1638,9 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
 
   // Returns true if this node should use the aria role combobox menu button.
   bool ShouldUseComboboxMenuButtonRole() const;
+
+  // Whether this is an AXNodeObject.
+  bool is_node_object_ : 1 = false;
 
   bool children_dirty_ : 1 = false;
 
@@ -1623,6 +1664,8 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
   bool cached_is_descendant_of_disabled_node_ : 1 = false;
   bool cached_can_set_focus_attribute_ : 1 = false;
   bool cached_is_in_menu_list_subtree_ : 1 = false;
+  bool always_load_inline_text_boxes_ : 1 = false;  // Used for Android only.
+  std::optional<bool> cached_is_on_screen_;
 
   Member<AXObject> cached_live_region_root_;
   gfx::RectF cached_local_bounding_box_;
@@ -1676,19 +1719,8 @@ class MODULES_EXPORT AXObject : public GarbageCollected<AXObject> {
 
   static unsigned number_of_live_ax_objects_;
 
-  // The ID of another tree that should be attached to this object as a child
-  // tree. This should not be used for iframes since the child tree for an
-  // iframe can be retrieved from the child frame's embedding token. It should
-  // only be used whenever the `ax::mojom::Action::kStitchChildTree` is sent to
-  // the renderer requesting that another tree is joined with the existing tree.
-  // This might be needed when another tree with some generated content should
-  // be stitched into the current tree.
-  //
-  // TODO(accessibility): Store in AXObjectCacheImpl since it is not needed by
-  // most objects taking up valuable space.
-  std::optional<ui::AXTreeID> child_tree_id_;
-
   FRIEND_TEST_ALL_PREFIXES(AccessibilityTest, GetParentNodeForComputeParent);
+  FRIEND_TEST_ALL_PREFIXES(AccessibilityTest, NodesRequiringCacheUpdate);
 };
 
 MODULES_EXPORT bool operator==(const AXObject& first, const AXObject& second);

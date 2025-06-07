@@ -18,7 +18,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
@@ -51,7 +50,8 @@ public class SafetyHubHatsHelperUnitTest {
                         ContentSettingsType.MEDIASTREAM_CAMERA,
                     },
                     0,
-                    0);
+                    0,
+                    PermissionsRevocationType.UNUSED_PERMISSIONS);
     private static final NotificationPermissions NOTIFICATION_PERMISSIONS =
             NotificationPermissions.create(EXAMPLE_URL, "*", 3);
     private static final String HATS_SURVEY_TRIGGER_ID = "safety_hub_android_organic_survey";
@@ -78,8 +78,6 @@ public class SafetyHubHatsHelperUnitTest {
 
     @Before
     public void setUp() throws Exception {
-        MockitoAnnotations.initMocks(this);
-
         UserPrefsJni.setInstanceForTesting(mUserPrefsNativeMock);
         doReturn(mPrefServiceMock).when(mUserPrefsNativeMock).get(mProfile);
         mockPasswordCounts(0, 0, 0);
@@ -102,7 +100,7 @@ public class SafetyHubHatsHelperUnitTest {
         TestSurveyUtils.setTestSurveyConfigForTrigger(
                 HATS_SURVEY_TRIGGER_ID, new String[0], new String[0]);
         SurveyClientFactory.setInstanceForTesting(mSurveyFactory);
-        doReturn(mSurveyClient).when(mSurveyFactory).createClient(any(), any(), any());
+        doReturn(mSurveyClient).when(mSurveyFactory).createClient(any(), any(), any(), any());
     }
 
     private void mockPasswordCounts(int compromised, int weak, int reused) {

@@ -34,6 +34,7 @@
 #include "components/page_load_metrics/browser/observers/core/uma_page_load_metrics_observer.h"
 #include "components/permissions/permission_manager.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/permission_request_description.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_features.h"
@@ -244,7 +245,10 @@ IN_PROC_BROWSER_TEST_F(ChromeBackForwardCacheBrowserTest,
       ->RequestPermissionFromCurrentDocument(
           rfh_a.get(),
           content::PermissionRequestDescription(
-              blink::PermissionType::GEOLOCATION, /* user_gesture = */ true),
+              content::PermissionDescriptorUtil::
+                  CreatePermissionDescriptorForPermissionType(
+                      blink::PermissionType::GEOLOCATION),
+              /* user_gesture = */ true),
           callback.Get());
 
   // Ensure |rfh_a| is evicted from the cache because it is not allowed to
@@ -914,7 +918,8 @@ IN_PROC_BROWSER_TEST_P(
 }
 
 // Flaky: crbug.com/40935990
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
+    BUILDFLAG(IS_WIN)
 #define MAYBE_DoesNotCachePageWithEmbeddedPdfAppendedOnPageLoaded \
   DISABLED_DoesNotCachePageWithEmbeddedPdfAppendedOnPageLoaded
 #else

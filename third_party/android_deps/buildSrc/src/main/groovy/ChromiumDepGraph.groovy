@@ -6,15 +6,15 @@
 import groovy.transform.AutoClone
 import groovy.util.slurpersupport.GPathResult
 import org.gradle.api.Project
-import org.gradle.api.artifacts.Configuration
-import org.gradle.api.artifacts.ResolvedArtifact
-import org.gradle.api.artifacts.ResolvedDependency
-import org.gradle.api.artifacts.ResolvedModuleVersion
+import org.gradle.api.artifacts.*
 import org.gradle.api.artifacts.component.ComponentIdentifier
-import org.gradle.api.artifacts.component.ModuleComponentSelector
 import org.gradle.api.artifacts.repositories.ArtifactRepository
-import org.gradle.api.artifacts.result.DependencyResult
+import org.gradle.api.artifacts.result.*
+import java.util.concurrent.*
+import java.time.*
 import org.gradle.api.logging.Logger
+import java.nio.file.Path
+import java.nio.file.Paths
 
 /**
  * Parses the project dependencies and generates a graph of {@link ChromiumDepGraph.DependencyDescription} objects to
@@ -31,14 +31,16 @@ class ChromiumDepGraph {
                     url: 'https://maven.google.com/androidx/multidex/multidex/2.0.0/multidex-2.0.0.aar'),
             com_google_android_datatransport_transport_api: new PropertyOverride(
                     description: 'Interfaces for data logging in gmscore SDKs.'),
-            com_google_android_datatransport_transport_backend_cct: new PropertyOverride(
-                    exclude: true),  // We're not using datatransport functionality.
-            com_google_android_datatransport_transport_runtime: new PropertyOverride(
-                    exclude: true),  // We're not using datatransport functionality.
             com_google_android_gms_play_services_cloud_messaging: new PropertyOverride(
                     description: 'Firebase Cloud Messaging library that interfaces with gmscore.'),
             com_google_android_gms_play_services_location: new PropertyOverride(
                     description: 'Provides data about the device\'s physical location via gmscore.'),
+            com_google_ar_impress: new PropertyOverride(
+                    url: 'https://maven.google.com/web/index.html?q=impress#com.google.ar:impress',
+                    description: 'Impress shows GLTF models on XR devices, and provides advanced materials and rendering.\n'
+                               + 'A dependency of https://developer.android.com/jetpack/androidx/releases/xr-scenecore.\n',
+                    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
+                    licenseName: 'Apache-2.0'),
             com_google_auto_service_auto_service_annotations: new PropertyOverride(
                     licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
                     licenseName: 'Apache 2.0'),
@@ -67,8 +69,6 @@ class ChromiumDepGraph {
                     description: 'Common classes for Firebase SDKs.'),
             com_google_firebase_firebase_components: new PropertyOverride(
                     description: 'Provides dependency management for Firebase SDKs.'),
-            com_google_firebase_firebase_datatransport: new PropertyOverride(
-                    exclude: true),  // We're not using datatransport functionality.
             com_google_firebase_firebase_encoders_json: new PropertyOverride(
                     description: 'JSON encoders used in Firebase SDKs.'),
             com_google_firebase_firebase_encoders: new PropertyOverride(
@@ -89,18 +89,15 @@ class ChromiumDepGraph {
                     url: 'https://github.com/google/guava',
                     licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
                     licenseName: 'Apache 2.0'),
+            // This targets needs to conditionally support android. When no internal android override is defined, this
+            // target needs to set supports_android=true as both android and non-android targets use guava, but when an
+            // internal android override is defined, android targets should use that instead (and fail compile if they
+            // use this one) but non-android targets still needs this guava target to exist.
             com_google_guava_guava: new PropertyOverride(
                     url: 'https://github.com/google/guava',
                     licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
                     licenseName: 'Apache 2.0',
-                    // Both -jre and -android versions are listed. Filter to only the -jre ones.
-                    versionFilter: '-jre'),
-            com_google_guava_guava_android: new PropertyOverride(
-                    url: 'https://github.com/google/guava',
-                    licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
-                    licenseName: 'Apache 2.0',
-                    // Both -jre and -android versions are listed. Filter to only the -android ones.
-                    versionFilter: '-android'),
+                    supportsAndroid: false),
             com_google_testparameterinjector_test_parameter_injector: new PropertyOverride(
                     url: 'https://github.com/google/TestParameterInjector',
                     licenseUrl: 'https://www.apache.org/licenses/LICENSE-2.0.txt',
@@ -249,6 +246,15 @@ class ChromiumDepGraph {
                     resolveVersion: '1.7.2'),
             org_jetbrains_kotlinx_kotlinx_coroutines_test_jvm: new PropertyOverride(
                     resolveVersion: '1.7.3'),
+            io_reactivex_rxjava3_rxjava: new PropertyOverride(
+                    exclude: true),  // An unnecessary dep of androidx.xr.runtime.
+            org_jetbrains_kotlinx_kotlinx_coroutines_reactive: new PropertyOverride(
+                    exclude: true),  // An unnecessary dep of androidx.xr.runtime.
+            org_jetbrains_kotlinx_kotlinx_coroutines_rx3: new PropertyOverride(
+                    exclude: true),  // An unnecessary dep of androidx.xr.runtime.
+            org_reactivestreams_reactive_streams: new PropertyOverride(
+                    exclude: true),  // An unnecessary dep of androidx.xr.runtime.
+
     ]
 
     // Local text versions of HTML licenses. This cannot replace PROPERTY_OVERRIDES because some libraries refer to
@@ -262,20 +268,19 @@ class ChromiumDepGraph {
             'https://www.unicode.org/license.html': 'licenses/Unicode.txt',
     ]
 
-    final Map<String, DependencyDescription> dependencies = [:]
+    final Map<String, DependencyDescription> dependencies = [:] as ConcurrentHashMap<String, DependencyDescription>
     Project[] projects
     Logger logger
     boolean skipLicenses
+    boolean warnOnStaleDeps
+
+    // TODO: remove (set to true) when AUTOROLL_MIGRATION_IN_PROGRESS = false
+    boolean tagTargetsAsAutorolled
 
     private static String makeModuleIdInner(String group, String module, String version) {
         // Does not include version because by default the resolution strategy for gradle is to use the newest version
         // among the required ones. We want to be able to match it in the BUILD.gn file.
         String moduleId = sanitize("${group}_${module}")
-
-        // Add 'android' suffix for guava-android so that its module name is distinct from the module for guava.
-        if (module == 'guava' && version.contains('android')) {
-            moduleId += '_android'
-        }
         return moduleId
     }
 
@@ -288,85 +293,126 @@ class ChromiumDepGraph {
         return makeModuleIdInner(componentId.group, componentId.module, componentId.version)
     }
 
-    static String makeModuleId(DependencyResult dependency) {
-        ModuleComponentSelector selector = dependency.requested
-        return makeModuleIdInner(selector.group, selector.module, selector.version)
+    static String makeModuleId(ResolvedDependencyResult dependency) {
+        ComponentIdentifier componentId = dependency.selected.id
+        return makeModuleIdInner(componentId.group, componentId.module, componentId.version)
+    }
+
+    static boolean anyContains(String value, Set<String>... sets) {
+        for (Set<String> curSet : sets) {
+            if (curSet.contains(value)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     void collectDependencies() {
         Set<ResolvedDependency> deps = [] as Set
         Map<String, SortedSet<String>> resolvedDeps = [:]
+        ExecutorService downloadExecutor = Executors.newCachedThreadPool()
+        List<Future> futures = []
         String[] configNames = [
                 'compile',
                 'compileLatest',
                 'buildCompile',
+                'buildCompileLatest',
                 'testCompile',
+                'testCompileLatest',
                 'androidTestCompile',
                 'androidTestCompileLatest',
                 'buildCompileNoDeps'
         ]
-        for (Project project : projects) {
-            for (String configName : configNames) {
-                Configuration configuration = project.configurations.getByName(configName)
-                deps += configuration.resolvedConfiguration.firstLevelModuleDependencies
-                if (!resolvedDeps.containsKey(configName)) {
-                    resolvedDeps[configName] = [] as SortedSet
-                }
-                configuration.incoming.resolutionResult.allDependencies { DependencyResult it ->
-                    resolvedDeps[configName] += makeModuleId(it)
+        timeIt('** Resolving all deps') {
+            for (Project project : projects) {
+                for (String configName : configNames) {
+                    Configuration configuration = project.configurations.getByName(configName)
+                    deps += configuration.resolvedConfiguration.firstLevelModuleDependencies
+                    if (!resolvedDeps.containsKey(configName)) {
+                        resolvedDeps[configName] = [] as SortedSet
+                    }
+                    configuration.incoming.resolutionResult.allDependencies { DependencyResult dr ->
+                        if (dr instanceof ResolvedDependencyResult) {
+                            resolvedDeps[configName] += makeModuleId(dr)
+                        } else {
+                            // We don't currently have any unresolved deps, though it is a potential return type of
+                            // ResolutionResult#allDependencies, see:
+                            // https://docs.gradle.org/current/javadoc/org/gradle/api/artifacts/result/ResolutionResult.html#getAllDependencies()
+                            logger.warn("Unresolved ${dr.from} -> ${dr.requested}")
+                        }
+                    }
                 }
             }
         }
 
         List<String> topLevelIds = []
+        Map<String, ResolvedDependency> resolvedVersions = [:]
         deps.each { dependency ->
             topLevelIds.add(makeModuleId(dependency.module))
-            collectDependenciesInternal(dependency)
+            resolveVersionRecursive(dependency, resolvedVersions)
+        }
+        ExecutorService taskExecutor = Executors.newCachedThreadPool()
+        List<Future> taskList = []
+        timeIt("** Parse all pom files") {
+            buildDepDescriptionsAsync(resolvedVersions, taskExecutor, taskList)
+            taskExecutor.shutdown()
+            taskList.each { task -> task.get() }
         }
 
-        topLevelIds.each { id -> dependencies.get(id).visible = true }
-
-        resolvedDeps['testCompile'].each { id ->
-            DependencyDescription dep = dependencies.get(id)
-            assert dep: "No dependency collected for artifact ${id}"
-            dep.testOnly = true
-        }
-
-        (resolvedDeps['androidTestCompile'] + resolvedDeps['androidTestCompileLatest']).each { id ->
-            DependencyDescription dep = dependencies.get(id)
-            assert dep: "No dependency collected for artifact ${id}"
-            dep.supportsAndroid = true
-            dep.testOnly = true
-        }
-
-        (resolvedDeps['buildCompile'] + resolvedDeps['buildCompileNoDeps']).each { id ->
-            DependencyDescription dep = dependencies.get(id)
-            assert dep: "No dependency collected for artifact ${id}"
-            dep.usedInBuild = true
-            dep.testOnly = false
-        }
-
-        (resolvedDeps['compile'] + resolvedDeps['compileLatest']).each { id ->
-            // TODO(https://crbug.com/394878886): Fix this if possible.
-            if (id == 'com_google_guava_guava') {
-                return
+        // Collect these using prefix match to allow variants "Latest", "NoDeps", "Autorolled".
+        Set<String> compileIds = [] as Set
+        Set<String> testIds = [] as Set
+        Set<String> androidTestIds = [] as Set
+        Set<String> buildIds = [] as Set
+        Set<String> autorolledIds = [] as Set
+        resolvedDeps.each { key, values ->
+            if (key.startsWith('compile')) {
+                compileIds.addAll(values);
+            } else if (key.startsWith('testCompile')) {
+                testIds.addAll(values);
+            } else if (key.startsWith('androidTest')) {
+                androidTestIds.addAll(values);
+            } else if (key.startsWith('build')) {
+                buildIds.addAll(values);
+            } else {
+                assert false : 'Unknown config ' + key
             }
-            DependencyDescription dep = dependencies.get(id)
-            assert dep: "No dependency collected for artifact ${id}"
-            dep.supportsAndroid = true
-            dep.testOnly = false
-            dep.isShipped = true
+            if (tagTargetsAsAutorolled && key.endsWith("Latest")) {
+                autorolledIds.addAll(values)
+            }
         }
 
-        // We only add testOnly after constructing the dependencies map, so now go through and see
-        // if we need to add testOnly to anything which depends on testOnly. In theory, this may
-        // need some recursion or looping to deal with multiple levels of unmarked targets, but I
-        // think in practice the only things getting annotated here will be a single level of
-        // synthetic groups which depend on testOnly targets.
-        dependencies.each { _, dep ->
-            dep.testOnly |= dep.children.any { id ->
-                dependencies.get(id).testOnly
+        dependencies.each { id, dep ->
+            dep.visible = topLevelIds.contains(id)
+            dep.isRobolectric = !anyContains(id, compileIds, androidTestIds, buildIds)
+            dep.testOnly = !anyContains(id, compileIds, buildIds)
+            dep.supportsAndroid = anyContains(id, compileIds, androidTestIds)
+            dep.requiresAndroid = dep.supportsAndroid && !anyContains(id, buildIds)
+            dep.usedInBuild = anyContains(id, buildIds)
+            dep.isShipped = anyContains(id, compileIds)
+            dep.isAutorolled = anyContains(id, autorolledIds)
+        }
+
+        // Find all reachable deps and mark unreachable ones as excluded.
+        // Required to prune deps of excluded deps.
+        Set<String> seen = new HashSet<>(topLevelIds);
+        seen.addAll(BuildConfigGenerator.EXISTING_LIBS.keySet());
+        ArrayList<String> workList = new ArrayList<>(topLevelIds);
+        while (!workList.isEmpty()) {
+          String id = workList.remove(workList.size() - 1);
+          DependencyDescription dep = dependencies.get(id)
+          dep.children.each { childId ->
+            DependencyDescription childDep = dependencies.get(childId)
+            if (!childDep.exclude && seen.add(childId)) {
+              workList.add(childId);
             }
+          }
+        }
+
+        dependencies.each { id, dep ->
+          if (!seen.contains(id)) {
+            dep.exclude = true
+          }
         }
 
         PROPERTY_OVERRIDES.each { id, overrides ->
@@ -377,6 +423,9 @@ class ChromiumDepGraph {
                 if (overrides.isShipped != null) {
                     dep.isShipped = overrides.isShipped
                 }
+                if (overrides.supportsAndroid != null) {
+                    dep.supportsAndroid = overrides.supportsAndroid
+                }
                 // If overrideLatest is true, set it recursively on the dep and all its children. This is convenient
                 // since you do not have to set it on a whole set of old deps.
                 if (overrides.overrideLatest) {
@@ -384,9 +433,26 @@ class ChromiumDepGraph {
                 }
                 dep.versionFilter = overrides.versionFilter
             } else {
-                logger.warn('PROPERTY_OVERRIDES has stale dep: ' + id)
+                if (warnOnStaleDeps) {
+                    logger.warn('PROPERTY_OVERRIDES has stale dep: ' + id)
+                }
             }
         }
+    }
+
+    <T> T timeIt(boolean enable, String actionName, Closure<T> closure) {
+        if (enable) {
+            return timeIt(actionName, closure)
+        }
+        return closure()
+    }
+
+    <T> T timeIt(String actionName, Closure<T> closure) {
+        def start = Instant.now()
+        def ret = closure()
+        def elapsed = Duration.between(start, Instant.now()).toMillis()
+        logger.warn "${actionName} took ${elapsed} ms"
+        return ret
     }
 
     private static String sanitize(String input) {
@@ -404,51 +470,8 @@ class ChromiumDepGraph {
         }
     }
 
-    private void collectDependenciesInternal(ResolvedDependency dependency) {
-        String id = makeModuleId(dependency.module)
-        if (dependencies.containsKey(id)) {
-            String gotVersion = dependency.module.id.version
-            if (dependencies.get(id).version == gotVersion) {
-                return
-            }
-            PropertyOverride overrides = PROPERTY_OVERRIDES.get(id)
-            if (overrides?.resolveVersion) {
-                if (overrides.resolveVersion != gotVersion) {
-                    return
-                }
-            } else if (isVersionLower(gotVersion, dependencies.get(id).version)) {
-                // Default to using largest version for version conflict resolution. See http://crbug.com/1040958.
-                // https://docs.gradle.org/current/userguide/dependency_resolution.html#sec:version-conflict
-                return
-            }
-        }
-        List<String> childModules = []
-
-        dependency.children.each { it ->
-            childModules += makeModuleId(it.module)
-        }
-
-        if (dependency.moduleArtifacts.empty) {
-            dependencies.put(id, buildDepDescriptionNoArtifact(id, dependency, childModules))
-            dependency.children.each {
-                it -> collectDependenciesInternal(it)
-            }
-        } else if (!areAllModuleArtifactsSameFile(dependency.moduleArtifacts)) {
-            throw new IllegalStateException("The dependency ${id} has multiple different artifacts: " +
-                    "${dependency.moduleArtifacts}")
-        } else {
-            ResolvedArtifact artifact = dependency.moduleArtifacts[0]
-            if (artifact.extension != 'jar' && artifact.extension != 'aar') {
-                throw new IllegalStateException("Type ${artifact.extension} of ${id} not supported.")
-            }
-            dependencies.put(id, buildDepDescription(id, dependency, artifact, childModules))
-            dependency.children.each {
-                it -> collectDependenciesInternal(it)
-            }
-        }
-    }
-
     private static boolean areAllModuleArtifactsSameFile(Set<ResolvedArtifact> artifacts) {
+        if (artifacts.size() == 1) return true
         String expectedPath = artifacts[0].file.absolutePath
         for (ResolvedArtifact artifact : artifacts) {
             if (expectedPath != artifact.file.absolutePath) {
@@ -456,6 +479,57 @@ class ChromiumDepGraph {
             }
         }
         return true
+    }
+
+    private void resolveVersionRecursive(ResolvedDependency dependency, Map<String, ResolvedDependency> resolvedVersions) {
+        String id = makeModuleId(dependency.module)
+        if (resolvedVersions.containsKey(id)) {
+            String gotVersion = dependency.module.id.version
+            if (resolvedVersions.get(id).module.id.version == gotVersion) {
+                return
+            }
+            PropertyOverride overrides = PROPERTY_OVERRIDES.get(id)
+            if (overrides?.resolveVersion) {
+                if (overrides.resolveVersion != gotVersion) {
+                    return
+                }
+            } else if (isVersionLower(gotVersion, resolvedVersions.get(id).module.id.version)) {
+                // Default to using largest version for version conflict resolution. See http://crbug.com/1040958.
+                // https://docs.gradle.org/current/userguide/dependency_resolution.html#sec:version-conflict
+                return
+            }
+        }
+
+        resolvedVersions.put(id, dependency)
+
+        dependency.children.each { it -> resolveVersionRecursive(it, resolvedVersions) }
+    }
+
+    private void buildDepDescriptionsAsync(Map<String, ResolvedDependency> resolvedDeps, ExecutorService taskExecutor, List<Future> taskList) {
+        resolvedDeps.each { String id, ResolvedDependency dependency ->
+            List<String> childModules = []
+
+            dependency.children.each { it ->
+                childModules += makeModuleId(it.module)
+            }
+
+            if (dependency.moduleArtifacts.empty) {
+                taskList.add(taskExecutor.submit {
+                    dependencies.put(id, buildDepDescriptionNoArtifact(id, dependency, childModules))
+                })
+            } else if (!areAllModuleArtifactsSameFile(dependency.moduleArtifacts)) {
+                throw new IllegalStateException("The dependency ${id} has multiple different artifacts: " +
+                        "${dependency.moduleArtifacts}")
+            } else {
+                ResolvedArtifact artifact = dependency.moduleArtifacts[0]
+                if (artifact.extension != 'jar' && artifact.extension != 'aar') {
+                    throw new IllegalStateException("Type ${artifact.extension} of ${id} not supported.")
+                }
+                taskList.add(taskExecutor.submit {
+                    dependencies.put(id, buildDepDescription(id, dependency, artifact, childModules))
+                })
+            }
+        }
     }
 
     private DependencyDescription buildDepDescriptionNoArtifact(
@@ -470,31 +544,31 @@ class ChromiumDepGraph {
                 children: Collections.unmodifiableList(new ArrayList<>(childModules)),
                 directoryName: id.toLowerCase(),
                 displayName: dependency.module.id.name,
-                exclude: false,
+                exclude: childModules.isEmpty(),
                 cipdSuffix: DEFAULT_CIPD_SUFFIX,
         ))
     }
 
     private DependencyDescription buildDepDescription(
             String id, ResolvedDependency dependency, ResolvedArtifact artifact, List<String> childModules) {
-        String pomUrl, repoUrl
+        String pomUrl, repoUrl, fileUrl, description, displayName
         GPathResult pomContent
+        List<LicenseSpec> licenses = []
         (repoUrl, pomUrl, pomContent) = computePomFromArtifact(artifact)
 
-        List<LicenseSpec> licenses = []
         if (!skipLicenses) {
             licenses = resolveLicenseInformation(pomContent)
         }
 
         // Build |fileUrl| by swapping '.pom' file extension with artifact file extension.
-        String fileUrl = pomUrl[0..-4] + artifact.extension
+        fileUrl = pomUrl[0..-4] + artifact.extension
         // Check that the URL is correct explicitly here. Otherwise, we won't
         // find out until 3pp bot runs.
         checkDownloadable(fileUrl)
 
         // Get rid of irrelevant indent that might be present in the XML file.
-        String description = pomContent.description?.text()?.trim()?.replaceAll(/\s+/, ' ')
-        String displayName = pomContent.name?.text()
+        description = pomContent.description?.text()?.trim()?.replaceAll(/\s+/, ' ')
+        displayName = pomContent.name?.text()
         displayName = displayName ?: dependency.module.id.name
 
         return customizeDep(new DependencyDescription(
@@ -568,6 +642,8 @@ class ChromiumDepGraph {
         } else if (dep.id?.startsWith('androidx_')) {
             // Some androidx dependencies don't set their URL, here is a good default.
             dep.url = dep.url ?: 'https://developer.android.com/jetpack/androidx'
+            // By default androidx dependencies' licenses are compatible with android.
+            dep.licenseAndroidCompatible = true
         }
 
         if (!dep.description && dep.id) {
@@ -601,10 +677,6 @@ class ChromiumDepGraph {
                 url = overrides.url ?: url
                 cipdSuffix = overrides.cipdSuffix ?: cipdSuffix
                 cpePrefix = overrides.cpePrefix ?: cpePrefix
-                // Boolean properties require explicit null checks instead of only when truish.
-                if (overrides.generateTarget != null) {
-                    generateTarget = overrides.generateTarget
-                }
                 if (overrides.exclude != null) {
                     exclude = overrides.exclude
                 }
@@ -760,8 +832,11 @@ class ChromiumDepGraph {
         // lowercase since 3pp uses the directory name as part of the CIPD names. However CIPD does not allow uppercase
         // in names.
         String directoryName
-        boolean supportsAndroid, visible, exclude, testOnly, isShipped, usedInBuild
-        boolean generateTarget = true
+        boolean visible, exclude, testOnly, isShipped, usedInBuild
+        boolean supportsAndroid
+        boolean requiresAndroid
+        boolean isRobolectric
+        boolean isAutorolled = false
         boolean licenseAndroidCompatible
         ComponentIdentifier componentId
         List<String> children
@@ -775,6 +850,87 @@ class ChromiumDepGraph {
         // This variable is not used in groovy code.
         String versionFilter
 
+        String getDirectoryPath() {
+            return BuildConfigGenerator.LIBS_DIRECTORY + '/' + directoryName
+        }
+
+        String getArtifactDirectoryPath() {
+            if (artifactPrefix) {
+                return "$artifactPrefix/$directoryPath"
+            }
+            return directoryPath
+        }
+
+        String getArtifactPrefix() {
+            // All artifacts live under cipd/ in all projects
+            return 'cipd'
+        }
+
+        String getCommittedDirectoryPath() {
+            if (committedPrefix) {
+                return "$committedPrefix/$directoryPath"
+            }
+            return directoryPath
+        }
+
+        String getCommittedPrefix() {
+            if (isAndroidx || isAutorolled) {
+                return 'committed'
+            }
+            // Main project does not have committed subdir since it is all
+            // "committed".
+            return null
+        }
+
+        String getRebasePrefix(String basePath) {
+            return Paths.get(basePath).relativize(Paths.get(this.projectPath)).toString()
+        }
+
+        // When writing the BUILD.gn, the paths of autorolled deps is rebased
+        // with respect to the main project path since the autorolled BUILD.gn
+        // is imported to the main BUILD.gn
+        String getRebasedCommittedDirectoryPath(String currentProjectPath) {
+            if (currentProjectPath == this.projectPath) {
+                return this.committedDirectoryPath
+            }
+            String rebasePrefix = getRebasePrefix(currentProjectPath)
+            return "${rebasePrefix}/$committedDirectoryPath"
+        }
+
+        String getRebasedArtifactDirectoryPath(String currentProjectPath) {
+            if (currentProjectPath == this.projectPath) {
+                return this.artifactDirectoryPath
+            }
+            String rebasePrefix = getRebasePrefix(currentProjectPath)
+            return "${rebasePrefix}/$artifactDirectoryPath"
+        }
+
+        boolean getIsAndroidx() {
+            return id.startsWith('androidx')
+        }
+
+        // This indicates which build.gradle subproject the target belongs to.
+        // Used to determine whether to process the target for this run.
+        String getProjectPath() {
+            if (isAndroidx) {
+                return BuildConfigGenerator.ANDROIDX_PROJECT_PATH
+            }
+            if (isAutorolled) {
+                return BuildConfigGenerator.AUTOROLLED_PROJECT_PATH
+            }
+            return BuildConfigGenerator.MAIN_PROJECT_PATH
+        }
+
+        // Indicates which BUILD.gn file the target lives in
+        String getBuildGnPath() {
+            if (isAndroidx) {
+                return BuildConfigGenerator.ANDROIDX_PROJECT_PATH
+            }
+            // While autorolled targets are generated as part of
+            // AUTOROLLED_PROJECT_PATH's BUILD.gn, it is declared inside a gn
+            // template to be imported into the MAIN_PROJECT_PATH's BUILD.gn.
+            return BuildConfigGenerator.MAIN_PROJECT_PATH
+        }
     }
 
     static class LicenseSpec {
@@ -792,10 +948,9 @@ class ChromiumDepGraph {
         String cpePrefix
         String resolveVersion
         Boolean isShipped
+        Boolean supportsAndroid
         // Set to true if this dependency is not needed.
         Boolean exclude
-        // Set to false to skip creation of BUILD.gn target.
-        Boolean generateTarget
         Boolean overrideLatest
         String versionFilter
 

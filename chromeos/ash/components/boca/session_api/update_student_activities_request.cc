@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/json/json_writer.h"
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/types/expected.h"
 #include "base/values.h"
@@ -27,6 +28,7 @@ bool ParseResponse(std::string json) {
 
 UpdateStudentActivitiesRequest::UpdateStudentActivitiesRequest(
     google_apis::RequestSender* sender,
+    std::string base_url,
     std::string session_id,
     GaiaId gaia_id,
     std::string device_id,
@@ -37,7 +39,7 @@ UpdateStudentActivitiesRequest::UpdateStudentActivitiesRequest(
       session_id_(std::move(session_id)),
       gaia_id_(std::move(gaia_id)),
       device_id_(std::move(device_id)),
-      url_base_(kSchoolToolsApiBaseUrl),
+      url_base_(std::move(base_url)),
       callback_(std::move(callback)) {}
 
 UpdateStudentActivitiesRequest ::~UpdateStudentActivitiesRequest() = default;

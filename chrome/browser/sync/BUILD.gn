@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/chromeos/ui_mode.gni")
+import("//chrome/common/features.gni")
 import("//components/supervised_user/buildflags.gni")
 import("//extensions/buildflags/buildflags.gni")
 
@@ -58,6 +58,7 @@ source_set("sync") {
     "//chrome/browser:browser_public_dependencies",
     "//chrome/browser/profiles:profile",
     "//components/browser_sync",
+    "//components/collaboration/public",
     "//components/favicon/core",
     "//components/keyed_service/core",
     "//components/prefs",
@@ -80,11 +81,13 @@ source_set("sync") {
     "//chrome/app:generated_resources",
     "//chrome/app:generated_resources_grit",
     "//chrome/browser:browser_process",
+    "//chrome/browser/plus_addresses",
 
     # TODO(crbug.com/374910357): Investigate for a better dependency injection.
     "//chrome/browser/autofill",
     "//chrome/browser/favicon",
     "//chrome/browser/prefs:util",
+    "//chrome/browser/profiles",
     "//chrome/browser/promos:utils",
     "//chrome/browser/reading_list",
     "//chrome/browser/search_engines",
@@ -152,7 +155,10 @@ source_set("sync") {
       "glue/web_contents_state_synced_tab_delegate.cc",
       "glue/web_contents_state_synced_tab_delegate.h",
     ]
-    deps += [ "//chrome/browser/sync/android:jni_headers" ]
+    deps += [
+      "//chrome/browser/sync/android:jni_headers",
+      "//chrome/browser/ui/android/tab_model",
+    ]
   } else {
     sources += [
       "glue/extension_data_type_controller.cc",
@@ -167,6 +173,7 @@ source_set("sync") {
       "//chrome/browser/ui/tabs:tab_strip_model_observer",
     ]
     deps += [
+      "//chrome/browser/accessibility/tree_fixing:prefs",
       "//chrome/browser/themes",
       "//chrome/browser/ui/tabs:tab_strip",
       "//chrome/browser/web_applications",
@@ -181,7 +188,7 @@ source_set("sync") {
       ]
     }
   }
-  if (is_chromeos_ash) {
+  if (is_chromeos) {
     sources += [
       "desk_sync_service_factory.cc",
       "desk_sync_service_factory.h",
@@ -217,6 +224,10 @@ source_set("sync") {
       "//chrome/browser/ash/login/session",
     ]
   }
+
+  if (enable_glic) {
+    deps += [ "//chrome/browser/glic" ]
+  }
 }
 
 # Code that depends on this target must be linked into //chrome/browser:browser
@@ -230,5 +241,6 @@ source_set("factories") {
   public_deps = [
     "//base",
     "//chrome/browser/profiles",
+    "//components/sync/engine",
   ]
 }

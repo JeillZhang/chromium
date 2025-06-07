@@ -7,11 +7,14 @@ package org.chromium.chrome.browser.app.tabmodel;
 import android.app.Activity;
 import android.util.Pair;
 
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.supplier.OneshotSupplier;
+import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.DeferredStartupHandler;
+import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
@@ -24,9 +27,11 @@ import org.chromium.chrome.browser.tabmodel.MismatchedIndicesHandler;
 import org.chromium.chrome.browser.tabmodel.NextTabPolicy.NextTabPolicySupplier;
 import org.chromium.chrome.browser.tabmodel.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
+import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorBase;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorImpl;
+import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStore;
 import org.chromium.chrome.browser.tabmodel.TabbedModeTabPersistencePolicy;
 import org.chromium.ui.modaldialog.ModalDialogManager;
@@ -44,6 +49,7 @@ public class TabbedModeTabModelOrchestrator extends TabModelOrchestrator {
     // This class is driven by TabbedModeTabModelOrchestrator to prevent duplicate glue code in
     //  ChromeTabbedActivity.
     private ArchivedTabModelOrchestrator mArchivedTabModelOrchestrator;
+    private @Nullable Supplier<TabModel> mArchivedHistoricalObserverSupplier;
     private OneshotSupplier<ProfileProvider> mProfileProviderSupplier;
 
     /**
@@ -66,6 +72,8 @@ public class TabbedModeTabModelOrchestrator extends TabModelOrchestrator {
     @Override
     public void destroy() {
         if (mArchivedTabModelOrchestrator != null) {
+            mArchivedTabModelOrchestrator.removeHistoricalTabModelObserver(
+                    mArchivedHistoricalObserverSupplier);
             mArchivedTabModelOrchestrator.unregisterTabModelOrchestrator(this);
         }
         super.destroy();
@@ -189,12 +197,26 @@ public class TabbedModeTabModelOrchestrator extends TabModelOrchestrator {
     public void onNativeLibraryReady(TabContentManager tabContentManager) {
         super.onNativeLibraryReady(tabContentManager);
 
-        if (ChromeFeatureList.sAndroidTabDeclutterRescueKillSwitch.isEnabled()) {
-            DeferredStartupHandler.getInstance()
-                    .addDeferredTask(
-                            () -> createAndInitArchivedTabModelOrchestrator(tabContentManager));
-            DeferredStartupHandler.getInstance().queueDeferredTasksOnIdleHandler();
+        if (!ChromeFeatureList.sAndroidTabDeclutterRescueKillSwitch.isEnabled()) {
+            return;
         }
+
+        if (ChromeFeatureList.sAndroidTabDeclutterPerformanceImprovements.isEnabled()) {
+            TabModelUtils.runOnTabStateInitialized(
+                    mTabModelSelector,
+                    (selector) -> {
+                        createArchivedTabModelInDeferredTask(tabContentManager);
+                    });
+        } else {
+            createArchivedTabModelInDeferredTask(tabContentManager);
+        }
+    }
+
+    private void createArchivedTabModelInDeferredTask(TabContentManager tabContentManager) {
+        DeferredStartupHandler.getInstance()
+                .addDeferredTask(
+                        () -> createAndInitArchivedTabModelOrchestrator(tabContentManager));
+        DeferredStartupHandler.getInstance().queueDeferredTasksOnIdleHandler();
     }
 
     @Override
@@ -219,8 +241,10 @@ public class TabbedModeTabModelOrchestrator extends TabModelOrchestrator {
         mArchivedTabModelOrchestrator = ArchivedTabModelOrchestrator.getForProfile(profile);
         mArchivedTabModelOrchestrator.maybeCreateAndInitTabModels(
                 tabContentManager, mCipherFactory);
+        mArchivedHistoricalObserverSupplier =
+                () -> getTabModelSelector().getModel(/* incognito= */ false);
         mArchivedTabModelOrchestrator.initializeHistoricalTabModelObserver(
-                () -> getTabModelSelector().getModel(/* incognito= */ false));
+                mArchivedHistoricalObserverSupplier);
         // Registering will automatically do an archive pass, and schedule recrurring passes for
         // long-running instances of Chrome.
         mArchivedTabModelOrchestrator.registerTabModelOrchestrator(this);

@@ -67,7 +67,7 @@ void CheckForOverRealization() {
 }
 
 // Serializes the `session_storage` to proto::WebStateStorage.
-web::proto::WebStateStorage SessionStorageToProto(
+std::optional<web::proto::WebStateStorage> SessionStorageToProto(
     CRWSessionStorage* session_storage) {
   web::proto::WebStateStorage storage;
   [session_storage serializeToProto:storage];
@@ -180,6 +180,13 @@ WebStateImpl::~WebStateImpl() {
   } else {
     saved_->TearDown();
   }
+
+  // Destroy all attached UserData before invalidating pimpl_ or saved_.
+  // As most of them have a pointer back to the WebState, this ensures
+  // they are destroyed while the pointer is still valid (i.e. they can
+  // use the pointer in their destructor, even if they don't observe
+  // WebStateDestroyed).
+  ClearAllUserData();
 }
 
 /* static */
@@ -267,11 +274,6 @@ void WebStateImpl::OnFaviconUrlUpdated(
 void WebStateImpl::OnStateChangedForPermission(Permission permission) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   RealizedState()->OnStateChangedForPermission(permission);
-}
-
-void WebStateImpl::OnUnderPageBackgroundColorChanged() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  RealizedState()->OnUnderPageBackgroundColorChanged();
 }
 
 NavigationManagerImpl& WebStateImpl::GetNavigationManagerImpl() {
@@ -399,31 +401,31 @@ void WebStateImpl::ShowRepostFormWarningDialog(
                                                std::move(callback));
 }
 
-void WebStateImpl::RunJavaScriptAlertDialog(const GURL& origin_url,
+void WebStateImpl::RunJavaScriptAlertDialog(const url::Origin& origin,
                                             NSString* message_text,
                                             base::OnceClosure callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  RealizedState()->RunJavaScriptAlertDialog(origin_url, message_text,
+  RealizedState()->RunJavaScriptAlertDialog(origin, message_text,
                                             std::move(callback));
 }
 
 void WebStateImpl::RunJavaScriptConfirmDialog(
-    const GURL& origin_url,
+    const url::Origin& origin,
     NSString* message_text,
     base::OnceCallback<void(bool success)> callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  RealizedState()->RunJavaScriptConfirmDialog(origin_url, message_text,
+  RealizedState()->RunJavaScriptConfirmDialog(origin, message_text,
                                               std::move(callback));
 }
 
 void WebStateImpl::RunJavaScriptPromptDialog(
-    const GURL& origin_url,
+    const url::Origin& origin,
     NSString* message_text,
     NSString* default_prompt_text,
     base::OnceCallback<void(NSString* user_input)> callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   RealizedState()->RunJavaScriptPromptDialog(
-      origin_url, message_text, default_prompt_text, std::move(callback));
+      origin, message_text, default_prompt_text, std::move(callback));
 }
 
 bool WebStateImpl::IsJavaScriptDialogRunning() {
@@ -553,15 +555,12 @@ WebState* WebStateImpl::ForceRealized() {
     // pass it to initialize the RealizedWebState).
     std::unique_ptr<SerializedData> saved = std::move(saved_);
 
-    // Load the storage from disk.
-    proto::WebStateStorage storage = saved->TakeStorageLoader().Run();
-
     // Perform the initialisation of the RealizedWebState. No outside
     // code should be able to observe the WebStateImpl with both `saved_`
     // and `pimpl_` set.
     pimpl_->InitWithProto(saved->GetBrowserState(), saved->GetLastActiveTime(),
                           saved->GetTitle(), saved->GetVisibleURL(),
-                          saved->GetFaviconStatus(), std::move(storage),
+                          saved->GetFaviconStatus(), saved->LoadStorage(),
                           saved->TakeNativeSessionFetcher());
 
     // Delete the SerializedData without calling TearDown() as the WebState

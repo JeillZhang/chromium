@@ -5,11 +5,11 @@
 #include "chrome/browser/trusted_vault/trusted_vault_client_android.h"
 
 #include <utility>
+#include <variant>
 
 #include "base/android/jni_android.h"
 #include "base/check_op.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "components/sync/service/sync_service_utils.h"
 #include "content/public/browser/browser_thread.h"
@@ -82,7 +82,7 @@ void TrustedVaultClientAndroid::FetchKeysCompleted(
 
   OngoingRequest ongoing_request = GetAndUnregisterOngoingRequest(request_id);
   OngoingFetchKeys& ongoing_fetch_keys =
-      absl::get<OngoingFetchKeys>(ongoing_request);
+      std::get<OngoingFetchKeys>(ongoing_request);
 
   DCHECK_EQ(ongoing_fetch_keys.account_info.gaia, GaiaId(gaia_id))
       << "User mismatch in FetchKeys() response";
@@ -100,7 +100,7 @@ void TrustedVaultClientAndroid::MarkLocalKeysAsStaleCompleted(
 
   OngoingRequest ongoing_request = GetAndUnregisterOngoingRequest(request_id);
 
-  std::move(absl::get<OngoingMarkLocalKeysAsStale>(ongoing_request).callback)
+  std::move(std::get<OngoingMarkLocalKeysAsStale>(ongoing_request).callback)
       .Run(!!succeeded);
 }
 
@@ -113,7 +113,7 @@ void TrustedVaultClientAndroid::GetIsRecoverabilityDegradedCompleted(
   OngoingRequest ongoing_request = GetAndUnregisterOngoingRequest(request_id);
 
   std::move(
-      absl::get<OngoingGetIsRecoverabilityDegraded>(ongoing_request).callback)
+      std::get<OngoingGetIsRecoverabilityDegraded>(ongoing_request).callback)
       .Run(!!is_degraded);
 }
 
@@ -124,8 +124,7 @@ void TrustedVaultClientAndroid::AddTrustedRecoveryMethodCompleted(
 
   OngoingRequest ongoing_request = GetAndUnregisterOngoingRequest(request_id);
 
-  std::move(
-      absl::get<OngoingAddTrustedRecoveryMethod>(ongoing_request).callback)
+  std::move(std::get<OngoingAddTrustedRecoveryMethod>(ongoing_request).callback)
       .Run();
 }
 
@@ -261,7 +260,7 @@ TrustedVaultClientAndroid::GetAndUnregisterOngoingRequest(RequestId id) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   auto it = ongoing_requests_.find(id);
-  CHECK(it != ongoing_requests_.end(), base::NotFatalUntil::M130);
+  CHECK(it != ongoing_requests_.end());
 
   OngoingRequest request = std::move(it->second);
   ongoing_requests_.erase(it);

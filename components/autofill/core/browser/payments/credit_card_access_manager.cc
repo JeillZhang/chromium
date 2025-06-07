@@ -20,7 +20,7 @@
 #include "build/build_config.h"
 #include "components/autofill/core/browser/autofill_progress_dialog_type.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/form_import/form_data_importer.h"
 #include "components/autofill/core/browser/foundations/autofill_client.h"
 #include "components/autofill/core/browser/foundations/autofill_driver.h"
@@ -41,6 +41,7 @@
 #include "components/autofill/core/browser/payments/payments_util.h"
 #include "components/autofill/core/browser/payments/payments_window_manager.h"
 #include "components/autofill/core/browser/payments/webauthn_callback_types.h"
+#include "components/autofill/core/browser/suggestions/payments/payments_suggestion_generator.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/strings/grit/components_strings.h"
@@ -71,7 +72,6 @@ constexpr auto kDelayForGetUnmaskDetails = base::Minutes(3);
 // Suffix for server IDs in the cache indicating that a card is a virtual card.
 constexpr char kVirtualCardIdentifier[] = "_vcn";
 
-#if !BUILDFLAG(IS_IOS)
 bool IsEligibleForCardInfoRetrievalAuthentication(
     const CreditCard& card,
     const std::vector<CardUnmaskChallengeOption>& challenge_options) {
@@ -93,7 +93,6 @@ bool IsEligibleForCardInfoRetrievalAuthentication(
 
   return true;
 }
-#endif  // !BUILDFLAG(IS_IOS)
 
 }  // namespace
 
@@ -155,7 +154,7 @@ bool CreditCardAccessManager::ShouldClearPreviewedForm() {
 void CreditCardAccessManager::PrepareToFetchCreditCard() {
 #if !BUILDFLAG(IS_IOS)
   // No need to fetch details if there are no server cards.
-  if (std::ranges::all_of(payments_data_manager().GetCreditCardsToSuggest(),
+  if (std::ranges::all_of(GetCreditCardsToSuggest(payments_data_manager()),
                           &CreditCard::IsLocalCard)) {
     return;
   }
@@ -274,6 +273,8 @@ void CreditCardAccessManager::LogMetricsAndFillFormForServerUnmaskFlows(
     autofill_metrics::LogCardInfoRetrievalEnrolledUnmaskResult(
         CardInfoRetrievalEnrolledUnmaskResult::kAuthenticationUnmasked);
   }
+  autofill_client().GetFormDataImporter()->set_card_was_fetched_from_cache(
+      false);
   std::move(on_credit_card_fetched_callback_).Run(*card_);
 }
 
@@ -358,15 +359,15 @@ void CreditCardAccessManager::FetchCreditCard(
   if (it != unmasked_card_cache_.end()) {  // key is in cache
     it->second.card.set_cvc(it->second.cvc);
     std::move(on_credit_card_fetched).Run(/*credit_card=*/it->second.card);
-    std::string metrics_name =
-        record_type == CreditCard::RecordType::kVirtualCard
-            ? "Autofill.UsedCachedVirtualCard"
-            : "Autofill.UsedCachedServerCard";
-    base::UmaHistogramCounts1000(metrics_name, ++it->second.cache_uses);
 
     autofill_metrics::LogServerCardUnmaskResult(
         ServerCardUnmaskResult::kLocalCacheHit, record_type,
         ServerCardUnmaskFlowType::kUnspecified);
+
+    // If the card is fetched from the in-memory cache, notify the
+    // FormDataImporter.
+    autofill_client().GetFormDataImporter()->set_card_was_fetched_from_cache(
+        true);
 
     Reset();
     return;
@@ -391,9 +392,22 @@ void CreditCardAccessManager::FetchCreditCard(
 }
 
 bool CreditCardAccessManager::IsMaskedServerCardRiskBasedAuthAvailable() const {
+  // On some particular platforms (iOS WebView i.e.), Hagrid (risk based
+  // authentication) is not supported. This check if the current platform
+  // supports Hagrid.
+  if (!payments_autofill_client().IsRiskBasedAuthEffectivelyAvailable()) {
+    return false;
+  }
+
+  bool isCardInfoRetrievalEnrolled =
+      base::FeatureList::IsEnabled(
+          features::kAutofillEnableCardInfoRuntimeRetrieval) &&
+      (card_->card_info_retrieval_enrollment_state() ==
+       CreditCard::CardInfoRetrievalEnrollmentState::kRetrievalEnrolled);
   return !card_->IsExpired(AutofillClock::Now()) &&
-         base::FeatureList::IsEnabled(
-             features::kAutofillEnableFpanRiskBasedAuthentication);
+         (base::FeatureList::IsEnabled(
+              features::kAutofillEnableFpanRiskBasedAuthentication) ||
+          isCardInfoRetrievalEnrolled);
 }
 
 void CreditCardAccessManager::FIDOAuthOptChange(bool opt_in) {
@@ -511,11 +525,6 @@ void CreditCardAccessManager::StartAuthenticationFlowForVirtualCard(
 
 void CreditCardAccessManager::StartAuthenticationFlowForMaskedServerCard(
     bool fido_auth_enabled) {
-  UnmaskAuthFlowType flow_type;
-#if BUILDFLAG(IS_IOS)
-  // On iOS only the CVC auth is available for masked server card.
-  flow_type = UnmaskAuthFlowType::kCvc;
-#else
   // We check if the card is enrolled in runtime retrieval and only SMS OTP
   // challenge options are present, then render the challenge option selection
   // dialog. Currently the selection dialog box is only supported for SMS OTP
@@ -527,6 +536,11 @@ void CreditCardAccessManager::StartAuthenticationFlowForMaskedServerCard(
     return;
   }
 
+  UnmaskAuthFlowType flow_type;
+#if BUILDFLAG(IS_IOS)
+  // On iOS only the CVC auth is available for masked server card.
+  flow_type = UnmaskAuthFlowType::kCvc;
+#else
   // If not enrolled in runtime retrieval then currently only FIDO and CVC auth
   // are available for masked server card.
   if (!fido_auth_enabled) {
@@ -746,7 +760,7 @@ void CreditCardAccessManager::OnCvcAuthenticationComplete(
     // filling.
     GetOrCreateFidoAuthenticator()->Authorize(GetWeakPtr(),
                                               response.card_authorization_token,
-                                              request_options.Clone());
+                                              std::move(request_options));
 #endif
   }
   if (ShouldOfferFidoOptInDialog(response)) {

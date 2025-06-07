@@ -8,6 +8,7 @@
 #include <Foundation/Foundation.h>
 
 #include "base/apple/foundation_util.h"
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
 #include "base/memory/raw_ptr_exclusion.h"
@@ -438,21 +439,26 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 }
 
 - (BOOL)conditionallyRespondsToSelector:(SEL)selector {
-  static std::unordered_set<SEL> methodSelectorsForActions = {
-      @selector(accessibilityPerformPress),
-  };
+  static base::NoDestructor<std::unordered_set<SEL>> methodSelectorsForActions({
+    @selector(accessibilityPerformPress),
+        @selector(accessibilityPerformDecrement),
+        @selector(accessibilityPerformIncrement),
+        @selector(accessibilityPerformShowMenu),
+        @selector(accessibilityPerformConfirm)
+  });
 
-  static std::unordered_set<SEL> methodSelectorsForParameterizedAttributes = {
-      @selector(accessibilityCellForColumn:row:),
-      @selector(accessibilityRangeForIndex:),
-      @selector(accessibilityRangeForLine:),
-      @selector(accessibilityRangeForPosition:),
-  };
+  static base::NoDestructor<std::unordered_set<SEL>>
+      methodSelectorsForParameterizedAttributes({
+        @selector(accessibilityCellForColumn:row:),
+            @selector(accessibilityRangeForIndex:),
+            @selector(accessibilityRangeForLine:),
+            @selector(accessibilityRangeForPosition:),
+      });
 
   // See if the method is permitted by checking its corresponding parameterized
   // attribute counterpart.
-  if (methodSelectorsForParameterizedAttributes.find(selector) !=
-      methodSelectorsForParameterizedAttributes.end()) {
+  if (methodSelectorsForParameterizedAttributes->find(selector) !=
+      methodSelectorsForParameterizedAttributes->end()) {
     NSString* selectorString = NSStringFromSelector(selector);
     NSString* attribute =
         [[AXPlatformNodeCocoa newAccessibilityAPIMethodToAttributeMap]
@@ -466,8 +472,8 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 
   // See if the method is permitted by checking its corresponding action
   // counterpart.
-  if (methodSelectorsForActions.find(selector) !=
-      methodSelectorsForActions.end()) {
+  if (methodSelectorsForActions->find(selector) !=
+      methodSelectorsForActions->end()) {
     NSString* selectorString = NSStringFromSelector(selector);
     NSString* action =
         [[AXPlatformNodeCocoa newAccessibilityAPIMethodToActionMap]
@@ -484,19 +490,20 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   // If we're in old-accessibility-API mode, disable methods that we've added
   // to support the new API.
   if (!features::IsMacAccessibilityAPIMigrationEnabled()) {
-    static std::unordered_set<SEL> newAccessibilityAPISelectors;
+    static base::NoDestructor<std::unordered_set<SEL>>
+        newAccessibilityAPISelectors;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
       NSSet<NSString*>* methodNames =
           [AXPlatformNodeCocoa newAccessibilityAPIMethods];
       for (NSString* methodName in methodNames) {
         SEL methodSelector = NSSelectorFromString(methodName);
-        newAccessibilityAPISelectors.insert(methodSelector);
+        newAccessibilityAPISelectors->insert(methodSelector);
       }
     });
 
-    if (newAccessibilityAPISelectors.find(selector) !=
-        newAccessibilityAPISelectors.end()) {
+    if (newAccessibilityAPISelectors->find(selector) !=
+        newAccessibilityAPISelectors->end()) {
       return NO;
     }
   } else {
@@ -504,14 +511,12 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
     // that are expected to continue to work independent of the flag. For any
     // such API, ensure the corresponding old API is not available when the flag
     // is enabled.
-    static std::unordered_set<SEL> deprecatedSelectors = {
-        @selector(AXInsertionPointLineNumber),
-        @selector(AXNumberOfCharacters),
-        @selector(AXPlaceholderValue),
-        @selector(AXSelectedText),
-        @selector(AXSelectedTextRange),
-        @selector(AXVisibleCharacterRange)};
-    if (deprecatedSelectors.find(selector) != deprecatedSelectors.end()) {
+    static base::NoDestructor<std::unordered_set<SEL>> deprecatedSelectors({
+      @selector(AXInsertionPointLineNumber), @selector(AXNumberOfCharacters),
+          @selector(AXPlaceholderValue), @selector(AXSelectedText),
+          @selector(AXSelectedTextRange), @selector(AXVisibleCharacterRange)
+    });
+    if (deprecatedSelectors->find(selector) != deprecatedSelectors->end()) {
       return NO;
     }
   }
@@ -574,7 +579,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   if (ui::IsRadio(role) || ui::IsCheckBox(role))
     return nil;
 
-  return label->GetNativeViewAccessible();
+  return label->GetNativeViewAccessible().Get();
 }
 
 - (BOOL)isNameFromLabel {
@@ -598,9 +603,9 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 
   // No label for windows or native dialogs.
   ax::mojom::Role role = _node->GetRole();
-  if (ui::IsWindow(role) ||
-      (ui::IsDialog(role) && !_node->GetDelegate()->IsWebContent()))
+  if (ui::IsWindow(role) || (ui::IsDialog(role) && !_node->IsWebContent())) {
     return false;
+  }
 
   // VoiceOver computes the wrong description for a link.
   if (ui::IsLink(role))
@@ -668,7 +673,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   for (auto& attributeValue : attributeValues) {
     ui::AXPlatformNode* node = delegate->GetFromNodeID(attributeValue);
     if (node) {
-      [elements addObject:node->GetNativeViewAccessible()];
+      [elements addObject:node->GetNativeViewAccessible().Get()];
     }
   }
   return elements;
@@ -683,7 +688,9 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
       treeItemIds->push_back(childDelegate->GetId());
     }
     gfx::NativeViewAccessible child = childDelegate->GetNativeViewAccessible();
-    [child getTreeItemDescendantNodeIds:treeItemIds];
+    AXPlatformNodeCocoa* childCocoa =
+        base::apple::ObjCCastStrict<AXPlatformNodeCocoa>(child.Get());
+    [childCocoa getTreeItemDescendantNodeIds:treeItemIds];
   }
 }
 
@@ -1014,17 +1021,20 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   return self;
 }
 
-- (void)detach {
+- (void)detachAndNotifyDestroyed:(BOOL)shouldNotify {
   if (!_node)
     return;
   _node = nil;
-  NSAccessibilityPostNotification(
-      self, NSAccessibilityUIElementDestroyedNotification);
+  if (shouldNotify) {
+    NSAccessibilityPostNotification(
+        self, NSAccessibilityUIElementDestroyedNotification);
+  }
 }
 
 - (NSRect)boundsInScreen {
-  if (!_node || !_node->GetDelegate())
+  if (!_node) {
     return NSZeroRect;
+  }
   return gfx::ScreenRectToNSRect(_node->GetDelegate()->GetBoundsRect(
       ui::AXCoordinateSystem::kScreenDIPs, ui::AXClippingBehavior::kClipped));
 }
@@ -1074,8 +1084,10 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 
 - (AXPlatformNodeCocoa*)fromNodeID:(ui::AXNodeID)id {
   ui::AXPlatformNode* cell = _node->GetDelegate()->GetFromNodeID(id);
-  if (cell)
-    return cell->GetNativeViewAccessible();
+  if (cell) {
+    return base::apple::ObjCCast<AXPlatformNodeCocoa>(
+        cell->GetNativeViewAccessible().Get());
+  }
   return nil;
 }
 
@@ -1364,7 +1376,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 }
 
 - (id)accessibilityFocusedUIElement {
-  return _node ? _node->GetDelegate()->GetFocus() : nil;
+  return _node ? _node->GetDelegate()->GetFocus().Get() : nil;
 }
 
 // This function and accessibilityPerformAction:, while deprecated, are a) still
@@ -1385,6 +1397,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
               containsObject:evaluatedObject];
         }]];
   }
+
   return actions;
 }
 
@@ -2058,7 +2071,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   ui::AXPlatformNodeBase* text_field_ancestor =
       _node->GetPlatformTextFieldAncestor();
   if (text_field_ancestor)
-    return text_field_ancestor->GetNativeViewAccessible();
+    return text_field_ancestor->GetNativeViewAccessible().Get();
   return nil;
 }
 
@@ -2162,7 +2175,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   if (!container)
     return nil;
 
-  return @[ container->GetNativeViewAccessible() ];
+  return @[ container->GetNativeViewAccessible().Get() ];
 }
 
 - (NSString*)AXPopupValue {
@@ -2308,13 +2321,13 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   // The assignment to ancestor may be null.
   if (!ancestor)
     return nil;
-  return ancestor->GetNativeViewAccessible();
+  return ancestor->GetNativeViewAccessible().Get();
 }
 
 - (id)AXParent {
   if (!_node)
     return nil;
-  return NSAccessibilityUnignoredAncestor(_node->GetParent());
+  return NSAccessibilityUnignoredAncestor(_node->GetParent().Get());
 }
 
 - (NSArray*)accessibilityChildren {
@@ -2330,9 +2343,9 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
     if (child && child->IsInvisibleOrIgnored()) {
       [children
           addObjectsFromArray:[child_iterator_ptr->GetNativeViewAccessible()
-                                  accessibilityChildren]];
+                                      .Get() accessibilityChildren]];
     } else {
-      [children addObject:child_iterator_ptr->GetNativeViewAccessible()];
+      [children addObject:child_iterator_ptr->GetNativeViewAccessible().Get()];
     }
   }
   return NSAccessibilityUnignoredChildren(children);
@@ -2344,7 +2357,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 }
 
 - (id)AXWindow {
-  return _node->GetDelegate()->GetNSWindow();
+  return _node->GetDelegate()->GetNSWindow().Get();
 }
 
 - (id)AXTopLevelUIElement {
@@ -2420,8 +2433,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 
 // LINT.IfChange
 - (NSString*)AXSelectedText {
-  NSRange selectedTextRange;
-  [[self AXSelectedTextRange] getValue:&selectedTextRange];
+  NSRange selectedTextRange = [[self AXSelectedTextRange] rangeValue];
   return [[self getAXValueAsString] substringWithRange:selectedTextRange];
 }
 // LINT.ThenChange(accessibilitySelectedText)
@@ -2479,8 +2491,9 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 
 - (id)AXStringForRange:(id)parameter {
   if (![parameter isKindOfClass:[NSValue class]] ||
-      (0 != strcmp([parameter objCType], @encode(NSRange))))
+      (0 != UNSAFE_TODO(strcmp([parameter objCType], @encode(NSRange))))) {
     return nil;
+  }
 
   return [self accessibilityStringForRange:[parameter rangeValue]];
 }
@@ -2690,7 +2703,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
                                 &targetId)) {
     ui::AXPlatformNode* target = delegate->GetFromNodeID(targetId);
     if (target) {
-      [elements addObject:target->GetNativeViewAccessible()];
+      [elements addObject:target->GetNativeViewAccessible().Get()];
     }
   }
 
@@ -2946,7 +2959,6 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   }
 
   ui::AXPlatformNodeDelegate* delegate = _node->GetDelegate();
-  DCHECK(delegate);
 
   NSMutableArray* ret = [NSMutableArray array];
 
@@ -2979,7 +2991,6 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   }
 
   ui::AXPlatformNodeDelegate* tableDelegate = table->GetDelegate();
-  DCHECK(tableDelegate);
   for (ui::AXNodeID id : tableDelegate->GetColHeaderNodeIds(*column)) {
     AXPlatformNodeCocoa* colheader = [self fromNodeID:id];
     if (colheader) {
@@ -2997,7 +3008,6 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 
   if (ui::IsTableLike(_node->GetRole())) {
     ui::AXPlatformNodeDelegate* delegate = _node->GetDelegate();
-    DCHECK(delegate);
     // The table header container is a special node in the accessibility tree
     // only used on macOS. It has all of the table headers as its children, even
     // though those cells are also children of rows in the table. Internally
@@ -3042,7 +3052,6 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   }
 
   ui::AXPlatformNodeDelegate* delegate = _node->GetDelegate();
-  DCHECK(delegate);
   std::optional<int> count = delegate->GetTableColCount();
   if (count.has_value()) {
     return *count;
@@ -3061,7 +3070,6 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   }
 
   ui::AXPlatformNodeDelegate* delegate = _node->GetDelegate();
-  DCHECK(delegate);
   std::optional<int> count = delegate->GetTableRowCount();
   if (count.has_value()) {
     return *count;
@@ -3096,9 +3104,6 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   }
 
   ui::AXPlatformNodeDelegate* tableDelegate = tableNode->GetDelegate();
-  if (!tableDelegate) {
-    return nil;
-  }
 
   // A table with no row headers.
   if (isTableLike && !tableDelegate->GetTableRowCount().has_value()) {
@@ -3125,7 +3130,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
     for (int32_t headerId : headerIds) {
       ui::AXPlatformNode* cellNode = tableDelegate->GetFromNodeID(headerId);
       if (cellNode) {
-        [rowHeaders addObject:cellNode->GetNativeViewAccessible()];
+        [rowHeaders addObject:cellNode->GetNativeViewAccessible().Get()];
       }
     }
   } else {
@@ -3133,7 +3138,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
     for (int32_t nodeId : delegate->GetRowHeaderNodeIds()) {
       ui::AXPlatformNode* cellNode = delegate->GetFromNodeID(nodeId);
       if (cellNode) {
-        [rowHeaders addObject:cellNode->GetNativeViewAccessible()];
+        [rowHeaders addObject:cellNode->GetNativeViewAccessible().Get()];
       }
     }
   }
@@ -3187,7 +3192,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   for (int32_t nodeId : nodeIds) {
     ui::AXPlatformNode* rowNode = delegate->GetFromNodeID(nodeId);
     if (rowNode) {
-      [rows addObject:rowNode->GetNativeViewAccessible()];
+      [rows addObject:rowNode->GetNativeViewAccessible().Get()];
     }
   }
 
@@ -3560,7 +3565,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
     if (auto* delegate = target->GetDelegate()) {
       if (delegate->GetRole() == ax::mojom::Role::kScrollBar &&
           delegate->HasState(state)) {
-        return target->GetNativeViewAccessible();
+        return target->GetNativeViewAccessible().Get();
       }
     }
   }
@@ -3604,7 +3609,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
     return nil;
   }
 
-  return cell->GetNativeViewAccessible();
+  return cell->GetNativeViewAccessible().Get();
 }
 // LINT.ThenChange(ui/accessibility/platform/browser_accessibility_cocoa.mm:accessibilityCellForColumn)
 
@@ -3665,7 +3670,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   for (int32_t id : table->GetTableUniqueCellIds()) {
     ui::AXPlatformNode* cell = table->GetFromNodeID(id);
     if (cell) {
-      [cells addObject:cell->GetNativeViewAccessible()];
+      [cells addObject:cell->GetNativeViewAccessible().Get()];
     }
   }
   return cells;

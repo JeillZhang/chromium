@@ -18,6 +18,7 @@
 #include "base/test/task_environment.h"
 #include "base/test/test_file_util.h"
 #include "base/test/test_future.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/support_tool/data_collector.h"
 #include "chrome/test/base/fake_profile_manager.h"
@@ -28,6 +29,7 @@
 #include "components/prefs/testing_pref_service.h"
 #include "components/user_manager/fake_user_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "components/user_manager/test_helper.h"
 #include "content/public/test/browser_task_environment.h"
 #include "google_apis/gaia/gaia_id.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
@@ -76,13 +78,12 @@ class ChromeUserLogsDataCollectorTest : public ::testing::Test {
     AccountId fake_user_account =
         AccountId::FromUserEmailGaiaId(kFakeUserEmail, kFakeGaiaId);
     fake_user_hash_ =
-        user_manager::FakeUserManager::GetFakeUsernameHash(fake_user_account);
+        user_manager::TestHelper::GetFakeUsernameHash(fake_user_account);
     // Add the fake user to `fake_user_manager` and make it primary user by
     // making user logged in.
     fake_user_manager_->AddGaiaUser(fake_user_account,
                                     user_manager::UserType::kRegular);
-    fake_user_manager_->UserLoggedIn(fake_user_account, fake_user_hash_,
-                                     /*browser_restart=*/false, false);
+    fake_user_manager_->UserLoggedIn(fake_user_account, fake_user_hash_);
 
     // Set up task runner and container for RedactionTool. We will use when
     // calling CollectDataAndDetectPII() and ExportCollectedDataWithPII()

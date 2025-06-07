@@ -12,6 +12,7 @@
 #import "base/time/time.h"
 #import "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #import "components/browser_sync/common_controller_builder.h"
+#import "components/collaboration/public/collaboration_service.h"
 #import "components/history/core/browser/features.h"
 #import "components/history/core/browser/history_service.h"
 #import "components/keyed_service/core/service_access_type.h"
@@ -25,6 +26,7 @@
 #import "components/sync/base/command_line_switches.h"
 #import "components/sync/base/features.h"
 #import "components/sync/base/sync_util.h"
+#import "components/sync/engine/net/http_bridge.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_service_impl.h"
 #import "components/sync_device_info/device_info.h"
@@ -36,6 +38,7 @@
 #import "ios/chrome/browser/bookmarks/model/account_bookmark_sync_service_factory.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
 #import "ios/chrome/browser/bookmarks/model/local_or_syncable_bookmark_sync_service_factory.h"
+#import "ios/chrome/browser/collaboration/model/collaboration_service_factory.h"
 #import "ios/chrome/browser/consent_auditor/model/consent_auditor_factory.h"
 #import "ios/chrome/browser/data_sharing/model/data_sharing_service_factory.h"
 #import "ios/chrome/browser/favicon/model/favicon_service_factory.h"
@@ -96,6 +99,8 @@ syncer::DataTypeController::TypeVector CreateControllers(
       ios::LocalOrSyncableBookmarkSyncServiceFactory::GetForProfile(profile),
       ios::AccountBookmarkSyncServiceFactory::GetForProfile(profile));
   builder.SetConsentAuditor(ConsentAuditorFactory::GetForProfile(profile));
+  builder.SetCollaborationService(
+      collaboration::CollaborationServiceFactory::GetForProfile(profile));
   builder.SetDataSharingService(
       data_sharing::DataSharingServiceFactory::GetForProfile(profile));
   builder.SetDeviceInfoSyncService(
@@ -111,9 +116,7 @@ syncer::DataTypeController::TypeVector CreateControllers(
   builder.SetIdentityManager(IdentityManagerFactory::GetForProfile(profile));
   builder.SetDataTypeStoreService(
       DataTypeStoreServiceFactory::GetForProfile(profile));
-  builder.SetPasskeyModel(syncer::IsWebauthnCredentialSyncEnabled()
-                              ? IOSPasskeyModelFactory::GetForProfile(profile)
-                              : nullptr);
+  builder.SetPasskeyModel(IOSPasskeyModelFactory::GetForProfile(profile));
   builder.SetPasswordReceiverService(
       IOSChromePasswordReceiverServiceFactory::GetForProfile(profile));
   builder.SetPasswordSenderService(
@@ -193,6 +196,14 @@ std::unique_ptr<KeyedService> BuildSyncService(web::BrowserState* context) {
   syncer::SyncServiceImpl::InitParams init_params;
   init_params.sync_client = BuildSyncClient(profile);
   init_params.url_loader_factory = profile->GetSharedURLLoaderFactory();
+  init_params.create_http_post_provider_factory = base::BindRepeating(
+      [](const std::string& user_agent,
+         std::unique_ptr<network::PendingSharedURLLoaderFactory>
+             pending_url_loader_factory)
+          -> std::unique_ptr<syncer::HttpPostProviderFactory> {
+        return std::make_unique<syncer::HttpBridgeFactory>(
+            user_agent, std::move(pending_url_loader_factory));
+      });
   init_params.network_connection_tracker =
       GetApplicationContext()->GetNetworkConnectionTracker();
   init_params.channel = ::GetChannel();
@@ -238,6 +249,8 @@ std::unique_ptr<KeyedService> BuildSyncService(web::BrowserState* context) {
   pref_service->OnSyncServiceInitialized(sync_service.get());
 
   SendTabToSelfSyncServiceFactory::GetForProfile(profile)
+      ->OnSyncServiceInitialized(sync_service.get());
+  collaboration::CollaborationServiceFactory::GetForProfile(profile)
       ->OnSyncServiceInitialized(sync_service.get());
 
   if (GoogleGroupsManager* groups_updater_service =
@@ -311,6 +324,7 @@ SyncServiceFactory::SyncServiceFactory()
   // actually plumbed in IOSChromeSyncClient, which this factory constructs.
   DependsOn(ConsentAuditorFactory::GetInstance());
   DependsOn(DataTypeStoreServiceFactory::GetInstance());
+  DependsOn(collaboration::CollaborationServiceFactory::GetInstance());
   DependsOn(data_sharing::DataSharingServiceFactory::GetInstance());
   DependsOn(DeviceInfoSyncServiceFactory::GetInstance());
   DependsOn(GoogleGroupsManagerFactory::GetInstance());
@@ -327,9 +341,7 @@ SyncServiceFactory::SyncServiceFactory()
   DependsOn(IOSChromePasswordReceiverServiceFactory::GetInstance());
   DependsOn(IOSChromePasswordSenderServiceFactory::GetInstance());
   DependsOn(IOSChromeProfilePasswordStoreFactory::GetInstance());
-  if (syncer::IsWebauthnCredentialSyncEnabled()) {
-    DependsOn(IOSPasskeyModelFactory::GetInstance());
-  }
+  DependsOn(IOSPasskeyModelFactory::GetInstance());
   if (base::FeatureList::IsEnabled(
           send_tab_to_self::kSendTabToSelfIOSPushNotifications)) {
     DependsOn(IOSSharingMessageBridgeFactory::GetInstance());

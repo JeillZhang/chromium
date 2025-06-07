@@ -16,7 +16,6 @@ import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.chrome.browser.back_press.BackPressHelper;
-import org.chromium.chrome.browser.back_press.SecondaryActivityBackPressUma;
 import org.chromium.chrome.browser.init.ActivityProfileProvider;
 import org.chromium.chrome.browser.init.AsyncInitializationActivity;
 import org.chromium.chrome.browser.policy.PolicyServiceFactory;
@@ -46,7 +45,7 @@ public abstract class FullscreenSigninAndHistorySyncActivityBase extends AsyncIn
     private ChildAccountStatusSupplier mChildAccountStatusSupplier;
 
     public FullscreenSigninAndHistorySyncActivityBase() {
-        mAppRestrictionSupplier = AppRestrictionSupplier.takeMaybeInitialized();
+        mAppRestrictionSupplier = new AppRestrictionSupplier();
         mPolicyServiceSupplier = new OneshotSupplierImpl<>();
         mPolicyLoadListener =
                 new PolicyLoadListener(mAppRestrictionSupplier, mPolicyServiceSupplier);
@@ -86,7 +85,6 @@ public abstract class FullscreenSigninAndHistorySyncActivityBase extends AsyncIn
         super.onDestroy();
 
         mPolicyLoadListener.destroy();
-        mAppRestrictionSupplier.destroy();
     }
 
     @Override
@@ -100,7 +98,9 @@ public abstract class FullscreenSigninAndHistorySyncActivityBase extends AsyncIn
         //  during re-FRE, this is just a temporary visual fix.
         if (BuildInfo.getInstance().isAutomotive) {
             StatusBarColorController.setStatusBarColor(
-                    getEdgeToEdgeManager().getEdgeToEdgeSystemBarColorHelper(),
+                    (getEdgeToEdgeManager() != null)
+                            ? getEdgeToEdgeManager().getEdgeToEdgeSystemBarColorHelper()
+                            : null,
                     getWindow(),
                     Color.BLACK);
         }
@@ -129,7 +129,7 @@ public abstract class FullscreenSigninAndHistorySyncActivityBase extends AsyncIn
     @Override
     protected void onPreCreate() {
         super.onPreCreate();
-        BackPressHelper.create(this, getOnBackPressedDispatcher(), this, getSecondaryActivity());
+        BackPressHelper.create(this, getOnBackPressedDispatcher(), this);
     }
 
     @Override
@@ -140,6 +140,4 @@ public abstract class FullscreenSigninAndHistorySyncActivityBase extends AsyncIn
     /** Called when back press is intercepted. */
     @Override
     public abstract @BackPressResult int handleBackPress();
-
-    public abstract @SecondaryActivityBackPressUma.SecondaryActivity int getSecondaryActivity();
 }

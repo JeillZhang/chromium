@@ -52,7 +52,7 @@ public class ApplicationStatus {
 
     private static class ActivityInfo {
         private int mStatus = ActivityState.DESTROYED;
-        private ObserverList<ActivityStateListener> mListeners = new ObserverList<>();
+        private final ObserverList<ActivityStateListener> mListeners = new ObserverList<>();
 
         /**
          * @return The current {@link ActivityState} of the activity.
@@ -794,6 +794,10 @@ public class ApplicationStatus {
         if (hasPausedActivity) return ApplicationState.HAS_PAUSED_ACTIVITIES;
         if (hasStoppedActivity) return ApplicationState.HAS_STOPPED_ACTIVITIES;
         return ApplicationState.HAS_DESTROYED_ACTIVITIES;
+    }
+
+    public static int getApplicationStateListenerCountForTesting() {
+        return sApplicationStateListeners == null ? 0 : sApplicationStateListeners.size();
     }
 
     @NativeMethods

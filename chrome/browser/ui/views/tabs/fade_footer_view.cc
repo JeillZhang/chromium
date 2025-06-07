@@ -8,6 +8,8 @@
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
+#include "chrome/browser/ui/tabs/alert/tab_alert.h"
+#include "chrome/browser/ui/tabs/alert/tab_alert_icon.h"
 #include "chrome/browser/ui/views/tabs/alert_indicator_button.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -15,7 +17,9 @@
 #include "ui/base/models/image_model.h"
 #include "ui/base/text/bytes_formatting.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/color/color_id.h"
 #include "ui/compositor/layer.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/views/border.h"
 #include "ui/views/layout/flex_layout_types.h"
 #include "ui/views/layout/layout_provider.h"
@@ -29,6 +33,38 @@ constexpr int kIconLabelSpacing = 8;
 constexpr auto kFooterMargins = gfx::Insets::VH(12, 12);
 // Spacing used to separate two footer rows.
 constexpr int kFooterRowSpacing = 8;
+
+ui::ColorId GetTabAlertColor(tabs::TabAlert alert_state) {
+  // Hover card background color isn't affected by third party themes so icons
+  // need to use a different color id from those used in the
+  // AlertIndicatorButton.
+  ui::ColorId icon_color = gfx::kPlaceholderColor;
+  switch (alert_state) {
+    case tabs::TabAlert::MEDIA_RECORDING:
+    case tabs::TabAlert::AUDIO_RECORDING:
+    case tabs::TabAlert::VIDEO_RECORDING:
+    case tabs::TabAlert::DESKTOP_CAPTURING:
+      icon_color = kColorHoverCardTabAlertMediaRecordingIcon;
+      break;
+    case tabs::TabAlert::TAB_CAPTURING:
+    case tabs::TabAlert::PIP_PLAYING:
+    case tabs::TabAlert::GLIC_ACCESSING:
+      icon_color = kColorHoverCardTabAlertPipPlayingIcon;
+      break;
+    case tabs::TabAlert::AUDIO_PLAYING:
+    case tabs::TabAlert::AUDIO_MUTING:
+    case tabs::TabAlert::BLUETOOTH_CONNECTED:
+    case tabs::TabAlert::BLUETOOTH_SCAN_ACTIVE:
+    case tabs::TabAlert::USB_CONNECTED:
+    case tabs::TabAlert::HID_CONNECTED:
+    case tabs::TabAlert::SERIAL_CONNECTED:
+    case tabs::TabAlert::VR_PRESENTING_IN_HEADSET:
+      icon_color = kColorHoverCardTabAlertAudioPlayingIcon;
+      break;
+  }
+
+  return icon_color;
+}
 }  // namespace
 
 template <typename T>
@@ -50,7 +86,7 @@ FooterRow<T>::FooterRow(bool is_fade_out_view)
   footer_label_ = views::View::AddChildView(std::make_unique<views::Label>(
       std::u16string(), views::style::CONTEXT_DIALOG_BODY_TEXT));
   icon_->SetBackground(
-      views::CreateThemedSolidBackground(ui::kColorBubbleFooterBackground));
+      views::CreateSolidBackground(ui::kColorBubbleFooterBackground));
   footer_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   footer_label_->SetMultiLine(true);
   footer_label_->SetProperty(
@@ -59,7 +95,7 @@ FooterRow<T>::FooterRow(bool is_fade_out_view)
                                views::MinimumFlexSizeRule::kScaleToZero,
                                views::MaximumFlexSizeRule::kUnbounded, true));
 
-  footer_label_->SetEnabledColorId(kColorTabHoverCardSecondaryText);
+  footer_label_->SetEnabledColor(kColorTabHoverCardSecondaryText);
   footer_label_->SetTextStyle(views::style::STYLE_BODY_4);
 
   // Vertically align the icon to the top line of the label
@@ -124,7 +160,7 @@ template class FooterRow<CollaborationMessagingRowData>;
 // -----------------------------------------------------------------------
 
 void FadeAlertFooterRow::SetData(const AlertFooterRowData& data) {
-  std::optional<TabAlertState> alert_state = data.alert_state;
+  std::optional<tabs::TabAlert> alert_state = data.alert_state;
   if (data.should_show_discard_status) {
     std::u16string row_text;
     if (data.memory_savings_in_bytes > 0) {
@@ -141,9 +177,9 @@ void FadeAlertFooterRow::SetData(const AlertFooterRowData& data) {
                    GetLayoutConstant(TAB_ALERT_INDICATOR_ICON_WIDTH)),
                row_text);
   } else if (alert_state.has_value()) {
-    SetContent(AlertIndicatorButton::GetTabAlertIndicatorImageForHoverCard(
-                   alert_state.value()),
-               GetTabAlertStateText(alert_state.value()));
+    const tabs::TabAlert alert = alert_state.value();
+    SetContent(tabs::GetAlertImageModel(alert, GetTabAlertColor(alert)),
+               GetTabAlertStateText(alert));
   } else {
     SetContent(ui::ImageModel(), std::u16string());
   }
@@ -192,18 +228,7 @@ void FadeCollaborationMessagingFooterRow::SetData(
     return;
   }
 
-  if (!data_.avatar.IsEmpty()) {
-    // Use avatar, if supplied.
-    SetContent(data_.avatar, data_.text);
-    return;
-  }
-
-  // Fallback to using an icon.
-  SetContent(
-      ui::ImageModel::FromVectorIcon(
-          kTabGroupSharingIcon, kColorHoverCardTabAlertUserAvatarFallbackIcon,
-          GetLayoutConstant(TAB_ALERT_INDICATOR_ICON_WIDTH)),
-      data_.text);
+  SetContent(data_.avatar, data_.text);
 }
 
 CollaborationMessagingRowData::CollaborationMessagingRowData() = default;
@@ -263,8 +288,7 @@ FooterView::FooterView() {
                                views::MinimumFlexSizeRule::kScaleToMinimum,
                                views::MaximumFlexSizeRule::kUnbounded, true));
 
-  SetBackground(
-      views::CreateThemedSolidBackground(ui::kColorBubbleFooterBackground));
+  SetBackground(views::CreateSolidBackground(ui::kColorBubbleFooterBackground));
 }
 
 void FooterView::SetAlertData(const AlertFooterRowData& data) {

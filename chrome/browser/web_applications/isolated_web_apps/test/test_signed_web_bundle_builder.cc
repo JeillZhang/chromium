@@ -6,10 +6,12 @@
 
 #include <memory>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
+#include "base/strings/string_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/version.h"
 #include "chrome/browser/web_applications/test/web_app_icon_test_utils.h"
@@ -48,7 +50,7 @@ web_package::SignedWebBundleId GetWebBundleIdWithFallback(
   if (web_bundle_id) {
     return *web_bundle_id;
   }
-  return absl::visit(
+  return std::visit(
       [](const auto& key_pair) {
         return web_package::SignedWebBundleId::CreateForPublicKey(
             key_pair.public_key);
@@ -149,8 +151,7 @@ void TestSignedWebBundleBuilder::AddFilesFromFolder(
     std::string mime_type;
     if (file_path.MatchesExtension(FILE_PATH_LITERAL(".webmanifest"))) {
       mime_type = "application/manifest+json";
-    } else if (!net::GetWellKnownMimeTypeFromExtension(
-                   file_path.Extension().substr(1), &mime_type)) {
+    } else if (!net::GetWellKnownMimeTypeFromFile(file_path, &mime_type)) {
       LOG(ERROR) << "Unable to deduce mime type from extension: "
                  << file_path.Extension();
       continue;

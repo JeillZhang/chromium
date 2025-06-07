@@ -42,6 +42,7 @@
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/core/testing/null_execution_context.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/transforms/scale_transform_operation.h"
 #include "ui/base/ui_base_features.h"
@@ -90,8 +91,8 @@ TEST_F(ComputedStyleTest, ShapeOutsideBoxEqual) {
 }
 
 TEST_F(ComputedStyleTest, ShapeOutsideCircleEqual) {
-  scoped_refptr<BasicShapeCircle> circle1 = BasicShapeCircle::Create();
-  scoped_refptr<BasicShapeCircle> circle2 = BasicShapeCircle::Create();
+  BasicShapeCircle* circle1 = MakeGarbageCollected<BasicShapeCircle>();
+  BasicShapeCircle* circle2 = MakeGarbageCollected<BasicShapeCircle>();
   auto* shape1 = MakeGarbageCollected<ShapeValue>(std::move(circle1),
                                                   CSSBoxType::kContent);
   auto* shape2 = MakeGarbageCollected<ShapeValue>(std::move(circle2),
@@ -104,7 +105,7 @@ TEST_F(ComputedStyleTest, ShapeOutsideCircleEqual) {
 }
 
 TEST_F(ComputedStyleTest, ClipPathEqual) {
-  scoped_refptr<BasicShapeCircle> shape = BasicShapeCircle::Create();
+  BasicShapeCircle* shape = MakeGarbageCollected<BasicShapeCircle>();
   ShapeClipPathOperation* path1 = MakeGarbageCollected<ShapeClipPathOperation>(
       shape, GeometryBox::kBorderBox);
   ShapeClipPathOperation* path2 = MakeGarbageCollected<ShapeClipPathOperation>(
@@ -1190,7 +1191,18 @@ TEST_F(ComputedStyleTest, BorderWidthZoom) {
           false /* allow_visited_style */, CSSValuePhase::kComputedValue);
       AtomicString prop_name = longhand.GetCSSPropertyName().ToAtomicString();
       ASSERT_TRUE(computed_value) << prop_name;
-      auto* numeric_value = DynamicTo<CSSNumericLiteralValue>(computed_value);
+      const CSSNumericLiteralValue* numeric_value = nullptr;
+      // With CSSGapDecorations, ColumnRuleWidth is a list of values. Thus,
+      // for this case we must get the first value before we attempt to cast.
+      if (RuntimeEnabledFeatures::CSSGapDecorationEnabled() &&
+          property == &GetCSSPropertyColumnRuleWidth()) {
+        auto* list = DynamicTo<CSSValueList>(computed_value);
+        ASSERT_TRUE(list);
+        ASSERT_EQ(list->length(), 1);
+        numeric_value = DynamicTo<CSSNumericLiteralValue>(list->First());
+      } else {
+        numeric_value = DynamicTo<CSSNumericLiteralValue>(computed_value);
+      }
       ASSERT_TRUE(numeric_value) << prop_name;
       EXPECT_TRUE(numeric_value->IsPx()) << prop_name;
       EXPECT_EQ(test.expected_px, numeric_value->DoubleValue()) << prop_name;
@@ -1263,7 +1275,18 @@ TEST_F(ComputedStyleTest, BorderWidthConversion) {
           *test.style, nullptr /* layout_object */,
           false /* allow_visited_style */, CSSValuePhase::kComputedValue);
       ASSERT_NE(computed_value, nullptr);
-      auto* numeric_value = DynamicTo<CSSNumericLiteralValue>(computed_value);
+      const CSSNumericLiteralValue* numeric_value = nullptr;
+      // With CSSGapDecorations, ColumnRuleWidth is a list of values. Thus,
+      // for this case we must get the first value before we attempt to cast.
+      if (RuntimeEnabledFeatures::CSSGapDecorationEnabled() &&
+          longhand == &GetCSSPropertyColumnRuleWidth()) {
+        auto* list = DynamicTo<CSSValueList>(computed_value);
+        ASSERT_TRUE(list);
+        ASSERT_EQ(list->length(), 1);
+        numeric_value = DynamicTo<CSSNumericLiteralValue>(list->First());
+      } else {
+        numeric_value = DynamicTo<CSSNumericLiteralValue>(computed_value);
+      }
       ASSERT_NE(numeric_value, nullptr);
       EXPECT_TRUE(numeric_value->IsPx());
       EXPECT_DOUBLE_EQ(test.expected_px, numeric_value->DoubleValue());
@@ -1999,7 +2022,7 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixStandardToConstrainedHigh) {
   ASSERT_NE(dynamic_range_limit_mix_value, nullptr);
 
   EXPECT_EQ(dynamic_range_limit_mix_value->CssText(),
-            "dynamic-range-limit-mix(standard 30%, constrained-high 70%)");
+            "dynamic-range-limit-mix(standard 30%, constrained 70%)");
 
   Document& document = GetDocument();
   const ComputedStyle* initial =
@@ -2033,7 +2056,7 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixStandardToHigh) {
   ASSERT_NE(dynamic_range_limit_mix_value, nullptr);
 
   EXPECT_EQ(dynamic_range_limit_mix_value->CssText(),
-            "dynamic-range-limit-mix(standard 40%, high 60%)");
+            "dynamic-range-limit-mix(standard 40%, no-limit 60%)");
 
   Document& document = GetDocument();
   const ComputedStyle* initial =
@@ -2067,7 +2090,7 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixConstrainedHighToHigh) {
   ASSERT_NE(dynamic_range_limit_mix_value, nullptr);
 
   EXPECT_EQ(dynamic_range_limit_mix_value->CssText(),
-            "dynamic-range-limit-mix(constrained-high 55%, high 45%)");
+            "dynamic-range-limit-mix(constrained 55%, no-limit 45%)");
 
   Document& document = GetDocument();
   const ComputedStyle* initial =
@@ -2102,7 +2125,7 @@ TEST_F(ComputedStyleTest, DynamicRangeLimitMixAllThree) {
 
   EXPECT_EQ(
       dynamic_range_limit_mix_value->CssText(),
-      "dynamic-range-limit-mix(standard 20%, constrained-high 60%, high 20%)");
+      "dynamic-range-limit-mix(standard 20%, constrained 60%, no-limit 20%)");
 
   Document& document = GetDocument();
   const ComputedStyle* initial =
@@ -2218,14 +2241,37 @@ TEST_F(ComputedStyleTest, BottomRelativeToSafeAreaInset) {
     <div id="f3" style="bottom: env(safe-area-inset-top)"></div>
     <div id="f4" style="bottom: calc(env(safe-area-inset-top))"></div>
     <div id="f5" style="bottom: calc(env(safe-area-inset-bottom) * 2)"></div>
+    <div id="f5" style="bottom: calc(env(safe-area-inset-bottom) + 2)"></div>
     <div id="f6" style="bottom: calc(-env(safe-area-inset-bottom))"></div>
+    <div id="f7" style="bottom: calc(env( safe-area-inset-bottom ,3px )*11px+ 22px+ 33px)"></div>
+    <div id="f8" style="bottom: calc(env( safe-area-inset-bottom, 2px)+ env(-foo) )"></div>
+    <div id="f9" style="bottom: calc(env( safe-area-inset-bottom, 2px)+ var(-foo) )"></div>
+    <div id="f10" style="--foo:env(safe-area-inset-bottom,2px); bottom: calc(var(--foo) - 2px)"></div>
+    <div id="f11" style="--foo:1px; bottom: calc(var(--foo) - 1px + 4 * env(safe-area-inset-bottom))"></div>
+    <div id="f12" style="--foo:3; bottom: calc(var(--foo) * env(safe-area-inset-bottom))"></div>
 
     <div id="t1" style="bottom: env(safe-area-inset-bottom)"></div>
-    <div id="t2" style="bottom:   env(  safe-area-inset-bottom, 0px)"></div>
-    <div id="t3" style="bottom: calc(env(safe-area-inset-bottom))"></div>
-    <div id="t4" style="bottom: calc( env( safe-area-inset-bottom , 0px) )"></div>
-    <div id="t5" style="bottom: calc(env(safe-area-inset-bottom, 0px)+999px)"></div>
-    <div id="t6" style="--foo:1px; bottom: calc(env(safe-area-inset-bottom, 0px)-var(--foo))"></div>
+    <div id="t2" style="bottom: env( safe-area-inset-bottom )"></div>
+    <div id="t3" style="bottom: env(safe-area-inset-bottom,0px)"></div>
+    <div id="t4" style="bottom:   env(  safe-area-inset-bottom , 2px )"></div>
+
+    <div id="t5" style="bottom: calc(env(safe-area-inset-bottom))"></div>
+    <div id="t6" style="bottom:  calc( env( safe-area-inset-bottom ) )"></div>
+    <div id="t7" style="bottom: calc(env(safe-area-inset-bottom,2px))"></div>
+    <div id="t8" style="bottom: calc( env( safe-area-inset-bottom, 2px ) )"></div>
+    <div id="t9" style="bottom: calc(1px - env(safe-area-inset-bottom, 2px))"></div>
+    <div id="t10" style="bottom: calc( env(safe-area-inset-bottom, 1px ) + 999px )"></div>
+    <div id="t11" style="bottom: calc( env(safe-area-inset-bottom ,3px) + 999px)"></div>
+    <div id="t12" style="bottom: calc(11px - 22em + env( safe-area-inset-bottom, 3px) + 35ch + 3cqw)"></div>
+    <div id="t13" style="bottom: calc(env(safe-area-inset-bottom) + env(safe-area-max-inset-bottom))"></div>
+    <div id="t14" style="bottom: calc(env(safe-area-inset-bottom, 2px) - env(safe-area-max-inset-bottom, 1px))"></div>
+
+    <div id="t15" style="--foo:1px; bottom: calc(env(safe-area-inset-bottom, 2px) - var(--foo))"></div>
+    <div id="t16" style="--foo: 1px;  bottom: calc(env(safe-area-inset-bottom,3px) - var( --foo ) - var(--foo))"></div>
+    <div id="t17" style="--foo:1px; bottom: calc(env(safe-area-inset-bottom, 3px) + var(--foo) + 1px - 2em + 3cqw)"></div>
+    <div id="t18" style="--foo:1px; bottom: calc(var(--foo) - 1px + 2em + env(safe-area-inset-bottom) + env(safe-area-max-inset-bottom))"></div>
+    <div id="t19" style="--foo:1px; bottom: calc(env(safe-area-inset-bottom) + env(safe-area-max-inset-bottom) + var(--foo)  - 1px +  2cqw)"></div>
+
   )HTML");
   document.View()->UpdateAllLifecyclePhasesForTest();
 
@@ -2235,6 +2281,12 @@ TEST_F(ComputedStyleTest, BottomRelativeToSafeAreaInset) {
   EXPECT_FALSE(StyleForElement("f4").IsBottomRelativeToSafeAreaInset());
   EXPECT_FALSE(StyleForElement("f5").IsBottomRelativeToSafeAreaInset());
   EXPECT_FALSE(StyleForElement("f6").IsBottomRelativeToSafeAreaInset());
+  EXPECT_FALSE(StyleForElement("f7").IsBottomRelativeToSafeAreaInset());
+  EXPECT_FALSE(StyleForElement("f8").IsBottomRelativeToSafeAreaInset());
+  EXPECT_FALSE(StyleForElement("f9").IsBottomRelativeToSafeAreaInset());
+  EXPECT_FALSE(StyleForElement("f10").IsBottomRelativeToSafeAreaInset());
+  EXPECT_FALSE(StyleForElement("f11").IsBottomRelativeToSafeAreaInset());
+  EXPECT_FALSE(StyleForElement("f12").IsBottomRelativeToSafeAreaInset());
 
   EXPECT_TRUE(StyleForElement("t1").IsBottomRelativeToSafeAreaInset());
   EXPECT_TRUE(StyleForElement("t2").IsBottomRelativeToSafeAreaInset());
@@ -2242,6 +2294,19 @@ TEST_F(ComputedStyleTest, BottomRelativeToSafeAreaInset) {
   EXPECT_TRUE(StyleForElement("t4").IsBottomRelativeToSafeAreaInset());
   EXPECT_TRUE(StyleForElement("t5").IsBottomRelativeToSafeAreaInset());
   EXPECT_TRUE(StyleForElement("t6").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t7").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t8").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t9").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t10").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t11").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t12").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t13").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t14").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t15").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t16").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t17").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t18").IsBottomRelativeToSafeAreaInset());
+  EXPECT_TRUE(StyleForElement("t19").IsBottomRelativeToSafeAreaInset());
 }
 
 TEST_F(ComputedStyleTest, HasEnvSafeAreaInsetBottom) {
@@ -2282,4 +2347,92 @@ TEST_F(ComputedStyleTest, HasEnvSafeAreaInsetBottom) {
   EXPECT_TRUE(StyleForElement("t6").HasEnvSafeAreaInsetBottom());
 }
 
+TEST_F(ComputedStyleTest, CursorInheritance) {
+  Document& document = GetDocument();
+  document.body()->setInnerHTML(R"HTML(
+    <style>
+      #parent {
+        cursor: pointer;
+      }
+      #child-no-inherit {
+        cursor: pointer;
+      }
+      #outer {
+      cursor: initial;
+    }
+    </style>
+    <div id="parent">
+      <div id="child-no-inherit"></div>
+      <div id="child-inherit"></div>
+    </div>
+    <div id="outer"></div>
+  )HTML");
+  document.View()->UpdateAllLifecyclePhasesForTest();
+
+  const auto& parent = StyleForElement("parent");
+  EXPECT_EQ(parent.Cursor(), ECursor::kPointer);
+  EXPECT_FALSE(parent.CursorIsInherited());
+
+  const auto& child_no_inherit = StyleForElement("child-no-inherit");
+  EXPECT_EQ(child_no_inherit.Cursor(), ECursor::kPointer);
+  EXPECT_FALSE(child_no_inherit.CursorIsInherited());
+
+  const auto& child_inherit = StyleForElement("child-inherit");
+  EXPECT_EQ(child_inherit.Cursor(), ECursor::kPointer);
+  EXPECT_TRUE(child_inherit.CursorIsInherited());
+
+  const auto& outer = StyleForElement("outer");
+  EXPECT_EQ(outer.Cursor(), ECursor::kAuto);
+  EXPECT_FALSE(outer.CursorIsInherited());
+}
+
+TEST_F(ComputedStyleTest, HasGapRule) {
+  ScopedCSSGapDecorationForTest scoped_gap_decoration(true);
+  Document& document = GetDocument();
+  document.body()->setInnerHTML(R"HTML(
+    <style>
+      #multi-col {
+        columns: 4;
+        column-rule-style: solid;
+        row-rule-style: solid;
+      }
+      #grid {
+        display: grid;
+        grid-template: repeat(3, 1fr) / repeat(2, 1fr);
+        column-rule-style: solid;
+        row-rule-style: solid;
+      }
+      #flex {
+        display: flex;
+        column-rule-style: solid;
+        row-rule-style: solid;
+      }
+      #no-rule {
+        column-rule-style: solid;
+        row-rule-style: solid;
+      }
+    </style>
+    <div id="multi-col"></div>
+    <div id="grid"></div>
+    <div id="flex"></div>
+    <div id="no-rule"></div>
+  )HTML");
+  document.View()->UpdateAllLifecyclePhasesForTest();
+
+  const auto& multi_col = StyleForElement("multi-col");
+  EXPECT_TRUE(multi_col.HasColumnRule());
+  EXPECT_TRUE(multi_col.HasRowRule());
+
+  const auto& grid = StyleForElement("grid");
+  EXPECT_TRUE(grid.HasColumnRule());
+  EXPECT_TRUE(grid.HasRowRule());
+
+  const auto& flex = StyleForElement("flex");
+  EXPECT_TRUE(flex.HasColumnRule());
+  EXPECT_TRUE(flex.HasRowRule());
+
+  const auto& no_rule = StyleForElement("no-rule");
+  EXPECT_FALSE(no_rule.HasColumnRule());
+  EXPECT_FALSE(no_rule.HasRowRule());
+}
 }  // namespace blink

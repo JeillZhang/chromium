@@ -51,8 +51,9 @@ import org.chromium.chrome.browser.ui.appmenu.AppMenuCoordinator;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuHandler;
 import org.chromium.chrome.test.AutomotiveContextWrapperTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.test.util.DeviceRestriction;
 
@@ -72,8 +73,8 @@ public class CustomTabPrivacySandboxDialogTest {
     public CustomTabActivityTestRule mCustomTabActivityTestRule = new CustomTabActivityTestRule();
 
     @Rule
-    public ChromeTabbedActivityTestRule mChromeTabbedActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mChromeTabbedActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private String mTestPage;
     private EmbeddedTestServer mTestServer;
@@ -135,7 +136,6 @@ public class CustomTabPrivacySandboxDialogTest {
     @Test
     @SmallTest
     @EnableFeatures({
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-notice-row-for-testing/true/notice-required/true"
     })
@@ -143,7 +143,14 @@ public class CustomTabPrivacySandboxDialogTest {
         HistogramWatcher watcher =
                 HistogramWatcher.newSingleRecordWatcher(
                         "Startup.Android.PrivacySandbox.ShouldShowAdsNoticeCCT", true);
-        mCustomTabActivityTestRule.startCustomTabActivityWithIntent(createMinimalCustomTabIntent());
+        Intent intent = createMinimalCustomTabIntent();
+        var token = SessionHolder.getSessionHolderFromIntent(intent);
+        CustomTabsConnection connection = CustomTabsConnection.getInstance();
+        connection.newSession(token.getSessionAsCustomTab());
+        connection.overridePackageNameForSessionForTesting(
+                token, "com.google.android.googlequicksearchbox");
+
+        mCustomTabActivityTestRule.startCustomTabActivityWithIntent(intent);
         onViewWaiting(withId(R.id.privacy_sandbox_dialog)).check(matches(isDisplayed()));
         watcher.assertExpected();
     }
@@ -191,7 +198,6 @@ public class CustomTabPrivacySandboxDialogTest {
     @Restriction(DeviceRestriction.RESTRICTION_TYPE_NON_AUTO)
     @EnableFeatures({
         ChromeFeatureList.CCT_RESIZABLE_FOR_THIRD_PARTIES,
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-notice-row-for-testing/true/notice-required/true"
     })
@@ -206,7 +212,7 @@ public class CustomTabPrivacySandboxDialogTest {
         intent.setData(Uri.parse("https://example.com"));
         String packageName = ContextUtils.getApplicationContext().getPackageName();
         intent.setPackage(packageName);
-        mChromeTabbedActivityTestRule.startMainActivityOnBlankPage();
+        mChromeTabbedActivityTestRule.startOnBlankPage();
 
         ApplicationTestUtils.waitForActivityWithClass(
                 CustomTabActivity.class,
@@ -285,7 +291,6 @@ public class CustomTabPrivacySandboxDialogTest {
     @Test
     @SmallTest
     @EnableFeatures({
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-notice-row-for-testing/true/notice-required/true"
     })
@@ -300,7 +305,6 @@ public class CustomTabPrivacySandboxDialogTest {
     @Test
     @SmallTest
     @EnableFeatures({
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-notice-row-for-testing/true/notice-required/true"
     })

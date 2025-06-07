@@ -7,6 +7,7 @@
 #include <memory>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 #include "base/base_paths.h"
 #include "base/command_line.h"
@@ -21,12 +22,12 @@
 #include "base/run_loop.h"
 #include "base/sampling_heap_profiler/poisson_allocation_sampler.h"
 #include "base/strings/string_util.h"
+#include "base/test/allow_check_is_test_for_testing.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_file_util.h"
 #include "base/test/test_switches.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/metrics/chrome_feature_list_creator.h"
 #include "chrome/common/chrome_constants.h"
@@ -37,7 +38,6 @@
 #include "chrome/install_static/test/scoped_install_details.h"
 #include "chrome/installer/util/taskbar_util.h"
 #include "chrome/test/base/chrome_test_suite.h"
-#include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/utility/chrome_content_utility_client.h"
 #include "components/crash/core/app/crashpad.h"
 #include "components/sampling_profiler/thread_profiler.h"
@@ -49,6 +49,7 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/service_factory.h"
 #include "services/test/echo/echo_service.h"
+#include "testing/libfuzzer/fuzztest_init_helper.h"
 
 #if BUILDFLAG(IS_MAC)
 #include "base/apple/bundle_locations.h"
@@ -69,19 +70,22 @@
 #include "chrome/installer/util/firewall_manager_win.h"
 #endif
 
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || \
-    (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 #include "chrome/browser/first_run/scoped_relaunch_chrome_browser_override.h"
 #include "chrome/browser/upgrade_detector/installed_version_poller.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/chrome_browser_main.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(IS_ANDROID)
+#include "chrome/test/base/android/android_browser_test.h"
+#else
+#include "chrome/test/base/in_process_browser_test.h"
+#endif
 
 // static
 int ChromeTestSuiteRunner::RunTestSuiteInternal(ChromeTestSuite* test_suite) {
@@ -91,10 +95,7 @@ int ChromeTestSuiteRunner::RunTestSuiteInternal(ChromeTestSuite* test_suite) {
   // Android browser tests run child processes as threads instead.
   content::ContentTestSuiteBase::RegisterInProcessThreads();
 #endif
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || \
-    (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
   InstalledVersionPoller::ScopedDisableForTesting disable_polling(
       InstalledVersionPoller::MakeScopedDisableForTesting());
 #endif
@@ -179,24 +180,28 @@ ChromeTestChromeMainDelegate::CreateContentUtilityClient() {
   return chrome_content_utility_client_.get();
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 std::optional<int> ChromeTestChromeMainDelegate::PostEarlyInitialization(
     InvokedIn invoked_in) {
   auto result = ChromeMainDelegate::PostEarlyInitialization(invoked_in);
-  if (absl::get_if<InvokedInBrowserProcess>(&invoked_in)) {
+  if (std::get_if<InvokedInBrowserProcess>(&invoked_in)) {
     // If servicing an `InProcessBrowserTest`, give the test an opportunity to
     // prepopulate Local State with preferences.
     ChromeFeatureListCreator* chrome_feature_list_creator =
         chrome_content_browser_client_->startup_data()
             ->chrome_feature_list_creator();
     PrefService* const local_state = chrome_feature_list_creator->local_state();
+#if BUILDFLAG(IS_ANDROID)
+    if (auto* test_instance = AndroidBrowserTest::GetCurrent()) {
+      test_instance->SetUpLocalStatePrefService(local_state);
+    }
+#else
     if (auto* test_instance = InProcessBrowserTest::GetCurrent()) {
       test_instance->SetUpLocalStatePrefService(local_state);
     }
+#endif
   }
   return result;
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_WIN)
 bool ChromeTestChromeMainDelegate::ShouldHandleConsoleControlEvents() {
@@ -273,6 +278,8 @@ int LaunchChromeTests(size_t parallel_jobs,
                       content::TestLauncherDelegate* delegate,
                       int argc,
                       char** argv) {
+  base::test::AllowCheckIsTestForTesting();
+
 #if BUILDFLAG(IS_MAC)
   // Set up the path to the framework so resources can be loaded. This is also
   // performed in ChromeTestSuite, but in browser tests that only affects the
@@ -316,10 +323,7 @@ int LaunchChromeTests(size_t parallel_jobs,
   std::unique_ptr<content::NetworkServiceTestHelper>
       network_service_test_helper = content::NetworkServiceTestHelper::Create();
 
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || \
-    (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
   // Cause a test failure for any test that triggers an unexpected relaunch.
   // Tests that fail here should likely be restructured to put the "before
   // relaunch" code into a PRE_ test with its own
@@ -341,6 +345,14 @@ int LaunchChromeTests(size_t parallel_jobs,
     return false;
   }));
 #endif  // BUILDFLAG(IS_WIN)
+
+  // This is needed because when running the browser test in multi-process
+  // mode, the FuzzTest initialization code will not get called in the child
+  // process.
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          "single-process-tests")) {
+    MaybeInitFuzztest(argc, argv);
+  }
 
   return content::LaunchTests(delegate, parallel_jobs, argc, argv);
 }

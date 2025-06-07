@@ -12,6 +12,7 @@
  * Declare tab information
  */
 export declare interface TabInfo {
+  id?: number;
   title: string;
   url: string;
   favicon: string;
@@ -72,7 +73,8 @@ export enum NavigationType {
   BLOCK = 2,
   DOMAIN = 3,
   LIMITED = 4,
-  SAME_DOMAIN_OPEN_OTHER_DOMAIN_LIMITED = 5
+  SAME_DOMAIN_OPEN_OTHER_DOMAIN_LIMITED = 5,
+  WORKSPACE_NAVIGATION = 6
 }
 
 export enum JoinMethod {
@@ -84,6 +86,36 @@ export enum SubmitAccessCodeResult {
   UNKNOWN = 0,
   SUCCESS = 1,
   INVALID_CODE = 2,
+  NETWORK_RESTRICTION = 3,
+}
+
+export enum CreateSessionResult {
+  UNKNOWN = 0,
+  SUCCESS = 1,
+  HTTP_ERROR = 2,
+  NETWORK_RESTRICTION = 3,
+}
+
+export enum StudentStatusDetail {
+  STUDENT_STATE_UNKNOWN = 0,
+
+  NOT_FOUND = 1,
+
+  ADDED = 2,
+
+  ACTIVE = 3,
+
+  REMOVED_BY_OTHER_SESSION = 4,
+
+  REMOVED_BY_BEING_TEACHER = 5,
+
+  REMOVED_BY_TEACHER = 6,
+
+  NOT_ADDED_CONFIGURED_AS_TEACHER = 7,
+
+  NOT_ADDED_NOT_CONFIGURED = 8,
+
+  MULTIPLE_DEVICE_SIGNED_IN = 9,
 }
 
 /**
@@ -130,6 +162,7 @@ export enum PermissionSetting {
 export enum BocaValidPref {
   NAVIGATION_SETTING = 0,
   CAPTION_ENABLEMENT_SETTING = 1,
+  DEFAULT_MEDIASTREAM_SETTING = 2,
 }
 
 /**
@@ -154,6 +187,17 @@ export enum AssignmentType {
 }
 
 /**
+ * Declare Speech Recognition install state enum type
+ */
+export enum SpeechRecognitionInstallState {
+  UNKNOWN = 0,
+  SYSTEM_LANGUAGE_NOT_SUPPORTED = 1,
+  IN_PROGRESS = 2,
+  FAILED = 3,
+  READY = 4
+}
+
+/**
  * Declare controlled tab
  */
 export declare interface ControlledTab {
@@ -166,6 +210,7 @@ export declare interface ControlledTab {
  */
 export declare interface OnTaskConfig {
   isLocked: boolean;
+  isPaused?: boolean;
   tabs: ControlledTab[];
 }
 
@@ -204,6 +249,7 @@ export declare interface Session {
  * Declare StudentActivity
  */
 export declare interface StudentActivity {
+  studentStatusDetail?: StudentStatusDetail;
   // Whether the student status have flipped from added to active in the
   // session.
   isActive: boolean;
@@ -259,6 +305,11 @@ export declare interface ClientApiDelegate {
   getStudentList(courseId: string): Promise<Identity[]>;
 
   /**
+   * Add students to the current session.
+   */
+  addStudents(students: Identity[]): Promise<boolean>;
+
+  /**
    * Get list of assignments in a course.
    */
   getAssignmentList(courseId: string): Promise<Assignment[]>;
@@ -266,7 +317,7 @@ export declare interface ClientApiDelegate {
   /**
    * Create a new session.
    */
-  createSession(sessionConfig: SessionConfig): Promise<boolean>;
+  createSession(sessionConfig: SessionConfig): Promise<CreateSessionResult>;
 
   /**
    * Remove a student from the current session.
@@ -317,6 +368,12 @@ export declare interface ClientApiDelegate {
   endViewScreenSession(id: string): Promise<boolean>;
 
   /**
+   * Request to set the view screen session to active for the student with the
+   * given id.
+   */
+  setViewScreenSessionActive(id: string): Promise<boolean>;
+
+  /**
    * Get the value of a boca specific user pref.
    */
   getUserPref(pref: BocaValidPref): Promise<any>;
@@ -332,6 +389,29 @@ export declare interface ClientApiDelegate {
   setSitePermission(
       url: string, permission: Permission,
       setting: PermissionSetting): Promise<boolean>;
+
+  /**
+   * Close the tab with tabId.
+   */
+  closeTab(tabId: number): Promise<boolean>;
+
+  openFeedbackDialog(): Promise<void>;
+
+  /**
+   * Refresh the workbook for students.
+   */
+  refreshWorkbook(): Promise<void>;
+
+  /**
+   * Gets Speech Recognition DLC installation status.
+   */
+  getSpeechRecognitionInstallationStatus():
+      Promise<SpeechRecognitionInstallState>;
+
+  /**
+   * Renotify the student to connect to the session.
+   */
+  renotifyStudent(id: string): Promise<boolean>;
 }
 
 /**
@@ -360,4 +440,23 @@ export declare interface ClientApi {
    * Notify the app that the active networks has been updated.
    */
   onActiveNetworkStateChanged(activeNetworks: NetworkInfo[]): void;
+
+  /**
+   * Notify the app that the local captions has been turned off from the caption
+   * bubble or by another mean from chrome. This can be called during a session
+   * or outside of a session in the teacher case.
+   */
+  onLocalCaptionDisabled(): void;
+
+  /**
+   * Notify the app that the status for Soda Installation has changed.
+   */
+  onSpeechRecognitionInstallStateUpdated(state: SpeechRecognitionInstallState):
+      void;
+
+  /**
+   * Notify the app that the session captions has been turned off in chrome.
+   * This can be due to an error or because of an event such as device locked.
+   */
+  onSessionCaptionDisabled(isError: boolean): void;
 }

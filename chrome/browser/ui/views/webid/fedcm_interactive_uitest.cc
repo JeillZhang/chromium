@@ -41,17 +41,21 @@ class FedCmCUJTest : public InteractiveBrowserTest {
       idps_ = {base::MakeRefCounted<content::IdentityProviderData>(
           "idp-example.com", content::IdentityProviderMetadata(),
           content::ClientMetadata(GURL(), GURL(), GURL(), gfx::Image()),
-          blink::mojom::RpContext::kSignIn, kDefaultDisclosureFields,
+          blink::mojom::RpContext::kSignIn, /*format=*/std::nullopt,
+          kDefaultDisclosureFields,
           /*has_login_status_mismatch=*/false)};
       accounts_ = {base::MakeRefCounted<Account>(
-          "id", "email", "name", "given_name", GURL(),
+          "id", "display_identifier", "display_name", "email", "name",
+          "given_name", GURL(), "phone", "username",
           /*login_hints=*/std::vector<std::string>(),
           /*domain_hints=*/std::vector<std::string>(),
           /*labels=*/std::vector<std::string>())};
       accounts_[0]->identity_provider = idps_[0];
       account_selection_view_->Show(
-          "rp-example.com", idps_, accounts_, Account::SignInMode::kExplicit,
-          mode, /*new_accounts=*/std::vector<IdentityRequestAccountPtr>());
+          content::RelyingPartyData(u"rp-example.com",
+                                    /*iframe_for_display=*/u""),
+          idps_, accounts_, mode,
+          /*new_accounts=*/std::vector<IdentityRequestAccountPtr>());
     });
   }
 
@@ -86,7 +90,7 @@ class FedCmCUJTest : public InteractiveBrowserTest {
 IN_PROC_BROWSER_TEST_F(FedCmCUJTest, SelectAccount) {
   RunTestSequence(OpenAccountsModal(),
                   WaitForShow(kFedCmAccountChooserDialogAccountElementId),
-                  PressButton(kFedCmAccountChooserDialogAccountElementId), );
+                  PressButton(kFedCmAccountChooserDialogAccountElementId));
 }
 
 // Shows the bubble account picker. It should hide when a modal UI is shown. It
@@ -96,7 +100,7 @@ IN_PROC_BROWSER_TEST_F(FedCmCUJTest, BubbleHidesWhenModalUIShown) {
       OpenAccountsBubble(),
       WaitForShow(kFedCmAccountChooserDialogAccountElementId), ShowTabModalUI(),
       WaitForHide(kFedCmAccountChooserDialogAccountElementId), HideTabModalUI(),
-      WaitForShow(kFedCmAccountChooserDialogAccountElementId), );
+      WaitForShow(kFedCmAccountChooserDialogAccountElementId));
 }
 
 // TODO(https://crbug.com/387473078): Fix this on windows.
@@ -126,7 +130,7 @@ IN_PROC_BROWSER_TEST_F(FedCmCUJTest, MAYBE_OneClickOutsideBubble) {
       ClickMouse(),
       CheckJsResult(
           kActiveTab,
-          "() => document.getElementById('text').style.display == 'block'"), );
+          "() => document.getElementById('text').style.display == 'block'"));
 }
 
 }  // namespace

@@ -145,6 +145,7 @@ class ChromeAuthenticatorRequestDelegate
       AccountPreselectedCallback account_preselected_callback,
       PasswordSelectedCallback password_selected_callback,
       device::FidoRequestHandlerBase::RequestCallback request_callback,
+      base::OnceClosure cancel_ui_timeout_callback,
       base::RepeatingClosure bluetooth_adapter_power_on_callback,
       base::RepeatingCallback<
           void(device::FidoRequestHandlerBase::BlePermissionCallback)>
@@ -204,17 +205,13 @@ class ChromeAuthenticatorRequestDelegate
   void OnCancelRequest() override;
   void OnManageDevicesClicked() override;
 
-  // Allows setting a mock `TrustedVaultConnection` so a real one will not be
-  // created. This is only used for a single request, and is destroyed
-  // afterward.
-  void SetTrustedVaultConnectionForTesting(
-      std::unique_ptr<trusted_vault::TrustedVaultConnection> connection);
 
-  // Overrides the tick clock and task runner used to track the vault connection
-  // timeout.
-  void SetMockTimeForTesting(
-      base::TickClock const* tick_clock,
-      scoped_refptr<base::SequencedTaskRunner> task_runner);
+  void SetPasswordControllerForTesting(
+      std::unique_ptr<PasswordCredentialController> controller);
+
+  // GetRenderFrameHost returns a pointer to the RenderFrameHost that was given
+  // to the constructor.
+  content::RenderFrameHost* GetRenderFrameHost() const;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(ChromeAuthenticatorRequestDelegatePrivateTest,
@@ -226,10 +223,6 @@ class ChromeAuthenticatorRequestDelegate
 
   class EnclaveManagerObserver;
 
-  // GetRenderFrameHost returns a pointer to the RenderFrameHost that was given
-  // to the constructor.
-  content::RenderFrameHost* GetRenderFrameHost() const;
-
   content::BrowserContext* GetBrowserContext() const;
   Profile* profile() const;
 
@@ -240,8 +233,7 @@ class ChromeAuthenticatorRequestDelegate
   // `immediate_not_found_callback_` to notify the renderer.
   bool MaybeHandleImmediateMediation(
       const device::FidoRequestHandlerBase::TransportAvailabilityInfo& data,
-      const webauthn::PasswordCredentialController::PasswordCredentials&
-          passwords);
+      const PasswordCredentialController::PasswordCredentials& passwords);
 
   // Barriers showing the UI while waiting for
   // - password credentials,
@@ -251,7 +243,7 @@ class ChromeAuthenticatorRequestDelegate
 
   void MaybeShowUI(
       device::FidoRequestHandlerBase::TransportAvailabilityInfo tai,
-      webauthn::PasswordCredentialController::PasswordCredentials passwords);
+      PasswordCredentialController::PasswordCredentials passwords);
 
   std::optional<device::FidoTransportProtocol> GetLastTransportUsed() const;
 
@@ -314,7 +306,10 @@ class ChromeAuthenticatorRequestDelegate
 #endif
 
   void OnPasswordCredentialsReceived(
-      webauthn::PasswordCredentialController::PasswordCredentials credentials);
+      PasswordCredentialController::PasswordCredentials credentials);
+
+  void UpdateModelForTransportAvailability(
+      const device::FidoRequestHandlerBase::TransportAvailabilityInfo& tai);
 
   const content::GlobalRenderFrameHostId render_frame_host_id_;
   const scoped_refptr<AuthenticatorRequestDialogModel> dialog_model_;
@@ -326,6 +321,7 @@ class ChromeAuthenticatorRequestDelegate
   AccountPreselectedCallback account_preselected_callback_;
   PasswordSelectedCallback password_selected_callback_;
   device::FidoRequestHandlerBase::RequestCallback request_callback_;
+  base::OnceClosure cancel_ui_timeout_callback_;
 
   // The number of credential types that have been requested to be displayed.
   int credential_types_ =
@@ -347,6 +343,8 @@ class ChromeAuthenticatorRequestDelegate
 
   std::unique_ptr<GPMEnclaveController> enclave_controller_;
 
+  std::unique_ptr<PasswordCredentialController> password_controller_;
+
   // Stores the TransportAvailabilityInfo while we're waiting for the enclave
   // state to load from the disk.
   std::unique_ptr<device::FidoRequestHandlerBase::TransportAvailabilityInfo>
@@ -354,15 +352,8 @@ class ChromeAuthenticatorRequestDelegate
 
   // Stores the password credentials while waiting for enclave state, transport
   // availability info to be ready.
-  std::unique_ptr<webauthn::PasswordCredentialController::PasswordCredentials>
+  std::unique_ptr<PasswordCredentialController::PasswordCredentials>
       pending_password_credentials_;
-
-  // This holds a `TrustedVaultConnection` which will be set on
-  // `enclave_controller_` when it is created.
-  std::unique_ptr<trusted_vault::TrustedVaultConnection>
-      pending_trusted_vault_connection_;
-  raw_ptr<const base::TickClock> tick_clock_ = nullptr;
-  scoped_refptr<base::SequencedTaskRunner> timer_task_runner_;
 
   base::WeakPtrFactory<ChromeAuthenticatorRequestDelegate> weak_ptr_factory_{
       this};

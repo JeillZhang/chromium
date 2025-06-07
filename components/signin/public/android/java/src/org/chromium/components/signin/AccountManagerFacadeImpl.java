@@ -4,6 +4,7 @@
 
 package org.chromium.components.signin;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.components.signin.AccountCapabilitiesConstants.IS_SUBJECT_TO_PARENTAL_CONTROLS_CAPABILITY_NAME;
 
 import android.accounts.Account;
@@ -15,8 +16,6 @@ import android.os.SystemClock;
 import android.text.TextUtils;
 
 import androidx.annotation.MainThread;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Callback;
@@ -29,12 +28,16 @@ import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.task.AsyncTask;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.signin.AccountManagerDelegate.CapabilityResponse;
 import org.chromium.components.signin.ConnectionRetry.AuthTask;
 import org.chromium.components.signin.base.AccountCapabilities;
 import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.base.GaiaId;
+import org.chromium.google_apis.gaia.GoogleServiceAuthError;
+import org.chromium.google_apis.gaia.GoogleServiceAuthErrorState;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -45,6 +48,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** AccountManagerFacade wraps our access of AccountManager in Android. */
+@NullMarked
 public class AccountManagerFacadeImpl implements AccountManagerFacade {
     /**
      * An account feature (corresponding to a Gaia service flag) that specifies whether the account
@@ -77,18 +81,15 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     private final AtomicReference<List<PatternMatcher>> mAccountRestrictionPatterns =
             new AtomicReference<>();
 
-    // Deprecated in favor of `mAccountsPromise`, to be removed after migrating all affected calls.
-    private @NonNull Promise<List<CoreAccountInfo>> mCoreAccountInfosPromise = new Promise<>();
+    private Promise<List<AccountInfo>> mAccountsPromise = new Promise<>();
 
-    private @NonNull Promise<List<AccountInfo>> mAccountsPromise = new Promise<>();
-
-    private @Nullable AsyncTask<List<GaiaId>> mFetchGaiaIdsTask;
+    private @Nullable AsyncTask<@Nullable List<GaiaId>> mFetchGaiaIdsTask;
 
     private int mNumberOfRetries;
     private boolean mDidAccountFetchSucceed;
 
     private int mPendingTokenRequests;
-    private Runnable mTokenRequestsCompletedCallback;
+    private @Nullable Runnable mTokenRequestsCompletedCallback;
 
     private boolean mDisallowTokenRequestsForTesting;
 
@@ -134,13 +135,6 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
 
     @MainThread
     @Override
-    public Promise<List<CoreAccountInfo>> getCoreAccountInfos() {
-        ThreadUtils.assertOnUiThread();
-        return mCoreAccountInfosPromise;
-    }
-
-    @MainThread
-    @Override
     public Promise<List<AccountInfo>> getAccounts() {
         ThreadUtils.assertOnUiThread();
         return mAccountsPromise;
@@ -155,29 +149,30 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         assert scope != null;
 
         if (mDisallowTokenRequestsForTesting) {
-            callback.onGetTokenFailure(false);
+            callback.onGetTokenFailure(
+                    new GoogleServiceAuthError(GoogleServiceAuthErrorState.REQUEST_CANCELED));
             return;
         }
 
         pendingRequestStarted();
         ConnectionRetry.runAuthTask(
-                new AuthTask<AccessTokenData>() {
+                new AuthTask() {
                     @Override
                     public AccessTokenData run() throws AuthException {
                         return mDelegate.getAccessToken(
-                                AccountUtils.createAccountFromName(coreAccountInfo.getEmail()),
-                                scope);
+                                CoreAccountInfo.getAndroidAccountFrom(coreAccountInfo), scope);
                     }
 
                     @Override
-                    public void onSuccess(AccessTokenData token) {
+                    public void onSuccess(@Nullable AccessTokenData token) {
+                        assert token != null : "AccessTokenData must not be null on success.";
                         callback.onGetTokenSuccess(token);
                         pendingRequestFinished();
                     }
 
                     @Override
-                    public void onFailure(boolean isTransientError) {
-                        callback.onGetTokenFailure(isTransientError);
+                    public void onFailure(GoogleServiceAuthError authError) {
+                        callback.onGetTokenFailure(authError);
                         pendingRequestFinished();
                     }
                 });
@@ -210,22 +205,22 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
             return;
         }
         ConnectionRetry.runAuthTask(
-                new AuthTask<Void>() {
+                new AuthTask() {
                     @Override
-                    public Void run() throws AuthException {
+                    public @Nullable AccessTokenData run() throws AuthException {
                         mDelegate.invalidateAccessToken(accessToken);
                         return null;
                     }
 
                     @Override
-                    public void onSuccess(Void ignored) {
+                    public void onSuccess(@Nullable AccessTokenData ignored) {
                         if (completedRunnable != null) {
                             completedRunnable.run();
                         }
                     }
 
                     @Override
-                    public void onFailure(boolean ignored) {
+                    public void onFailure(GoogleServiceAuthError ignored) {
                         if (completedRunnable != null) {
                             completedRunnable.run();
                         }
@@ -252,7 +247,7 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         new AsyncTask<Boolean>() {
             @Override
             public Boolean doInBackground() {
-                Account account = AccountUtils.createAccountFromName(coreAccountInfo.getEmail());
+                Account account = CoreAccountInfo.getAndroidAccountFrom(coreAccountInfo);
                 return mDelegate.hasFeature(account, FEATURE_IS_USM_ACCOUNT_KEY);
             }
 
@@ -271,7 +266,7 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         new AsyncTask<Boolean>() {
             @Override
             public Boolean doInBackground() {
-                Account account = AccountUtils.createAccountFromName(coreAccountInfo.getEmail());
+                Account account = CoreAccountInfo.getAndroidAccountFrom(coreAccountInfo);
                 @CapabilityResponse
                 int capability =
                         mDelegate.hasCapability(
@@ -324,13 +319,14 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     }
 
     /**
-     * Creates an intent that will ask the user to add a new account to the device. See
-     * {@link AccountManager#addAccount} for details.
+     * Creates an intent that will ask the user to add a new account to the device. See {@link
+     * AccountManager#addAccount} for details.
+     *
      * @param callback The callback to get the created intent. Will be invoked on the main thread.
-     *         If there is an issue while creating the intent, callback will receive null.
+     *     If there is an issue while creating the intent, callback will receive null.
      */
     @Override
-    public void createAddAccountIntent(Callback<Intent> callback) {
+    public void createAddAccountIntent(Callback<@Nullable Intent> callback) {
         RecordUserAction.record("Signin_AddAccountToDevice");
         mDelegate.createAddAccountIntent(callback);
     }
@@ -346,7 +342,8 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     }
 
     @Override
-    public void confirmCredentials(Account account, Activity activity, Callback<Bundle> callback) {
+    public void confirmCredentials(
+            Account account, @Nullable Activity activity, Callback<@Nullable Bundle> callback) {
         mDelegate.confirmCredentials(account, activity, callback);
     }
 
@@ -355,10 +352,7 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
         return mDidAccountFetchSucceed;
     }
 
-    /**
-     * Fetches gaia ids, creates account objects and updates {@link #mCoreAccountInfosPromise} and
-     * {@link #mAccountsPromise}.
-     */
+    /** Fetches gaia ids, creates account objects and updates {@link #mAccountsPromise}. */
     @MainThread
     private void fetchGaiaIdsAndUpdateCoreAccountInfos() {
         ThreadUtils.assertOnUiThread();
@@ -368,67 +362,13 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
             mFetchGaiaIdsTask = null;
         }
 
-        List<String> emails = getFilteredAccountEmails();
-        mFetchGaiaIdsTask =
-                new AsyncTask<List<GaiaId>>() {
-                    @Override
-                    public @Nullable List<GaiaId> doInBackground() {
-                        final long seedingStartTime = SystemClock.elapsedRealtime();
-                        List<GaiaId> gaiaIds = new ArrayList<>();
-                        for (String email : emails) {
-                            if (isCancelled()) {
-                                return null;
-                            }
-                            final GaiaId gaiaId = mDelegate.getAccountGaiaId(email);
-                            if (gaiaId == null) {
-                                // TODO(crbug.com/40275966): Add metrics to check how often we get a
-                                // null gaiaId.
-                                return null;
-                            }
-                            gaiaIds.add(gaiaId);
-                        }
-                        RecordHistogram.recordTimesHistogram(
-                                "Signin.AndroidGetAccountIdsTime",
-                                SystemClock.elapsedRealtime() - seedingStartTime);
-                        return gaiaIds;
-                    }
-
-                    @Override
-                    public void onPostExecute(@Nullable List<GaiaId> gaiaIds) {
-                        mFetchGaiaIdsTask = null;
-                        if (gaiaIds == null) {
-                            fetchGaiaIdsAndUpdateCoreAccountInfos();
-                            return;
-                        }
-                        List<CoreAccountInfo> coreAccountInfos = new ArrayList<>();
-                        List<AccountInfo> accounts = new ArrayList<>();
-                        for (int index = 0; index < emails.size(); index++) {
-                            coreAccountInfos.add(
-                                    CoreAccountInfo.createFromEmailAndGaiaId(
-                                            emails.get(index), gaiaIds.get(index)));
-                            accounts.add(
-                                    new AccountInfo.Builder(emails.get(index), gaiaIds.get(index))
-                                            .build());
-                        }
-                        assert mCoreAccountInfosPromise.isFulfilled()
-                                == mAccountsPromise.isFulfilled();
-                        if (mCoreAccountInfosPromise.isFulfilled()) {
-                            mCoreAccountInfosPromise = Promise.fulfilled(coreAccountInfos);
-                            mAccountsPromise = Promise.fulfilled(accounts);
-                        } else {
-                            mCoreAccountInfosPromise.fulfill(coreAccountInfos);
-                            mAccountsPromise.fulfill(accounts);
-                        }
-                        for (AccountsChangeObserver observer : mObservers) {
-                            observer.onCoreAccountInfosChanged();
-                        }
-                    }
-                }.executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
+        mFetchGaiaIdsTask = new GetAccountAsyncTask(getFilteredAccountEmails());
+        mFetchGaiaIdsTask.executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
     }
 
     private void onAccountsUpdated() {
         ThreadUtils.assertOnUiThread();
-        new AsyncTask<List<Account>>() {
+        new AsyncTask<@Nullable List<Account>>() {
             @Override
             protected @Nullable List<Account> doInBackground() {
                 try {
@@ -502,7 +442,8 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     private List<String> getFilteredAccountEmails() {
         List<String> ret = new ArrayList<>();
         List<PatternMatcher> restrictions = mAccountRestrictionPatterns.get();
-        for (Account account : mAllAccounts.get()) {
+        assumeNonNull(restrictions);
+        for (Account account : assumeNonNull(mAllAccounts.get())) {
             String name = account.name;
             boolean matches = restrictions.isEmpty();
             for (PatternMatcher matcher : restrictions) {
@@ -522,7 +463,7 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
      * @param capabilityName the name of the capability used to query Identity services.
      * @return the name of the capability used to query GmsCore.
      */
-    static String getAndroidCapabilityName(@NonNull String capabilityName) {
+    static String getAndroidCapabilityName(String capabilityName) {
         if (capabilityName.startsWith(ACCOUNT_CAPABILITY_NAME_PREFIX)) {
             return capabilityName.substring(ACCOUNT_CAPABILITY_NAME_PREFIX.length());
         }
@@ -530,7 +471,6 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     }
 
     public void resetAccountsForTesting() {
-        mCoreAccountInfosPromise = new Promise<>();
         mAccountsPromise = new Promise<>();
         mAllAccounts.set(null);
         updateAccounts();
@@ -540,5 +480,58 @@ public class AccountManagerFacadeImpl implements AccountManagerFacade {
     public void disallowTokenRequestsForTesting() {
         ThreadUtils.assertOnUiThread();
         mDisallowTokenRequestsForTesting = true;
+    }
+
+    private class GetAccountAsyncTask extends AsyncTask<@Nullable List<GaiaId>> {
+        private final List<String> mEmails;
+
+        GetAccountAsyncTask(List<String> emails) {
+            mEmails = emails;
+        }
+
+        @Override
+        public @Nullable List<GaiaId> doInBackground() {
+            final long seedingStartTime = SystemClock.elapsedRealtime();
+            List<GaiaId> gaiaIds = new ArrayList<>();
+            for (String email : mEmails) {
+                if (isCancelled()) {
+                    return null;
+                }
+                final GaiaId gaiaId = mDelegate.getAccountGaiaId(email);
+                if (gaiaId == null) {
+                    // TODO(crbug.com/40275966): Add metrics to check how often we get a
+                    // null gaiaId.
+                    return null;
+                }
+                gaiaIds.add(gaiaId);
+            }
+            RecordHistogram.recordTimesHistogram(
+                    "Signin.AndroidGetAccountIdsTime",
+                    SystemClock.elapsedRealtime() - seedingStartTime);
+            return gaiaIds;
+        }
+
+        @Override
+        public void onPostExecute(@Nullable List<GaiaId> gaiaIds) {
+            mFetchGaiaIdsTask = null;
+            if (gaiaIds == null) {
+                fetchGaiaIdsAndUpdateCoreAccountInfos();
+                return;
+            }
+            List<AccountInfo> accounts = new ArrayList<>();
+            for (int index = 0; index < mEmails.size(); index++) {
+                String email = mEmails.get(index);
+                GaiaId gaiaId = gaiaIds.get(index);
+                accounts.add(new AccountInfo.Builder(email, gaiaId).build());
+            }
+            if (mAccountsPromise.isFulfilled()) {
+                mAccountsPromise = Promise.fulfilled(accounts);
+            } else {
+                mAccountsPromise.fulfill(accounts);
+            }
+            for (AccountsChangeObserver observer : mObservers) {
+                observer.onCoreAccountInfosChanged();
+            }
+        }
     }
 }

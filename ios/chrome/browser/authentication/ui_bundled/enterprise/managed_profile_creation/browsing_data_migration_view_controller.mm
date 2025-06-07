@@ -42,16 +42,16 @@ typedef NS_ENUM(NSInteger, ItemIdentifier) {
 @end
 
 @implementation BrowsingDataMigrationViewController {
-  BOOL _keepBrowsingDataSeparate;
+  BOOL _browsingDataSeparate;
   NSString* _userEmail;
   UITableViewDiffableDataSource<NSNumber*, NSNumber*>* _dataSource;
 }
 
 - (instancetype)initWithUserEmail:(NSString*)userEmail
-         keepBrowsingDataSeparate:(BOOL)keepBrowsingDataSeparate {
+             browsingDataSeparate:(BOOL)browsingDataSeparate {
   self = [super initWithStyle:ChromeTableViewStyle()];
   if (self) {
-    _keepBrowsingDataSeparate = keepBrowsingDataSeparate;
+    _browsingDataSeparate = browsingDataSeparate;
     _userEmail = userEmail;
   }
   return self;
@@ -62,6 +62,8 @@ typedef NS_ENUM(NSInteger, ItemIdentifier) {
 - (void)viewDidLoad {
   [super viewDidLoad];
 
+  self.view.accessibilityIdentifier =
+      kBrowsingDataManagementScreenAccessibilityIdentifier;
   self.view.backgroundColor = [UIColor colorNamed:kSecondaryBackgroundColor];
   self.title = l10n_util::GetNSString(
       IDS_IOS_ENTERPRISE_PROFILE_CREATION_ACCOUNT_KEEP_BROWSING_DATA_LABEL);
@@ -78,7 +80,7 @@ typedef NS_ENUM(NSInteger, ItemIdentifier) {
   [self.tableView
       selectRowAtIndexPath:
           [_dataSource indexPathForItemIdentifier:
-                           _keepBrowsingDataSeparate
+                           _browsingDataSeparate
                                ? @(ItemIdentifierKeepBrowsingDataSeparate)
                                : @(ItemIdentifierMergeBrowsingData)]
                   animated:YES
@@ -91,9 +93,9 @@ typedef NS_ENUM(NSInteger, ItemIdentifier) {
     willSelectRowAtIndexPath:(NSIndexPath*)indexPath {
   auto selectedItemIdentifier =
       [_dataSource itemIdentifierForIndexPath:indexPath];
-  _keepBrowsingDataSeparate = [selectedItemIdentifier
+  _browsingDataSeparate = [selectedItemIdentifier
       isEqual:@(ItemIdentifierKeepBrowsingDataSeparate)];
-  [self.mutator updateShouldKeepBrowsingDataSeparate:_keepBrowsingDataSeparate];
+  [self.mutator updateShouldKeepBrowsingDataSeparate:_browsingDataSeparate];
   [self updateSelection];
   return indexPath;
 }
@@ -124,8 +126,10 @@ typedef NS_ENUM(NSInteger, ItemIdentifier) {
   cell.accessoryType = UITableViewCellAccessoryNone;
   cell.textLabel.text = title;
   cell.detailTextLabel.text = details;
-  cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-  cell.backgroundColor = [UIColor colorNamed:kPrimaryBackgroundColor];
+  cell.selectionStyle = UITableViewCellSelectionStyleNone;
+  cell.backgroundColor = selected
+                             ? [UIColor colorNamed:kBlueHaloColor]
+                             : [UIColor colorNamed:kPrimaryBackgroundColor];
   cell.separatorInset =
       UIEdgeInsetsMake(0.f, kTableViewSeparatorInsetHide, 0.f, 0.f);
   cell.accessibilityIdentifier = accessibilityIdentifier;
@@ -183,13 +187,12 @@ typedef NS_ENUM(NSInteger, ItemIdentifier) {
     case ItemIdentifierKeepBrowsingDataSeparate: {
       auto title = l10n_util::GetNSString(
           IDS_IOS_ENTERPRISE_PROFILE_CREATION_ACCOUNT_KEEP_BROWSING_DATA_SEPARATE_TITLE);
-      auto details = l10n_util::GetNSStringF(
-          IDS_IOS_ENTERPRISE_PROFILE_CREATION_ACCOUNT_KEEP_BROWSING_DATA_SEPARATE_SUBTITLE,
-          base::SysNSStringToUTF16(_userEmail));
+      auto details = l10n_util::GetNSString(
+          IDS_IOS_ENTERPRISE_PROFILE_CREATION_ACCOUNT_KEEP_BROWSING_DATA_SEPARATE_SUBTITLE);
       return [self
           createBrowsingDataMigrationCellItem:title
                                       details:details
-                                     selected:_keepBrowsingDataSeparate
+                                     selected:_browsingDataSeparate
                       accessibilityIdentifier:kKeepBrowsingDataSeparateCellId];
     }
     case ItemIdentifierMergeBrowsingData: {
@@ -201,7 +204,7 @@ typedef NS_ENUM(NSInteger, ItemIdentifier) {
       return
           [self createBrowsingDataMigrationCellItem:title
                                             details:details
-                                           selected:!_keepBrowsingDataSeparate
+                                           selected:!_browsingDataSeparate
                             accessibilityIdentifier:kMergeBrowsingDataCellId];
     }
   }

@@ -38,31 +38,36 @@ using chrome_test_util::SignOutAccountsButton;
 
 namespace {
 
-// Closes the managed account dialog when necessary, if `fakeIdentity` is a
-// managed account. That dialog may be shown when User Policy is enabled.
-void CloseManagedAccountDialogIfAny(FakeSystemIdentity* fakeIdentity) {
-  // Don't expect a managed account dialog when the account isn't considered
-  // managed.
-  if ([fakeIdentity.userEmail hasSuffix:@"@gmail.com"]) {
-    return;
+BOOL IsIdentityPossiblyManaged(id<SystemIdentity> identity) {
+  return ![identity.userEmail hasSuffix:@"@gmail.com"];
+}
+
+void CloseHistorySyncSheet(BOOL enableHistorySync) {
+  id<GREYMatcher> history_sync_matcher =
+      grey_accessibilityID(kHistorySyncViewAccessibilityIdentifier);
+
+  [ChromeEarlGrey waitForMatcher:history_sync_matcher];
+  if (enableHistorySync) {
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                            PromoScreenPrimaryButtonMatcher()]
+        performAction:grey_tap()];
+  } else {
+    [[EarlGrey selectElementWithMatcher:chrome_test_util::
+                                            PromoScreenSecondaryButtonMatcher()]
+        performAction:grey_tap()];
   }
+}
 
-  // Synchronization off due to an infinite spinner, in the user consent view,
-  // under the managed consent dialog. This spinner is started by the sign-in
-  // process.
-  ScopedSynchronizationDisabler disabler;
-
-  // Verify whether there is a management dialog and interact with it to
+// Closes the "Sign out and delete data" dialog. That dialog may be shown when a
+// managed account signs out.
+void CloseManagedAccountSignOutAndDeleteDataDialog() {
+  // Verify whether there is a confirmation dialog and interact with it to
   // complete the sign-in flow if present.
   id<GREYMatcher> acceptButton = [ChromeMatchersAppInterface
       buttonWithAccessibilityLabelID:
-          IDS_IOS_MANAGED_SIGNIN_WITH_USER_POLICY_CONTINUE_BUTTON_LABEL];
-  BOOL hasDialog =
-      [ChromeEarlGrey testUIElementAppearanceWithMatcher:acceptButton
-                                                 timeout:base::Seconds(1)];
-  if (hasDialog) {
-    [[EarlGrey selectElementWithMatcher:acceptButton] performAction:grey_tap()];
-  }
+          IDS_IOS_SIGNOUT_AND_DELETE_DIALOG_SIGN_OUT_BUTTON];
+  [ChromeEarlGrey waitForUIElementToAppearWithMatcher:acceptButton];
+  [[EarlGrey selectElementWithMatcher:acceptButton] performAction:grey_tap()];
 }
 
 // Taps the sign-in sheet confirmation if the user is not signed-in yet, and
@@ -78,7 +83,7 @@ void MaybeTapSigninBottomSheetAndHistoryConfirmationDialog(
   }
 
   [ChromeEarlGreyUI waitForAppToIdle];
-  CloseManagedAccountDialogIfAny(fakeIdentity);
+  [SigninEarlGrey closeManagedAccountSignInDialogIfAny:fakeIdentity];
   // If the history type isn't enabled yet, the history opt-in dialog should
   // show up now. Tap the "Yes, I'm In" button.
   if (![ChromeEarlGrey isSyncHistoryDataTypeSelected]) {
@@ -105,15 +110,24 @@ id<GREYMatcher> SignOutSnackbarLabelMatcher() {
 
 + (void)signinWithFakeIdentity:(FakeSystemIdentity*)fakeIdentity
              enableHistorySync:(BOOL)enableHistorySync {
+  GREYAssert([SigninEarlGrey isSignedOut],
+             @"Can't sign in when already signed in");
+
   if (![SigninEarlGrey isIdentityAdded:fakeIdentity]) {
     // For convenience, add the identity, if it was not added yet.
     [SigninEarlGrey addFakeIdentity:fakeIdentity];
   }
+  if ([SigninEarlGrey areSeparateProfilesForManagedAccountsEnabled] &&
+      IsIdentityPossiblyManaged(fakeIdentity)) {
+    [SigninEarlGrey signinWithFakeIdentity:fakeIdentity];
+    [ChromeEarlGreyUI waitForAppToIdle];
+    CloseHistorySyncSheet(enableHistorySync);
+    return;
+  }
   // TODO(crbug.com/335592853): There's no good reason why the with-history vs
   // without-history flows should be completely different, unify them.
   if (!enableHistorySync) {
-    [SigninEarlGrey signInWithoutHistorySyncWithFakeIdentity:fakeIdentity];
-    CloseManagedAccountDialogIfAny(fakeIdentity);
+    [SigninEarlGrey signinWithFakeIdentity:fakeIdentity];
     ConditionBlock condition = ^bool {
       return [[SigninEarlGrey primaryAccountGaiaID]
           isEqualToString:fakeIdentity.gaiaID];
@@ -123,27 +137,16 @@ id<GREYMatcher> SignOutSnackbarLabelMatcher() {
     GREYAssert(isSigned,
                @"Signed in failed. Expected: %@, Currently signed: %@",
                fakeIdentity.gaiaID, [SigninEarlGrey primaryAccountGaiaID]);
-
-    [ChromeEarlGrey
-        waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
-
     return;
   }
 
-  if ([SigninEarlGrey isSignedOut]) {
-    [SigninEarlGreyUI tapPrimarySignInButtonInRecentTabs];
-    [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                            kIdentityButtonControlIdentifier)]
-        performAction:grey_tap()];
-    [[EarlGrey selectElementWithMatcher:IdentityCellMatcherForEmail(
-                                            fakeIdentity.userEmail)]
-        performAction:grey_tap()];
-  } else {
-    [SigninEarlGreyUI
-        openRecentTabsAndTapButton:
-            grey_accessibilityID(
-                kRecentTabsTabSyncOffButtonAccessibilityIdentifier)];
-  }
+  [SigninEarlGreyUI tapPrimarySignInButtonInRecentTabs];
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                          kIdentityButtonControlIdentifier)]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:IdentityCellMatcherForEmail(
+                                          fakeIdentity.userEmail)]
+      performAction:grey_tap()];
 
   MaybeTapSigninBottomSheetAndHistoryConfirmationDialog(fakeIdentity);
 
@@ -165,10 +168,13 @@ id<GREYMatcher> SignOutSnackbarLabelMatcher() {
 }
 
 + (void)signOut {
+  [self signOutWithClearDataConfirmation:NO];
+}
+
++ (void)signOutWithClearDataConfirmation:(BOOL)expectClearDataConfirmation {
   [ChromeEarlGreyUI openSettingsMenu];
   [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
-  // With ReplaceSyncWithSignin, we're now in the "manage sync" view, and
-  // the signout button is at the very bottom. Scroll there.
+  // Scroll to the signout button is at the very bottom.
   id<GREYMatcher> scrollViewMatcher =
       grey_accessibilityID(kManageSyncTableViewAccessibilityIdentifier);
   [[EarlGrey selectElementWithMatcher:scrollViewMatcher]
@@ -179,6 +185,11 @@ id<GREYMatcher> SignOutSnackbarLabelMatcher() {
                  grey_text(l10n_util::GetNSString(
                      IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_SIGN_OUT_ITEM))]
       performAction:grey_tap()];
+
+  if (expectClearDataConfirmation) {
+    CloseManagedAccountSignOutAndDeleteDataDialog();
+  }
+
   // Close the snackbar, so that it can't obstruct other UI items.
   [self dismissSignoutSnackbar];
 

@@ -37,7 +37,6 @@
 #include "third_party/blink/renderer/modules/webgpu/texture_utils.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/image_extractor.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/webgpu_mailbox_texture.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_types.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -241,16 +240,14 @@ ExternalSource GetExternalSourceFromExternalImage(
       gfx::SizeF(),  // It will be ignored and won't affect size.
       kRespectImageOrientation);
 
-  // TODO(crbug.com/1197369): Ensure kUnpremultiplyAlpha impl will also make
-  // image live on GPU if possible.
-  // Use kDontChangeAlpha here to bypass the alpha type conversion here.
-  // Left the alpha op to CopyTextureForBrowser() and CopyContentFromCPU().
-  // This will help combine more transforms (e.g. flipY, color-space)
-  // into a single blit.
+  // The alpha op will happen at CopyTextureForBrowser() and
+  // CopyContentFromCPU(). This will help combine more transforms (e.g. flipY,
+  // color-space) into a single blit.
+  // TODO(https://crbug.com/40760113): Ensure unpremultiplied images will live
+  // on GPU if possible.
   SourceImageStatus source_image_status = kInvalidSourceImageStatus;
   auto image_for_canvas = canvas_image_source->GetSourceImageForCanvas(
-      FlushReason::kWebGPUExternalImage, &source_image_status, image_size,
-      kDontChangeAlpha);
+      FlushReason::kWebGPUExternalImage, &source_image_status, image_size);
   if (source_image_status != kNormalSourceImageStatus) {
     // Canvas back resource is broken, zero size, incomplete or invalid.
     // but developer can do nothing. Return nullptr and issue an noop.
@@ -285,7 +282,9 @@ ExternalSource GetExternalSourceFromExternalImage(
     // generate
     //   required results.
     ImageExtractor image_extractor(image_for_canvas.get(),
-                                   external_image_dst_info.premultiplied_alpha,
+                                   external_image_dst_info.premultiplied_alpha
+                                       ? kPremul_SkAlphaType
+                                       : kUnpremul_SkAlphaType,
                                    PredefinedColorSpaceToSkColorSpace(
                                        external_image_dst_info.color_space));
     sk_image = image_extractor.GetSkImage();
@@ -315,7 +314,7 @@ ExternalSource GetExternalSourceFromExternalImage(
     // PaintImageBuilder. Use the builder to create PaintImage internally.
     // Store the orientation metadata but no transforms apply to the content.
     auto image = UnacceleratedStaticBitmapImage::Create(
-        std::move(sk_image), image_for_canvas->CurrentFrameOrientation());
+        std::move(sk_image), image_for_canvas->Orientation());
 
     // Recruit Image::ResizeAndOrientImage() to apply transformation based on
     // orientation metadata. This API helps rotate contents based on orientation
@@ -326,8 +325,8 @@ ExternalSource GetExternalSourceFromExternalImage(
     if (!image_is_default_orientation) {
       PaintImage paint_image = image->PaintImageForCurrentFrame();
       paint_image = Image::ResizeAndOrientImage(
-          paint_image, image_for_canvas->CurrentFrameOrientation(),
-          gfx::Vector2dF(1, 1), 1, kInterpolationNone);
+          paint_image, image_for_canvas->Orientation(), gfx::Vector2dF(1, 1), 1,
+          kInterpolationNone);
 
       // Have default orientation now.
       image = UnacceleratedStaticBitmapImage::Create(std::move(paint_image));
@@ -437,6 +436,25 @@ void GPUQueue::submit(ScriptState* script_state,
   UseCounter::Count(execution_context, WebFeature::kWebGPUQueueSubmit);
 }
 
+#if defined(WGPU_BREAKING_CHANGE_QUEUE_WORK_DONE_CALLBACK_MESSAGE)
+void OnWorkDoneCallback(ScriptPromiseResolver<IDLUndefined>* resolver,
+                        wgpu::QueueWorkDoneStatus status,
+                        wgpu::StringView message) {
+  switch (status) {
+    case wgpu::QueueWorkDoneStatus::Success:
+      resolver->Resolve();
+      break;
+    case wgpu::QueueWorkDoneStatus::Error:
+      resolver->RejectWithDOMException(DOMExceptionCode::kOperationError,
+                                       String::FromUTF8(message));
+      break;
+    case wgpu::QueueWorkDoneStatus::CallbackCancelled:
+      resolver->RejectWithDOMException(DOMExceptionCode::kOperationError,
+                                       String::FromUTF8(message));
+      break;
+  }
+}
+#else   // defined(WGPU_BREAKING_CHANGE_QUEUE_WORK_DONE_CALLBACK_MESSAGE)
 void OnWorkDoneCallback(ScriptPromiseResolver<IDLUndefined>* resolver,
                         wgpu::QueueWorkDoneStatus status) {
   switch (status) {
@@ -448,13 +466,14 @@ void OnWorkDoneCallback(ScriptPromiseResolver<IDLUndefined>* resolver,
           DOMExceptionCode::kOperationError,
           "Unexpected failure in onSubmittedWorkDone");
       break;
-    case wgpu::QueueWorkDoneStatus::InstanceDropped:
+    case wgpu::QueueWorkDoneStatus::CallbackCancelled:
       resolver->RejectWithDOMException(
           DOMExceptionCode::kOperationError,
           "Instance dropped in onSubmittedWorkDone");
       break;
   }
 }
+#endif  // defined(WGPU_BREAKING_CHANGE_QUEUE_WORK_DONE_CALLBACK_MESSAGE)
 
 ScriptPromise<IDLUndefined> GPUQueue::onSubmittedWorkDone(
     ScriptState* script_state) {
@@ -836,16 +855,6 @@ bool GPUQueue::CopyFromCanvasSourceImage(
     image = unaccelerated_image.get();
   }
 
-  // TODO(crbug.com/1426666): If disable OOP-R, using webgpu mailbox to upload
-  // cpu-backed resource which has unpremultiply alpha type causes issues
-  // due to alpha type has been dropped. Disable that
-  // upload path if the image is not texture backed, OOP-R is disabled and image
-  // alpha type is unpremultiplied.
-  if (!features::IsCanvasOopRasterizationEnabled() &&
-      !image->IsTextureBacked() && !image->IsPremultiplied()) {
-    use_webgpu_mailbox_texture = false;
-  }
-
   bool noop = copy_size.width == 0 || copy_size.height == 0 ||
               copy_size.depthOrArrayLayers == 0;
 
@@ -1023,7 +1032,13 @@ bool GPUQueue::CopyFromCanvasSourceImage(
 
     wgpu::Extent3D source_image_copy_size = {copy_size.width, copy_size.height};
 
-    wgpu::CommandEncoder encoder = device_->GetHandle().CreateCommandEncoder();
+    wgpu::CommandEncoderDescriptor command_encoder_desc = {
+        .label = "GPUQueue::CopyFromCanvasSourceImage",
+    };
+
+    wgpu::CommandEncoder encoder =
+        device_->GetHandle().CreateCommandEncoder(&command_encoder_desc);
+
     encoder.CopyBufferToTexture(&dawn_intermediate_buffer,
                                 &dawn_intermediate_texture,
                                 &source_image_copy_size);

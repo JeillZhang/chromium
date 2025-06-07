@@ -10,7 +10,6 @@ import java.util.Set;
 import org.jni_zero.CheckDiscard;
 import org.jni_zero.GEN_JNI;
 import org.jni_zero.JniTestInstanceHolder;
-import org.jni_zero.NativeLibraryLoadedStatus;
 import org.jni_zero.SampleForTests;
 import org.jni_zero.SampleUnderSamePackage;
 import org.jni_zero.internal.NullUnmarked;
@@ -26,7 +25,6 @@ public class SampleForTestsJni implements SampleForTests.Natives {
     if (holder != null && holder.value != null) {
       return (SampleForTests.Natives) holder.value;
     }
-    NativeLibraryLoadedStatus.checkLoaded();
     return new SampleForTestsJni();
   }
 
@@ -155,6 +153,11 @@ public class SampleForTestsJni implements SampleForTests.Natives {
     assert nativeCPPClass != 0;
     assert caller != null : "Parameter \"caller\" was null. Add @Nullable to it?";
     return (String) GEN_JNI.org_jni_1zero_SampleForTests_returnAString(nativeCPPClass, caller);
+  }
+
+  @Override
+  public int returnFromEnum() {
+    return (int) GEN_JNI.org_jni_1zero_SampleForTests_returnFromEnum();
   }
 
   @Override

@@ -194,11 +194,11 @@ public class IntentHandlerRobolectricTest {
     private ShadowKeyguardManager mShadowKeyguardManager;
 
     private void processUrls(String[] urls, boolean isValid) {
-        List<String> failedTests = new ArrayList<String>();
+        List<String> failedTests = new ArrayList<>();
 
         for (String url : urls) {
             mIntent.setData(Uri.parse(url));
-            if (IntentHandler.intentHasValidUrl(mIntent) != isValid) {
+            if (IntentHandler.isValidUrl(url) != isValid) {
                 failedTests.add(url);
             }
         }
@@ -302,7 +302,7 @@ public class IntentHandlerRobolectricTest {
     @SmallTest
     @Feature({"Android-AppBase"})
     public void testRejectedGoogleChromeSchemeUrls() {
-        List<String> failedTests = new ArrayList<String>();
+        List<String> failedTests = new ArrayList<>();
 
         for (String url : REJECTED_GOOGLECHROME_URLS) {
             mIntent.setData(Uri.parse(url));
@@ -336,8 +336,8 @@ public class IntentHandlerRobolectricTest {
     @Feature({"Android-AppBase"})
     public void testNullUrlIntent() {
         mIntent.setData(null);
-        Assert.assertTrue(
-                "Intent with null data should be valid", IntentHandler.intentHasValidUrl(mIntent));
+        String url = IntentHandler.getUrlFromIntent(mIntent);
+        Assert.assertTrue("Intent with null data should be valid", IntentHandler.isValidUrl(url));
     }
 
     @Test
@@ -735,9 +735,11 @@ public class IntentHandlerRobolectricTest {
                 ExternalAppId.PIXEL_LAUNCHER,
                 IntentHandler.determineExternalIntentSource(intent, activity));
 
-        intent.putExtra(IntentHandler.EXTRA_ACTIVITY_REFERRER, "android.app.launcher");
+        intent.putExtra(
+                IntentHandler.EXTRA_ACTIVITY_REFERRER,
+                "android-app://com.sec.android.app.launcher");
         assertEquals(
-                ExternalAppId.THIRD_PARTY_LAUNCHER,
+                ExternalAppId.SAMSUNG_LAUNCHER,
                 IntentHandler.determineExternalIntentSource(intent, activity));
     }
 }

@@ -162,6 +162,11 @@ build_recipe(
 )
 
 build_recipe(
+    name = "recipe:chromium/autosharder_test",
+    bootstrappable = True,
+)
+
+build_recipe(
     name = "recipe:chromium/generic_script_runner",
 )
 
@@ -270,10 +275,6 @@ build_recipe(
 
 build_recipe(
     name = "recipe:chromium_toolchain/package_rust",
-)
-
-build_recipe(
-    name = "recipe:cronet",
 )
 
 build_recipe(

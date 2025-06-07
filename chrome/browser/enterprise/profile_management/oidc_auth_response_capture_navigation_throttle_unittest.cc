@@ -6,8 +6,8 @@
 
 #include "base/base64.h"
 #include "base/base64url.h"
-#include "base/features.h"
 #include "base/json/json_writer.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/enterprise/profile_management/profile_management_features.h"
@@ -22,6 +22,7 @@
 #include "components/ukm/test_ukm_recorder.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/mock_navigation_handle.h"
+#include "content/public/test/mock_navigation_throttle_registry.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
@@ -245,12 +246,15 @@ class OidcAuthResponseCaptureNavigationThrottleTest
         GURL(kOidcEntraReprocessUrl), main_frame());
 
     EXPECT_CALL(*oidc_interceptor,
-                MaybeInterceptOidcAuthentication(_, _, _, _, _))
+                MaybeInterceptOidcAuthentication(_, _, _, _, _, _))
         .Times(0);
 
-    auto throttle =
-        OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-            &navigation_handle);
+    content::MockNavigationThrottleRegistry registry(
+        &navigation_handle,
+        content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+    OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(registry);
+    ASSERT_EQ(1u, registry.throttles().size());
+    auto* throttle = registry.throttles().back().get();
 
     if (expected_throttle_action == NavigationThrottle::DEFER) {
       throttle->set_resume_callback_for_testing(
@@ -272,13 +276,14 @@ class OidcAuthResponseCaptureNavigationThrottleTest
   void ExpectOidcInterception(
       MockOidcAuthenticationSigninInterceptor* oidc_interceptor,
       ProfileManagementOidcTokens expected_oidc_tokens) {
-    EXPECT_CALL(*oidc_interceptor,
-                MaybeInterceptOidcAuthentication(
-                    web_contents(), _, kExampleIdIssuer, kExampleIdSubject, _))
+    EXPECT_CALL(*oidc_interceptor, MaybeInterceptOidcAuthentication(
+                                       web_contents(), _, kExampleIdIssuer,
+                                       kExampleIdSubject, _, _))
         .WillOnce([this, expected_oidc_tokens](
                       content::WebContents* intercepted_contents,
                       ProfileManagementOidcTokens oidc_tokens,
                       std::string issuer_id, std::string subject_id,
+                      std::string email,
                       OidcInterceptionCallback oidc_callback) {
           ValidateOidcTokens(oidc_tokens, expected_oidc_tokens);
           std::move(oidc_callback).Run();
@@ -297,9 +302,11 @@ class OidcAuthResponseCaptureNavigationThrottleTest
     navigation_handle.set_url(GURL(kOidcEntraReprocessUrl));
     ASSERT_EQ(nullptr, oidc_interceptor);
 
-    auto throttle =
-        OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-            &navigation_handle);
+    content::MockNavigationThrottleRegistry registry(
+        &navigation_handle,
+        content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+    OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(registry);
+    ASSERT_EQ(1u, registry.throttles().size());
 
     std::string redirection_url =
         BuildStandardResponseUrl(/*oidc_state=*/std::string());
@@ -309,7 +316,7 @@ class OidcAuthResponseCaptureNavigationThrottleTest
         GURL(redirection_url));
 
     EXPECT_EQ(NavigationThrottle::PROCEED,
-              throttle->WillRedirectRequest().action());
+              registry.throttles().back()->WillRedirectRequest().action());
 
     CheckFunnelAndResultHistogram(
         OidcInterceptionFunnelStep::kValidRedirectionCaptured,
@@ -343,13 +350,16 @@ class OidcAuthResponseCaptureNavigationThrottleTest
           ProfileManagementOidcTokens(auth_token, id_token, oidc_state));
     } else {
       EXPECT_CALL(*oidc_interceptor,
-                  MaybeInterceptOidcAuthentication(_, _, _, _, _))
+                  MaybeInterceptOidcAuthentication(_, _, _, _, _, _))
           .Times(0);
     }
 
-    auto throttle =
-        OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-            &navigation_handle);
+    content::MockNavigationThrottleRegistry registry(
+        &navigation_handle,
+        content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+    OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(registry);
+    ASSERT_EQ(1u, registry.throttles().size());
+    auto* throttle = registry.throttles().back().get();
 
     SetupRedirectionForHandle(navigation_handle,
                               {GURL(source_url), GURL(redirection_url)},
@@ -384,9 +394,12 @@ class OidcAuthResponseCaptureNavigationThrottleTest
         ProfileManagementOidcTokens(std::string(), kExampleEncodedInfo,
                                     std::string()));
 
-    auto throttle =
-        OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-            &navigation_handle);
+    content::MockNavigationThrottleRegistry registry(
+        &navigation_handle,
+        content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+    OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(registry);
+    ASSERT_EQ(1u, registry.throttles().size());
+    auto* throttle = registry.throttles().back().get();
 
     throttle->set_resume_callback_for_testing(
         task_environment()->QuitClosure());
@@ -402,12 +415,15 @@ class OidcAuthResponseCaptureNavigationThrottleTest
 
     auto* oidc_interceptor = GetMockOidcInterceptor();
     EXPECT_CALL(*oidc_interceptor,
-                MaybeInterceptOidcAuthentication(_, _, _, _, _))
+                MaybeInterceptOidcAuthentication(_, _, _, _, _, _))
         .Times(0);
 
-    auto throttle =
-        OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-            &navigation_handle);
+    content::MockNavigationThrottleRegistry registry(
+        &navigation_handle,
+        content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+    OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(registry);
+    ASSERT_EQ(1u, registry.throttles().size());
+    auto* throttle = registry.throttles().back().get();
 
     EXPECT_EQ(NavigationThrottle::PROCEED,
               throttle->WillProcessResponse().action());
@@ -497,12 +513,15 @@ TEST_P(OidcAuthResponseCaptureNavigationThrottleTest,
 
   auto* oidc_interceptor = GetMockOidcInterceptor();
   EXPECT_CALL(*oidc_interceptor,
-              MaybeInterceptOidcAuthentication(_, _, _, _, _))
+              MaybeInterceptOidcAuthentication(_, _, _, _, _, _))
       .Times(0);
 
-  auto throttle =
-      OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-          &navigation_handle);
+  content::MockNavigationThrottleRegistry registry(
+      &navigation_handle,
+      content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+  OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(registry);
+  ASSERT_EQ(1u, registry.throttles().size());
+  auto* throttle = registry.throttles().back().get();
 
   EXPECT_EQ(NavigationThrottle::PROCEED,
             throttle->WillProcessResponse().action());
@@ -723,23 +742,6 @@ TEST_P(OidcAuthResponseCaptureNavigationThrottleTest, DecodeFailure) {
       OidcInterceptionResult::kInvalidUrlOrTokens);
 }
 
-TEST_P(OidcAuthResponseCaptureNavigationThrottleTest, DataDecoderFailure) {
-  // Disable the Rust JSON parser, as it is in-process and cannot crash.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatureState(base::features::kUseRustJsonParser, false);
-  in_process_data_decoder_.SimulateJsonParserCrash(/*drop=*/true);
-
-  std::string redirection_url =
-      BuildStandardResponseUrl(/*oidc_state=*/std::string());
-
-  auto* oidc_interceptor = GetMockOidcInterceptor();
-  RunThrottleAndExpectNoOidcInterception(oidc_interceptor, redirection_url,
-                                         NavigationThrottle::DEFER);
-  CheckFunnelAndResultHistogram(
-      OidcInterceptionFunnelStep::kValidRedirectionCaptured,
-      OidcInterceptionResult::kInvalidUrlOrTokens);
-}
-
 TEST_P(OidcAuthResponseCaptureNavigationThrottleTest, NoServiceForGuestMode) {
   TestNoServiceForInvalidProfile(profile_manager()->CreateGuestProfile());
 }
@@ -757,11 +759,11 @@ TEST_P(OidcAuthResponseCaptureNavigationThrottleTest, NotInMainFrame) {
   content::MockNavigationHandle navigation_handle(GURL(kOidcEntraReprocessUrl),
                                                   subframe);
 
-  auto throttle =
-      OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-          &navigation_handle);
-
-  ASSERT_EQ(throttle, nullptr);
+  content::MockNavigationThrottleRegistry registry(
+      &navigation_handle,
+      content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+  OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(registry);
+  EXPECT_EQ(0u, registry.throttles().size());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -820,13 +822,16 @@ TEST_P(OidcAuthNavigationThrottleGenericOidcTest, MissingRedirectionChain) {
                                                       /*state=*/std::string()));
   } else {
     EXPECT_CALL(*oidc_interceptor,
-                MaybeInterceptOidcAuthentication(_, _, _, _, _))
+                MaybeInterceptOidcAuthentication(_, _, _, _, _, _))
         .Times(0);
   }
 
-  auto throttle =
-      OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-          &navigation_handle);
+  content::MockNavigationThrottleRegistry registry(
+      &navigation_handle,
+      content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+  OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(registry);
+  ASSERT_EQ(1u, registry.throttles().size());
+  auto* throttle = registry.throttles().back().get();
 
   if (enable_generic_oidc()) {
     throttle->set_resume_callback_for_testing(
@@ -860,23 +865,25 @@ class OidcAuthNavigationThrottleFeatureDisabledTest
 TEST_P(OidcAuthNavigationThrottleFeatureDisabledTest, NoThrottleCreation) {
   content::MockNavigationHandle msft_navigation_handle(
       GURL(kOidcEntraReprocessUrl), main_frame());
-  auto msft_throttle =
-      OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-          &msft_navigation_handle);
-  ASSERT_EQ(nullptr, msft_throttle.get());
+  content::MockNavigationThrottleRegistry msft_registry(
+      &msft_navigation_handle,
+      content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+  OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(msft_registry);
+  ASSERT_EQ(0u, msft_registry.throttles().size());
 
   content::MockNavigationHandle full_navigation_handle(
       GURL(kOidcEntraReprocessUrl), main_frame());
+  content::MockNavigationThrottleRegistry full_registry(
+      &full_navigation_handle,
+      content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
   std::string redirection_url =
       BuildStandardResponseUrl(/*oidc_state=*/std::string());
   SetupRedirectionForHandle(
       full_navigation_handle,
       {GURL(kOidcEntraReprocessUrl), GURL(redirection_url)},
       GURL(redirection_url));
-  auto full_throttle =
-      OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-          &full_navigation_handle);
-  ASSERT_EQ(nullptr, full_throttle.get());
+  OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(full_registry);
+  ASSERT_EQ(0u, full_registry.throttles().size());
 
   ExpectNoUkmLogged();
 }
@@ -913,12 +920,15 @@ TEST_P(OidcAuthNavigationThrottleProcessResponseTest,
                                                   main_frame());
   auto* oidc_interceptor = GetMockOidcInterceptor();
   EXPECT_CALL(*oidc_interceptor,
-              MaybeInterceptOidcAuthentication(_, _, _, _, _))
+              MaybeInterceptOidcAuthentication(_, _, _, _, _, _))
       .Times(0);
 
-  auto throttle =
-      OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-          &navigation_handle);
+  content::MockNavigationThrottleRegistry registry(
+      &navigation_handle,
+      content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+  OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(registry);
+  ASSERT_EQ(1u, registry.throttles().size());
+  auto* throttle = registry.throttles().back().get();
 
   navigation_handle.set_url(GURL(direct_navigate_url));
   EXPECT_EQ(NavigationThrottle::PROCEED,
@@ -955,13 +965,16 @@ TEST_P(OidcAuthNavigationThrottleProcessResponseTest, ProcessResponse) {
         ProfileManagementOidcTokens(auth_token, id_token, /*state=*/""));
   } else {
     EXPECT_CALL(*oidc_interceptor,
-                MaybeInterceptOidcAuthentication(_, _, _, _, _))
+                MaybeInterceptOidcAuthentication(_, _, _, _, _, _))
         .Times(0);
   }
 
-  auto throttle =
-      OidcAuthResponseCaptureNavigationThrottle::MaybeCreateThrottleFor(
-          &navigation_handle);
+  content::MockNavigationThrottleRegistry registry(
+      &navigation_handle,
+      content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
+  OidcAuthResponseCaptureNavigationThrottle::MaybeCreateAndAdd(registry);
+  ASSERT_EQ(1u, registry.throttles().size());
+  auto* throttle = registry.throttles().back().get();
 
   if (enable_process_response()) {
     throttle->set_resume_callback_for_testing(

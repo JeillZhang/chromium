@@ -23,6 +23,7 @@
 #import "ios/chrome/browser/drag_and_drop/model/drag_item_util.h"
 #import "ios/chrome/browser/saved_tab_groups/model/ios_tab_group_sync_util.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
+#import "ios/chrome/browser/saved_tab_groups/ui/tab_group_utils.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_avatar_configuration.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_face_pile_configuration.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_service.h"
@@ -62,10 +63,13 @@ using ScopedDataSharingSyncObservation =
 using tab_groups::SharingState;
 
 namespace {
+
 // The preferred size in points for the avatar icons.
-constexpr CGFloat kFacePileAvatarSize = 24;
+constexpr CGFloat kLegacyFacePileAvatarSize = 24;
+constexpr CGFloat kFacePileAvatarSize = 26;
 // The preferred size in points for the avatar icon in the activity label.
 constexpr CGFloat kActivityLabelAvatarSize = 16;
+
 }  // namespace
 
 @interface TabGroupMediator () <DataSharingServiceObserverDelegate,
@@ -96,10 +100,6 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
   base::WeakPtr<const TabGroup> _tabGroup;
   // A service to get activity messages for a shared tab group.
   raw_ptr<collaboration::messaging::MessagingBackendService> _messagingService;
-  // A map of a tab ID and a message to indicate that a tab should display a
-  // chip on its cell. This is also used for the activity summary.
-  std::map<tab_groups::LocalTabID, collaboration::messaging::PersistentMessage>
-      _dirtyTabs;
   // The bridge between the C++ MessagingBackendService observer and this
   // Objective-C class.
   std::unique_ptr<MessagingBackendServiceBridge> _messagingBackendServiceBridge;
@@ -118,9 +118,6 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
               modeHolder:(TabGridModeHolder*)modeHolder
         messagingService:(collaboration::messaging::MessagingBackendService*)
                              messagingService {
-  CHECK(IsTabGroupInGridEnabled())
-      << "You should not be able to create a tab group mediator outside the "
-         "Tab Groups experiment.";
   CHECK(webStateList);
   CHECK(groupConsumer);
   CHECK(tabGroup);
@@ -155,7 +152,8 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
     _tabGroup = tabGroup;
 
     [_groupConsumer setGroupTitle:tabGroup->GetTitle()];
-    [_groupConsumer setGroupColor:tabGroup->GetColor()];
+    [_groupConsumer setGroupColor:tab_groups::ColorForTabGroupColorId(
+                                      tabGroup->GetColor())];
 
     _messagingService = messagingService;
     if (_messagingService) {
@@ -364,14 +362,23 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
 // Overrides the parent to return the data if there is a new message for a tab
 // in a group.
 - (ActivityLabelData*)activityLabelDataForTab:(web::WebStateID)webStateID {
-  if (!_dirtyTabs.contains(webStateID.identifier())) {
+  if (!_tabGroup || !_messagingService || !_messagingService->IsInitialized()) {
+    return nil;
+  }
+
+  std::vector<collaboration::messaging::PersistentMessage> messages =
+      _messagingService->GetMessagesForTab(
+          webStateID.identifier(),
+          collaboration::messaging::PersistentNotificationType::DIRTY_TAB);
+  if (messages.empty()) {
     return nil;
   }
 
   ActivityLabelData* data = [[ActivityLabelData alloc] init];
 
-  collaboration::messaging::PersistentMessage message =
-      _dirtyTabs[webStateID.identifier()];
+  // The backend stores only one message per tab.
+  CHECK_EQ(1u, messages.size());
+  collaboration::messaging::PersistentMessage message = messages[0];
   switch (message.collaboration_event) {
     case collaboration::messaging::CollaborationEvent::TAB_ADDED:
       data.labelString = l10n_util::GetNSString(
@@ -388,9 +395,6 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
 
   if (!_shareKitService->IsSupported() ||
       !message.attribution.triggering_user.has_value()) {
-    // TODO(crbug.com/385090658): Now, `triggering_user` doesn't have a value in
-    // any cases (a tab is added / updated) and the label isn't created. Confirm
-    // why `triggering_user` is nil.
     return nil;
   }
 
@@ -415,28 +419,7 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
 - (void)closeItemWithIdentifier:(GridItemIdentifier*)identifier {
   CHECK_EQ(identifier.type, GridItemType::kTab);
   web::WebStateID webStateID = identifier.tabSwitcherItem.identifier;
-  if (_tabGroup->range().count() > 1 || ![self isShared] ||
-      !_collaborationService) {
-    [self closeItemWithID:webStateID];
-    return;
-  }
-
-  data_sharing::MemberRole userRole = tab_groups::utils::GetUserRoleForGroup(
-      _tabGroup.get(), _tabGroupSyncService, _collaborationService);
-
-  switch (userRole) {
-    case data_sharing::MemberRole::kOwner:
-      [self.tabGroupDelegate tabGroupMediatorCloseLastTabAsOwner:self
-                                               lastTabIdentifier:webStateID];
-      break;
-    case data_sharing::MemberRole::kMember:
-      [self.tabGroupDelegate tabGroupMediatorCloseLastTabAsMember:self
-                                                lastTabIdentifier:webStateID];
-      break;
-    case data_sharing::MemberRole::kInvitee:
-    case data_sharing::MemberRole::kUnknown:
-      NOTREACHED();
-  }
+  [self closeItemWithID:webStateID];
 }
 
 #pragma mark - TabCollectionDragDropHandler override
@@ -569,7 +552,8 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
         break;
       }
       [_groupConsumer setGroupTitle:tabGroup->GetTitle()];
-      [_groupConsumer setGroupColor:tabGroup->GetColor()];
+      [_groupConsumer setGroupColor:tab_groups::ColorForTabGroupColorId(
+                                        tabGroup->GetColor())];
       break;
     }
     case WebStateListChange::Type::kGroupDelete: {
@@ -623,6 +607,10 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
       [self addObservationForWebState:insertChange.inserted_web_state()];
       break;
     }
+    case WebStateListChange::Type::kGroupCreate: {
+      // Don't show tab group when created.
+      break;
+    }
     default:
       [super didChangeWebStateList:webStateList change:change status:status];
       break;
@@ -642,7 +630,8 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
   [self populateConsumerItems];
   if (_tabGroup) {
     [_groupConsumer setGroupTitle:_tabGroup->GetTitle()];
-    [_groupConsumer setGroupColor:_tabGroup->GetColor()];
+    [_groupConsumer setGroupColor:tab_groups::ColorForTabGroupColorId(
+                                      _tabGroup->GetColor())];
   } else {
     [self.tabGroupsHandler hideTabGroup];
   }
@@ -657,6 +646,7 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
   if (newGroup.local_group_id() != _tabGroup->tab_group_id()) {
     return;
   }
+  [self updateTabGroupSharingState];
   [self updateFacePileUI];
 }
 
@@ -715,8 +705,12 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
       [[ShareKitFacePileConfiguration alloc] init];
   config.collabID = base::SysUTF8ToNSString(savedCollabID.value());
   config.showsEmptyState = YES;
-  config.avatarSize = kFacePileAvatarSize;
-  [_groupConsumer setFacePileViewController:_shareKitService->FacePile(config)];
+  if (IsContainedTabGroupEnabled()) {
+    config.avatarSize = kFacePileAvatarSize;
+  } else {
+    config.avatarSize = kLegacyFacePileAvatarSize;
+  }
+  [_groupConsumer setFacePileView:_shareKitService->FacePileView(config)];
 }
 
 // Inserts an item representing `webState` in the consumer at `index`.
@@ -741,23 +735,6 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
     return;
   }
 
-  std::vector<collaboration::messaging::PersistentMessage> messages =
-      _messagingService->GetMessagesForGroup(
-          _tabGroup->tab_group_id(),
-          collaboration::messaging::PersistentNotificationType::DIRTY_TAB);
-
-  for (auto& message : messages) {
-    if (!message.attribution.tab_metadata.has_value()) {
-      continue;
-    }
-    collaboration::messaging::TabMessageMetadata tab_data =
-        message.attribution.tab_metadata.value();
-    if (!tab_data.local_tab_id.has_value()) {
-      continue;
-    }
-    _dirtyTabs[tab_data.local_tab_id.value()] = message;
-  }
-
   [self updateActivitySummaryCell];
 }
 
@@ -779,21 +756,34 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
   CHECK(_messagingService);
   CHECK(_messagingService->IsInitialized());
 
+  std::vector<collaboration::messaging::PersistentMessage> messages =
+      _messagingService->GetMessagesForGroup(
+          _tabGroup->tab_group_id(),
+          collaboration::messaging::PersistentNotificationType::DIRTY_TAB);
+  std::vector<collaboration::messaging::PersistentMessage> tombstoned_messages =
+      _messagingService->GetMessagesForGroup(
+          _tabGroup->tab_group_id(),
+          collaboration::messaging::PersistentNotificationType::TOMBSTONED);
+  messages.insert(messages.end(), tombstoned_messages.begin(),
+                  tombstoned_messages.end());
+
   int numOfTabsAdded = 0;
   int numOfTabsRemoved = 0;
-  for (auto const& [localTabID, message] : _dirtyTabs) {
+  for (auto const& message : messages) {
+    if (!message.attribution.tab_metadata.has_value()) {
+      continue;
+    }
+
     switch (message.collaboration_event) {
       case collaboration::messaging::CollaborationEvent::TAB_ADDED: {
-        // Make sure that the dirty tab exists in the group.
-        if ([self isTabInGroup:localTabID]) {
-          numOfTabsAdded++;
-        }
+        numOfTabsAdded++;
+        break;
+      }
+      case collaboration::messaging::CollaborationEvent::TAB_UPDATED: {
+        numOfTabsAdded++;
         break;
       }
       case collaboration::messaging::CollaborationEvent::TAB_REMOVED:
-        // TODO(crbug.com/385133876): Now, only -hidePersistentMessage: is
-        // called when a tab is removed. So `numOfTabsRemoved` is never
-        // incremented. Probably we need to fix it on the server side.
         numOfTabsRemoved++;
         break;
       default:
@@ -807,14 +797,32 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
     return;
   }
 
-  [_groupConsumer
-      setActivitySummaryCellText:
-          base::SysUTF16ToNSString(
-              base::i18n::MessageFormatter::FormatWithNamedArgs(
-                  l10n_util::GetStringUTF16(
-                      IDS_IOS_TAB_GROUP_ACTIVITY_SUMMARY_ACTIVITY_TEXT),
-                  "count_tab_added", numOfTabsAdded, "count_tab_removed",
-                  numOfTabsRemoved))];
+  NSString* summary = @"";
+  if (numOfTabsAdded > 0) {
+    summary =
+        [summary stringByAppendingString:
+                     l10n_util::GetPluralNSStringF(
+                         IDS_IOS_TAB_GROUP_ACTIVITY_SUMMARY_ACTIVITY_ADDED_TEXT,
+                         numOfTabsAdded)];
+  }
+  if (numOfTabsRemoved > 0) {
+    if (summary.length > 0) {
+      summary = [summary stringByAppendingString:@", "];
+      summary = [summary
+          stringByAppendingString:
+              l10n_util::GetPluralNSStringF(
+                  IDS_IOS_TAB_GROUP_ACTIVITY_SUMMARY_ACTIVITY_REMOVED_TEXT,
+                  numOfTabsRemoved)];
+    } else {
+      summary = [summary
+          stringByAppendingString:
+              l10n_util::GetPluralNSStringF(
+                  IDS_IOS_TAB_GROUP_ACTIVITY_SUMMARY_ACTIVITY_REMOVED_ONLY_TEXT,
+                  numOfTabsRemoved)];
+    }
+  }
+
+  [_groupConsumer setActivitySummaryCellText:summary];
 }
 
 // Returns YES if the tab specified by `localTabID` exists in the group.
@@ -834,13 +842,6 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
 // Returns YES if the group is shared.
 - (BOOL)isShared {
   CHECK(_tabGroup);
-  BOOL isSharedTabGroupSupported =
-      _shareKitService && _shareKitService->IsSupported();
-
-  if (!isSharedTabGroupSupported || !_tabGroupSyncService) {
-    return NO;
-  }
-
   return tab_groups::utils::IsTabGroupShared(_tabGroup.get(),
                                              _tabGroupSyncService);
 }
@@ -875,8 +876,7 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
 // Updates the sharing state for the current `_tabGroup`.
 - (void)updateTabGroupSharingState {
   CHECK(_tabGroup);
-  BOOL shared = tab_groups::utils::IsTabGroupShared(_tabGroup.get(),
-                                                    _tabGroupSyncService);
+  BOOL shared = [self isShared];
   if (!shared) {
     [_groupConsumer setSharingState:SharingState::kNotShared];
     return;
@@ -915,7 +915,6 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
     return;
   }
   tab_groups::LocalTabID localTabID = tab_data.local_tab_id.value();
-  _dirtyTabs[localTabID] = message;
 
   [self reconfigureTab:localTabID];
   [self updateActivitySummaryCell];
@@ -939,7 +938,6 @@ constexpr CGFloat kActivityLabelAvatarSize = 16;
     return;
   }
   tab_groups::LocalTabID localTabID = tab_data.local_tab_id.value();
-  _dirtyTabs.erase(localTabID);
 
   [self reconfigureTab:localTabID];
   [self updateActivitySummaryCell];

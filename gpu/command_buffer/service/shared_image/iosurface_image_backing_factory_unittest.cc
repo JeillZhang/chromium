@@ -1346,7 +1346,7 @@ class IOSurfaceImageBackingFactoryGMBTest
 
     auto backing = backing_factory_->CreateSharedImage(
         mailbox, format, size, color_space, surface_origin, alpha_type, usage,
-        "TestLabel", std::move(handle));
+        "TestLabel", /*is_thread_safe=*/false, std::move(handle));
 
     if (!should_succeed) {
       return nullptr;
@@ -1500,6 +1500,7 @@ TEST_P(IOSurfaceImageBackingFactoryGMBTest, Basic) {
   shared_image.reset();
 }
 
+#if BUILDFLAG(SKIA_USE_DAWN)
 // Tests that multiple representations created from Graphite's Dawn device use
 // the same wgpu::Texture for accesses created with the same usage.
 TEST_P(IOSurfaceImageBackingFactoryGMBTest,
@@ -1802,6 +1803,7 @@ TEST_P(IOSurfaceImageBackingFactoryGMBTest,
   queue.Submit(1, &commands);
   EXPECT_FALSE(context_provider->GetResetStatus());
 }
+#endif  // #if BUILDFLAG(SKIA_USE_DAWN)
 
 const auto kScanoutFormats =
     ::testing::Values(viz::SinglePlaneFormat::kRGBA_8888,

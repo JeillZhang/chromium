@@ -10,12 +10,14 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
 #include "chrome/browser/download/download_item_warning_data.h"
+#include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/safe_browsing/chrome_ping_manager_factory.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/mock_download_item.h"
+#include "components/prefs/testing_pref_service.h"
 #include "components/safe_browsing/content/browser/safe_browsing_service_interface.h"
 #include "components/safe_browsing/core/browser/ping_manager.h"
 #include "components/safe_browsing/core/common/features.h"
@@ -29,6 +31,10 @@
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "services/network/test/test_utils.h"
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/test/base/scoped_testing_local_state.h"
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 using network::GetUploadData;
 using testing::Return;
@@ -47,11 +53,14 @@ const char kTestDownloadUrl[] = "https://example.com";
 }
 
 // Mock SafeBrowsingPrefChangeHandler.
-class MockSafeBrowsingPrefChangeHandler : public SafeBrowsingPrefChangeHandler {
+class MockSafeBrowsingPrefChangeHandler
+    : public safe_browsing::SafeBrowsingPrefChangeHandler {
  public:
+  explicit MockSafeBrowsingPrefChangeHandler(Profile* profile)
+      : SafeBrowsingPrefChangeHandler(profile) {}
   MOCK_METHOD(void,
               MaybeShowEnhancedProtectionSettingChangeNotification,
-              (Profile * profile),
+              (),
               (override));
 };
 
@@ -80,11 +89,7 @@ class SafeBrowsingServiceTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
 
     profile_ = std::make_unique<TestingProfile>();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    // Local state is needed to construct ProxyConfigService, which is a
-    // dependency of PingManager on ChromeOS.
-    TestingBrowserProcess::GetGlobal()->SetLocalState(profile_->GetPrefs());
-#endif
+    profile2_ = std::make_unique<TestingProfile>();
   }
 
   void TearDown() override {
@@ -92,9 +97,6 @@ class SafeBrowsingServiceTest : public testing::Test {
     browser_process_->safe_browsing_service()->ShutDown();
     browser_process_->SetSafeBrowsingService(nullptr);
     safe_browsing::SafeBrowsingServiceInterface::RegisterFactory(nullptr);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
-#endif
     base::RunLoop().RunUntilIdle();
   }
 
@@ -211,9 +213,18 @@ class SafeBrowsingServiceTest : public testing::Test {
   content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   raw_ptr<TestingBrowserProcess> browser_process_;
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // Local state is needed to construct ProxyConfigService, which is a
+  // dependency of PingManager on ChromeOS.
+  ScopedTestingLocalState scoped_testing_local_state_{
+      TestingBrowserProcess::GetGlobal()};
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
   scoped_refptr<SafeBrowsingService> sb_service_;
   TestingProfile::Builder profile_builder_;
   std::unique_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile2_;
   raw_ptr<TestingProfile> otr_profile_;
 
   ::testing::NiceMock<download::MockDownloadItem> download_item_;
@@ -544,12 +555,13 @@ TEST_F(SafeBrowsingServiceTest, EnhancedProtectionPrefChange_SingleProfile) {
   Profile* profile1 = profile();
 
   // 2. Create a mock SafeBrowsingPrefChangeHandler.
-  auto mock_handler1 = std::make_unique<
-      ::testing::NiceMock<MockSafeBrowsingPrefChangeHandler>>();
+  auto mock_handler1 =
+      std::make_unique<::testing::NiceMock<MockSafeBrowsingPrefChangeHandler>>(
+          profile1);
 
-  // 3. Set the expectation: The mock should be called once with the profile.
+  // 3. Set the expectation: The mock should be called once.
   EXPECT_CALL(*mock_handler1,
-              MaybeShowEnhancedProtectionSettingChangeNotification(profile1));
+              MaybeShowEnhancedProtectionSettingChangeNotification());
 
   // 4. Add the mock handler to the map.
   sb_service_->pref_change_handlers_map_[profile1] = std::move(mock_handler1);
@@ -562,22 +574,21 @@ TEST_F(SafeBrowsingServiceTest,
        EnhancedProtectionPrefChange_SupportsMultipleProfiles) {
   // 1. Create multiple profiles.
   Profile* profile1 = profile();
-  auto profile2 = std::make_unique<TestingProfile>();
-  Profile* profile2_ptr = profile2.get();  // Store the pointer before moving
+  Profile* profile2_ptr = profile2_.get();  // Store the pointer before moving
 
   // 2. Create mock SafeBrowsingPrefChangeHandlers for each profile.
-  auto mock_handler1 = std::make_unique<
-      ::testing::NiceMock<MockSafeBrowsingPrefChangeHandler>>();
-  auto mock_handler2 = std::make_unique<
-      ::testing::NiceMock<MockSafeBrowsingPrefChangeHandler>>();
+  auto mock_handler1 =
+      std::make_unique<::testing::NiceMock<MockSafeBrowsingPrefChangeHandler>>(
+          profile1);
+  auto mock_handler2 =
+      std::make_unique<::testing::NiceMock<MockSafeBrowsingPrefChangeHandler>>(
+          profile2_ptr);
 
-  // 3. Set expectations: Each mock should be called once with its corresponding
-  // profile.
+  // 3. Set expectations: Each mock should be called once.
   EXPECT_CALL(*mock_handler1.get(),
-              MaybeShowEnhancedProtectionSettingChangeNotification(profile1));
-  EXPECT_CALL(
-      *mock_handler2.get(),
-      MaybeShowEnhancedProtectionSettingChangeNotification(profile2_ptr));
+              MaybeShowEnhancedProtectionSettingChangeNotification());
+  EXPECT_CALL(*mock_handler2.get(),
+              MaybeShowEnhancedProtectionSettingChangeNotification());
 
   // 4. Add the mock handlers to the map, associating them with their profiles.
   sb_service_->pref_change_handlers_map_[profile1] = std::move(mock_handler1);
@@ -748,14 +759,10 @@ TEST_F(SendNotificationsAcceptedTest, SendReportForAllowlistedURL) {
   ping_manager->SetURLLoaderFactoryForTesting(
       base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
           &test_url_loader_factory));
-// TODO(b/325636200): We should remove this once we figure out why the test is
-// crashing for ChromeOS and how to properly test it.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
   EXPECT_TRUE(sb_service_->MaybeSendNotificationsAcceptedReport(
       nullptr, profile(), notification_url1, notification_url2,
       notification_url3, display_duration));
   EXPECT_TRUE(request_validated);
-#endif
 }
 
 TEST_F(SendNotificationsAcceptedTest,

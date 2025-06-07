@@ -9,6 +9,12 @@
 
 @implementation TestLensOverlayController
 
+@synthesize visibleAreaLayoutGuide = _visibleAreaLayoutGuide;
+
+- (CGSize)imageSize {
+  return CGSizeZero;
+}
+
 - (void)setLensOverlayDelegate:(id<ChromeLensOverlayDelegate>)delegate {
   // NO-OP
 }
@@ -53,6 +59,18 @@
 
 - (BOOL)translateFilterActive {
   return NO;
+}
+
+- (CGRect)selectionRect {
+  return CGRectZero;
+}
+
+- (void)setGuidanceRestHeight:(CGFloat)height {
+  // NO-OP
+}
+
+- (void)requestShowOverflowMenuTooltip {
+  // NO-OP
 }
 
 @end

@@ -82,9 +82,10 @@ public class ChildProcessConnectionTest {
         }
 
         @Override
-        public void updateGroupImportance(int group, int importanceInGroup) {
+        public boolean updateGroupImportance(int group, int importanceInGroup) {
             mGroup = group;
             mImportanceInGroup = importanceInGroup;
+            return true;
         }
 
         @Override
@@ -159,7 +160,8 @@ public class ChildProcessConnectionTest {
 
         mIChildProcessService = mock(IChildProcessService.class);
         ApplicationInfo appInfo = BuildInfo.getInstance().getBrowserApplicationInfo();
-        when(mIChildProcessService.getAppInfo()).thenReturn(appInfo);
+        String[] appInfoStrings = ChildProcessService.convertToStrings(appInfo);
+        when(mIChildProcessService.getAppInfoStrings()).thenReturn(appInfoStrings);
         // Capture the parameters passed to the IChildProcessService.setupConnection() call.
         doAnswer(
                         new Answer<Void>() {
@@ -173,7 +175,7 @@ public class ChildProcessConnectionTest {
                         })
                 .when(mIChildProcessService)
                 .setupConnection(
-                        or(isNull(), any(Bundle.class)),
+                        or(isNull(), any()),
                         or(isNull(), any()),
                         or(isNull(), any()),
                         or(isNull(), any()));
@@ -380,7 +382,7 @@ public class ChildProcessConnectionTest {
         assertNotNull(mFirstServiceConnection);
         connection.start(/* useStrongBinding= */ false, /* serviceCallback= */ null);
         connection.setupConnection(
-                /* connectionBundle= */ null,
+                /* childProcessArgs= */ null,
                 /* clientInterfaces= */ null,
                 /* binderBox= */ null,
                 mConnectionCallback,
@@ -399,7 +401,7 @@ public class ChildProcessConnectionTest {
         assertNotNull(mFirstServiceConnection);
         connection.start(/* useStrongBinding= */ false, /* serviceCallback= */ null);
         connection.setupConnection(
-                /* connectionBundle= */ null,
+                /* childProcessArgs= */ null,
                 /* clientInterfaces= */ null,
                 /* binderBox= */ null,
                 mConnectionCallback,
@@ -421,7 +423,7 @@ public class ChildProcessConnectionTest {
         assertNotNull(mFirstServiceConnection);
         connection.start(/* useStrongBinding= */ false, /* serviceCallback= */ null);
         connection.setupConnection(
-                /* connectionBundle= */ null,
+                /* childProcessArgs= */ null,
                 /* clientInterfaces= */ null,
                 /* binderBox= */ null,
                 mConnectionCallback,
@@ -448,7 +450,7 @@ public class ChildProcessConnectionTest {
         assertNotNull(mFirstServiceConnection);
         connection1.start(/* useStrongBinding= */ true, /* serviceCallback= */ null);
         connection1.setupConnection(
-                /* connectionBundle= */ null,
+                /* childProcessArgs= */ null,
                 /* clientInterfaces= */ null,
                 /* binderBox= */ null,
                 mConnectionCallback,
@@ -472,7 +474,7 @@ public class ChildProcessConnectionTest {
         assertNotNull(mFirstServiceConnection);
         connection2.start(/* useStrongBinding= */ false, /* serviceCallback= */ null);
         connection2.setupConnection(
-                /* connectionBundle= */ null,
+                /* childProcessArgs= */ null,
                 /* clientInterfaces= */ null,
                 /* binderBox= */ null,
                 mConnectionCallback,
@@ -498,7 +500,7 @@ public class ChildProcessConnectionTest {
         assertNotNull(mFirstServiceConnection);
         connection.start(/* useStrongBinding= */ false, /* serviceCallback= */ null);
         connection.setupConnection(
-                /* connectionBundle= */ null,
+                /* childProcessArgs= */ null,
                 /* clientInterfaces= */ null,
                 /* binderBox= */ null,
                 mConnectionCallback,
@@ -529,7 +531,7 @@ public class ChildProcessConnectionTest {
         assertNotNull(mFirstServiceConnection);
         connection.start(/* useStrongBinding= */ false, /* serviceCallback= */ null);
         connection.setupConnection(
-                /* connectionBundle= */ null,
+                /* childProcessArgs= */ null,
                 /* clientInterfaces= */ null,
                 /* binderBox= */ null,
                 mConnectionCallback,
@@ -558,7 +560,7 @@ public class ChildProcessConnectionTest {
         connection.start(/* useStrongBinding= */ false, /* serviceCallback= */ null);
         mFirstServiceConnection.notifyServiceConnected(mChildProcessServiceBinder);
         connection.setupConnection(
-                /* connectionBundle= */ null,
+                /* childProcessArgs= */ null,
                 /* clientInterfaces= */ null,
                 /* binderBox= */ null,
                 mConnectionCallback,
@@ -577,7 +579,7 @@ public class ChildProcessConnectionTest {
         connection.start(/* useStrongBinding= */ false, /* serviceCallback= */ null);
         mFirstServiceConnection.notifyServiceConnected(mChildProcessServiceBinder);
         connection.setupConnection(
-                /* connectionBundle= */ null,
+                /* childProcessArgs= */ null,
                 /* clientInterfaces= */ null,
                 /* binderBox= */ null,
                 mConnectionCallback,
@@ -631,7 +633,7 @@ public class ChildProcessConnectionTest {
         connection.start(/* useStrongBinding= */ false, /* serviceCallback= */ null);
         mFirstServiceConnection.notifyServiceConnected(mChildProcessServiceBinder);
         connection.setupConnection(
-                /* connectionBundle= */ null,
+                /* childProcessArgs= */ null,
                 /* clientInterfaces= */ null,
                 /* binderBox= */ null,
                 mConnectionCallback,
@@ -682,7 +684,7 @@ public class ChildProcessConnectionTest {
         }
 
         connection.setupConnection(
-                /* connectionBundle= */ null,
+                /* childProcessArgs= */ null,
                 /* clientInterfaces= */ null,
                 /* binderBox= */ null,
                 mConnectionCallback,

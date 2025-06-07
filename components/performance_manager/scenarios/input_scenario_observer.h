@@ -24,7 +24,8 @@ class InputScenarioObserver : public FrameInputStateObserver,
   InputScenarioObserver& operator=(const InputScenarioObserver&) = delete;
 
   // FrameInputStateObserver:
-  void OnInputScenarioChanged(const FrameNode* frame_node) override;
+  void OnInputScenarioChanged(const FrameNode* frame_node,
+                              InputScenario previous_scenario) override;
 
   // ProcessNodeObserver:
   void OnBeforeProcessNodeRemoved(const ProcessNode* process_node) override;
@@ -34,7 +35,9 @@ class InputScenarioObserver : public FrameInputStateObserver,
   void OnTakenFromGraph(Graph* graph) override;
 
  private:
-  std::map<const ProcessNode*, int> process_input_scenarios_count_;
+  std::map<const ProcessNode*,
+           std::array<size_t, static_cast<size_t>(InputScenario::kMax) + 1>>
+      process_input_scenarios_count_;
   SEQUENCE_CHECKER(sequence_checker_);
 };
 

@@ -25,7 +25,7 @@
 #include "third_party/skia/include/gpu/ganesh/GrTypes.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 #if !BUILDFLAG(IS_NACL)
 #include "ui/gfx/native_pixmap.h"
@@ -91,6 +91,8 @@ struct SharedImageInfo {
              kPremul_SkAlphaType,
              usage),
         debug_label(debug_label) {}
+  SharedImageInfo(const SharedImageMetadata& meta, std::string_view debug_label)
+      : meta(meta), debug_label(debug_label) {}
 
   SharedImageMetadata meta;
   std::string debug_label;
@@ -179,6 +181,18 @@ class GPU_EXPORT SharedImageInterface
       const SharedImageInfo& si_info,
       gfx::GpuMemoryBufferHandle buffer_handle) = 0;
 
+  // Creates a shared image for an existing MLTensor.
+  // Tensors store numeric values in multiple dimensions.
+  // |size| is calculated from the tensor's shape: the product of all dimensions
+  // except the last determines the height, and the last dimension becomes the
+  // width. |usage| must include gpu::SHARED_IMAGE_USAGE_WEBNN_SHARED_TENSOR.
+  // |format| should be valid and correspond to the equivalent dataType.
+  virtual scoped_refptr<ClientSharedImage> CreateSharedImageForMLTensor(
+      std::string debug_label,
+      viz::SharedImageFormat format,
+      const gfx::Size& size,
+      gpu::SharedImageUsageSet usage) = 0;
+
   // Creates a shared image with the usage of
   // gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY only. A shared memory buffer is
   // created internally and a shared image is created out of this buffer. This
@@ -222,22 +236,11 @@ class GPU_EXPORT SharedImageInterface
   // is done to copy the content of |buffer_handle| into a shared memory
   // |memory_region| via below methods. This shared memory is mappable in any
   // process and is used internally during GpuMemoryBuffer::Map().
-  // This will block on calling client thread.
-  virtual bool CopyNativeGmbToSharedMemorySync(
-      gfx::GpuMemoryBufferHandle buffer_handle,
-      base::UnsafeSharedMemoryRegion memory_region);
-
-  // This is non-blocking version of above method. The |callback| will be run
-  // when the copy is done.
+  // The |callback| will be run when the copy is done.
   virtual void CopyNativeGmbToSharedMemoryAsync(
       gfx::GpuMemoryBufferHandle buffer_handle,
       base::UnsafeSharedMemoryRegion memory_region,
       base::OnceCallback<void(bool)> callback);
-
-  // Checks if the GpuChannel is connected to this interface. This is
-  // used on windows to find if SII is still connected to the GPU service so
-  // that GpuMemoryBufferManager can use it.
-  virtual bool IsConnected();
 
   // Destroys the shared image, unregistering its mailbox, after |sync_token|
   // has been released. After this call, the mailbox can't be used to reference
@@ -278,7 +281,8 @@ class GPU_EXPORT SharedImageInterface
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      gpu::SharedImageUsageSet usage) = 0;
+      gpu::SharedImageUsageSet usage,
+      std::string_view debug_label) = 0;
 
   // Swaps front and back buffer of a swap chain. Back buffer mailbox still
   // refers to the back buffer of the swap chain after calling PresentSwapChain.
@@ -334,9 +338,6 @@ class GPU_EXPORT SharedImageInterface
   // previous commands which will be sent to server on the next flush().
   virtual void WaitSyncToken(const gpu::SyncToken& sync_token) = 0;
 
-  // Flush the SharedImageInterface, issuing any deferred IPCs.
-  virtual void Flush() = 0;
-
   // Informs that existing |mailbox| with the specified metadata can be passed
   // to DestroySharedImage().
   virtual scoped_refptr<ClientSharedImage> NotifyMailboxAdded(
@@ -346,16 +347,9 @@ class GPU_EXPORT SharedImageInterface
       const gfx::ColorSpace& color_space,
       GrSurfaceOrigin surface_origin,
       SkAlphaType alpha_type,
-      SharedImageUsageSet usage);
-  virtual scoped_refptr<ClientSharedImage> NotifyMailboxAdded(
-      const Mailbox& mailbox,
-      viz::SharedImageFormat format,
-      const gfx::Size& size,
-      const gfx::ColorSpace& color_space,
-      GrSurfaceOrigin surface_origin,
-      SkAlphaType alpha_type,
       SharedImageUsageSet usage,
-      uint32_t texture_target);
+      uint32_t texture_target,
+      std::string_view debug_label);
 
   virtual const SharedImageCapabilities& GetCapabilities() = 0;
 

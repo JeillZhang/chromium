@@ -16,6 +16,7 @@
 #include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/protobuf_matchers.h"
@@ -197,7 +198,6 @@ class SeaPenFetcherTest : public testing::Test {
   SeaPenFetcherTest() {
     scoped_feature_list_.InitWithFeatures(
         {
-            ash::features::kSeaPen,
             ash::features::kFeatureManagementSeaPen,
             manta::features::kMantaService,
         },
@@ -299,8 +299,6 @@ TEST_F(SeaPenFetcherTest, ThumbnailsCallsSnapperProvider) {
               testing::UnorderedElementsAreArray(matchers));
 
   histogram_tester().ExpectTotalCount(kThumbnailsLatencyMetric, 1);
-  histogram_tester().ExpectUniqueSample(kThumbnailsStatusCodeMetric,
-                                        manta::MantaStatusCode::kOk, 1);
   histogram_tester().ExpectUniqueSample(kThumbnailsTimeoutMetric, false, 1);
   histogram_tester().ExpectUniqueSample(
       kThumbnailsCountMetric, SeaPenFetcher::kNumTemplateThumbnailsRequested,
@@ -311,7 +309,6 @@ TEST_F(SeaPenFetcherTest, TemplateRequestsFourImages_withTextInputOn) {
   scoped_feature_list_.Reset();
   scoped_feature_list_.InitWithFeatures(
       {
-          ash::features::kSeaPen,
           ash::features::kFeatureManagementSeaPen,
           manta::features::kMantaService,
           ash::features::kSeaPenTextInput,
@@ -358,7 +355,6 @@ TEST_F(SeaPenFetcherTest, FreeformThumbnailsCallsSnapperProvider) {
   scoped_feature_list_.Reset();
   scoped_feature_list_.InitWithFeatures(
       {
-          ash::features::kSeaPen,
           ash::features::kFeatureManagementSeaPen,
           manta::features::kMantaService,
           ash::features::kSeaPenTextInput,
@@ -411,8 +407,6 @@ TEST_F(SeaPenFetcherTest, FreeformThumbnailsCallsSnapperProvider) {
               testing::UnorderedElementsAreArray(matchers));
 
   histogram_tester().ExpectTotalCount(kFreeformThumbnailsLatencyMetric, 1);
-  histogram_tester().ExpectUniqueSample(kFreeformThumbnailsStatusCodeMetric,
-                                        manta::MantaStatusCode::kOk, 1);
   histogram_tester().ExpectUniqueSample(kFreeformThumbnailsTimeoutMetric, false,
                                         1);
   histogram_tester().ExpectUniqueSample(
@@ -452,8 +446,6 @@ TEST_F(SeaPenFetcherTest, ThumbnailsEmptyReturnsError) {
 
   // Recorded an entry in the "0" thumbnail count bucket 1 time.
   histogram_tester().ExpectUniqueSample(kThumbnailsCountMetric, 0, 1);
-  histogram_tester().ExpectUniqueSample(kThumbnailsStatusCodeMetric,
-                                        manta::MantaStatusCode::kOk, 1);
   histogram_tester().ExpectTotalCount(kThumbnailsLatencyMetric, 1);
   histogram_tester().ExpectUniqueSample(kThumbnailsTimeoutMetric, false, 1);
 }
@@ -461,8 +453,8 @@ TEST_F(SeaPenFetcherTest, ThumbnailsEmptyReturnsError) {
 TEST_F(SeaPenFetcherTest, FreeformThumbnailsEmptyReturnsBlockedError) {
   scoped_feature_list_.Reset();
   scoped_feature_list_.InitWithFeatures(
-      {ash::features::kSeaPen, ash::features::kFeatureManagementSeaPen,
-       manta::features::kMantaService, ash::features::kSeaPenTextInput},
+      {ash::features::kFeatureManagementSeaPen, manta::features::kMantaService,
+       ash::features::kSeaPenTextInput},
       {});
   EXPECT_CALL(snapper_provider(), Call(testing::_, testing::_, testing::_))
       .WillOnce([](const manta::proto::Request& request,
@@ -495,8 +487,6 @@ TEST_F(SeaPenFetcherTest, FreeformThumbnailsEmptyReturnsBlockedError) {
 
   // Recorded an entry in the "0" thumbnail count bucket 1 time.
   histogram_tester().ExpectUniqueSample(kFreeformThumbnailsCountMetric, 0, 1);
-  histogram_tester().ExpectUniqueSample(kFreeformThumbnailsStatusCodeMetric,
-                                        manta::MantaStatusCode::kOk, 1);
   histogram_tester().ExpectTotalCount(kFreeformThumbnailsLatencyMetric, 1);
   histogram_tester().ExpectUniqueSample(kFreeformThumbnailsTimeoutMetric, false,
                                         1);
@@ -505,8 +495,8 @@ TEST_F(SeaPenFetcherTest, FreeformThumbnailsEmptyReturnsBlockedError) {
 TEST_F(SeaPenFetcherTest, FreeformThumbnailsEmptyReturnsErrorDueToPerson) {
   scoped_feature_list_.Reset();
   scoped_feature_list_.InitWithFeatures(
-      {ash::features::kSeaPen, ash::features::kFeatureManagementSeaPen,
-       manta::features::kMantaService, ash::features::kSeaPenTextInput},
+      {ash::features::kFeatureManagementSeaPen, manta::features::kMantaService,
+       ash::features::kSeaPenTextInput},
       {});
   EXPECT_CALL(snapper_provider(), Call(testing::_, testing::_, testing::_))
       .WillOnce([](const manta::proto::Request& request,
@@ -539,8 +529,6 @@ TEST_F(SeaPenFetcherTest, FreeformThumbnailsEmptyReturnsErrorDueToPerson) {
 
   // Recorded an entry in the "0" thumbnail count bucket 1 time.
   histogram_tester().ExpectUniqueSample(kFreeformThumbnailsCountMetric, 0, 1);
-  histogram_tester().ExpectUniqueSample(kFreeformThumbnailsStatusCodeMetric,
-                                        manta::MantaStatusCode::kOk, 1);
   histogram_tester().ExpectTotalCount(kFreeformThumbnailsLatencyMetric, 1);
   histogram_tester().ExpectUniqueSample(kFreeformThumbnailsTimeoutMetric, false,
                                         1);
@@ -1008,7 +996,6 @@ TEST_F(SeaPenFetcherTest, FreeformThumbnails_StoresGenerativePrompts) {
   scoped_feature_list_.Reset();
   scoped_feature_list_.InitWithFeatures(
       {
-          ash::features::kSeaPen,
           ash::features::kFeatureManagementSeaPen,
           manta::features::kMantaService,
           ash::features::kSeaPenTextInput,
@@ -1067,12 +1054,13 @@ TEST_F(SeaPenFetcherTest, FetchFreeformWallpaper_ExperimentOff_UsesUserPrompt) {
   scoped_feature_list_.Reset();
   scoped_feature_list_.InitWithFeatures(
       {
-          ash::features::kSeaPen,
           ash::features::kFeatureManagementSeaPen,
           manta::features::kMantaService,
           ash::features::kSeaPenTextInput,
       },
-      {});
+      {
+          ash::features::kSeaPenQueryRewrite,
+      });
   auto user_query = MakeFreeformQuery();
   std::string generative_prompt = "prompt used to generate images";
   ash::personalization_app::mojom::SeaPenQueryPtr generative_prompt_query =
@@ -1116,7 +1104,6 @@ TEST_F(SeaPenFetcherTest, FetchFreeformWallpaper_UsesGenerativePrompt) {
   scoped_feature_list_.Reset();
   scoped_feature_list_.InitWithFeatures(
       {
-          ash::features::kSeaPen,
           ash::features::kFeatureManagementSeaPen,
           manta::features::kMantaService,
           ash::features::kSeaPenTextInput,
@@ -1168,7 +1155,6 @@ TEST_F(SeaPenFetcherTest,
   scoped_feature_list_.Reset();
   scoped_feature_list_.InitWithFeatures(
       {
-          ash::features::kSeaPen,
           ash::features::kFeatureManagementSeaPen,
           manta::features::kMantaService,
           ash::features::kSeaPenTextInput,
@@ -1213,7 +1199,6 @@ TEST_F(SeaPenFetcherTest, FetchTemplateWallpaper_UsesTemplate) {
   scoped_feature_list_.Reset();
   scoped_feature_list_.InitWithFeatures(
       {
-          ash::features::kSeaPen,
           ash::features::kFeatureManagementSeaPen,
           manta::features::kMantaService,
           ash::features::kSeaPenTextInput,

@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "base/memory/ptr_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/viz/common/resources/shared_image_format.h"
@@ -25,7 +26,7 @@
 #include "gpu/ipc/service/gpu_memory_buffer_factory.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/gpu_fence_handle.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gl/gl_context.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -39,26 +40,6 @@ constexpr char kSICreationFailureError[] =
 
 }  // namespace
 
-#if BUILDFLAG(IS_WIN)
-namespace base {
-bool operator<(const scoped_refptr<gfx::D3DSharedFence>& lhs,
-               const scoped_refptr<gfx::D3DSharedFence>& rhs) {
-  return lhs->GetDXGIHandleToken() < rhs->GetDXGIHandleToken();
-}
-
-bool operator<(const gfx::DXGIHandleToken& lhs,
-               const scoped_refptr<gfx::D3DSharedFence>& rhs) {
-  return lhs < rhs->GetDXGIHandleToken();
-}
-
-bool operator<(const scoped_refptr<gfx::D3DSharedFence>& lhs,
-               const gfx::DXGIHandleToken& rhs) {
-  return lhs->GetDXGIHandleToken() < rhs;
-}
-
-}  // namespace base
-#endif
-
 namespace gpu {
 SharedImageStub::SharedImageStub(GpuChannel* channel, int32_t route_id)
     : channel_(channel),
@@ -68,7 +49,12 @@ SharedImageStub::SharedImageStub(GpuChannel* channel, int32_t route_id)
           channel->scheduler()->CreateSequence(SchedulingPriority::kLow,
                                                channel_->task_runner(),
                                                CommandBufferNamespace::GPU_IO,
-                                               command_buffer_id_)) {}
+                                               command_buffer_id_)),
+      memory_tracker_(base::MakeRefCounted<MemoryTracker>(
+          command_buffer_id_,
+          channel_->client_tracing_id(),
+          channel_->gpu_channel_manager()->peak_memory_monitor(),
+          GpuPeakMemoryAllocationSource::SHARED_IMAGE_STUB)) {}
 
 SharedImageStub::~SharedImageStub() {
   channel_->scheduler()->DestroySequence(sequence_);
@@ -500,9 +486,9 @@ void SharedImageStub::OnRegisterDxgiFence(const Mailbox& mailbox,
     return;
   }
 
-  mailbox_fences.emplace_hint(mailbox_fences.begin(),
-                              gfx::D3DSharedFence::CreateFromScopedHandle(
-                                  fence_handle.Release(), dxgi_token));
+  mailbox_fences.emplace(dxgi_token,
+                         gfx::D3DSharedFence::CreateFromScopedHandle(
+                             fence_handle.Release(), dxgi_token));
 }
 
 void SharedImageStub::OnUpdateDxgiFence(const Mailbox& mailbox,
@@ -533,7 +519,7 @@ void SharedImageStub::OnUpdateDxgiFence(const Mailbox& mailbox,
     return;
   }
 
-  scoped_refptr<gfx::D3DSharedFence> fence = *fence_it;
+  scoped_refptr<gfx::D3DSharedFence> fence = fence_it->second;
   fence->Update(fence_value);
 
   channel_->gpu_channel_manager()->shared_image_manager()->UpdateExternalFence(
@@ -561,6 +547,10 @@ void SharedImageStub::OnUnregisterDxgiFence(const Mailbox& mailbox,
   }
 
   mailbox_fences.erase(fence_it);
+
+  if (mailbox_fences.empty()) {
+    registered_dxgi_fences_.erase(mailbox_fences_it);
+  }
 }
 
 #endif  // BUILDFLAG(IS_WIN)
@@ -641,7 +631,7 @@ ContextResult SharedImageStub::Initialize() {
       channel_manager->gpu_preferences(),
       channel_manager->gpu_driver_bug_workarounds(),
       channel_manager->gpu_feature_info(), context_state_.get(),
-      channel_manager->shared_image_manager(), this,
+      channel_manager->shared_image_manager(), memory_tracker(),
       /*is_for_display_compositor=*/false);
   gpu_channel_shared_image_interface_ =
       base::MakeRefCounted<GpuChannelSharedImageInterface>(
@@ -653,37 +643,14 @@ void SharedImageStub::OnError() {
   channel_->OnChannelError();
 }
 
-void SharedImageStub::TrackMemoryAllocatedChange(int64_t delta) {
-  DCHECK(delta >= 0 || size_ >= static_cast<uint64_t>(-delta));
-  uint64_t old_size = size_;
-  size_ += delta;
-  channel_->gpu_channel_manager()
-      ->peak_memory_monitor()
-      ->OnMemoryAllocatedChange(
-          command_buffer_id_, old_size, size_,
-          GpuPeakMemoryAllocationSource::SHARED_IMAGE_STUB);
-}
-
-uint64_t SharedImageStub::GetSize() const {
-  return size_;
-}
-
-uint64_t SharedImageStub::ClientTracingId() const {
-  return channel_->client_tracing_id();
-}
-
-int SharedImageStub::ClientId() const {
-  return channel_->client_id();
-}
-
-uint64_t SharedImageStub::ContextGroupTracingId() const {
-  return command_buffer_id_.GetUnsafeValue();
-}
-
 SharedImageStub::SharedImageDestructionCallback
 SharedImageStub::GetSharedImageDestructionCallback(const Mailbox& mailbox) {
   return base::BindOnce(&SharedImageStub::DestroySharedImage,
                         weak_factory_.GetWeakPtr(), mailbox);
+}
+
+uint64_t SharedImageStub::GetSize() const {
+  return memory_tracker_->GetSize();
 }
 
 void SharedImageStub::DestroySharedImage(const Mailbox& mailbox,

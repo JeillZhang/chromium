@@ -245,6 +245,9 @@ class POLICY_EXPORT DeviceManagementService {
     // The content type of the payload.
     virtual std::string GetContentType() = 0;
 
+    // Whether the request will forward user cookies or not.
+    virtual bool AreCookiesUsed() = 0;
+
     // Returns the network annotation to assign to requests.
     virtual net::NetworkTrafficAnnotationTag GetTrafficAnnotationTag() = 0;
 
@@ -375,11 +378,15 @@ class POLICY_EXPORT JobConfigurationBase
       const std::string& response_body) override;
   std::optional<base::TimeDelta> GetTimeoutDuration() override;
   std::string GetContentType() override;
+  bool AreCookiesUsed() override;
+
+  void set_use_cookies(bool use_cookies) { use_cookies_ = use_cookies; }
 
  protected:
   JobConfigurationBase(JobType type,
                        DMAuth auth_data,
                        std::optional<std::string> oauth_token,
+                       bool use_cookies,
                        scoped_refptr<network::SharedURLLoaderFactory> factory);
   ~JobConfigurationBase() override;
 
@@ -406,6 +413,11 @@ class POLICY_EXPORT JobConfigurationBase
   // OAuth token that will be passed as a query parameter. Both |auth_data_|
   // and |oauth_token_| can be specified for one request.
   std::optional<std::string> oauth_token_;
+
+  // Will allow using cookies as part of the request when true. Cookies can
+  // be used in combination with other auth models, the order of precedence
+  // will be determined server-side.
+  bool use_cookies_;
 
   // Query parameters for the network request.
   ParameterMap query_params_;

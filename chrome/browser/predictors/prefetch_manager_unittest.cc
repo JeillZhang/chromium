@@ -33,9 +33,11 @@
 #include "net/base/network_isolation_key.h"
 #include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
+#include "third_party/blink/public/common/navigation/preloading_headers.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
 #include "url/origin.h"
 
@@ -116,10 +118,12 @@ class PrefetchManagerTest : public testing::TestWithParam<bool> {
   }
 
   void CheckHeaders(network::ResourceRequest& request) {
-    EXPECT_THAT(request.headers.GetHeader("Purpose"),
-                testing::Optional(std::string("prefetch")));
-    EXPECT_THAT(request.headers.GetHeader("Sec-Purpose"),
-                testing::Optional(std::string("prefetch")));
+    EXPECT_THAT(
+        request.headers.GetHeader(blink::kPurposeHeaderName),
+        testing::Optional(std::string(blink::kSecPurposePrefetchHeaderValue)));
+    EXPECT_THAT(
+        request.headers.GetHeader(blink::kSecPurposeHeaderName),
+        testing::Optional(std::string(blink::kSecPurposePrefetchHeaderValue)));
   }
 
   base::test::ScopedFeatureList features_;
@@ -171,6 +175,9 @@ TEST_P(PrefetchManagerTest, OneMainFrameUrlOnePrefetch) {
         EXPECT_TRUE(request.load_flags & net::LOAD_PREFETCH);
 
         EXPECT_EQ(request.referrer_policy, net::ReferrerPolicy::NO_REFERRER);
+        EXPECT_EQ(request.permissions_policy,
+                  *network::PermissionsPolicy::CreateFromParsedPolicy(
+                      {}, {}, url::Origin::Create(request.url)));
         EXPECT_EQ(request.destination,
                   network::mojom::RequestDestination::kScript);
         EXPECT_EQ(
@@ -659,6 +666,9 @@ TEST_P(PrefetchManagerTest, Font) {
         EXPECT_TRUE(request.load_flags & net::LOAD_PREFETCH);
 
         EXPECT_EQ(request.referrer_policy, net::ReferrerPolicy::NO_REFERRER);
+        EXPECT_EQ(request.permissions_policy,
+                  *network::PermissionsPolicy::CreateFromParsedPolicy(
+                      {}, {}, url::Origin::Create(request.url)));
         EXPECT_EQ(request.destination,
                   network::mojom::RequestDestination::kFont);
         EXPECT_EQ(

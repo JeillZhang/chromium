@@ -11,7 +11,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
@@ -51,24 +50,24 @@ bool IsYouTubeInfrastructureSubframe(content::NavigationHandle* handle) {
 #endif
 
 // static
-std::unique_ptr<SupervisedUserGoogleAuthNavigationThrottle>
-SupervisedUserGoogleAuthNavigationThrottle::MaybeCreate(
-    content::NavigationHandle* navigation_handle) {
+void SupervisedUserGoogleAuthNavigationThrottle::MaybeCreateAndAdd(
+    content::NavigationThrottleRegistry& registry) {
   Profile* profile = Profile::FromBrowserContext(
-      navigation_handle->GetWebContents()->GetBrowserContext());
+      registry.GetNavigationHandle().GetWebContents()->GetBrowserContext());
   if (!profile->IsChild()) {
-    return nullptr;
+    return;
   }
 
-  return base::WrapUnique(new SupervisedUserGoogleAuthNavigationThrottle(
-      profile, navigation_handle));
+  registry.AddThrottle(
+      base::WrapUnique(new SupervisedUserGoogleAuthNavigationThrottle(
+      profile, registry)));
 }
 
 SupervisedUserGoogleAuthNavigationThrottle::
     SupervisedUserGoogleAuthNavigationThrottle(
         Profile* profile,
-        content::NavigationHandle* navigation_handle)
-    : content::NavigationThrottle(navigation_handle),
+        content::NavigationThrottleRegistry& registry)
+    : content::NavigationThrottle(registry),
       child_account_service_(ChildAccountServiceFactory::GetForProfile(profile))
 #if BUILDFLAG(IS_ANDROID)
       ,
@@ -170,20 +169,16 @@ SupervisedUserGoogleAuthNavigationThrottle::ShouldProceed() {
   // Other Google-owned sites either already requires authentication (e.g.
   // Google Photos), or have restrictions forced (e.g. SafeSearch).
   GURL request_url = navigation_handle()->GetURL();
-  if (!base::FeatureList::IsEnabled(
-          supervised_user::kForceSupervisedUserReauthenticationForYouTube) ||
-      !google_util::IsYoutubeDomainUrl(request_url,
+  if (!google_util::IsYoutubeDomainUrl(request_url,
                                        google_util::ALLOW_SUBDOMAIN,
                                        google_util::ALLOW_NON_STANDARD_PORTS) ||
-     !SupervisedUserVerificationPage::ShouldShowPage(
+      !SupervisedUserVerificationPage::ShouldShowPage(
           *child_account_service_)) {
     // This interstitial should only be displayed for YouTube request.
     return content::NavigationThrottle::PROCEED;
   }
 
-  if (base::FeatureList::IsEnabled(
-          supervised_user::kExemptYouTubeInfrastructureFromBlocking) &&
-      IsYouTubeInfrastructureSubframe(navigation_handle())) {
+  if (IsYouTubeInfrastructureSubframe(navigation_handle())) {
     // Controls integration between google.com and youtube.com.
     return content::NavigationThrottle::PROCEED;
   }
@@ -208,7 +203,7 @@ SupervisedUserGoogleAuthNavigationThrottle::ShouldProceed() {
   return content::NavigationThrottle::ThrottleCheckResult(
       content::NavigationThrottle::CANCEL, net::ERR_BLOCKED_BY_CLIENT,
       std::move(interstitial_html));
-#elif BUILDFLAG(IS_CHROMEOS_ASH)
+#elif BUILDFLAG(IS_CHROMEOS)
   // A credentials re-mint is already underway when we reach here (Mirror
   // account reconciliation). Nothing to do here except block the navigation
   // while re-minting is underway.

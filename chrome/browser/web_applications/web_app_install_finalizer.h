@@ -13,7 +13,9 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "build/chromeos_buildflags.h"
+#include "base/time/clock.h"
+#include "base/time/default_clock.h"
+#include "build/build_config.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_integrity_block_data.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
@@ -26,7 +28,7 @@
 #include "components/webapps/common/web_app_id.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/ash/experiences/system_web_apps/types/system_web_app_data.h"
 #endif
 
@@ -81,7 +83,7 @@ class WebAppInstallFinalizer {
     bool skip_icon_writes_on_download_failure = false;
 
     std::optional<WebAppChromeOsData> chromeos_data;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     std::optional<ash::SystemWebAppData> system_web_app_data;
 #endif
 
@@ -103,6 +105,8 @@ class WebAppInstallFinalizer {
     // do not validate even if scope_extensions has valid entries.
     bool skip_origin_association_validation = false;
   };
+
+  static bool& DisableUserDisplayModeSyncMitigationsForTesting();
 
   explicit WebAppInstallFinalizer(Profile* profile);
   WebAppInstallFinalizer(const WebAppInstallFinalizer&) = delete;
@@ -135,6 +139,8 @@ class WebAppInstallFinalizer {
       bool is_placeholder,
       GURL install_url,
       std::vector<std::string> additional_policy_ids);
+
+  void SetClockForTesting(base::Clock* clock);
 
  private:
   using CommitCallback = base::OnceCallback<void(bool success)>;
@@ -198,6 +204,7 @@ class WebAppInstallFinalizer {
 
   const raw_ptr<Profile> profile_;
   raw_ptr<WebAppProvider> provider_ = nullptr;
+  raw_ptr<base::Clock> clock_{base::DefaultClock::GetInstance()};
 
   bool started_ = false;
 

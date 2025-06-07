@@ -4,7 +4,9 @@
 
 #include <string>
 
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/test/integration/contact_info_helper.h"
 #include "chrome/browser/sync/test/integration/encryption_helper.h"
@@ -15,7 +17,8 @@
 #include "chrome/browser/sync/test/integration/updated_progress_marker_checker.h"
 #include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
-#include "components/autofill/core/browser/data_model/autofill_profile_test_api.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile_test_api.h"
+#include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/browser/webdata/addresses/contact_info_sync_util.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/account_capabilities_test_mutator.h"
@@ -26,6 +29,7 @@
 #include "components/sync/protocol/contact_info_specifics.pb.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/test/fake_server.h"
+#include "components/sync/test/test_matchers.h"
 #include "content/public/test/browser_test.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -40,6 +44,10 @@ namespace {
 using autofill::AutofillProfile;
 using contact_info_helper::AddressDataManagerProfileChecker;
 using contact_info_helper::BuildTestAccountProfile;
+using syncer::MatchesLocalDataDescription;
+using syncer::MatchesLocalDataItemModel;
+using testing::_;
+using testing::ElementsAre;
 using testing::IsEmpty;
 using testing::UnorderedElementsAre;
 
@@ -65,6 +73,21 @@ MATCHER_P2(HasContactInfoWithGuidAndUnknownFields, guid, unknown_fields, "") {
          arg.specifics().contact_info().unknown_fields() == unknown_fields;
 }
 #endif
+
+#if !BUILDFLAG(IS_CHROMEOS)
+// Matches a sync::entity_data has a contact info field with `address`.
+MATCHER_P(HasContactInfoWithAddress, address, "") {
+  return base::UTF8ToUTF16(
+             arg.specifics().contact_info().address_street_address().value()) ==
+         address;
+}
+
+// Matches a AutofillProfile has a `autofill::FieldType::NAME_FIRST` with
+// `first_name`.
+MATCHER_P(HasContactInfoWithFirstName, first_name, "") {
+  return arg->GetRawInfo(autofill::FieldType::NAME_FIRST) == first_name;
+}
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 // Checker to wait until the CONTACT_INFO datatype becomes (in)active, depending
 // on `expect_active`.
@@ -146,10 +169,6 @@ class SingleClientContactInfoSyncTest : public SyncTest {
   autofill::PersonalDataManager* GetPersonalDataManager() const {
     return contact_info_helper::GetPersonalDataManager(GetProfile(0));
   }
-
- private:
-  base::test::ScopedFeatureList feature_{
-      switches::kExplicitBrowserSigninUIOnDesktop};
 };
 
 IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest, DownloadInitialData) {
@@ -212,7 +231,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest, FinalizeAfterImport) {
 }
 
 // ChromeOS does not support signing out of a primary account.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest, ClearOnSignout) {
   const AutofillProfile kProfile = BuildTestAccountProfile();
   AddSpecificsToServer(AsContactInfoSpecifics(kProfile), GetFakeServer());
@@ -226,7 +245,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest, ClearOnSignout) {
                   &GetPersonalDataManager()->address_data_manager(), IsEmpty())
                   .Wait());
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 // Specialized fixture to test the behavior for custom passphrase users with and
 // without kSyncEnableContactInfoDataTypeForCustomPassphraseUsers enabled.
@@ -271,6 +290,8 @@ IN_PROC_BROWSER_TEST_P(SingleClientContactInfoPassphraseSyncTest,
                   .Wait());
 }
 
+// Transport Mode is only supported on these platforms.
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 // CONTACT_INFO should be able to run in transport mode and the availability of
 // account profiles should depend on the signed-in state.
 IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
@@ -287,15 +308,12 @@ IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
                   UnorderedElementsAre(profile))
                   .Wait());
   // ChromeOS doesn't have the concept of sign-out.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
   GetClient(0)->SignOutPrimaryAccount();
   EXPECT_TRUE(AddressDataManagerProfileChecker(
                   &GetPersonalDataManager()->address_data_manager(), IsEmpty())
                   .Wait());
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
                        DeleteAccountDataInErrorState) {
   // Add a profile to account storage.
@@ -419,14 +437,13 @@ IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
                   .IsAutofillSyncToggleAvailable());
 
   // Turn on Sync.
-  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount(signin::ConsentLevel::kSync));
+  ASSERT_TRUE(GetClient(0)->SetupSync());
 
   // The toggle is no longer available.
   EXPECT_FALSE(GetPersonalDataManager()
                    ->address_data_manager()
                    .IsAutofillSyncToggleAvailable());
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
   // Sign out.
   GetClient(0)->SignOutPrimaryAccount();
 
@@ -434,9 +451,10 @@ IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
   EXPECT_FALSE(GetPersonalDataManager()
                    ->address_data_manager()
                    .IsAutofillSyncToggleAvailable());
-#endif
 }
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
+#if !BUILDFLAG(IS_ANDROID)
 IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
                        PreservesUnsupportedFieldsDataOnCommits) {
   // Create an unsupported field with an unused tag.
@@ -459,7 +477,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
           /*creation_time=*/0,
           /*last_modified_time=*/0));
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::CONTACT_INFO));
   ASSERT_TRUE(AddressDataManagerProfileChecker(
@@ -484,35 +502,158 @@ IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
                   HasContactInfoWithGuidAndUnknownFields(profile2.guid(), "")));
 }
 
-// Overwrite the Sync test account with a non-gmail account. This treats it as a
-// Dasher account.
-// On Android, `switches::kSyncUserForTest` isn't supported, so it's currently
-// not possible to simulate a non-gmail account.
-class SingleClientContactInfoManagedAccountTest
-    : public SingleClientContactInfoSyncTest {
- public:
-  SingleClientContactInfoManagedAccountTest() {
-    // This can't be done in `SetUpCommandLine()` because `SyncTest::SetUp()`
-    // already consumes the parameter.
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kSyncUserForTest, "user@managed-domain.com");
-  }
-};
-
-IN_PROC_BROWSER_TEST_F(SingleClientContactInfoManagedAccountTest,
-                       DisabledForManagedAccounts) {
+#if !BUILDFLAG(IS_CHROMEOS)
+IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
+                       ShouldReturnLocalDataDescriptions) {
   ASSERT_TRUE(SetupClients());
+
+  autofill::AutofillProfile profile1 = autofill::test::GetFullProfile();
+  GetPersonalDataManager()->address_data_manager().AddProfile(profile1);
+
+  autofill::AutofillProfile profile2 = autofill::test::GetFullProfile2();
+  GetPersonalDataManager()->address_data_manager().AddProfile(profile2);
+
+  ASSERT_TRUE(AddressDataManagerProfileChecker(
+                  &GetPersonalDataManager()->address_data_manager(),
+                  UnorderedElementsAre(profile1, profile2))
+                  .Wait());
+  ASSERT_THAT(
+      GetPersonalDataManager()->address_data_manager().GetProfilesByRecordType(
+          autofill::AutofillProfile::RecordType::kLocalOrSyncable),
+      UnorderedElementsAre(HasContactInfoWithFirstName(profile1.GetRawInfo(
+                               autofill::FieldType::NAME_FIRST)),
+                           HasContactInfoWithFirstName(profile2.GetRawInfo(
+                               autofill::FieldType::NAME_FIRST))));
+
+  // Setup transport mode.
+  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
+  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
+  ASSERT_TRUE(
+      GetSyncService(0)->GetActiveDataTypes().Has(syncer::CONTACT_INFO));
+
+  EXPECT_THAT(
+      GetClient(0)->GetLocalDataDescriptionAndWait(syncer::CONTACT_INFO),
+      MatchesLocalDataDescription(
+          syncer::DataType::CONTACT_INFO,
+          UnorderedElementsAre(
+              MatchesLocalDataItemModel(profile1.guid(),
+                                        syncer::LocalDataItemModel::NoIcon(),
+                                        /*title=*/_, /*subtitle=*/_),
+              MatchesLocalDataItemModel(profile2.guid(),
+                                        syncer::LocalDataItemModel::NoIcon(),
+                                        /*title=*/_, /*subtitle=*/_)),
+          // TODO(crbug.com/373568992): Merge Desktop and Mobile data
+          // under common struct.
+          /*item_count=*/0u, /*domains=*/IsEmpty(),
+          /*domain_count=*/0u));
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
+                       ShouldBatchUploadAllEntries) {
+  ASSERT_TRUE(SetupClients());
+
+  autofill::AutofillProfile profile1 = autofill::test::GetFullProfile();
+  GetPersonalDataManager()->address_data_manager().AddProfile(profile1);
+
+  autofill::AutofillProfile profile2 = autofill::test::GetFullProfile2();
+  GetPersonalDataManager()->address_data_manager().AddProfile(profile2);
+
+  ASSERT_TRUE(AddressDataManagerProfileChecker(
+                  &GetPersonalDataManager()->address_data_manager(),
+                  UnorderedElementsAre(profile1, profile2))
+                  .Wait());
+  ASSERT_THAT(
+      GetPersonalDataManager()->address_data_manager().GetProfilesByRecordType(
+          autofill::AutofillProfile::RecordType::kLocalOrSyncable),
+      UnorderedElementsAre(HasContactInfoWithFirstName(profile1.GetRawInfo(
+                               autofill::FieldType::NAME_FIRST)),
+                           HasContactInfoWithFirstName(profile2.GetRawInfo(
+                               autofill::FieldType::NAME_FIRST))));
+
+  // Setup transport mode.
+  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
+  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
+  ASSERT_TRUE(
+      GetSyncService(0)->GetActiveDataTypes().Has(syncer::CONTACT_INFO));
+
+  GetSyncService(0)->TriggerLocalDataMigration({syncer::CONTACT_INFO});
+
+  EXPECT_TRUE(ServerCountMatchStatusChecker(syncer::CONTACT_INFO, 2).Wait());
+  EXPECT_THAT(fake_server_->GetSyncEntitiesByDataType(syncer::CONTACT_INFO),
+              UnorderedElementsAre(
+                  HasContactInfoWithAddress(profile1.GetRawInfo(
+                      autofill::FieldType::ADDRESS_HOME_STREET_ADDRESS)),
+                  HasContactInfoWithAddress(profile2.GetRawInfo(
+                      autofill::FieldType::ADDRESS_HOME_STREET_ADDRESS))));
+
+  EXPECT_THAT(
+      GetPersonalDataManager()->address_data_manager().GetProfilesByRecordType(
+          autofill::AutofillProfile::RecordType::kLocalOrSyncable),
+      IsEmpty());
+
+  EXPECT_THAT(
+      GetPersonalDataManager()->address_data_manager().GetProfilesByRecordType(
+          autofill::AutofillProfile::RecordType::kAccount),
+      UnorderedElementsAre(HasContactInfoWithFirstName(profile1.GetRawInfo(
+                               autofill::FieldType::NAME_FIRST)),
+                           HasContactInfoWithFirstName(profile2.GetRawInfo(
+                               autofill::FieldType::NAME_FIRST))));
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
+                       ShouldBatchUploadSomeEntries) {
+  ASSERT_TRUE(SetupClients());
+
+  autofill::AutofillProfile profile1 = autofill::test::GetFullProfile();
+  GetPersonalDataManager()->address_data_manager().AddProfile(profile1);
+
+  autofill::AutofillProfile profile2 = autofill::test::GetFullProfile2();
+  GetPersonalDataManager()->address_data_manager().AddProfile(profile2);
+
+  ASSERT_TRUE(AddressDataManagerProfileChecker(
+                  &GetPersonalDataManager()->address_data_manager(),
+                  UnorderedElementsAre(profile1, profile2))
+                  .Wait());
+  ASSERT_THAT(
+      GetPersonalDataManager()->address_data_manager().GetProfilesByRecordType(
+          autofill::AutofillProfile::RecordType::kLocalOrSyncable),
+      UnorderedElementsAre(HasContactInfoWithFirstName(profile1.GetRawInfo(
+                               autofill::FieldType::NAME_FIRST)),
+                           HasContactInfoWithFirstName(profile2.GetRawInfo(
+                               autofill::FieldType::NAME_FIRST))));
+
+  // Setup transport mode.
+  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
+  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
+  ASSERT_TRUE(
+      GetSyncService(0)->GetActiveDataTypes().Has(syncer::CONTACT_INFO));
+
+  GetSyncService(0)->TriggerLocalDataMigrationForItems(
+      {{syncer::CONTACT_INFO, {profile1.guid()}}});
+
+  EXPECT_TRUE(ServerCountMatchStatusChecker(syncer::CONTACT_INFO, 1).Wait());
+  EXPECT_THAT(fake_server_->GetSyncEntitiesByDataType(syncer::CONTACT_INFO),
+              ElementsAre(HasContactInfoWithAddress(profile1.GetRawInfo(
+                  autofill::FieldType::ADDRESS_HOME_STREET_ADDRESS))));
+
+  EXPECT_THAT(
+      GetPersonalDataManager()->address_data_manager().GetProfilesByRecordType(
+          autofill::AutofillProfile::RecordType::kLocalOrSyncable),
+      ElementsAre(HasContactInfoWithFirstName(
+          profile2.GetRawInfo(autofill::FieldType::NAME_FIRST))));
+
+  EXPECT_THAT(
+      GetPersonalDataManager()->address_data_manager().GetProfilesByRecordType(
+          autofill::AutofillProfile::RecordType::kAccount),
+      ElementsAre(HasContactInfoWithFirstName(
+          profile1.GetRawInfo(autofill::FieldType::NAME_FIRST))));
+}
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+
+IN_PROC_BROWSER_TEST_F(SingleClientContactInfoSyncTest,
+                       DisabledForManagedAccounts) {
   // Sign in with a managed account.
-  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount(signin::ConsentLevel::kSync));
-  signin::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfile(GetProfile(0));
-  CoreAccountInfo account =
-      identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSync);
-  signin::SimulateSuccessfulFetchOfAccountInfo(
-      identity_manager, account.account_id, account.email, account.gaia,
-      "managed-domain.com", "Full Name", "Given Name", "en-US",
-      /*picture_url=*/"");
-  ASSERT_TRUE(SetupSync());
+  ASSERT_TRUE(SetupSync(SyncTestAccount::kEnterpriseAccount1));
 
   EXPECT_FALSE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::CONTACT_INFO));

@@ -195,7 +195,7 @@ void ConfigureLabelText(views::Label* title) {
   title->SetProperty(views::kCrossAxisAlignmentKey,
                      views::LayoutAlignment::kStretch);
   title->SetHorizontalAlignment(gfx::ALIGN_CENTER);
-  title->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+  title->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
   TypographyProvider::Get()->StyleLabel(ash::TypographyToken::kCrosHeadline1,
                                         *title);
 }
@@ -713,7 +713,6 @@ void EcheTray::InitBubble(
 
   auto bubble_view = std::make_unique<TrayBubbleView>(init_params);
   bubble_view->SetCanActivate(true);
-  bubble_view->SetBorder(views::CreateEmptyBorder(kBubblePadding));
 
   header_view_ = bubble_view->AddChildView(CreateBubbleHeaderView(phone_name));
 
@@ -822,7 +821,8 @@ std::unique_ptr<views::View> EcheTray::CreateBubbleHeaderView(
 
   // Add minimize button
   minimize_button_ = header->AddChildView(CreateButton(
-      base::BindRepeating(&EcheTray::CloseBubble, weak_factory_.GetWeakPtr()),
+      base::BindRepeating(&EcheTray::CloseBubble, weak_factory_.GetWeakPtr(),
+                          TrayBackgroundView::CloseReason::kUnspecified),
       kEcheMinimizeIcon, IDS_APP_ACCNAME_MINIMIZE));
 
   // Add close button

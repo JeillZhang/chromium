@@ -11,6 +11,7 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "net/base/load_flags.h"
 #include "net/log/net_log_source.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy.h"
 #include "services/network/public/mojom/cookie_access_observer.mojom.h"
 #include "services/network/public/mojom/device_bound_sessions.mojom.h"
 #include "services/network/public/mojom/devtools_observer.mojom.h"
@@ -309,7 +310,7 @@ bool ResourceRequest::EqualsForTesting(const ResourceRequest& request) const {
          credentials_mode == request.credentials_mode &&
          redirect_mode == request.redirect_mode &&
          fetch_integrity == request.fetch_integrity &&
-         expected_signatures == request.expected_signatures &&
+         expected_public_keys == request.expected_public_keys &&
          destination == request.destination &&
          request_body == request.request_body &&
          keepalive == request.keepalive &&
@@ -325,10 +326,6 @@ bool ResourceRequest::EqualsForTesting(const ResourceRequest& request) const {
          upgrade_if_insecure == request.upgrade_if_insecure &&
          is_revalidating == request.is_revalidating &&
          throttling_profile_id == request.throttling_profile_id &&
-         custom_proxy_pre_cache_headers.ToString() ==
-             request.custom_proxy_pre_cache_headers.ToString() &&
-         custom_proxy_post_cache_headers.ToString() ==
-             request.custom_proxy_post_cache_headers.ToString() &&
          fetch_window_id == request.fetch_window_id &&
          devtools_request_id == request.devtools_request_id &&
          is_fetch_like_api == request.is_fetch_like_api &&
@@ -349,7 +346,11 @@ bool ResourceRequest::EqualsForTesting(const ResourceRequest& request) const {
          target_ip_address_space == request.target_ip_address_space &&
          shared_dictionary_writer_enabled ==
              request.shared_dictionary_writer_enabled &&
-         socket_tag == request.socket_tag;
+         socket_tag == request.socket_tag &&
+         allows_device_bound_session_registration ==
+             request.allows_device_bound_session_registration &&
+         permissions_policy == request.permissions_policy &&
+         fetch_retry_options == request.fetch_retry_options;
 }
 
 bool ResourceRequest::SendsCookies() const {

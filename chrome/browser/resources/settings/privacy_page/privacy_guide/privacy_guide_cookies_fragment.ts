@@ -12,6 +12,7 @@ import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
 import '/shared/settings/prefs/prefs.js';
 import './privacy_guide_fragment_shared.css.js';
 import '../../controls/settings_radio_group.js';
+import '../../icons.html.js';
 import '../../privacy_page/collapse_radio_button.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
@@ -39,14 +40,6 @@ export class PrivacyGuideCookiesFragmentElement extends
 
   static get properties() {
     return {
-      /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
       /** Cookie control modes for use in bindings. */
       cookieControlsModeEnum_: {
         type: Object,
@@ -67,6 +60,7 @@ export class PrivacyGuideCookiesFragmentElement extends
     };
   }
 
+  declare private isAlwaysBlock3pcsIncognitoEnabled_: boolean;
   private metricsBrowserProxy_: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
   private startStateBlock3PIncognito_: boolean;

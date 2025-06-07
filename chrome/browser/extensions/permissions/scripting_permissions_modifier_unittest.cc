@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/functional/callback_helpers.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/values_test_util.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
@@ -166,7 +167,7 @@ TEST_F(ScriptingPermissionsModifierUnitTest, WithholdHostPermissionsOnInstall) {
   // Initialize the permissions and have the prefs built and stored.
   PermissionsUpdater(profile()).InitializePermissions(extension.get());
   ExtensionPrefs::Get(profile())->OnExtensionInstalled(
-      extension.get(), Extension::State::ENABLED, syncer::StringOrdinal(), "");
+      extension.get(), /*disable_reasons=*/{}, syncer::StringOrdinal(), "");
 
   ASSERT_TRUE(
       PermissionsManager::Get(profile())->CanAffectExtension(*extension));
@@ -228,7 +229,7 @@ TEST_F(ScriptingPermissionsModifierUnitTest,
 
   auto reload_extension = [this, &extension_id]() {
     TestExtensionRegistryObserver observer(ExtensionRegistry::Get(profile()));
-    service()->ReloadExtension(extension_id);
+    registrar()->ReloadExtension(extension_id);
     return observer.WaitForExtensionLoaded();
   };
 
@@ -630,7 +631,7 @@ TEST_F(ScriptingPermissionsModifierUnitTest,
 
   {
     TestExtensionRegistryObserver observer(ExtensionRegistry::Get(profile()));
-    service()->ReloadExtension(extension->id());
+    registrar()->ReloadExtension(extension->id());
     extension = observer.WaitForExtensionLoaded();
   }
   EXPECT_TRUE(extension->permissions_data()

@@ -36,6 +36,7 @@ class DummyWidgetScheduler final : public WidgetScheduler {
   DummyWidgetScheduler& operator=(const DummyWidgetScheduler&) = delete;
   ~DummyWidgetScheduler() override = default;
 
+  void WillShutdown() override {}
   void Shutdown() override {}
   // Returns the input task runner.
   scoped_refptr<base::SingleThreadTaskRunner> InputTaskRunner() override {
@@ -125,12 +126,11 @@ class DummyFrameScheduler : public FrameScheduler {
   void OnStartedUsingNonStickyFeature(
       SchedulingPolicy::Feature feature,
       const SchedulingPolicy& policy,
-      std::unique_ptr<SourceLocation> source_location,
+      SourceLocation* source_location,
       SchedulingAffectingFeatureHandle* handle) override {}
-  void OnStartedUsingStickyFeature(
-      SchedulingPolicy::Feature feature,
-      const SchedulingPolicy& policy,
-      std::unique_ptr<SourceLocation> source_location) override {}
+  void OnStartedUsingStickyFeature(SchedulingPolicy::Feature feature,
+                                   const SchedulingPolicy& policy,
+                                   SourceLocation* source_location) override {}
   void OnStoppedUsingNonStickyFeature(
       SchedulingAffectingFeatureHandle* handle) override {}
   base::WeakPtr<FrameOrWorkerScheduler> GetFrameOrWorkerSchedulerWeakPtr()
@@ -192,7 +192,8 @@ class DummyPageScheduler : public PageScheduler {
     return *agent_group_scheduler_;
   }
   VirtualTimeController* GetVirtualTimeController() override { return nullptr; }
-  scoped_refptr<WidgetScheduler> CreateWidgetScheduler() override {
+  scoped_refptr<WidgetScheduler> CreateWidgetScheduler(
+      WidgetScheduler::Delegate*) override {
     return base::MakeRefCounted<DummyWidgetScheduler>();
   }
 
@@ -278,8 +279,6 @@ class DummyWebMainThreadScheduler : public WebThreadScheduler,
   void PostDelayedIdleTask(const base::Location&,
                            base::TimeDelta delay,
                            Thread::IdleTask) override {}
-  void PostNonNestableIdleTask(const base::Location&,
-                               Thread::IdleTask) override {}
   void RemoveCancelledIdleTasks() override {}
   void AddRAILModeObserver(RAILModeObserver*) override {}
   void RemoveRAILModeObserver(RAILModeObserver const*) override {}

@@ -52,6 +52,8 @@ class UserMediaClient;
 
 enum class UserMediaRequestType { kUserMedia, kDisplayMedia, kAllScreensMedia };
 
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum class UserMediaRequestResult {
   kOk = 0,
   kTimedOut = 1,
@@ -66,7 +68,8 @@ enum class UserMediaRequestResult {
   kNotSupportedError = 10,
   kInsecureContext = 11,
   kInvalidStateError = 12,
-  kMaxValue = kInvalidStateError
+  kNotAllowedByUserError = 13,
+  kMaxValue = kNotAllowedByUserError
 };
 
 class MODULES_EXPORT UserMediaRequest final
@@ -117,7 +120,7 @@ class MODULES_EXPORT UserMediaRequest final
 
   void Start();
 
-  void Succeed(const MediaStreamDescriptorVector& streams);
+  void Succeed(const GCedMediaStreamDescriptorVector& streams);
   void OnMediaStreamInitialized(MediaStream* stream);
   void OnMediaStreamsInitialized(MediaStreamVector streams);
   void FailConstraint(const String& constraint_name, const String& message);
@@ -135,10 +138,6 @@ class MODULES_EXPORT UserMediaRequest final
   // The MediaStreamType for the video part of a request with video. Returns
   // NO_SERVICE for requests where Video() == false.
   mojom::blink::MediaStreamType VideoMediaStreamType() const;
-
-  // Flag tied to whether or not the similarly named Origin Trial is
-  // enabled. Will be removed at end of trial. See: http://crbug.com/789152.
-  bool ShouldDisableHardwareNoiseSuppression() const;
 
   // errorMessage is only set if requestIsPrivilegedContext() returns |false|.
   // Caller is responsible for properly setting errors and canceling request.
@@ -198,6 +197,9 @@ class MODULES_EXPORT UserMediaRequest final
     return suppress_local_audio_playback_;
   }
 
+  void set_restrict_own_audio(bool value) { restrict_own_audio_ = value; }
+  bool restrict_own_audio() const { return restrict_own_audio_; }
+
   // Mark this request as an GetOpenDevice request for initializing a
   // TransferredMediaStreamTrack from the deviced identified by session_id.
   void SetTransferData(const base::UnguessableToken& session_id,
@@ -220,7 +222,7 @@ class MODULES_EXPORT UserMediaRequest final
   // Completes the re-creation of the transferred MediaStreamTrack by
   // constructing the MediaStreamTrackImpl object.
   void FinalizeTransferredTrackInitialization(
-      const MediaStreamDescriptorVector& streams_descriptors);
+      const GCedMediaStreamDescriptorVector& streams_descriptors);
 
   void Trace(Visitor*) const override;
 
@@ -237,8 +239,8 @@ class MODULES_EXPORT UserMediaRequest final
   bool dynamic_surface_switching_requested_ = true;
   bool exclude_monitor_type_surfaces_ = false;
   bool suppress_local_audio_playback_ = false;
+  bool restrict_own_audio_ = false;
   const bool auto_select_all_screens_ = false;
-  bool should_disable_hardware_noise_suppression_;
   bool has_transient_user_activation_ = false;
   int32_t request_id_ = -1;
 

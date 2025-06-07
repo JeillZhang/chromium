@@ -12,6 +12,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/thread_annotations.h"
@@ -40,7 +41,6 @@
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/blink/public/common/features.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -406,9 +406,9 @@ class FakeAddressSpaceServer {
       network::mojom::IPAddressSpace space) {
     switch (space) {
       case network::mojom::IPAddressSpace::kLocal:
-        return "local";
+        return "loopback";
       case network::mojom::IPAddressSpace::kPrivate:
-        return "private";
+        return "local";
       case network::mojom::IPAddressSpace::kPublic:
         return "public";
       default:
@@ -576,11 +576,12 @@ class PrivateNetworkAccessBrowserTest
   PrivateNetworkAccessBrowserTest()
       : PrivateNetworkAccessBrowserTestBase(
             {
-                blink::features::kPlzDedicatedWorker,
                 features::kBlockInsecurePrivateNetworkRequests,
                 features::kPrivateNetworkAccessSendPreflights,
             },
-            {}) {}
+            {
+                network::features::kLocalNetworkAccessChecks,
+            }) {}
 };
 
 // This definition is required as raw initializer lists aren't allowed in the
@@ -599,19 +600,21 @@ class PrivateNetworkAccessSandboxedDataBrowserTest
   PrivateNetworkAccessSandboxedDataBrowserTest()
       : PrivateNetworkAccessBrowserTestBase(
             GetParam() ? FeatureVec({
-                             blink::features::kPlzDedicatedWorker,
                              features::kBlockInsecurePrivateNetworkRequests,
                              features::kPrivateNetworkAccessSendPreflights,
                              features::kOriginKeyedProcessesByDefault,
                          })
                        : FeatureVec({
-                             blink::features::kPlzDedicatedWorker,
                              features::kBlockInsecurePrivateNetworkRequests,
                              features::kPrivateNetworkAccessSendPreflights,
                          }),
-            GetParam()
-                ? FeatureVec({})
-                : FeatureVec({features::kOriginKeyedProcessesByDefault})) {}
+            GetParam() ? FeatureVec({
+                             network::features::kLocalNetworkAccessChecks,
+                         })
+                       : FeatureVec({
+                             features::kOriginKeyedProcessesByDefault,
+                             network::features::kLocalNetworkAccessChecks,
+                         })) {}
 };
 
 class PrivateNetworkAccessBrowserTestWithBlockInsteadOfWarnOption
@@ -642,7 +645,9 @@ class PrivateNetworkAccessBrowserTestBlockFromPrivate
                 features::kBlockInsecurePrivateNetworkRequestsFromPrivate,
                 features::kPrivateNetworkAccessRespectPreflightResults,
             },
-            {}) {}
+            {
+                network::features::kLocalNetworkAccessChecks,
+            }) {}
 };
 
 // Test with insecure private network subresource requests blocked, including
@@ -657,7 +662,9 @@ class PrivateNetworkAccessBrowserTestBlockFromUnknown
                 features::kBlockInsecurePrivateNetworkRequestsFromUnknown,
                 features::kPrivateNetworkAccessRespectPreflightResults,
             },
-            {}) {}
+            {
+                network::features::kLocalNetworkAccessChecks,
+            }) {}
 };
 
 // Test with PNA checks for iframes enabled.
@@ -672,7 +679,9 @@ class PrivateNetworkAccessBrowserTestForNavigations
                 features::kPrivateNetworkAccessForNavigations,
                 features::kPrivateNetworkAccessRespectPreflightResults,
             },
-            {}) {}
+            {
+                network::features::kLocalNetworkAccessChecks,
+            }) {}
 };
 
 // Test with PNA checks for navigations enabled in warning-only mode.
@@ -695,6 +704,7 @@ class PrivateNetworkAccessBrowserTestNoPreflights
             },
             {
                 features::kPrivateNetworkAccessSendPreflights,
+                network::features::kLocalNetworkAccessChecks,
             }) {}
 };
 
@@ -709,7 +719,9 @@ class PrivateNetworkAccessBrowserTestRespectPreflightResults
                 features::kBlockInsecurePrivateNetworkRequests,
                 features::kPrivateNetworkAccessRespectPreflightResults,
             },
-            {}) {}
+            {
+                network::features::kLocalNetworkAccessChecks,
+            }) {}
 };
 
 // Test with PNA checks for worker-related fetches enabled.
@@ -724,6 +736,7 @@ class PrivateNetworkAccessBrowserTestForWorkers
             },
             {
                 features::kPrivateNetworkAccessForWorkersWarningOnly,
+                network::features::kLocalNetworkAccessChecks,
             }) {}
 };
 
@@ -741,6 +754,7 @@ class PrivateNetworkAccessBrowserTestRespectPreflightResultsForWorkers
             },
             {
                 features::kPrivateNetworkAccessForWorkersWarningOnly,
+                network::features::kLocalNetworkAccessChecks,
             }) {}
 };
 
@@ -758,7 +772,9 @@ class
                 features::kPrivateNetworkAccessForWorkers,
                 features::kPrivateNetworkAccessForWorkersWarningOnly,
             },
-            {}) {}
+            {
+                network::features::kLocalNetworkAccessChecks,
+            }) {}
 };
 
 // Test with insecure private network requests allowed.
@@ -774,6 +790,7 @@ class PrivateNetworkAccessBrowserTestNoBlocking
                 features::kPrivateNetworkAccessForNavigations,
                 features::kPrivateNetworkAccessForWorkers,
                 features::kPrivateNetworkAccessSendPreflights,
+                network::features::kLocalNetworkAccessChecks,
             }) {}
 };
 
@@ -956,7 +973,9 @@ class PrivateNetworkAccessBrowserTestNullIPKillswitch
             {
                 network::features::kTreatNullIPAsPublicAddressSpace,
             },
-            {}) {}
+            {
+                network::features::kLocalNetworkAccessChecks,
+            }) {}
 };
 
 // Tests that a top-level navigation to 0.0.0.0 is in the kPublic address space
@@ -2904,6 +2923,7 @@ class PrivateNetworkAccessDeprecationTrialDisabledBrowserTest
             },
             {
                 features::kBlockInsecurePrivateNetworkRequestsDeprecationTrial,
+                network::features::kLocalNetworkAccessChecks,
             }) {}
 };
 
@@ -4404,6 +4424,50 @@ IN_PROC_BROWSER_TEST_F(PrivateNetworkAccessBrowserTestForNavigations,
   EXPECT_THAT(
       SecureLocalServer().request_observer().RequestMethodsForUrl(target_url),
       IsEmpty());
+}
+
+class LocalNetworkAccessBrowserTest
+    : public PrivateNetworkAccessBrowserTestBase {
+ public:
+  LocalNetworkAccessBrowserTest()
+      : PrivateNetworkAccessBrowserTestBase(
+            {
+                network::features::kLocalNetworkAccessChecks,
+            },
+            {}) {}
+};
+
+IN_PROC_BROWSER_TEST_F(LocalNetworkAccessBrowserTest, CheckSecurityState) {
+  EXPECT_TRUE(NavigateToURL(shell(), SecurePublicURL(kDefaultPath)));
+
+  const network::mojom::ClientSecurityStatePtr security_state =
+      root_frame_host()->BuildClientSecurityState();
+  ASSERT_FALSE(security_state.is_null());
+
+  EXPECT_TRUE(security_state->is_web_secure_context);
+  EXPECT_EQ(network::mojom::IPAddressSpace::kPublic,
+            security_state->ip_address_space);
+
+  EXPECT_EQ(security_state->private_network_request_policy,
+            network::mojom::PrivateNetworkRequestPolicy::kPermissionWarn);
+}
+
+IN_PROC_BROWSER_TEST_F(LocalNetworkAccessBrowserTest, CheckBlockInsteadOfWarn) {
+  PolicyTestContentBrowserClient client;
+  client.SetBlockInsteadOfWarn();
+
+  EXPECT_TRUE(NavigateToURL(shell(), SecurePublicURL(kDefaultPath)));
+
+  const network::mojom::ClientSecurityStatePtr security_state =
+      root_frame_host()->BuildClientSecurityState();
+  ASSERT_FALSE(security_state.is_null());
+
+  EXPECT_TRUE(security_state->is_web_secure_context);
+  EXPECT_EQ(network::mojom::IPAddressSpace::kPublic,
+            security_state->ip_address_space);
+
+  EXPECT_EQ(security_state->private_network_request_policy,
+            network::mojom::PrivateNetworkRequestPolicy::kPermissionBlock);
 }
 
 }  // namespace content

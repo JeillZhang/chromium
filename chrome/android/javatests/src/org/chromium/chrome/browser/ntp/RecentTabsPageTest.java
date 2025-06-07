@@ -17,7 +17,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.MockitoAnnotations.initMocks;
 
 import android.app.Activity;
 import android.content.res.ColorStateList;
@@ -39,6 +38,8 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Spy;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.Token;
@@ -57,8 +58,9 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tasks.tab_management.ColorPickerUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.chrome.test.util.RecentTabsPageTestUtils;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
@@ -68,6 +70,7 @@ import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.components.policy.test.annotations.Policies;
 import org.chromium.components.signin.test.util.TestAccounts;
 import org.chromium.components.tab_groups.TabGroupColorId;
+import org.chromium.components.tab_groups.TabGroupColorPickerUtils;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.mojom.WindowOpenDisposition;
@@ -86,8 +89,11 @@ public class RecentTabsPageTest {
     private static final int COLOR_ID = TabGroupColorId.YELLOW;
     private static final int COLOR_ID_2 = TabGroupColorId.RED;
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     // FakeAccountInfoService is required to create the ProfileDataCache entry with sync_off badge
     // for Sync promo.
@@ -108,10 +114,8 @@ public class RecentTabsPageTest {
 
     @Before
     public void setUp() throws Exception {
-        initMocks(this);
-
         RecentTabsManager.setRecentlyClosedTabManagerForTests(mManager);
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.startOnBlankPage();
         mActivity = mActivityTestRule.getActivity();
         mTabModel = mActivity.getTabModelSelector().getModel(false);
         mTab = mActivity.getActivityTab();
@@ -180,7 +184,7 @@ public class RecentTabsPageTest {
         assertEquals(GradientDrawable.OVAL, bgDrawable.getShape());
         assertEquals(
                 ColorStateList.valueOf(
-                        ColorPickerUtils.getTabGroupColorPickerItemColor(
+                        TabGroupColorPickerUtils.getTabGroupColorPickerItemColor(
                                 mActivity, COLOR_ID, /* isIncognito= */ false)),
                 bgDrawable.getColor());
     }

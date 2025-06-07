@@ -23,6 +23,9 @@
 #include "google/protobuf/descriptor.pb.h"
 #include "google/protobuf/io/printer.h"
 
+// Must be included last.
+#include "google/protobuf/port_def.inc"
+
 namespace google {
 namespace protobuf {
 namespace compiler {
@@ -137,6 +140,7 @@ class SingularStringView : public FieldGeneratorBase {
     )cc");
   }
 
+
   void GenerateCopyAggregateInitializer(io::Printer* p) const override {
     p->Emit(R"cc(
       decltype($field_$){},
@@ -210,7 +214,7 @@ void SingularStringView::GenerateStaticMembers(io::Printer* p) const {
   if (is_inlined()) {
     // `_init_inline_xxx` is used for initializing default instances.
     p->Emit(R"cc(
-      static std::true_type _init_inline_$name$_;
+      static ::std::true_type _init_inline_$name$_;
     )cc");
   }
 }
@@ -220,27 +224,25 @@ void SingularStringView::GenerateAccessorDeclarations(io::Printer* p) const {
   auto v2 = p->WithVars(
       AnnotatedAccessors(field_, {"set_"}, AnnotationCollector::kSet));
 
-  p->Emit(
-      {{"donated",
-        [&] {
-          if (!is_inlined()) return;
-          p->Emit(R"cc(
-            inline PROTOBUF_ALWAYS_INLINE bool _internal_$name$_donated() const;
+  p->Emit({{"donated",
+            [&] {
+              if (!is_inlined()) return;
+              p->Emit(R"cc(
+                PROTOBUF_ALWAYS_INLINE bool _internal_$name$_donated() const;
+              )cc");
+            }}},
+          R"cc(
+            $DEPRECATED$ ::absl::string_view $name$() const;
+            template <typename Arg_ = ::std::string&&>
+            $DEPRECATED$ void $set_name$(Arg_&& arg);
+
+            private:
+            const ::std::string& _internal_$name$() const;
+            PROTOBUF_ALWAYS_INLINE void _internal_set_$name$(::absl::string_view value);
+            $donated$;
+
+            public:
           )cc");
-        }}},
-      R"cc(
-        $DEPRECATED$ absl::string_view $name$() const;
-        template <typename Arg_ = std::string&&>
-        $DEPRECATED$ void $set_name$(Arg_&& arg);
-
-        private:
-        const std::string& _internal_$name$() const;
-        inline PROTOBUF_ALWAYS_INLINE void _internal_set_$name$(
-            absl::string_view value);
-        $donated$;
-
-        public:
-      )cc");
 }
 
 void UpdateHasbitSet(io::Printer* p, bool is_oneof) {
@@ -297,7 +299,7 @@ void SingularStringView::GenerateInlineAccessorDefinitions(
            }},
       },
       R"cc(
-        inline absl::string_view $Msg$::$name$() const
+        inline ::absl::string_view $Msg$::$name$() const
             ABSL_ATTRIBUTE_LIFETIME_BOUND {
           $WeakDescriptorSelfPin$;
           $annotate_get$;
@@ -306,7 +308,7 @@ void SingularStringView::GenerateInlineAccessorDefinitions(
           return _internal_$name_internal$();
         }
         template <typename Arg_>
-        inline PROTOBUF_ALWAYS_INLINE void $Msg$::set_$name$(Arg_&& arg) {
+        PROTOBUF_ALWAYS_INLINE void $Msg$::set_$name$(Arg_&& arg) {
           $WeakDescriptorSelfPin$;
           $TsanDetectConcurrentMutation$;
           $PrepareSplitMessageForWrite$;
@@ -315,12 +317,12 @@ void SingularStringView::GenerateInlineAccessorDefinitions(
           $annotate_set$;
           // @@protoc_insertion_point(field_set:$pkg.Msg.field$)
         }
-        inline const std::string& $Msg$::_internal_$name_internal$() const {
+        inline const ::std::string& $Msg$::_internal_$name_internal$() const {
           $TsanDetectConcurrentRead$;
           $check_hasbit$;
           return $field_$.Get();
         }
-        inline void $Msg$::_internal_set_$name_internal$(absl::string_view value) {
+        inline void $Msg$::_internal_set_$name_internal$(::absl::string_view value) {
           $TsanDetectConcurrentMutation$;
           $update_hasbit$;
           //~ Don't use $Set$ here; we always want the std::string variant
@@ -503,7 +505,7 @@ void SingularStringView::GenerateSerializeWithCachedSizesToArray(
                                              "static_cast<int>(_s.length()),");
             }}},
           R"cc(
-            const std::string& _s = this_._internal_$name$();
+            const ::std::string& _s = this_._internal_$name$();
             $utf8_check$;
             target = stream->Write$DeclaredType$MaybeAliased($number$, _s, target);
           )cc");
@@ -554,11 +556,11 @@ class RepeatedStringView : public FieldGeneratorBase {
   void GeneratePrivateMembers(io::Printer* p) const override {
     if (should_split()) {
       p->Emit(R"cc(
-        $pbi$::RawPtr<$pb$::RepeatedPtrField<std::string>> $name$_;
+        $pbi$::RawPtr<$pb$::RepeatedPtrField<::std::string>> $name$_;
       )cc");
     } else {
       p->Emit(R"cc(
-        $pb$::RepeatedPtrField<std::string> $name$_;
+        $pb$::RepeatedPtrField<::std::string> $name$_;
       )cc");
     }
   }
@@ -628,6 +630,7 @@ class RepeatedStringView : public FieldGeneratorBase {
     )cc");
   }
 
+
   void GenerateAccessorDeclarations(io::Printer* p) const override;
   void GenerateInlineAccessorDefinitions(io::Printer* p) const override;
   void GenerateSerializeWithCachedSizesToArray(io::Printer* p) const override;
@@ -637,14 +640,7 @@ class RepeatedStringView : public FieldGeneratorBase {
 };
 
 void RepeatedStringView::GenerateAccessorDeclarations(io::Printer* p) const {
-  bool unknown_ctype =
-      field_->options().ctype() != internal::cpp::EffectiveStringCType(field_);
-
-  if (unknown_ctype) {
-    p->Emit(R"cc(
-      private:  // Hidden due to unknown ctype option.
-    )cc");
-  }
+  ABSL_DCHECK(GetDeclaredStringType() == pb::CppFeatures::VIEW);
 
   auto v1 = p->WithVars(AnnotatedAccessors(field_, {"", "_internal_"}));
   auto v2 = p->WithVars(
@@ -653,21 +649,17 @@ void RepeatedStringView::GenerateAccessorDeclarations(io::Printer* p) const {
       AnnotatedAccessors(field_, {"mutable_"}, AnnotationCollector::kAlias));
 
   p->Emit(R"cc(
-    $DEPRECATED$ absl::string_view $name$(int index) const;
-    $DEPRECATED$ void $set_name$(int index, const std::string& value);
-    $DEPRECATED$ void $set_name$(int index, std::string&& value);
-    $DEPRECATED$ void $set_name$(int index, const char* value);
-    $DEPRECATED$ void $set_name$(int index, absl::string_view value);
-    $DEPRECATED$ void $add_name$(const std::string& value);
-    $DEPRECATED$ void $add_name$(std::string&& value);
-    $DEPRECATED$ void $add_name$(const char* value);
-    $DEPRECATED$ void $add_name$(absl::string_view value);
-    $DEPRECATED$ const $pb$::RepeatedPtrField<std::string>& $name$() const;
-    $DEPRECATED$ $pb$::RepeatedPtrField<std::string>* $mutable_name$();
+    $DEPRECATED$ ::absl::string_view $name$(int index) const;
+    template <typename Arg_ = ::std::string&&>
+    $DEPRECATED$ void set_$name$(int index, Arg_&& value);
+    template <typename Arg_ = ::std::string&&>
+    $DEPRECATED$ void add_$name$(Arg_&& value);
+    $DEPRECATED$ const $pb$::RepeatedPtrField<::std::string>& $name$() const;
+    $DEPRECATED$ $pb$::RepeatedPtrField<::std::string>* $nonnull$ $mutable_name$();
 
     private:
-    const $pb$::RepeatedPtrField<std::string>& _internal_$name$() const;
-    $pb$::RepeatedPtrField<std::string>* _internal_mutable_$name$();
+    const $pb$::RepeatedPtrField<::std::string>& _internal_$name$() const;
+    $pb$::RepeatedPtrField<::std::string>* $nonnull$ _internal_mutable_$name$();
 
     public:
   )cc");
@@ -675,119 +667,84 @@ void RepeatedStringView::GenerateAccessorDeclarations(io::Printer* p) const {
 
 void RepeatedStringView::GenerateInlineAccessorDefinitions(
     io::Printer* p) const {
-  p->Emit({{"Get", opts_->safe_boundary_check ? "InternalCheckedGet" : "Get"},
-           {"GetExtraArg",
-            [&] {
-              p->Emit(opts_->safe_boundary_check
-                          ? ", $pbi$::GetEmptyStringAlreadyInited()"
-                          : "");
-            }}},
-          R"cc(
-            inline absl::string_view $Msg$::$name$(int index) const
-                ABSL_ATTRIBUTE_LIFETIME_BOUND {
-              $WeakDescriptorSelfPin$;
-              $annotate_get$;
-              // @@protoc_insertion_point(field_get:$pkg.Msg.field$)
-              return _internal_$name_internal$().$Get$(index$GetExtraArg$);
-            }
-            inline void $Msg$::set_$name$(int index, const std::string& value) {
-              $WeakDescriptorSelfPin$;
-              _internal_mutable_$name_internal$()->Mutable(index)->assign(value);
-              $annotate_set$;
-              // @@protoc_insertion_point(field_set:$pkg.Msg.field$)
-            }
-            inline void $Msg$::set_$name$(int index, std::string&& value) {
-              $WeakDescriptorSelfPin$;
-              _internal_mutable_$name_internal$()->Mutable(index)->assign(std::move(value));
-              $annotate_set$;
-              // @@protoc_insertion_point(field_set:$pkg.Msg.field$)
-            }
-            inline void $Msg$::set_$name$(int index, const char* value) {
-              $WeakDescriptorSelfPin$;
-              $DCHK$(value != nullptr);
-              _internal_mutable_$name_internal$()->Mutable(index)->assign(value);
-              $annotate_set$;
-              // @@protoc_insertion_point(field_set_char:$pkg.Msg.field$)
-            }
-            inline void $Msg$::set_$name$(int index, absl::string_view value) {
-              $WeakDescriptorSelfPin$;
-              _internal_mutable_$name_internal$()->Mutable(index)->assign(
-                  value.data(), value.size());
-              $annotate_set$;
-              // @@protoc_insertion_point(field_set_string_piece:$pkg.Msg.field$)
-            }
-            inline void $Msg$::add_$name$(const std::string& value) {
-              $WeakDescriptorSelfPin$;
-              $TsanDetectConcurrentMutation$;
-              _internal_mutable_$name_internal$()->Add()->assign(value);
-              $annotate_add$;
-              // @@protoc_insertion_point(field_add:$pkg.Msg.field$)
-            }
-            inline void $Msg$::add_$name$(std::string&& value) {
-              $WeakDescriptorSelfPin$;
-              $TsanDetectConcurrentMutation$;
-              _internal_mutable_$name_internal$()->Add(std::move(value));
-              $annotate_add$;
-              // @@protoc_insertion_point(field_add:$pkg.Msg.field$)
-            }
-            inline void $Msg$::add_$name$(const char* value) {
-              $WeakDescriptorSelfPin$;
-              $DCHK$(value != nullptr);
-              $TsanDetectConcurrentMutation$;
-              _internal_mutable_$name_internal$()->Add()->assign(value);
-              $annotate_add$;
-              // @@protoc_insertion_point(field_add_char:$pkg.Msg.field$)
-            }
-            inline void $Msg$::add_$name$(absl::string_view value) {
-              $WeakDescriptorSelfPin$;
-              $TsanDetectConcurrentMutation$;
-              _internal_mutable_$name_internal$()->Add()->assign(value.data(),
-                                                                 value.size());
-              $annotate_add$;
-              // @@protoc_insertion_point(field_add_string_piece:$pkg.Msg.field$)
-            }
-            inline const ::$proto_ns$::RepeatedPtrField<std::string>&
-            $Msg$::$name$() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
-              $WeakDescriptorSelfPin$;
-              $annotate_list$;
-              // @@protoc_insertion_point(field_list:$pkg.Msg.field$)
-              return _internal_$name_internal$();
-            }
-            inline ::$proto_ns$::RepeatedPtrField<std::string>*
-            $Msg$::mutable_$name$() ABSL_ATTRIBUTE_LIFETIME_BOUND {
-              $WeakDescriptorSelfPin$;
-              $annotate_mutable_list$;
-              // @@protoc_insertion_point(field_mutable_list:$pkg.Msg.field$)
-              $TsanDetectConcurrentMutation$;
-              return _internal_mutable_$name_internal$();
-            }
-          )cc");
+  p->Emit(
+      {
+          {GetEmitRepeatedFieldGetterSub(*opts_, p)},
+          {"bytes_tag",
+           [&] {
+             if (field_->type() == FieldDescriptor::TYPE_BYTES) {
+               p->Emit(", $pbi$::BytesTag{}");
+             }
+           }},
+          {GetEmitRepeatedFieldMutableSub(*opts_, p)},
+      },
+      R"cc(
+        inline ::absl::string_view $Msg$::$name$(int index) const
+            ABSL_ATTRIBUTE_LIFETIME_BOUND {
+          $WeakDescriptorSelfPin$;
+          $annotate_get$;
+          // @@protoc_insertion_point(field_get:$pkg.Msg.field$)
+          return $getter$;
+        }
+        template <typename Arg_>
+        inline void $Msg$::set_$name$(int index, Arg_&& value) {
+          $WeakDescriptorSelfPin$;
+          $pbi$::AssignToString(*$mutable$, ::std::forward<Arg_>(value) $bytes_tag$);
+          $annotate_set$;
+          // @@protoc_insertion_point(field_set:$pkg.Msg.field$)
+        }
+        template <typename Arg_>
+        inline void $Msg$::add_$name$(Arg_&& value) {
+          $WeakDescriptorSelfPin$;
+          $TsanDetectConcurrentMutation$;
+          $pbi$::AddToRepeatedPtrField(*_internal_mutable_$name_internal$(),
+                                       ::std::forward<Arg_>(value) $bytes_tag$);
+          $annotate_add$;
+          // @@protoc_insertion_point(field_add:$pkg.Msg.field$)
+        }
+        inline const $pb$::RepeatedPtrField<::std::string>& $Msg$::$name$()
+            const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+          $WeakDescriptorSelfPin$;
+          $annotate_list$;
+          // @@protoc_insertion_point(field_list:$pkg.Msg.field$)
+          return _internal_$name_internal$();
+        }
+        inline $pb$::RepeatedPtrField<::std::string>* $nonnull$
+        $Msg$::mutable_$name$() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+          $WeakDescriptorSelfPin$;
+          $annotate_mutable_list$;
+          // @@protoc_insertion_point(field_mutable_list:$pkg.Msg.field$)
+          $TsanDetectConcurrentMutation$;
+          return _internal_mutable_$name_internal$();
+        }
+      )cc");
   if (should_split()) {
     p->Emit(R"cc(
-      inline const $pb$::RepeatedPtrField<std::string>&
+      inline const $pb$::RepeatedPtrField<::std::string>&
       $Msg$::_internal_$name_internal$() const {
         $TsanDetectConcurrentRead$;
         return *$field_$;
       }
-      inline $pb$::RepeatedPtrField<std::string>*
+      inline $pb$::RepeatedPtrField<::std::string>* $nonnull$
       $Msg$::_internal_mutable_$name_internal$() {
         $TsanDetectConcurrentRead$;
         $PrepareSplitMessageForWrite$;
         if ($field_$.IsDefault()) {
-          $field_$.Set($pb$::Arena::Create<$pb$::RepeatedPtrField<std::string>>(
-              GetArena()));
+          $field_$.Set(
+              $pb$::Arena::Create<$pb$::RepeatedPtrField<::std::string>>(
+                  GetArena()));
         }
         return $field_$.Get();
       }
     )cc");
   } else {
     p->Emit(R"cc(
-      inline const ::$proto_ns$::RepeatedPtrField<std::string>&
+      inline const $pb$::RepeatedPtrField<::std::string>&
       $Msg$::_internal_$name_internal$() const {
         $TsanDetectConcurrentRead$;
         return $field_$;
       }
-      inline ::$proto_ns$::RepeatedPtrField<std::string>*
+      inline $pb$::RepeatedPtrField<::std::string>* $nonnull$
       $Msg$::_internal_mutable_$name_internal$() {
         $TsanDetectConcurrentRead$;
         return &$field_$;
@@ -830,3 +787,5 @@ std::unique_ptr<FieldGeneratorBase> MakeRepeatedStringViewGenerator(
 }  // namespace compiler
 }  // namespace protobuf
 }  // namespace google
+
+#include "google/protobuf/port_undef.inc"

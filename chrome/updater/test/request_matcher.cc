@@ -21,7 +21,7 @@
 #include "base/test/bind.h"
 #include "base/values.h"
 #include "base/version.h"
-#include "chrome/updater/constants.h"
+#include "chrome/updater/branded_constants.h"
 #include "chrome/updater/test/http_request.h"
 #include "chrome/updater/update_service.h"
 #include "chrome/updater/updater_scope.h"
@@ -162,9 +162,12 @@ Matcher GetAppPriorityMatcher(const std::string& app_id,
         return false;
       }
       const base::Value::List* app_list =
-          doc->FindListByDottedPath("request.app");
+          doc->FindListByDottedPath("request.apps");
       if (!app_list) {
-        return false;
+        app_list = doc->FindListByDottedPath("request.app");  // V3 fallback.
+        if (!app_list) {
+          return false;
+        }
       }
       for (const base::Value& app : *app_list) {
         if (const auto* dict = app.GetIfDict()) {
@@ -198,7 +201,7 @@ Matcher GetUpdaterEnableUpdatesMatcher() {
         return false;
       }
       const base::Value::List* app_list =
-          doc->FindListByDottedPath("request.app");
+          doc->FindListByDottedPath("request.apps");
       if (!app_list) {
         return false;
       }
@@ -226,7 +229,7 @@ Matcher GetMultipartContentMatcher(
     const std::vector<FormExpectations>& form_expections) {
   return base::BindLambdaForTesting([form_expections](
                                         const HttpRequest& request) {
-    constexpr char kMultifpartBoundaryPrefix[] =
+    static constexpr char kMultifpartBoundaryPrefix[] =
         "multipart/form-data; boundary=";
     if (!request.headers.contains("Content-Type")) {
       ADD_FAILURE() << "Content-Type header not found, which is expected "

@@ -14,6 +14,7 @@ import android.view.View;
 import androidx.annotation.Nullable;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
@@ -21,7 +22,8 @@ import org.mockito.ArgumentMatchers;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
@@ -51,6 +53,7 @@ public class TileInteractionDelegateTest {
                 SuggestionsUiDelegate uiDelegate,
                 ContextMenuManager contextMenuManager,
                 Delegate tileGroupDelegate,
+                TileDragDelegate tileDragDelegate,
                 Observer observer,
                 OfflinePageBridge offlinePageBridge) {
             super(
@@ -58,6 +61,7 @@ public class TileInteractionDelegateTest {
                     uiDelegate,
                     contextMenuManager,
                     tileGroupDelegate,
+                    tileDragDelegate,
                     observer,
                     offlinePageBridge);
         }
@@ -72,12 +76,14 @@ public class TileInteractionDelegateTest {
         }
     }
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock Tile mTile;
     @Mock SuggestionsTileView mTileView;
     @Mock SiteSuggestion mData;
     @Mock SuggestionsUiDelegate mSuggestionsUiDelegate;
     @Mock ContextMenuManager mContextMenuManager;
     @Mock TileGroup.Delegate mTileGroupDelegate;
+    @Mock TileGroup.TileDragDelegate mTileDragDelegate;
     @Mock OfflinePageBridge mOfflinePageBridge;
     @Mock private Runnable mSnapshotTileGridChangedRunnable;
     @Mock private Runnable mTileCountChangedRunnable;
@@ -92,7 +98,6 @@ public class TileInteractionDelegateTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         when(mTile.getUrl()).thenReturn(new GURL("https://example.com"));
         when(mTile.getData()).thenReturn(mData);
         when(mAndroidPrerenderManager.startPrerendering(any())).thenReturn(true);
@@ -102,12 +107,6 @@ public class TileInteractionDelegateTest {
     @Test
     public void testTileInteractionDelegateTaken() {
         HistogramWatcher.Builder histogramWatcherBuilder = HistogramWatcher.newBuilder();
-
-        histogramWatcherBuilder.expectIntRecord(
-                "Prerender.Experimental.NewTabPage.TouchDuration.Taken", 0);
-        histogramWatcherBuilder.expectNoRecords(
-                "Prerender.Experimental.NewTabPage.TouchDuration.NotTaken");
-
         HistogramWatcher histogramWatcher = histogramWatcherBuilder.build();
 
         TileGroup tileGroup =
@@ -116,6 +115,7 @@ public class TileInteractionDelegateTest {
                         mSuggestionsUiDelegate,
                         mContextMenuManager,
                         mTileGroupDelegate,
+                        mTileDragDelegate,
                         mTileGroupObserver,
                         mOfflinePageBridge);
         tileGroup.onIconMadeAvailable(new GURL("https://example.com"));
@@ -134,12 +134,6 @@ public class TileInteractionDelegateTest {
     @Test
     public void testTileInteractionDelegateNotTaken() {
         HistogramWatcher.Builder histogramWatcherBuilder = HistogramWatcher.newBuilder();
-
-        histogramWatcherBuilder.expectIntRecord(
-                "Prerender.Experimental.NewTabPage.TouchDuration.NotTaken", 0);
-        histogramWatcherBuilder.expectNoRecords(
-                "Prerender.Experimental.NewTabPage.TouchDuration.Taken");
-
         HistogramWatcher histogramWatcher = histogramWatcherBuilder.build();
 
         TileGroup tileGroup =
@@ -148,6 +142,7 @@ public class TileInteractionDelegateTest {
                         mSuggestionsUiDelegate,
                         mContextMenuManager,
                         mTileGroupDelegate,
+                        mTileDragDelegate,
                         mTileGroupObserver,
                         mOfflinePageBridge);
         tileGroup.onIconMadeAvailable(new GURL("https://example.com"));
@@ -171,6 +166,7 @@ public class TileInteractionDelegateTest {
                         mSuggestionsUiDelegate,
                         mContextMenuManager,
                         mTileGroupDelegate,
+                        mTileDragDelegate,
                         mTileGroupObserver,
                         mOfflinePageBridge);
         tileGroup.setTileForTesting(mTile);

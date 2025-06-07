@@ -4,13 +4,15 @@
 
 #include "chrome/browser/web_applications/isolated_web_apps/iwa_identity_validator.h"
 
+#include <variant>
+
 #include "base/base64.h"
 #include "base/containers/map_util.h"
 #include "base/no_destructor.h"
 #include "base/strings/stringprintf.h"
-#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/iwa_key_distribution_info_provider.h"
 #include "components/web_package/signed_web_bundles/ecdsa_p256_public_key.h"
 #include "components/web_package/signed_web_bundles/ed25519_public_key.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
 
 namespace web_app {
 
@@ -28,7 +30,7 @@ ValidateWebBundleIdentityAgainstKeyRotationInfo(
   }
 
   if (!std::ranges::any_of(public_keys, [&](const auto& public_key) {
-        return absl::visit(
+        return std::visit(
             [&](const auto& public_key) {
               return std::ranges::equal(public_key.bytes(),
                                         *kr_info.public_key);
@@ -56,7 +58,7 @@ IwaIdentityValidator::ValidateWebBundleIdentity(
     const std::string& web_bundle_id,
     const std::vector<web_package::PublicKey>& public_keys) const {
   if (const auto* kr_info =
-          IwaKeyDistributionInfoProvider::GetInstance()->GetKeyRotationInfo(
+          IwaKeyDistributionInfoProvider::GetInstance().GetKeyRotationInfo(
               web_bundle_id)) {
     return ValidateWebBundleIdentityAgainstKeyRotationInfo(
         web_bundle_id, public_keys, *kr_info);

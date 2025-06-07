@@ -15,6 +15,7 @@
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/thread_pool.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/chrome_manifest_url_handlers.h"
@@ -298,10 +299,11 @@ base::FilePath GetBundleResourcePath(
 
   const base::FilePath request_relative_path =
       extensions::file_util::ExtensionURLToRelativeFilePath(request.url);
-  if (!ExtensionsBrowserClient::Get()
-           ->GetComponentExtensionResourceManager()
-           ->IsComponentExtensionResource(extension_resources_path,
-                                          request_relative_path, resource_id)) {
+  auto* manager =
+      ExtensionsBrowserClient::Get()->GetComponentExtensionResourceManager();
+  CHECK(manager);
+  if (!manager->IsComponentExtensionResource(
+          extension_resources_path, request_relative_path, resource_id)) {
     return base::FilePath();
   }
   DCHECK_NE(0, *resource_id);

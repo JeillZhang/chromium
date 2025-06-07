@@ -10,13 +10,16 @@
 #import "components/sync/base/data_type.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view_delegate.h"
+#import "ios/chrome/browser/authentication/ui_bundled/change_profile_continuation_provider.h"
 
 class AuthenticationService;
 class ChromeAccountManagerService;
 class PrefService;
 @protocol SigninPresenter;
 @protocol AccountSettingsPresenter;
+typedef NS_ENUM(NSUInteger, SigninCoordinatorResult);
 @class SigninPromoViewConfigurator;
+@class ShowSigninCommand;
 @protocol SigninPromoViewConsumer;
 @protocol SystemIdentity;
 
@@ -68,6 +71,17 @@ enum class SigninPromoAction {
   kReviewAccountSettings,
 };
 
+@class SigninPromoViewMediator;
+
+// Protocol used to display signin UI.
+@protocol SigninPromoViewMediatorDelegate
+
+// Asks the presenter to display the signin UI configured by `command`.
+- (void)showSignin:(SigninPromoViewMediator*)mediator
+           command:(ShowSigninCommand*)command;
+
+@end
+
 // Class that monitors the available identities and creates
 // SigninPromoViewConfigurator. This class makes the link between the model and
 // the view. The consumer will receive notification if default identity is
@@ -84,12 +98,15 @@ enum class SigninPromoAction {
 // (in that case the button opens a dialog to add an account instead).
 // When the user is signed-out and has accounts on the device, this is the
 // default identity.
-// when the user is signed-in and not syncing, this is the signed-in identity
-// (not necessarily the default one).
+// When the user is signed-in, this is the signed-in identity (not necessarily
+// the default one).
 @property(nonatomic, strong, readonly) id<SystemIdentity> displayedIdentity;
 
 // Sign-in promo view state. kNeverVisible by default.
 @property(nonatomic, assign) SigninPromoViewState signinPromoViewState;
+
+// YES if the sign-in flow is in progress.
+@property(nonatomic, assign, readonly) BOOL signinInProgress;
 
 // YES if the promo spinner should be displayed. Either the sign-in or the
 // initial sync is in progress.
@@ -129,15 +146,19 @@ enum class SigninPromoAction {
 // Designated initializer.
 // `baseViewController` is the view to present UI for sign-in.
 - (instancetype)
-     initWithIdentityManager:(signin::IdentityManager*)identityManager
-       accountManagerService:(ChromeAccountManagerService*)accountManagerService
-                 authService:(AuthenticationService*)authService
-                 prefService:(PrefService*)prefService
-                 syncService:(syncer::SyncService*)syncService
-                 accessPoint:(signin_metrics::AccessPoint)accessPoint
-             signinPresenter:(id<SigninPresenter>)signinPresenter
-    accountSettingsPresenter:
-        (id<AccountSettingsPresenter>)accountSettingsPresenter
+              initWithIdentityManager:(signin::IdentityManager*)identityManager
+                accountManagerService:
+                    (ChromeAccountManagerService*)accountManagerService
+                          authService:(AuthenticationService*)authService
+                          prefService:(PrefService*)prefService
+                          syncService:(syncer::SyncService*)syncService
+                          accessPoint:(signin_metrics::AccessPoint)accessPoint
+                             delegate:
+                                 (id<SigninPromoViewMediatorDelegate>)delegate
+             accountSettingsPresenter:
+                 (id<AccountSettingsPresenter>)accountSettingsPresenter
+    changeProfileContinuationProvider:(const ChangeProfileContinuationProvider&)
+                                          changeProfileContinuationProvider
     NS_DESIGNATED_INITIALIZER;
 
 - (SigninPromoViewConfigurator*)createConfigurator;
@@ -155,6 +176,9 @@ enum class SigninPromoAction {
 // promo view is removed from the view hierarchy (it or one of its superviews is
 // removed). The mediator should not be used after this called.
 - (void)disconnect;
+
+// Callback for the SigninPresenter.
+- (void)signinDidCompleteWithResult:(SigninCoordinatorResult)result;
 
 @end
 

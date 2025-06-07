@@ -23,6 +23,7 @@
 #include "ash/system/tray/tri_view.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/utf_string_conversions.h"
 #include "components/global_media_controls/public/mojom/device_service.mojom-shared.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -169,7 +170,7 @@ void MediaCastListView::CreateCastingHeader() {
   label->SetText(l10n_util::GetStringUTF16(
       IDS_ASH_GLOBAL_MEDIA_CONTROLS_CAST_LIST_HEADER));
   label->SetBackground(views::CreateSolidBackground(SK_ColorTRANSPARENT));
-  label->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+  label->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
   label->SetAutoColorReadabilityEnabled(false);
   TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosBody2, *label);
   casting_header->AddView(TriView::Container::CENTER, std::move(label));

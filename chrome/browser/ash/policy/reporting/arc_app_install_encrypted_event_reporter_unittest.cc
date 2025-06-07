@@ -14,7 +14,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ash/policy/reporting/app_install_event_log_manager_wrapper.h"
 #include "chrome/browser/ash/policy/reporting/arc_app_install_event_log.h"
 #include "chrome/browser/ash/policy/reporting/arc_app_install_event_log_manager.h"
@@ -22,6 +21,7 @@
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/ash/components/network/network_handler_test_helper.h"
@@ -53,15 +53,11 @@ class AppInstallEventEncryptedReporterTest : public testing::Test {
 
   void SetUp() override {
     ash::system::StatisticsProvider::SetTestProvider(&statistics_provider_);
-
-    RegisterLocalState(pref_service_.registry());
-    TestingBrowserProcess::GetGlobal()->SetLocalState(&pref_service_);
     chromeos::PowerManagerClient::InitializeFake();
   }
 
   void TearDown() override {
     task_environment_.RunUntilIdle();
-    TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
     chromeos::PowerManagerClient::Shutdown();
   }
 
@@ -73,7 +69,8 @@ class AppInstallEventEncryptedReporterTest : public testing::Test {
   }
 
   content::BrowserTaskEnvironment task_environment_;
-  TestingPrefServiceSimple pref_service_;
+  ScopedTestingLocalState scoped_testing_local_state_{
+      TestingBrowserProcess::GetGlobal()};
   TestingProfile profile_;
   ash::system::FakeStatisticsProvider statistics_provider_;
 };

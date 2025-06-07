@@ -120,7 +120,8 @@ void ChromeTailoredSecurityService::OnSyncNotificationMessageRequest(
       web_contents, is_enabled,
       base::BindOnce(&ChromeTailoredSecurityService::MessageDismissed,
                      // Unretained is safe because |this| owns |message_|.
-                     base::Unretained(this)));
+                     base::Unretained(this)),
+      /*is_requested_by_synced_esb=*/false);
 #else
   Browser* browser = chrome::FindBrowserWithProfile(profile_);
   if (!browser) {
@@ -161,7 +162,7 @@ void ChromeTailoredSecurityService::DidAddTab(TabAndroid* tab,
   TailoredSecurityTimestampUpdateCallback();
 }
 
-void ChromeTailoredSecurityService::OnTabModelAdded() {
+void ChromeTailoredSecurityService::OnTabModelAdded(TabModel* tab_model) {
   if (observed_tab_model_) {
     return;
   }
@@ -169,7 +170,7 @@ void ChromeTailoredSecurityService::OnTabModelAdded() {
   AddTabModelObserver();
 }
 
-void ChromeTailoredSecurityService::OnTabModelRemoved() {
+void ChromeTailoredSecurityService::OnTabModelRemoved(TabModel* tab_model) {
   if (!observed_tab_model_) {
     return;
   }

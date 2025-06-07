@@ -124,7 +124,7 @@ void HoverHighlightView::SetSubText(const std::u16string& sub_text) {
         sub_row_->AddChildView(TrayPopupUtils::CreateUnfocusableLabel());
   }
 
-  sub_text_label_->SetEnabledColorId(kColorAshTextColorSecondary);
+  sub_text_label_->SetEnabledColor(kColorAshTextColorSecondary);
   sub_text_label_->SetAutoColorReadabilityEnabled(false);
   sub_text_label_->SetText(sub_text);
 }
@@ -164,7 +164,7 @@ void HoverHighlightView::AddViewAndLabel(std::unique_ptr<views::View> view,
   SetLayoutManager(std::make_unique<views::FillLayout>());
   tri_view_ = TrayPopupUtils::CreateDefaultRowView(
       /*use_wide_layout=*/true);
-  AddChildView(tri_view_.get());
+  AddChildViewRaw(tri_view_.get());
 
   left_view_ = view.get();
   tri_view_->AddView(TriView::Container::START, view.release());
@@ -172,7 +172,7 @@ void HoverHighlightView::AddViewAndLabel(std::unique_ptr<views::View> view,
   text_label_ = TrayPopupUtils::CreateUnfocusableLabel();
   text_label_->SetText(text);
   text_label_->SetEnabled(GetEnabled());
-  text_label_->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+  text_label_->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
   TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosButton2,
                                         *text_label_);
   tri_view_->AddView(TriView::Container::CENTER, text_label_);
@@ -195,11 +195,11 @@ void HoverHighlightView::AddLabelRow(const std::u16string& text) {
   SetLayoutManager(std::make_unique<views::FillLayout>());
   tri_view_ = TrayPopupUtils::CreateDefaultRowView(
       /*use_wide_layout=*/true);
-  AddChildView(tri_view_.get());
+  AddChildViewRaw(tri_view_.get());
 
   text_label_ = TrayPopupUtils::CreateUnfocusableLabel();
   text_label_->SetText(text);
-  text_label_->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+  text_label_->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
   TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosButton2,
                                         *text_label_);
   tri_view_->AddView(TriView::Container::CENTER, text_label_);

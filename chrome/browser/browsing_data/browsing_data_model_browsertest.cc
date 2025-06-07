@@ -11,6 +11,7 @@
 
 #include "base/check.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
@@ -486,13 +487,13 @@ class BrowsingDataModelBrowserTest
         {features::kPrivacySandboxAdsAPIsOverride, {}},
         {features::kIsolatedWebApps, {}},
         {features::kIsolatedWebAppDevMode, {}},
-        {blink::features::kSharedStorageAPI, {}},
-        {blink::features::kInterestGroupStorage, {}},
+        {network::features::kSharedStorageAPI, {}},
+        {network::features::kInterestGroupStorage, {}},
         {blink::features::kPrivateAggregationApi, {}},
         {blink::features::kAdInterestGroupAPI, {}},
         {blink::features::kFledge, {}},
         {blink::features::kFencedFrames, {}},
-        {blink::features::kBrowsingTopics, {}},
+        {network::features::kBrowsingTopics, {}},
         {net::features::kThirdPartyStoragePartitioning, {}},
         {network::features::kCompressionDictionaryTransportBackend, {}},
         {network::features::kCompressionDictionaryTransport, {}},
@@ -512,7 +513,8 @@ class BrowsingDataModelBrowserTest
 #endif
 
 #if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
-    enabled_features.push_back({net::features::kDeviceBoundSessions, {}});
+    enabled_features.push_back({net::features::kDeviceBoundSessions,
+                                {{"ForceEnableForTesting", "true"}}});
     enabled_features.push_back(
         {unexportable_keys::
              kEnableBoundSessionCredentialsSoftwareKeysForManualTesting,

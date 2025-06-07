@@ -34,6 +34,8 @@
 namespace extensions {
 namespace {
 
+// TODO(crbug.com/393179880): Port to desktop Android when ExtensionActionRunner
+// is ported.
 class ExtensionActiveTabTest : public ExtensionApiTest {
  public:
   ExtensionActiveTabTest() = default;
@@ -205,7 +207,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, FileURLs) {
         extension_registry()->enabled_extensions().GetByID(extension_id);
 
     // Load an extension page with a file iframe.
-    GURL page = extension->GetResourceURL("file_iframe.html");
+    GURL page = extension->ResolveExtensionURL("file_iframe.html");
     ExtensionTestMessageListener listener;
     ui_test_utils::NavigateToURLWithDisposition(
         browser(), page, WindowOpenDisposition::NEW_FOREGROUND_TAB,

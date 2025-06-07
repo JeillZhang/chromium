@@ -9,11 +9,14 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.content_public.browser.RenderFrameHost;
 
 /** Native bridge for facilitated payment APIs, such as PIX. */
 @JNINamespace("payments::facilitated")
+@NullMarked
 public class FacilitatedPaymentsApiClientBridge implements FacilitatedPaymentsApiClient.Delegate {
     private final FacilitatedPaymentsApiClient mApiClient;
     private long mNativeFacilitatedPaymentsApiClientAndroid;
@@ -52,6 +55,12 @@ public class FacilitatedPaymentsApiClientBridge implements FacilitatedPaymentsAp
         mApiClient.isAvailable();
     }
 
+    /** The synchronous version to check whether facilitated payments API is available to use. */
+    @CalledByNative
+    public boolean isAvailableSync() {
+        return mApiClient.isAvailableSync();
+    }
+
     /**
      * Retrieves the client token for initiating payment. The client token will be received back in
      * the onGetClientToken(byte[]) method. If the client token is null or empty, then payment
@@ -87,7 +96,7 @@ public class FacilitatedPaymentsApiClientBridge implements FacilitatedPaymentsAp
 
     // FacilitatedPaymentsApiClient.Delegate implementation:
     @Override
-    public void onGetClientToken(byte[] clientToken) {
+    public void onGetClientToken(byte @Nullable [] clientToken) {
         if (mNativeFacilitatedPaymentsApiClientAndroid == 0) return;
         FacilitatedPaymentsApiClientBridgeJni.get()
                 .onGetClientToken(mNativeFacilitatedPaymentsApiClientAndroid, clientToken);
@@ -105,9 +114,11 @@ public class FacilitatedPaymentsApiClientBridge implements FacilitatedPaymentsAp
     interface Natives {
         void onIsAvailable(long nativeFacilitatedPaymentsApiClientAndroid, boolean isAvailable);
 
-        void onGetClientToken(long nativeFacilitatedPaymentsApiClientAndroid, byte[] clientToken);
+        void onGetClientToken(
+                long nativeFacilitatedPaymentsApiClientAndroid, byte @Nullable [] clientToken);
 
-        void onPurchaseActionResultEnum(long nativeFacilitatedPaymentsApiClientAndroid,
+        void onPurchaseActionResultEnum(
+                long nativeFacilitatedPaymentsApiClientAndroid,
                 @PurchaseActionResult int purchaseActionResult);
     }
 }

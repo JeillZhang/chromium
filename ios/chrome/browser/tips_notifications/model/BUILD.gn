@@ -6,6 +6,8 @@ source_set("client") {
   sources = [
     "tips_notification_client.h",
     "tips_notification_client.mm",
+    "tips_notification_criteria.h",
+    "tips_notification_criteria.mm",
   ]
   deps = [
     ":utils",
@@ -14,6 +16,8 @@ source_set("client") {
     "//components/safe_browsing/core/common:safe_browsing_prefs",
     "//components/search",
     "//ios/chrome/browser/authentication/ui_bundled:signin_presenter",
+    "//ios/chrome/browser/content_suggestions/ui_bundled:commands",
+    "//ios/chrome/browser/content_suggestions/ui_bundled/set_up_list:utils",
     "//ios/chrome/browser/default_browser/model",
     "//ios/chrome/browser/default_browser/model:utils",
     "//ios/chrome/browser/feature_engagement/model",
@@ -29,14 +33,13 @@ source_set("client") {
     "//ios/chrome/browser/shared/model/application_context",
     "//ios/chrome/browser/shared/model/browser",
     "//ios/chrome/browser/shared/model/prefs:pref_names",
+    "//ios/chrome/browser/shared/model/profile",
     "//ios/chrome/browser/shared/model/utils",
     "//ios/chrome/browser/shared/public/commands",
     "//ios/chrome/browser/shared/public/features",
     "//ios/chrome/browser/signin/model",
     "//ios/chrome/browser/signin/model:authentication_service",
     "//ios/chrome/browser/signin/model:authentication_service_factory",
-    "//ios/chrome/browser/ui/content_suggestions:commands",
-    "//ios/chrome/browser/ui/content_suggestions/set_up_list:utils",
     "//ios/public/provider/chrome/browser/lens:lens_api",
   ]
   frameworks = [ "UserNotifications.framework" ]
@@ -49,6 +52,7 @@ source_set("utils") {
   ]
   deps = [
     "//base",
+    "//components/prefs",
     "//ios/chrome/app/strings",
     "//ios/chrome/browser/push_notification/model:constants",
     "//ios/chrome/browser/shared/public/features",
@@ -66,11 +70,14 @@ source_set("unit_tests") {
     "//base",
     "//base/test:test_support",
     "//components/safe_browsing/core/common:safe_browsing_prefs",
+    "//ios/chrome/browser/authentication/ui_bundled:signin_presenter",
+    "//ios/chrome/browser/content_suggestions/ui_bundled:commands",
     "//ios/chrome/browser/default_browser/model",
     "//ios/chrome/browser/default_browser/model:test_support",
     "//ios/chrome/browser/default_browser/model:utils",
     "//ios/chrome/browser/first_run/model",
     "//ios/chrome/browser/push_notification/model:constants",
+    "//ios/chrome/browser/push_notification/model:push_notification_util",
     "//ios/chrome/browser/shared/coordinator/scene:scene_state_header",
     "//ios/chrome/browser/shared/model/application_context",
     "//ios/chrome/browser/shared/model/browser",
@@ -79,9 +86,14 @@ source_set("unit_tests") {
     "//ios/chrome/browser/shared/model/profile/test",
     "//ios/chrome/browser/shared/public/commands",
     "//ios/chrome/browser/shared/public/features",
-    "//ios/chrome/browser/ui/content_suggestions:commands",
+    "//ios/chrome/browser/signin/model:authentication_service",
+    "//ios/chrome/browser/signin/model:authentication_service_factory",
+    "//ios/chrome/browser/signin/model:fake_system_identity",
+    "//ios/chrome/browser/signin/model:fake_system_identity_manager",
+    "//ios/chrome/browser/signin/model:test_support",
     "//ios/chrome/test:test_support",
     "//ios/testing:block_swizzler",
+    "//ios/web/public/test",
     "//third_party/ocmock",
   ]
 }

@@ -10,6 +10,7 @@
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/file_system_access/chrome_file_system_access_permission_context.h"
 #include "chrome/browser/file_system_access/file_system_access_features.h"
@@ -41,6 +42,18 @@
 #if !BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ui/views/media_preview/media_preview_feature.h"
 #endif
+
+namespace {
+std::u16string PageInfoSubpageText(ContentSettingsType type) {
+  // Without this, the title and toggle accessibility text inside the submenu of
+  // |CAPTURED_SURFACE_CONTROL| permission type would be the same as in the main
+  // page info. This block sets the submenu text to a different one.
+  return (type == ContentSettingsType::CAPTURED_SURFACE_CONTROL)
+             ? l10n_util::GetStringUTF16(
+                   IDS_SITE_SETTINGS_TYPE_CAPTURED_SURFACE_CONTROL_SUB_MENU)
+             : PageInfoUI::PermissionTypeToUIString(type);
+}
+}  // namespace
 
 PageInfoPermissionContentView::PageInfoPermissionContentView(
     PageInfo* presenter,
@@ -81,25 +94,16 @@ PageInfoPermissionContentView::PageInfoPermissionContentView(
 
   auto* label_wrapper = permission_info_container->AddChildView(
       PageInfoViewFactory::CreateLabelWrapper());
-  title_ = label_wrapper->AddChildView(
-      std::make_unique<views::Label>(PageInfoUI::PermissionTypeToUIString(type),
-                                     views::style::CONTEXT_DIALOG_BODY_TEXT));
+  title_ = label_wrapper->AddChildView(std::make_unique<views::Label>(
+      PageInfoSubpageText(type), views::style::CONTEXT_DIALOG_BODY_TEXT));
   title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   title_->SetTextStyle(views::style::STYLE_BODY_3_MEDIUM);
-  title_->SetEnabledColorId(kColorPageInfoForeground);
-
-  // Without this, the title text inside the submenu of
-  // |CAPTURED_SURFACE_CONTROL| permission type would be the same as in the main
-  // page info. This block sets the submenu title text to a different one.
-  if (type == ContentSettingsType::CAPTURED_SURFACE_CONTROL) {
-    title_->SetText(l10n_util::GetStringUTF16(
-        IDS_SITE_SETTINGS_TYPE_CAPTURED_SURFACE_CONTROL_SUB_MENU));
-  }
+  title_->SetEnabledColor(kColorPageInfoForeground);
 
   state_label_ = label_wrapper->AddChildView(std::make_unique<views::Label>(
       std::u16string(), views::style::CONTEXT_LABEL,
       views::style::STYLE_BODY_4));
-  state_label_->SetEnabledColorId(kColorPageInfoSubtitleForeground);
+  state_label_->SetEnabledColor(kColorPageInfoSubtitleForeground);
   state_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
 
   // Add extra details as sublabel.
@@ -108,7 +112,7 @@ PageInfoPermissionContentView::PageInfoPermissionContentView(
     auto detail_label = std::make_unique<views::Label>(
         detail, views::style::CONTEXT_LABEL, views::style::STYLE_BODY_4);
     detail_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    detail_label->SetEnabledColorId(kColorPageInfoSubtitleForeground);
+    detail_label->SetEnabledColor(kColorPageInfoSubtitleForeground);
     label_wrapper->AddChildView(std::move(detail_label));
   }
 
@@ -152,9 +156,8 @@ PageInfoPermissionContentView::PageInfoPermissionContentView(
       std::make_unique<views::ToggleButton>(base::BindRepeating(
           &PageInfoPermissionContentView::OnToggleButtonPressed,
           base::Unretained(this))));
-  toggle_button_->GetViewAccessibility().SetName(
-      l10n_util::GetStringFUTF16(IDS_PAGE_INFO_SELECTOR_TOOLTIP,
-                                 PageInfoUI::PermissionTypeToUIString(type)));
+  toggle_button_->GetViewAccessibility().SetName(l10n_util::GetStringFUTF16(
+      IDS_PAGE_INFO_SELECTOR_TOOLTIP, PageInfoSubpageText(type)));
   toggle_button_->SetPreferredSize(
       gfx::Size(toggle_button_->GetPreferredSize().width(), title_height));
 

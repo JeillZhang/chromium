@@ -38,10 +38,6 @@
 #include "third_party/blink/renderer/platform/wtf/wtf_export.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
 
-#ifdef __OBJC__
-#include "base/apple/bridging.h"
-#endif
-
 namespace WTF {
 class WTF_EXPORT AtomicString;
 }
@@ -93,8 +89,10 @@ class WTF_EXPORT AtomicString {
   StringImpl* Impl() const { return string_.Impl(); }
 
   bool Is8Bit() const { return string_.Is8Bit(); }
-  const LChar* Characters8() const { return string_.Characters8(); }
-  const UChar* Characters16() const { return string_.Characters16(); }
+  // Use Span16() instead.
+  UNSAFE_BUFFER_USAGE const UChar* Characters16() const {
+    return UNSAFE_TODO(string_.Characters16());
+  }
   wtf_size_t length() const { return string_.length(); }
   base::span<const LChar> Span8() const { return string_.Span8(); }
   base::span<const UChar> Span16() const { return string_.Span16(); }
@@ -205,7 +203,6 @@ class WTF_EXPORT AtomicString {
   unsigned Hash() const { return string_.Impl()->ExistingHash(); }
 
 #ifdef __OBJC__
-  AtomicString(NSString* s) : string_(Add(base::apple::NSToCFPtrCast(s))) {}
   operator NSString*() const { return string_; }
 #endif
   // AtomicString::fromUTF8 will return a null string if
@@ -250,9 +247,6 @@ class WTF_EXPORT AtomicString {
   }
   static scoped_refptr<StringImpl> AddSlowCase(scoped_refptr<StringImpl>&&);
   static scoped_refptr<StringImpl> AddSlowCase(StringImpl*);
-#if BUILDFLAG(IS_APPLE)
-  static scoped_refptr<StringImpl> Add(CFStringRef);
-#endif
 };
 
 inline bool operator==(const AtomicString& a, const AtomicString& b) {
@@ -352,5 +346,5 @@ using WTF::g_xml_atom;
 using WTF::g_xmlns_atom;
 using WTF::g_xlink_atom;
 
-#include "third_party/blink/renderer/platform/wtf/text/string_concatenate.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_operators_atomic.h"
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_ATOMIC_STRING_H_

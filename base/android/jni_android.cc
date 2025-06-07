@@ -12,6 +12,7 @@
 #include "base/android/jni_utils.h"
 #include "base/android_runtime_jni_headers/Throwable_jni.h"
 #include "base/debug/debugging_buildflags.h"
+#include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
@@ -20,7 +21,7 @@
 #include "third_party/jni_zero/jni_zero.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
-#include "base/base_minimal_jni/JniAndroid_jni.h"
+#include "base/jni_android_jni/JniAndroid_jni.h"
 
 namespace base {
 namespace android {
@@ -265,3 +266,5 @@ std::string GetJavaStackTraceIfPresent() {
 
 }  // namespace android
 }  // namespace base
+
+DEFINE_JNI_FOR_JniAndroid()

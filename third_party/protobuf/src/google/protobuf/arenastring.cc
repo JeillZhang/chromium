@@ -7,14 +7,23 @@
 
 #include "google/protobuf/arenastring.h"
 
+#include <atomic>
+#include <cassert>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <utility>
 
+#include "absl/base/const_init.h"
+#include "absl/base/optimization.h"
 #include "absl/log/absl_check.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "google/protobuf/io/coded_stream.h"
 #include "google/protobuf/message_lite.h"
 #include "google/protobuf/parse_context.h"
+#include "google/protobuf/port.h"
 
 // clang-format off
 #include "google/protobuf/port_def.inc"
@@ -42,7 +51,7 @@ constexpr size_t kNewAlign = alignof(std::max_align_t);
 constexpr size_t kStringAlign = alignof(std::string);
 
 static_assert((kStringAlign > kNewAlign ? kStringAlign : kNewAlign) >= 4, "");
-static_assert(alignof(ExplicitlyConstructedArenaString) >= 4, "");
+static_assert(alignof(GlobalEmptyString) >= 4, "");
 
 }  // namespace
 

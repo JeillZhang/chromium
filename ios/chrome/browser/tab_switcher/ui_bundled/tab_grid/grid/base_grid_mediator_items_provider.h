@@ -5,12 +5,20 @@
 #ifndef IOS_CHROME_BROWSER_TAB_SWITCHER_UI_BUNDLED_TAB_GRID_GRID_BASE_GRID_MEDIATOR_ITEMS_PROVIDER_H_
 #define IOS_CHROME_BROWSER_TAB_SWITCHER_UI_BUNDLED_TAB_GRID_GRID_BASE_GRID_MEDIATOR_ITEMS_PROVIDER_H_
 
-@class GridItemIdentifier;
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_group_item.h"
 
 @class ActivityLabelData;
+@class GridItemIdentifier;
+@class TabSnapshotAndFavicon;
 namespace web {
 class WebStateID;
 }  // namespace web
+
+// Block invoked when a TabSnapshotAndFavicon fetching operation completes.
+typedef void (^GroupTabSnapshotAndFaviconCompletionBlock)(
+    TabGroupItem* item,
+    NSInteger tabIndex,
+    TabSnapshotAndFavicon* tabSnapshotAndFavicon);
 
 // Protocol allowing to get information of the grid model.
 @protocol BaseGridMediatorItemProvider
@@ -22,8 +30,17 @@ class WebStateID;
 // if the label shouldn't be displayed.
 - (ActivityLabelData*)activityLabelDataForItem:(GridItemIdentifier*)itemID;
 
-// Returns the facePile view controller associated with the `itemID`.
-- (UIViewController*)facePileViewControllerForItem:(GridItemIdentifier*)itemID;
+// Returns the facePile view associated with the `itemID`.
+- (UIView*)facePileViewForItem:(GridItemIdentifier*)itemID;
+
+// Fetches snapshots and favicons for the tabs within `tabGroupItem`.
+// The `completion` block is called multiple times, executing each time a
+// snapshot or favicon for an individual tab is fetched.
+- (void)
+    fetchTabGroupItemSnapshotsAndFavicons:(TabGroupItem*)tabGroupItem
+                               completion:
+                                   (GroupTabSnapshotAndFaviconCompletionBlock)
+                                       completion;
 
 @end
 

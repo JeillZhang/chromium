@@ -5,8 +5,10 @@
 #include "chrome/browser/performance_manager/policies/userspace_swap_policy_chromeos.h"
 
 #include "base/allocator/buildflags.h"
+#include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
 #include "base/system/sys_info.h"
+#include "base/time/time.h"
 #include "chrome/browser/performance_manager/policies/policy_features.h"
 #include "chromeos/ash/components/memory/userspace_swap/userspace_swap.h"
 #include "components/performance_manager/graph/graph_impl.h"
@@ -52,8 +54,7 @@ class MockUserspaceSwapPolicy : public UserspaceSwapPolicy {
   MOCK_METHOD1(IsPageNodeAudible, bool(const PageNode*));
   MOCK_METHOD1(IsPageNodeVisible, bool(const PageNode*));
   MOCK_METHOD1(IsPageNodeLoading, bool(const PageNode*));
-  MOCK_METHOD1(GetTimeSinceLastVisibilityChange,
-               base::TimeDelta(const PageNode*));
+  MOCK_METHOD1(GetLastVisibilityChangeTime, base::TimeTicks(const PageNode*));
 
   // Allow our mock to dispatch to default implementations.
   bool DefaultIsEligibleToSwap(const ProcessNode* process_node,
@@ -80,7 +81,7 @@ class MockUserspaceSwapPolicy : public UserspaceSwapPolicy {
     // Create a simple starting config that can be modified as needed for tests.
     // NOTE: We only initialize the configuration options which are used by the
     // policy.
-    memset(&test_config_, 0, sizeof(test_config_));
+    UNSAFE_TODO(memset(&test_config_, 0, sizeof(test_config_)));
 
     test_config_.enabled = true;
     test_config_.graph_walk_frequency = base::Seconds(10);
@@ -377,8 +378,8 @@ TEST_F(UserspaceSwapPolicyTest, ValidateProcessSwapFrequency) {
       .WillRepeatedly(Return(false));
   EXPECT_CALL(*policy(), IsPageNodeVisible(page_node().get()))
       .WillRepeatedly(Return(false));
-  EXPECT_CALL(*policy(), GetTimeSinceLastVisibilityChange(page_node().get()))
-      .WillRepeatedly(Return(base::TimeDelta::Max()));
+  EXPECT_CALL(*policy(), GetLastVisibilityChangeTime(page_node().get()))
+      .WillRepeatedly(Return(base::TimeTicks::Max()));
 
   EXPECT_CALL(*policy(), SwapNodesOnGraph())
       .WillRepeatedly(

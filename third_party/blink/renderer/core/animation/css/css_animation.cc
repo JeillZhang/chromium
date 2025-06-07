@@ -14,8 +14,9 @@ CSSAnimation::CSSAnimation(ExecutionContext* execution_context,
                            AnimationTimeline* timeline,
                            AnimationEffect* content,
                            wtf_size_t animation_index,
-                           const String& animation_name)
-    : Animation(execution_context, timeline, content),
+                           const String& animation_name,
+                           AnimationTrigger* trigger)
+    : Animation(execution_context, timeline, content, trigger),
       animation_index_(animation_index),
       animation_name_(animation_name) {
   // The owning_element does not always equal to the target element of an
@@ -121,6 +122,12 @@ CSSAnimation::PlayStateTransitionScope::~PlayStateTransitionScope() {
   bool is_paused = animation_.Paused();
   if (was_paused_ != is_paused)
     animation_.ignore_css_play_state_ = true;
+}
+
+void CSSAnimation::Trace(blink::Visitor* visitor) const {
+  Animation::Trace(visitor);
+  visitor->Trace(owning_element_);
+  visitor->Trace(css_trigger_);
 }
 
 }  // namespace blink

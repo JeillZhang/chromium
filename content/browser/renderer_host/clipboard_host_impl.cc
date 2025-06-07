@@ -38,7 +38,6 @@
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "skia/ext/skia_utils_base.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/mojom/clipboard/clipboard.mojom.h"
 #include "third_party/blink/public/mojom/drag/drag.mojom-forward.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -151,6 +150,10 @@ void ClipboardHostImpl::Create(
 
 ClipboardHostImpl::~ClipboardHostImpl() {
   clipboard_writer_->Reset();
+  if (listening_to_clipboard_) {
+    ui::ClipboardMonitor::GetInstance()->RemoveObserver(this);
+    listening_to_clipboard_ = false;
+  }
 }
 
 void ClipboardHostImpl::GetSequenceNumber(ui::ClipboardBuffer clipboard_buffer,
@@ -186,7 +189,7 @@ void ClipboardHostImpl::ReadAvailableTypes(
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   if (file_type_only) {
-    types = {base::UTF8ToUTF16(ui::kMimeTypeURIList)};
+    types = {ui::kMimeTypeUriList16};
   } else {
     clipboard->ReadAvailableTypes(clipboard_buffer, data_endpoint.get(),
                                   &types);
@@ -701,9 +704,7 @@ void ClipboardHostImpl::OnCopyHtmlAllowedResult(
   DCHECK_GT(pending_writes_, 0);
   --pending_writes_;
 
-  clipboard_writer_->SetDataSourceURL(
-      render_frame_host().GetMainFrame()->GetLastCommittedURL(),
-      render_frame_host().GetLastCommittedURL());
+  AddSourceDataToClipboardWriter();
 
   if (replacement_data) {
     clipboard_writer_->WriteText(std::move(*replacement_data));
@@ -722,9 +723,7 @@ void ClipboardHostImpl::OnCopyAllowedResult(
   DCHECK_GT(pending_writes_, 0);
   --pending_writes_;
 
-  clipboard_writer_->SetDataSourceURL(
-      render_frame_host().GetMainFrame()->GetLastCommittedURL(),
-      render_frame_host().GetLastCommittedURL());
+  AddSourceDataToClipboardWriter();
 
   // If `replacement_data` is empty, only one of these fields should be
   // non-empty depending on which "Write" method was called by the renderer.
@@ -798,9 +797,50 @@ ClipboardEndpoint ClipboardHostImpl::CreateClipboardEndpoint() {
 void ClipboardHostImpl::ResetClipboardWriter() {
   clipboard_writer_ = std::make_unique<ui::ScopedClipboardWriter>(
       ui::ClipboardBuffer::kCopyPaste, CreateDataEndpoint());
+}
+
+void ClipboardHostImpl::AddSourceDataToClipboardWriter() {
+  clipboard_writer_->SetDataSourceURL(
+      render_frame_host().GetMainFrame()->GetLastCommittedURL(),
+      render_frame_host().GetLastCommittedURL());
   clipboard_writer_->WritePickledData(
       render_frame_host().GetGlobalFrameToken().ToPickle(),
       SourceRFHTokenType());
+}
+
+void ClipboardHostImpl::OnClipboardDataChanged() {
+  if (!listening_to_clipboard_) {
+    return;
+  }
+  if (clipboard_listener_) {
+    clipboard_listener_->OnClipboardDataChanged();
+  }
+}
+
+void ClipboardHostImpl::RegisterClipboardListener(
+    mojo::PendingRemote<blink::mojom::ClipboardListener> listener) {
+  // Replace the current listener with the new one
+  clipboard_listener_.reset();
+  clipboard_listener_.Bind(std::move(listener));
+
+  // Set up connection error handler to stop observing when connection is closed
+  clipboard_listener_.set_disconnect_handler(
+      base::BindOnce(&ClipboardHostImpl::StopObservingClipboard,
+                     weak_ptr_factory_.GetWeakPtr()));
+
+  // Start listening for clipboard changes if not already doing so
+  if (!listening_to_clipboard_) {
+    ui::ClipboardMonitor::GetInstance()->AddObserver(this);
+    listening_to_clipboard_ = true;
+  }
+}
+
+void ClipboardHostImpl::StopObservingClipboard() {
+  if (listening_to_clipboard_) {
+    ui::ClipboardMonitor::GetInstance()->RemoveObserver(this);
+    listening_to_clipboard_ = false;
+  }
+  clipboard_listener_.reset();
 }
 
 }  // namespace content

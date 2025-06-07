@@ -14,6 +14,7 @@
 #include "base/location.h"
 #include "base/metrics/field_trial.h"
 #include "base/path_service.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -29,6 +30,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_navigator.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/login/http_auth_coordinator.h"
 #include "chrome/browser/ui/login/login_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
@@ -57,6 +59,7 @@
 #include "content/public/test/slow_http_response.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/extension_host.h"
 #include "extensions/browser/process_manager.h"
 #include "net/base/auth.h"
 #include "net/dns/mock_host_resolver.h"
@@ -164,7 +167,8 @@ class LoginTabHelperFake : public LoginTabHelper {
   std::unique_ptr<LoginHandler> CreateLoginHandler(
       const net::AuthChallengeInfo& auth_info,
       content::WebContents* web_contents,
-      LoginAuthRequiredCallback auth_required_callback) override {
+      content::LoginDelegate::LoginAuthRequiredCallback auth_required_callback)
+      override {
     return std::make_unique<LoginHandlerFake>(auth_info, web_contents,
                                               std::move(auth_required_callback),
                                               browser_client_);
@@ -2188,7 +2192,10 @@ class LoginProxyBrowserTest : public ProxyBrowserTest,
     }
 
     // The URL should be hidden to avoid origin confusion issues.
-    EXPECT_TRUE(browser->location_bar_model()->GetFormattedFullURL().empty());
+    EXPECT_TRUE(browser->GetFeatures()
+                    .location_bar_model()
+                    ->GetFormattedFullURL()
+                    .empty());
 
     // Cancel the prompt, which triggers a reload to read the error page content
     // from the server. On HTTPS pages, the error page content still shouldn't
@@ -2207,8 +2214,10 @@ class LoginProxyBrowserTest : public ProxyBrowserTest,
             content::EvalJs(contents, "document.documentElement.innerHTML"));
       }
 
-      EXPECT_FALSE(
-          browser->location_bar_model()->GetFormattedFullURL().empty());
+      EXPECT_FALSE(browser->GetFeatures()
+                       .location_bar_model()
+                       ->GetFormattedFullURL()
+                       .empty());
     }
 
     // Reload; this time, supply credentials and check that the page loads.
@@ -2219,7 +2228,10 @@ class LoginProxyBrowserTest : public ProxyBrowserTest,
                                      ui::PAGE_TRANSITION_TYPED, false),
                        /*navigation_handle_callback=*/{});
       auth_needed_waiter.Wait();
-      EXPECT_TRUE(browser->location_bar_model()->GetFormattedFullURL().empty());
+      EXPECT_TRUE(browser->GetFeatures()
+                      .location_bar_model()
+                      ->GetFormattedFullURL()
+                      .empty());
     }
 
     auto auth_supplied_waiter = CreateAuthSuppliedObserver();
@@ -2230,7 +2242,10 @@ class LoginProxyBrowserTest : public ProxyBrowserTest,
     std::u16string expected_title = u"OK";
     content::TitleWatcher title_watcher(contents, expected_title);
     EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
-    EXPECT_FALSE(browser->location_bar_model()->GetFormattedFullURL().empty());
+    EXPECT_FALSE(browser->GetFeatures()
+                     .location_bar_model()
+                     ->GetFormattedFullURL()
+                     .empty());
   }
 };
 

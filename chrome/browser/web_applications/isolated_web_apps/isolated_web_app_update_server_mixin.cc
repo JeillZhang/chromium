@@ -4,14 +4,16 @@
 
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_server_mixin.h"
 
-#include "base/functional/overloaded.h"
+#include <variant>
+
 #include "base/json/json_writer.h"
 #include "base/version.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/bundle_versions_storage.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_builder.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/policy_test_utils.h"
-#include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest.h"
+#include "components/webapps/isolated_web_apps/update_channel.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace web_app {
 
@@ -52,6 +54,11 @@ IsolatedWebAppUpdateServerMixin::CreateForceInstallPolicyEntry(
       pinned_version, allow_downgrades);
 }
 
+base::Value::Dict IsolatedWebAppUpdateServerMixin::GetUpdateManifest(
+    const web_package::SignedWebBundleId& web_bundle_id) const {
+  return storage_.GetUpdateManifest(web_bundle_id);
+}
+
 void IsolatedWebAppUpdateServerMixin::AddBundle(
     std::unique_ptr<BundledIsolatedWebApp> bundle,
     std::optional<std::vector<UpdateChannel>> update_channels) {
@@ -72,8 +79,8 @@ IsolatedWebAppUpdateServerMixin::HandleRequest(
     return HttpNotFound();
   }
 
-  return absl::visit(
-      base::Overloaded{
+  return std::visit(
+      absl::Overload{
           [](BundledIsolatedWebApp* bundle)
               -> std::unique_ptr<net::test_server::HttpResponse> {
             auto response =

@@ -4,6 +4,7 @@
 
 #include <string>
 
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/apps/link_capturing/link_capturing_feature_test_support.h"
 #include "chrome/browser/sharesheet/sharesheet_service.h"
@@ -84,6 +85,9 @@ class ShareToTargetBrowserTest : public WebAppBrowserTestBase,
   void InstallWebAppFromManifest(const GURL& app_url) {
     DCHECK(app_id_.empty());
     app_id_ = web_app::InstallWebAppFromManifest(browser(), app_url);
+    // Enabling link capturing to ensure it doesn't interfere.
+    EXPECT_EQ(apps::test::EnableLinkCapturingByUser(profile(), app_id_),
+              base::ok());
   }
 
   const webapps::AppId& app_id() const { return app_id_; }
@@ -182,8 +186,11 @@ IN_PROC_BROWSER_TEST_P(ShareToTargetBrowserTest, ShareToPartialWild) {
 INSTANTIATE_TEST_SUITE_P(
     All,
     ShareToTargetBrowserTest,
+    // Ensure share target still works with navigation capturing v2.
     testing::Values(apps::test::LinkCapturingFeatureVersion::kV1DefaultOff,
-                    apps::test::LinkCapturingFeatureVersion::kV2DefaultOff),
+                    apps::test::LinkCapturingFeatureVersion::kV2DefaultOff,
+                    apps::test::LinkCapturingFeatureVersion::
+                        kV2DefaultOffCaptureExistingFrames),
     apps::test::LinkCapturingVersionToString);
 
 }  // namespace web_app

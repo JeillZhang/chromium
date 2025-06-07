@@ -13,12 +13,13 @@
 #import "ios/chrome/browser/authentication/ui_bundled/identity_chooser/identity_chooser_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/identity_chooser/identity_chooser_coordinator_delegate.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/instant_signin/instant_signin_mediator.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin/interruptible_chrome_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/logging/user_signin_logger.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator+protected.h"
 #import "ios/chrome/browser/shared/coordinator/alert/alert_coordinator.h"
+#import "ios/chrome/browser/shared/coordinator/chrome_coordinator/animated_coordinator.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/elements/activity_overlay_coordinator.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service.h"
@@ -47,6 +48,7 @@
   signin_metrics::AccountConsistencyPromoAction _actionToRecordOnSuccess;
   // The signin logger.
   UserSigninLogger* _signinLogger;
+  ChangeProfileContinuationProvider _continuationProvider;
 }
 
 #pragma mark - Public
@@ -55,14 +57,22 @@
     initWithBaseViewController:(UIViewController*)viewController
                        browser:(Browser*)browser
                       identity:(id<SystemIdentity>)identity
+                  contextStyle:(SigninContextStyle)contextStyle
                    accessPoint:(signin_metrics::AccessPoint)accessPoint
-                   promoAction:(signin_metrics::PromoAction)promoAction {
+                   promoAction:(signin_metrics::PromoAction)promoAction
+          continuationProvider:
+              (const ChangeProfileContinuationProvider&)continuationProvider {
   self = [super initWithBaseViewController:viewController
                                    browser:browser
+                              contextStyle:contextStyle
                                accessPoint:accessPoint];
   if (self) {
+    CHECK(browser, base::NotFatalUntil::M142);
+    CHECK(viewController, base::NotFatalUntil::M142);
+    CHECK(continuationProvider);
     _identity = identity;
     _promoAction = promoAction;
+    _continuationProvider = continuationProvider;
   }
   return self;
 }
@@ -71,18 +81,24 @@
   // TODO(crbug.com/40067451): Switch back to DCHECK if the number of reports is
   // low.
   DUMP_WILL_BE_CHECK(!_mediator) << base::SysNSStringToUTF8([self description]);
+  DUMP_WILL_BE_CHECK(!_signinLogger)
+      << base::SysNSStringToUTF8([self description]);
 }
 
 #pragma mark - ChromeCoordinator
 
 - (void)start {
   [super start];
+  signin::IdentityManager* identityManager =
+      IdentityManagerFactory::GetForProfile(self.profile->GetOriginalProfile());
+  CHECK(!identityManager->HasPrimaryAccount(signin::ConsentLevel::kSignin),
+        base::NotFatalUntil::M142);
   _signinLogger = [[UserSigninLogger alloc] initWithAccessPoint:self.accessPoint
                                                     promoAction:_promoAction];
   [_signinLogger logSigninStarted];
-  ProfileIOS* profile = self.browser->GetProfile();
   _mediator =
-      [[InstantSigninMediator alloc] initWithAccessPoint:self.accessPoint];
+      [[InstantSigninMediator alloc] initWithAccessPoint:self.accessPoint
+                                    continuationProvider:_continuationProvider];
   _mediator.delegate = self;
 
   if (_identity) {
@@ -99,16 +115,7 @@
     return;
   }
 
-  bool hasAccountOnDevice = false;
-  if (IsUseAccountListFromIdentityManagerEnabled()) {
-    signin::IdentityManager* identityManager =
-        IdentityManagerFactory::GetForProfile(profile);
-    hasAccountOnDevice = !identityManager->GetAccountsOnDevice().empty();
-  } else {
-    ChromeAccountManagerService* accountManagerService =
-        ChromeAccountManagerServiceFactory::GetForProfile(profile);
-    hasAccountOnDevice = accountManagerService->HasIdentities();
-  }
+  bool hasAccountOnDevice = !identityManager->GetAccountsOnDevice().empty();
   if (!hasAccountOnDevice) {
     signin_metrics::RecordConsistencyPromoUserAction(
         signin_metrics::AccountConsistencyPromoAction::
@@ -134,60 +141,28 @@
   [_identityChooserCoordinator start];
 }
 
-- (void)stop {
-  CHECK(!_addAccountSigninCoordinator);
-  CHECK(!_activityOverlayCoordinator);
-  CHECK(!_identityChooserCoordinator);
+#pragma mark - AnimatedCoordinator
+
+- (void)stopAnimated:(BOOL)animated {
+  if (_addAccountSigninCoordinator) {
+    CHECK(!_identityChooserCoordinator);
+    CHECK(!_activityOverlayCoordinator);
+    [_addAccountSigninCoordinator stopAnimated:animated];
+    _addAccountSigninCoordinator = nil;
+  } else if (_identityChooserCoordinator) {
+    CHECK(!_activityOverlayCoordinator);
+    [self stopIdentityChooserCoordinator];
+  } else {
+    [self stopActivityOverlay];
+  }
+  CHECK(!_addAccountSigninCoordinator, base::NotFatalUntil::M145);
+  CHECK(!_activityOverlayCoordinator, base::NotFatalUntil::M145);
+  CHECK(!_identityChooserCoordinator, base::NotFatalUntil::M145);
   _signinLogger = nil;
   [_mediator disconnect];
   _mediator.delegate = nil;
   _mediator = nil;
-  [super stop];
-}
-
-#pragma mark - SigninCoordinator
-
-- (void)interruptWithAction:(SigninCoordinatorInterrupt)action
-                 completion:(ProceduralBlock)completion {
-  if (_addAccountSigninCoordinator) {
-    CHECK(!_identityChooserCoordinator);
-    CHECK(!_activityOverlayCoordinator);
-    [_addAccountSigninCoordinator interruptWithAction:action
-                                           completion:completion];
-  } else if (_identityChooserCoordinator) {
-    CHECK(!_activityOverlayCoordinator);
-    [self stopIdentityChooserCoordinator];
-    [self runCompletionWithSigninResult:SigninCoordinatorResultInterrupted
-                     completionIdentity:nil];
-    if (completion) {
-      completion();
-    }
-  } else if (action == SigninCoordinatorInterrupt::UIShutdownNoDismiss) {
-    CHECK(!IsInterruptibleCoordinatorAlwaysDismissedEnabled(),
-          base::NotFatalUntil::M136);
-    // In case of `UIShutdownNoDismiss`, everything should be done
-    // synchronously. So we should not wait for the mediator interruption to be
-    // done. The coordinator needs to finish itself, and then call the interrupt
-    // completion.
-    _mediator.delegate = nil;
-    [_mediator interruptWithAction:action completion:nil];
-    // Drop the activity overlay if it exists.
-    [self stopActivityOverlay];
-    [self runCompletionWithSigninResult:SigninCoordinatorResultInterrupted
-                     completionIdentity:nil];
-    if (completion) {
-      completion();
-    }
-  } else {
-    if (IsInterruptibleCoordinatorStoppedSynchronouslyEnabled()) {
-      [_mediator interruptWithAction:action completion:nil];
-      if (completion) {
-        completion();
-      }
-    } else {
-      [_mediator interruptWithAction:action completion:completion];
-    }
-  }
+  [super stopAnimated:animated];
 }
 
 #pragma mark - IdentityChooserCoordinatorDelegate
@@ -242,11 +217,23 @@
     case SigninCoordinatorResultDisabled:
     case SigninCoordinatorResultInterrupted:
     case SigninCoordinatorResultCanceledByUser:
+    case SigninCoordinatorProfileSwitch:
       [self runCompletionWithSigninResult:result completionIdentity:nil];
       break;
     case SigninCoordinatorUINotAvailable:
       NOTREACHED();
   }
+}
+
+- (void)instantSigninMediatorWillSwitchProfile:
+    (InstantSigninMediator*)mediator {
+  CHECK_EQ(mediator, _mediator);
+  [_mediator disconnect];
+  _mediator.delegate = nil;
+  _mediator = nil;
+  [self removeActivityOverlay];
+  [self runCompletionWithSigninResult:SigninCoordinatorProfileSwitch
+                   completionIdentity:_identity];
 }
 
 #pragma mark - Private
@@ -272,9 +259,11 @@
       [[AuthenticationFlow alloc] initWithBrowser:self.browser
                                          identity:_identity
                                       accessPoint:self.accessPoint
+                             precedingHistorySync:YES
                                 postSignInActions:postSigninActions
-                         presentingViewController:self.baseViewController];
-  authenticationFlow.precedingHistorySync = YES;
+                         presentingViewController:self.baseViewController
+                                       anchorView:nil
+                                       anchorRect:CGRectNull];
   [_mediator startSignInOnlyFlowWithAuthenticationFlow:authenticationFlow];
 }
 
@@ -283,7 +272,9 @@
   _addAccountSigninCoordinator = [SigninCoordinator
       addAccountCoordinatorWithBaseViewController:self.baseViewController
                                           browser:self.browser
-                                      accessPoint:self.accessPoint];
+                                     contextStyle:self.contextStyle
+                                      accessPoint:self.accessPoint
+                             continuationProvider:_continuationProvider];
   __weak __typeof(self) weakSelf = self;
   _addAccountSigninCoordinator.signinCompletion = ^(
       SigninCoordinatorResult result, id<SystemIdentity> resultIdentity) {
@@ -307,6 +298,7 @@
     case SigninCoordinatorResultDisabled:
     case SigninCoordinatorResultInterrupted:
     case SigninCoordinatorResultCanceledByUser:
+    case SigninCoordinatorProfileSwitch:
       [self runCompletionWithSigninResult:result completionIdentity:nil];
       break;
     case SigninCoordinatorUINotAvailable:

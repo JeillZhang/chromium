@@ -22,15 +22,14 @@
 #include "base/time/time.h"
 #include "build/branding_buildflags.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/enterprise/browser_management/management_service_factory.h"
 #include "chrome/browser/ip_protection/ip_protection_switches.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/channel_info.h"
 #include "components/ip_protection/common/ip_protection_data_types.h"
+#include "components/ip_protection/common/ip_protection_probabilistic_reveal_token_direct_fetcher.h"
 #include "components/ip_protection/common/ip_protection_proxy_config_direct_fetcher.h"
 #include "components/ip_protection/common/ip_protection_telemetry.h"
 #include "components/ip_protection/common/ip_protection_token_direct_fetcher.h"
-#include "components/policy/core/common/management/management_service.h"
 #include "components/prefs/pref_service.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/privacy_sandbox/tracking_protection_prefs.h"
@@ -67,18 +66,15 @@ bool IsLikelyDogfoodClient() {
 IpProtectionCoreHost::IpProtectionCoreHost(
     signin::IdentityManager* identity_manager,
     privacy_sandbox::TrackingProtectionSettings* tracking_protection_settings,
-    policy::ManagementService* management_service,
     PrefService* pref_service,
     Profile* profile)
     : identity_manager_(identity_manager),
       tracking_protection_settings_(tracking_protection_settings),
-      management_service_(management_service),
       pref_service_(pref_service),
       profile_(profile) {
   CHECK(identity_manager);
   identity_manager_->AddObserver(this);
   CHECK(tracking_protection_settings);
-  CHECK(management_service);
   CHECK(pref_service_);
   tracking_protection_settings_->AddObserver(this);
 }
@@ -87,10 +83,16 @@ void IpProtectionCoreHost::SetUp() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory;
-  if (!ip_protection_token_fetcher_ || !ip_protection_proxy_config_fetcher_) {
+  if (!ip_protection_token_fetcher_ || !ip_protection_proxy_config_fetcher_ ||
+      !ip_protection_prt_fetcher_) {
     CHECK(profile_);
     url_loader_factory = profile_->GetDefaultStoragePartition()
                              ->GetURLLoaderFactoryForBrowserProcess();
+  }
+  if (!ip_protection_prt_fetcher_) {
+    ip_protection_prt_fetcher_ = std::make_unique<
+        ip_protection::IpProtectionProbabilisticRevealTokenDirectFetcher>(
+        url_loader_factory->Clone(), chrome::GetChannel());
   }
   if (!ip_protection_token_fetcher_) {
     ip_protection_token_fetcher_ =
@@ -100,7 +102,7 @@ void IpProtectionCoreHost::SetUp() {
   if (!ip_protection_proxy_config_fetcher_) {
     ip_protection_proxy_config_fetcher_ =
         std::make_unique<ip_protection::IpProtectionProxyConfigDirectFetcher>(
-            url_loader_factory.get(),
+            std::move(url_loader_factory),
             ip_protection::IpProtectionTokenFetcherHelper::kChromeIpBlinding,
             this);
   }
@@ -115,7 +117,11 @@ void IpProtectionCoreHost::SetUpForTesting(
   // Carefully destroy any existing values in the correct order.
   ip_protection_proxy_config_fetcher_.reset();
   ip_protection_token_fetcher_.reset();
+  ip_protection_prt_fetcher_.reset();
 
+  ip_protection_prt_fetcher_ = std::make_unique<
+      ip_protection::IpProtectionProbabilisticRevealTokenDirectFetcher>(
+      url_loader_factory->Clone(), chrome::GetChannel());
   ip_protection_token_fetcher_ =
       std::make_unique<ip_protection::IpProtectionTokenDirectFetcher>(
           this, url_loader_factory->Clone(), std::move(bsa));
@@ -180,6 +186,36 @@ void IpProtectionCoreHost::GetProxyConfig(GetProxyConfigCallback callback) {
          std::optional<std::vector<::net::ProxyChain>> proxy_chain,
          std::optional<ip_protection::GeoHint> geo_hint) {
         std::move(callback).Run(proxy_chain, geo_hint);
+      },
+      std::move(callback)));
+}
+
+void IpProtectionCoreHost::TryGetProbabilisticRevealTokens(
+    TryGetProbabilisticRevealTokensCallback callback) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  CHECK(!is_shutting_down_);
+  SetUp();
+
+  // If non-Chrome-branded bail out unless tests are running.
+#if !BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  if (!for_testing_) {
+    std::move(callback).Run(
+        {}, ip_protection::TryGetProbabilisticRevealTokensResult{
+                ip_protection::TryGetProbabilisticRevealTokensStatus::
+                    kNoGoogleChromeBranding,
+                static_cast<int32_t>(net::OK)});
+    return;
+  }
+#endif  // !BUILDFLAG(GOOGLE_CHROME_BRANDING)
+
+  ip_protection_prt_fetcher_->TryGetProbabilisticRevealTokens(base::BindOnce(
+      // Convert the mojo style callback, which takes `const T&` to the
+      // preferred style, passing `T` by value.
+      [](TryGetProbabilisticRevealTokensCallback callback,
+         std::optional<ip_protection::TryGetProbabilisticRevealTokensOutcome>
+             outcome,
+         ip_protection::TryGetProbabilisticRevealTokensResult result) {
+        std::move(callback).Run(outcome, result);
       },
       std::move(callback)));
 }
@@ -322,10 +358,10 @@ void IpProtectionCoreHost::Shutdown() {
   CHECK(tracking_protection_settings_);
   tracking_protection_settings_->RemoveObserver(this);
   tracking_protection_settings_ = nullptr;
-  management_service_ = nullptr;
   pref_service_ = nullptr;
   profile_ = nullptr;
   ip_protection_token_fetcher_.reset();
+  ip_protection_prt_fetcher_.reset();
   // If we are shutting down, we can't process messages anymore because we
   // rely on having `identity_manager_` to get the OAuth token. Thus, just
   // reset the receiver set.
@@ -350,6 +386,10 @@ void IpProtectionCoreHost::AddNetworkService(
 }
 
 void IpProtectionCoreHost::AccountStatusChanged(bool account_available) {
+  if (ip_protection_prt_fetcher_) {
+    ip_protection_prt_fetcher_->AccountStatusChanged(account_available);
+  }
+
   if (ip_protection_proxy_config_fetcher_) {
     ip_protection_proxy_config_fetcher_->AccountStatusChanged(
         account_available);
@@ -424,44 +464,12 @@ bool IpProtectionCoreHost::CanIpProtectionBeEnabled() {
              switches::kDisableIpProtectionProxy);
 }
 
-bool IpProtectionCoreHost::ShouldDisableIpProtectionForManagedForTesting() {
-  return ShouldDisableIpProtectionForManaged();
+bool IpProtectionCoreHost::ShouldDisableIpProtectionForEnterpriseForTesting() {
+  return ShouldDisableIpProtectionForEnterprise();
 }
 
-bool IpProtectionCoreHost::ShouldDisableIpProtectionForManaged() {
-#if BUILDFLAG(IS_CHROMEOS)
-  // On ChromeOS the `IsManaged()` checks work differently than on other
-  // platforms, but to accomplish disabling by default for enterprise users we
-  // use the `default_for_enterprise_users=false` option in the enterprise
-  // policy definition. Thus, check whether the preference has been set via
-  // that (or by the admins overriding this).
-  if (pref_service_->IsManagedPreference(prefs::kIpProtectionEnabled)) {
-#else
-  if (management_service_->IsManaged() ||
-      policy::ManagementServiceFactory::GetForPlatform()->IsManaged()) {
-#endif
-
-    if (IsLikelyDogfoodClient()) {
-      // For Googler/Dogfood devices we don't want to disable IP Protection by
-      // default so that we can carry out dogfood experiments via Finch
-      // instead of also needing to coordinate internal enterprise policy
-      // rollouts.
-      return false;
-    }
-
-    // If the user's enterprise has a policy for IP, use this regardless of
-    // user UX feature status. Enterprises should have the ability to enable
-    // or disable IPP even when users do not have UX access to the feature.
-    if (pref_service_->IsManagedPreference(prefs::kIpProtectionEnabled)) {
-      return !pref_service_->GetBoolean(prefs::kIpProtectionEnabled);
-    }
-
-    // Disable IP Protection for managed browsers and managed devices when the
-    // admins haven't explicitly opted in to it via enterprise policy.
-    return true;
-  }
-
-  return false;
+bool IpProtectionCoreHost::ShouldDisableIpProtectionForEnterprise() {
+  return tracking_protection_settings_->IsIpProtectionDisabledForEnterprise();
 }
 
 bool IpProtectionCoreHost::IsIpProtectionEnabled() {
@@ -469,7 +477,7 @@ bool IpProtectionCoreHost::IsIpProtectionEnabled() {
     return false;
   }
 
-  if (ShouldDisableIpProtectionForManaged()) {
+  if (ShouldDisableIpProtectionForEnterprise()) {
     return false;
   }
 
@@ -477,7 +485,7 @@ bool IpProtectionCoreHost::IsIpProtectionEnabled() {
   // `tracking_protection_settings_->IsIpProtectionEnabled()` but we can't yet
   // because it would prevent us from being able to do experiments via Finch
   // without showing the user setting.
-  if (!base::FeatureList::IsEnabled(privacy_sandbox::kIpProtectionV1)) {
+  if (!base::FeatureList::IsEnabled(privacy_sandbox::kIpProtectionUx)) {
     // If the preference isn't visible to users then IP Protection is enabled
     // via other means like via Finch experiment.
     return true;

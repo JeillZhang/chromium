@@ -121,6 +121,10 @@ const PREF_TO_SETTING_MAP: Record<string, SettingAndType> = {
     setting: Setting.kHighlightCursorWhileMoving,
     type: PrefType.BOOLEAN,
   },
+  'settings.a11y.cursor_color_enabled': {
+    setting: Setting.kEnableCursorColor,
+    type: PrefType.BOOLEAN,
+  },
   'settings.a11y.face_gaze.enabled': {
     setting: Setting.kFaceGaze,
     type: PrefType.BOOLEAN,
@@ -260,10 +264,6 @@ const PREF_TO_SETTING_MAP: Record<string, SettingAndType> = {
   },
   'settings.lobster_enabled': {
     setting: Setting.kLobsterOnOff,
-    type: PrefType.BOOLEAN,
-  },
-  'ash.capture_mode.sunfish_enabled': {
-    setting: Setting.kSunfishOnOff,
     type: PrefType.BOOLEAN,
   },
   'ash.scanner.enabled': {

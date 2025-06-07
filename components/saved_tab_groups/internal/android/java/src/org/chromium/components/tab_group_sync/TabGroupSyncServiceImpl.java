@@ -84,11 +84,15 @@ public class TabGroupSyncServiceImpl implements TabGroupSyncService {
     }
 
     @Override
-    public void makeTabGroupShared(LocalTabGroupId tabGroupId, String collaborationId) {
+    public void makeTabGroupShared(
+            LocalTabGroupId tabGroupId,
+            String collaborationId,
+            @Nullable Callback<Boolean> tabGroupSharingCallback) {
         if (mNativePtr == 0) return;
         assert tabGroupId != null;
         TabGroupSyncServiceImplJni.get()
-                .makeTabGroupShared(mNativePtr, this, tabGroupId, collaborationId);
+                .makeTabGroupShared(
+                        mNativePtr, this, tabGroupId, collaborationId, tabGroupSharingCallback);
     }
 
     @Override
@@ -217,11 +221,17 @@ public class TabGroupSyncServiceImpl implements TabGroupSyncService {
     }
 
     @Override
-    public boolean isRemoteDevice(String syncCacheGuid) {
+    public boolean isRemoteDevice(@Nullable String syncCacheGuid) {
         if (mNativePtr == 0) return false;
         return TabGroupSyncServiceImplJni.get()
-                .isRemoteDevice(
-                        mNativePtr, this, syncCacheGuid == null ? new String() : syncCacheGuid);
+                .isRemoteDevice(mNativePtr, this, syncCacheGuid == null ? "" : syncCacheGuid);
+    }
+
+    @Override
+    public boolean wasTabGroupClosedLocally(String syncTabGroupId) {
+        if (mNativePtr == 0) return false;
+        return TabGroupSyncServiceImplJni.get()
+                .wasTabGroupClosedLocally(mNativePtr, this, syncTabGroupId);
     }
 
     @Override
@@ -236,6 +246,21 @@ public class TabGroupSyncServiceImpl implements TabGroupSyncService {
                         eventDetails.localTabId,
                         eventDetails.openingSource,
                         eventDetails.closingSource);
+    }
+
+    @Override
+    public void updateArchivalStatus(String syncTabGroupId, boolean archivalStatus) {
+        if (mNativePtr == 0) return;
+        assert syncTabGroupId != null;
+        TabGroupSyncServiceImplJni.get()
+                .updateArchivalStatus(mNativePtr, this, syncTabGroupId, archivalStatus);
+    }
+
+    @Override
+    public void setCollaborationAvailableInFinderForTesting(String collaborationId) {
+        if (mNativePtr == 0) return;
+        TabGroupSyncServiceImplJni.get()
+                .setCollaborationAvailableInFinderForTesting(mNativePtr, this, collaborationId);
     }
 
     @CalledByNative
@@ -315,7 +340,8 @@ public class TabGroupSyncServiceImpl implements TabGroupSyncService {
                 long nativeTabGroupSyncServiceAndroid,
                 TabGroupSyncServiceImpl caller,
                 LocalTabGroupId tabGroupId,
-                String collaborationId);
+                String collaborationId,
+                @Nullable Callback<Boolean> tabGroupSharingCallback);
 
         void aboutToUnShareTabGroup(
                 long nativeTabGroupSyncServiceAndroid,
@@ -408,6 +434,11 @@ public class TabGroupSyncServiceImpl implements TabGroupSyncService {
                 TabGroupSyncServiceImpl caller,
                 String syncCacheGuid);
 
+        boolean wasTabGroupClosedLocally(
+                long nativeTabGroupSyncServiceAndroid,
+                TabGroupSyncServiceImpl caller,
+                String syncTabGroupId);
+
         void recordTabGroupEvent(
                 long nativeTabGroupSyncServiceAndroid,
                 TabGroupSyncServiceImpl caller,
@@ -416,5 +447,16 @@ public class TabGroupSyncServiceImpl implements TabGroupSyncService {
                 int localTabId,
                 int openingSource,
                 int closingSource);
+
+        void updateArchivalStatus(
+                long nativeTabGroupSyncServiceAndroid,
+                TabGroupSyncServiceImpl caller,
+                String syncTabGroupId,
+                boolean archivalStatus);
+
+        void setCollaborationAvailableInFinderForTesting(
+                long nativeTabGroupSyncServiceAndroid,
+                TabGroupSyncServiceImpl caller,
+                String collaborationId);
     }
 }

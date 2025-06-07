@@ -25,12 +25,12 @@ import java.util.Locale;
  */
 @NullMarked
 public class MimeTypeFilter implements FileFilter {
-    private HashSet<String> mExtensions = new HashSet<>();
-    private HashSet<String> mMimeTypes = new HashSet<>();
-    private HashSet<String> mMimeSupertypes = new HashSet<>();
-    private MimeTypeMap mMimeTypeMap;
+    private final HashSet<String> mExtensions = new HashSet<>();
+    private final HashSet<String> mMimeTypes = new HashSet<>();
+    private final HashSet<String> mMimeSupertypes = new HashSet<>();
+    private final MimeTypeMap mMimeTypeMap;
     private boolean mAcceptAllMimeTypes;
-    private boolean mAcceptDirectory;
+    private final boolean mAcceptDirectory;
 
     /**
      * Contructs a MimeTypeFilter object.
@@ -56,7 +56,7 @@ public class MimeTypeFilter implements FileFilter {
     }
 
     /** Returns true if either the uri or the mimeType is accepted by the MimeTypeFilter */
-    public boolean accept(Uri uri, @Nullable String mimeType) {
+    public boolean accept(@Nullable Uri uri, @Nullable String mimeType) {
         if (uri != null) {
             String fileExtension =
                     MimeTypeMap.getFileExtensionFromUrl(uri.toString()).toLowerCase(Locale.US);

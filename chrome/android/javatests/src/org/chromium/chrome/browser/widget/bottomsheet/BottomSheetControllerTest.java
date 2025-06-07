@@ -43,6 +43,7 @@ import org.chromium.chrome.browser.layouts.LayoutTestUtils;
 import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tabmodel.TabModel;
@@ -184,6 +185,7 @@ public class BottomSheetControllerTest {
     @Test
     @SmallTest
     @Feature({"BottomSheetController"})
+    @DisabledTest(message = "Flaky, http://crbug.com/397476647")
     public void testShowWithBottomInset() {
         requestContentInSheet(mLowPriorityContent, true);
         View bottomSheet = mActivity.findViewById(R.id.bottom_sheet);
@@ -1071,8 +1073,11 @@ public class BottomSheetControllerTest {
                     tabModel.addObserver(
                             new TabModelObserver() {
                                 @Override
-                                public void didSelectTab(
-                                        Tab tab, @TabSelectionType int type, int lastId) {
+                                public void didAddTab(
+                                        Tab tab,
+                                        @TabLaunchType int type,
+                                        @TabCreationState int creationState,
+                                        boolean markedForSelection) {
                                     tabSelectedHelper.notifyCalled();
                                     tabModel.removeObserver(this);
                                 }

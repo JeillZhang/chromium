@@ -11,8 +11,6 @@ NSString* const kPasswordsSearchBarID = @"PasswordsSearchBar";
 NSString* const kPasswordsScrimViewID = @"PasswordsScrimViewID";
 
 NSString* const kPasswordDetailsTableViewID = @"PasswordDetailsTableViewID";
-NSString* const kPasswordDetailsDeletionAlertViewID =
-    @"PasswordDetailsDeletionAlertViewID";
 NSString* const kPasswordsAddPasswordSaveButtonID =
     @"PasswordsAddPasswordSaveButtonID";
 NSString* const kPasswordsAddPasswordCancelButtonID =
@@ -59,9 +57,17 @@ NSString* WidgetPromoDisabledImageName() {
 
 NSString* const kWidgetPromoID = @"WidgetPromoID";
 
+NSString* const kWidgetTrustedVaultPromoID = @"WidgetTrustedVaultPromoID";
+
 NSString* const kWidgetPromoCloseButtonID = @"WidgetPromoCloseButtonID";
 
 NSString* const kWidgetPromoImageID = @"WidgetPromoImageID";
 
+NSString* const kWidgetTrustedVaultPromoImageID =
+    @"WidgetTrustedVaultPromoImageID";
+
 const char kPasswordManagerWidgetPromoActionHistogram[] =
     "IOS.PasswordManager.WidgetPromo.Action";
+
+const char kPasswordManagerPromoWithTrustedVaultKeyRetrievalActionHistogram[] =
+    "IOS.PasswordManager.TrustedVaultKeyRetrievalPromo.Action";

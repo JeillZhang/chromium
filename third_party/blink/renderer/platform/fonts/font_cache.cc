@@ -126,6 +126,9 @@ void FontCache::Trace(Visitor* visitor) const {
   visitor->Trace(fallback_list_shaper_cache_);
   visitor->Trace(font_data_cache_);
   visitor->Trace(font_fallback_map_);
+#if BUILDFLAG(IS_MAC)
+  visitor->Trace(character_fallback_cache_);
+#endif
 }
 
 #if !BUILDFLAG(IS_MAC)
@@ -218,6 +221,11 @@ bool FontCache::IsPlatformFamilyMatchAvailable(
 bool FontCache::IsPlatformFontUniqueNameMatchAvailable(
     const FontDescription& font_description,
     const AtomicString& unique_font_name) {
+  // Return early to avoid attempting fallback.
+  if (unique_font_name.empty()) {
+    return false;
+  }
+
   return GetFontPlatformData(font_description,
                              FontFaceCreationParams(unique_font_name),
                              AlternateFontName::kLocalUniqueFace);

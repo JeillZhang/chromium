@@ -21,6 +21,7 @@
 #include "base/strings/string_util.h"
 #include "base/system/sys_info.h"
 #include "build/build_config.h"
+#include "gpu/command_buffer/client/test_shared_image_interface.h"
 #include "media/base/video_frame.h"
 #include "media/gpu/buildflags.h"
 #include "media/gpu/macros.h"
@@ -31,19 +32,18 @@
 #include "media/gpu/video_frame_mapper_factory.h"
 #include "media/media_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
 #include <sys/mman.h>
 #endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
 
-namespace media {
-namespace test {
+namespace media::test {
 
 VideoFrameValidator::VideoFrameValidator(
     std::unique_ptr<VideoFrameProcessor> corrupt_frame_processor,
     CropHelper crop_helper)
     : corrupt_frame_processor_(std::move(corrupt_frame_processor)),
+      test_sii_(base::MakeRefCounted<gpu::TestSharedImageInterface>()),
       crop_helper_(crop_helper),
       num_frames_validating_(0),
       frame_validator_thread_("FrameValidatorThread"),
@@ -156,7 +156,7 @@ void VideoFrameValidator::ProcessVideoFrameTask(
 
   scoped_refptr<const VideoFrame> frame = video_frame;
   // If this is a DMABuf-backed memory frame we need to map it before accessing.
-#if BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
   if (frame->storage_type() == VideoFrame::STORAGE_GPU_MEMORY_BUFFER) {
     // TODO(andrescj): This is a workaround. ClientNativePixmapFactoryDmabuf
     // creates ClientNativePixmapOpaque for SCANOUT_VDA_WRITE buffers which
@@ -187,7 +187,7 @@ void VideoFrameValidator::ProcessVideoFrameTask(
       return;
     }
   }
-#endif  // BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION)
+#endif  // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
 
   ASSERT_TRUE(frame->IsMappable());
 
@@ -214,7 +214,8 @@ scoped_refptr<VideoFrame> VideoFrameValidator::CloneAndCropFrame(
     scoped_refptr<const VideoFrame> frame) const {
   const auto crop = crop_helper_.Run(*frame);
   const auto& visible = frame->visible_rect();
-  auto cloned_frame = CloneVideoFrame(frame.get(), frame->layout());
+  auto cloned_frame =
+      CloneVideoFrame(frame.get(), frame->layout(), test_sii_.get());
   // Ensures that the crop is within the previous visible rectangle.
   if (!visible.Contains(crop)) {
     LOG(ERROR) << "Crop " << crop.ToString()
@@ -652,5 +653,4 @@ LogLikelihoodRatioVideoFrameValidator::Validate(
   return nullptr;
 }
 
-}  // namespace test
-}  // namespace media
+}  // namespace media::test

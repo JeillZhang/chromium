@@ -21,6 +21,7 @@
 #include "base/files/file_path.h"
 #include "base/i18n/time_formatting.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -89,7 +90,7 @@ SearchResultImageListView::SearchResultImageListView(
       l10n_util::GetStringUTF16(IDS_ASH_SEARCH_RESULT_CATEGORY_LABEL_IMAGES)));
   title_label_->SetBackgroundColor(SK_ColorTRANSPARENT);
   title_label_->SetAutoColorReadabilityEnabled(false);
-  title_label_->SetEnabledColorId(kColorAshTextColorSecondary);
+  title_label_->SetEnabledColor(kColorAshTextColorSecondary);
   title_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   title_label_->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(
       kPreferredTitleTopMargins, kPreferredTitleHorizontalMargins,
@@ -160,12 +161,12 @@ SearchResultImageListView::SearchResultImageListView(
       content_label->SetAllowCharacterBreak(true);
       TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosButton1,
                                             *content_label);
-      content_label->SetEnabledColorId(cros_tokens::kColorPrimary);
+      content_label->SetEnabledColor(cros_tokens::kColorPrimary);
     } else {
       content_label->SetElideBehavior(gfx::ElideBehavior::ELIDE_MIDDLE);
       TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosBody2,
                                             *content_label);
-      content_label->SetEnabledColorId(cros_tokens::kTextColorSecondary);
+      content_label->SetEnabledColor(cros_tokens::kTextColorSecondary);
     }
 
     metadata_content_labels_.push_back(content_label.get());

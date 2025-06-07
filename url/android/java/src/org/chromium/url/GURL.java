@@ -23,7 +23,9 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.Contract;
 import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.MonotonicNonNull;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.url.mojom.Url;
@@ -63,7 +65,7 @@ public class GURL {
 
     // Right now this is only collecting reports on Canary which has a relatively small population.
     private static final int DEBUG_REPORT_PERCENTAGE = 10;
-    private static @Nullable ReportDebugThrowableCallback sReportCallback;
+    private static @MonotonicNonNull ReportDebugThrowableCallback sReportCallback;
 
     // TODO(crbug.com/40113773): Right now we return a new String with each request for a
     //      GURL component other than the spec itself. Should we cache return Strings (as
@@ -73,7 +75,7 @@ public class GURL {
     private Parsed mParsed;
 
     private static class Holder {
-        private static GURL sEmptyGURL = new GURL("");
+        private static final GURL sEmptyGURL = new GURL("");
     }
 
     @CalledByNative
@@ -132,13 +134,14 @@ public class GURL {
                 PostTask.postTask(
                         TaskTraits.BEST_EFFORT_MAY_BLOCK,
                         () -> {
-                            assumeNonNull(sReportCallback).run(throwable);
+                            sReportCallback.run(throwable);
                         });
             }
         }
     }
 
     /** @return true if the GURL is null, empty, or invalid. */
+    @Contract("null -> true")
     public static boolean isEmptyOrInvalid(@Nullable GURL gurl) {
         return gurl == null || gurl.isEmpty() || !gurl.isValid();
     }
@@ -285,7 +288,7 @@ public class GURL {
     }
 
     @Override
-    public final boolean equals(Object other) {
+    public final boolean equals(@Nullable Object other) {
         if (other == this) return true;
         if (!(other instanceof GURL)) return false;
         return mSpec.equals(((GURL) other).mSpec);

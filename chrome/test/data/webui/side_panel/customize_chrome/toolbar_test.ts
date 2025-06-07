@@ -39,6 +39,7 @@ suite('CustomizerToolbarTest', () => {
             id: ActionId.kHome,
             displayName: 'Home',
             pinned: true,
+            hasEnterpriseControlledPinnedState: false,
             category: CategoryId.kNavigation,
             iconUrl: {url: 'https://example.com/foo_1.png'},
           },
@@ -46,6 +47,7 @@ suite('CustomizerToolbarTest', () => {
             id: ActionId.kShowPasswordManager,
             displayName: 'Show Password Manager',
             pinned: false,
+            hasEnterpriseControlledPinnedState: false,
             category: CategoryId.kYourChrome,
             iconUrl: {url: 'https://example.com/foo_1.png'},
           },
@@ -98,11 +100,11 @@ suite('CustomizerToolbarTest', () => {
     await microtasksFinished();
 
     const categories =
-        toolbarElement.shadowRoot!.querySelectorAll('.category-title');
+        toolbarElement.shadowRoot.querySelectorAll('.category-title');
     assertEquals(2, categories.length);
 
     const actions =
-        toolbarElement.shadowRoot!.querySelectorAll('.toggle-container');
+        toolbarElement.shadowRoot.querySelectorAll('.toggle-container');
     assertEquals(2, actions.length);
 
     const navigationCategory = categories[0];
@@ -138,7 +140,7 @@ suite('CustomizerToolbarTest', () => {
     await microtasksFinished();
 
     const homeAction =
-        toolbarElement.shadowRoot!.querySelector('.toggle-container');
+        toolbarElement.shadowRoot.querySelector('.toggle-container');
     assertTrue(!!homeAction);
     const iconUrl = homeAction.querySelector('img')!.src;
     assertEquals('https://example.com/foo_1.png', iconUrl);
@@ -149,7 +151,7 @@ suite('CustomizerToolbarTest', () => {
     await microtasksFinished();
 
     const homeAction =
-        toolbarElement.shadowRoot!.querySelector('.toggle-container');
+        toolbarElement.shadowRoot.querySelector('.toggle-container');
     assertTrue(!!homeAction);
     const homeActionToggle = homeAction.querySelector('cr-toggle');
     assertTrue(!!homeActionToggle);
@@ -167,7 +169,7 @@ suite('CustomizerToolbarTest', () => {
     await microtasksFinished();
 
     const homeAction =
-        toolbarElement.shadowRoot!.querySelector('.toggle-container');
+        toolbarElement.shadowRoot.querySelector('.toggle-container');
     assertTrue(!!homeAction);
     const homeActionToggle = homeAction.querySelector('cr-toggle');
     assertTrue(!!homeActionToggle);

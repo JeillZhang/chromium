@@ -4,9 +4,11 @@
 
 package org.chromium.components.browser_ui.bottomsheet;
 
+import androidx.annotation.ColorInt;
 import androidx.annotation.IntDef;
 
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -105,9 +107,11 @@ public interface BottomSheetController {
      * @param hideReason The reason that the content is being hidden.
      */
     void hideContent(
-            BottomSheetContent content, boolean animate, @StateChangeReason int hideReason);
+            @Nullable BottomSheetContent content,
+            boolean animate,
+            @StateChangeReason int hideReason);
 
-    void hideContent(BottomSheetContent content, boolean animate);
+    void hideContent(@Nullable BottomSheetContent content, boolean animate);
 
     /** @param observer The observer to add. */
     void addObserver(BottomSheetObserver observer);
@@ -127,7 +131,7 @@ public interface BottomSheetController {
     boolean collapseSheet(boolean animate);
 
     /** @return The content currently showing in the bottom sheet. */
-    BottomSheetContent getCurrentSheetContent();
+    @Nullable BottomSheetContent getCurrentSheetContent();
 
     /** @return The current state of the bottom sheet. */
     @SheetState
@@ -147,10 +151,18 @@ public interface BottomSheetController {
     int getCurrentOffset();
 
     /**
-     * @return The height of the bottom sheet's container in px. This will return 0 if the sheet has
-     *     not been initialized (content has not been requested).
+     * @return The height of the bottom sheet's parent container in px. This is not the bottom sheet
+     *     height. This will return 0 if the sheet has not been initialized (content has not been
+     *     requested).
      */
     int getContainerHeight();
+
+    /**
+     * @return The width of the bottom sheet's parent container in px. his is not the bottom sheet
+     *     width. This will return 0 if the sheet has not been initialized (content has not been
+     *     requested).
+     */
+    int getContainerWidth();
 
     /**
      * @return The maximum width of the bottom sheet. This will return 0 if the sheet has not been
@@ -197,4 +209,18 @@ public interface BottomSheetController {
      *     sheet state.
      */
     boolean isSmallScreen();
+
+    /**
+     * Whether the bottom sheet is anchored on top of the browser controls. When false, the bottom
+     * sheet will be anchored at the bottom of the window and potentially covering the bottom
+     * controls UI.
+     */
+    boolean isAnchoredToBottomControls();
+
+    /**
+     * Get the current background color for the bottom sheet. If the sheet does not have a solid
+     * background color, this will return null.
+     */
+    @ColorInt
+    @Nullable Integer getSheetBackgroundColor();
 }

@@ -238,12 +238,13 @@ class WebTestControlHost : public WebContentsObserver,
   void BlockThirdPartyCookies(bool block) override;
   void GetWritableDirectory(GetWritableDirectoryCallback reply) override;
   void SetFilePathForMockFileDialog(const base::FilePath& path) override;
+  void CreateSubresourceFilterRulesetFile(
+      const std::vector<std::string>& disallowed_suffixes,
+      CreateSubresourceFilterRulesetFileCallback callback) override;
   void FocusDevtoolsSecondaryWindow() override;
   void SetTrustTokenKeyCommitments(const std::string& raw_commitments,
                                    base::OnceClosure callback) override;
   void ClearTrustTokenState(base::OnceClosure callback) override;
-  void SetDatabaseQuota(int32_t quota) override;
-  void ClearAllDatabases() override;
   void SimulateWebNotificationClick(
       const std::string& title,
       int32_t action_index,

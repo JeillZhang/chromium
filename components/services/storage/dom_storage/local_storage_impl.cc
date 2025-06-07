@@ -15,6 +15,7 @@
 
 #include "base/barrier_closure.h"
 #include "base/containers/contains.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/feature_list.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
@@ -25,6 +26,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "base/task/sequenced_task_runner.h"
@@ -454,7 +456,7 @@ void LocalStorageImpl::FlushStorageKeyForTesting(
 }
 
 void LocalStorageImpl::ShutDown(base::OnceClosure callback) {
-  DCHECK_NE(connection_state_, CONNECTION_SHUTDOWN);
+  CHECK_NE(connection_state_, CONNECTION_SHUTDOWN);
   DCHECK(callback);
 
   control_receiver_.reset();
@@ -603,6 +605,16 @@ void LocalStorageImpl::ForceFakeOpenStorageAreaForTesting(
 
 LocalStorageImpl::~LocalStorageImpl() {
   DCHECK_EQ(connection_state_, CONNECTION_SHUTDOWN);
+  // ShutDown() should run before this destructor and clear `areas_`. If this
+  // didn't occur, collect a crash dump to help diagnose the issue.
+  // TODO(crbug.com/396030877): Remove this DWOC and workaround once the issue
+  // is resolved.
+  if (!areas_.empty()) {
+    base::debug::DumpWithoutCrashing();
+    // Clear `areas_`to avoid a UaF crash in the StorageAreaHolder d'tor which
+    // tries to access `this`'s state.
+    areas_.clear();
+  }
   base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
       this);
 }
@@ -724,9 +736,8 @@ void LocalStorageImpl::OnConnectionFinished() {
     tried_to_recreate_during_open_ = false;
 
   // Clear stale storage areas after a delay to prevent blocking session
-  // restoration. See crbug.com/40281870 for more info.
-  if (database_ && !in_memory_ &&
-      base::FeatureList::IsEnabled(kDeleteStaleLocalStorageOnStartup)) {
+  // restoration.
+  if (database_ && !in_memory_) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(&LocalStorageImpl::DeleteStaleStorageAreas,
@@ -900,15 +911,14 @@ void LocalStorageImpl::OnGotStorageUsageForShutdown(
     for (const auto& origin_to_purge : origins_to_purge_on_shutdown_) {
       if (key_origin == origin_to_purge ||
           (storage_key.IsThirdPartyContext() &&
-           net::SchemefulSite(origin_to_purge) ==
-               storage_key.top_level_site())) {
+           storage_key.top_level_site().IsSameSiteWith(origin_to_purge))) {
         storage_keys_to_delete.push_back(storage_key);
         break;
       }
     }
   }
 
-  if (!storage_keys_to_delete.empty()) {
+  if (!storage_keys_to_delete.empty() && database_) {
     DeleteStorageKeys(database_.get(), std::move(storage_keys_to_delete),
                       base::BindOnce(&LocalStorageImpl::OnStorageKeysDeleted,
                                      base::Unretained(this)));
@@ -969,6 +979,11 @@ void LocalStorageImpl::OnCommitResult(leveldb::Status status) {
 }
 
 void LocalStorageImpl::DeleteStaleStorageAreas() {
+  if (!database_) {
+    // Due to the delay before LocalStorageImpl::DeleteStaleStorageAreas is invoked
+    // it's possible `database_` existed before, but no longer.
+    return;
+  }
   database_->RunDatabaseTask(
       base::BindOnce([](const DomStorageDatabase& db) {
         std::vector<DomStorageDatabase::KeyValuePair> data;
@@ -981,6 +996,13 @@ void LocalStorageImpl::DeleteStaleStorageAreas() {
 
 void LocalStorageImpl::OnGotMetaDataToDeleteStaleStorageAreas(
     std::vector<DomStorageDatabase::KeyValuePair> data) {
+  if (!database_) {
+    // This method is provided as a callback to an off thread task. Between the
+    // time that the task is posted and now when this callback is invoked, the
+    // `database_` member may have been reset.
+    return;
+  }
+
   // Collect last accessed or modified time for all storage areas.
   std::map<blink::StorageKey, base::Time> storage_key_to_latest_use_time;
   for (const DomStorageDatabase::KeyValuePair& row : data) {
@@ -1041,9 +1063,7 @@ void LocalStorageImpl::OnGotMetaDataToDeleteStaleStorageAreas(
       // If the storage area has not been accessed or modified within 400 days
       // it can be cleared.
       stale_storage_keys.push_back(storage_key);
-    } else if (base::FeatureList::IsEnabled(
-                   kDeleteOrphanLocalStorageOnStartup) &&
-               (storage_key.nonce().has_value() ||
+    } else if ((storage_key.nonce().has_value() ||
                 storage_key.top_level_site().opaque()) &&
                (base::Time::Now() - accessed_or_modified_time) >=
                    base::Days(1)) {
@@ -1053,11 +1073,9 @@ void LocalStorageImpl::OnGotMetaDataToDeleteStaleStorageAreas(
       orphans_found++;
     }
   }
-  if (base::FeatureList::IsEnabled(kDeleteOrphanLocalStorageOnStartup)) {
-    // These are counted independently to better track errors in rollout.
-    base::UmaHistogramCounts100000(
-        "LocalStorage.OrphanStorageAreasOnStartupCount", orphans_found);
-  }
+  // These are counted independently to better track errors in rollout.
+  base::UmaHistogramCounts100000(
+      "LocalStorage.OrphanStorageAreasOnStartupCount", orphans_found);
 
   // Delete stale storage areas and count results.
   DeleteStorageKeys(

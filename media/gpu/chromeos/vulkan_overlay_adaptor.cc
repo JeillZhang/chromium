@@ -20,7 +20,6 @@
 #include "media/gpu/chromeos/shaders/shaders.h"
 #include "media/gpu/macros.h"
 #include "ui/gfx/color_space.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 
 namespace media {
 
@@ -893,7 +892,7 @@ std::unique_ptr<VulkanOverlayAdaptor> VulkanOverlayAdaptor::Create(
 
   VkFormat out_format =
       (format == kMT2T
-#if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(USE_CHROMEOS_MEDIA_ACCELERATION) && \
+#if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION) && \
     defined(ARCH_CPU_ARM_FAMILY)
        && base::FeatureList::IsEnabled(media::kEnableArmHwdrm10bitOverlays)
 #endif
@@ -1044,8 +1043,8 @@ void VulkanOverlayAdaptor::Process(gpu::VulkanImage& in_image,
         out_image.format() == VK_FORMAT_A2R10G10B10_UNORM_PACK32);
   // This is plausible enough under normal circumstances so we don't want to
   // crash with CHECK, but greater than 4K overlays are currently unsupported.
-  if (static_cast<int>(display_rect.width()) >= out_image.size().width() ||
-      static_cast<int>(display_rect.height()) >= out_image.size().width()) {
+  if (static_cast<int>(display_rect.width()) > out_image.size().width() ||
+      static_cast<int>(display_rect.height()) > out_image.size().height()) {
     LOG(ERROR) << "Unsupported protected content overlay size: "
                << display_rect.ToString();
     return;

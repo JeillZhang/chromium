@@ -7,6 +7,7 @@
 #import "base/apple/foundation_util.h"
 #import "base/feature_list.h"
 #import "base/metrics/user_metrics.h"
+#import "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/autofill/ios/browser/form_suggestion.h"
 #import "components/password_manager/core/browser/features/password_features.h"
@@ -412,12 +413,8 @@ CGFloat const kSpacingAfterTitle = 4;
                                                   atIndexPath:indexPath];
   cell.accessoryType = [self accessoryType:indexPath];
 
-  [cell
-      setFaviconContainerBackgroundColor:
-          (self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark)
-              ? [UIColor colorNamed:kSeparatorColor]
-              : [UIColor colorNamed:kPrimaryBackgroundColor]];
-  [cell setFaviconContainerBorderColor:UIColor.clearColor];
+  [cell setFaviconContainerBackgroundColor:
+            [UIColor colorNamed:kPrimaryBackgroundColor]];
   cell.titleLabel.textColor = [UIColor colorNamed:kTextPrimaryColor];
   cell.backgroundColor = [UIColor colorNamed:kSecondaryBackgroundColor];
 

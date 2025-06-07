@@ -20,11 +20,6 @@
  *
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_WTF_STRING_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_WTF_STRING_H_
 
@@ -93,7 +88,8 @@ class WTF_EXPORT String {
   explicit String(const LChar* characters)
       : String(reinterpret_cast<const char*>(characters)) {}
   String(const char* characters)  // NOLINT(google-explicit-constructor)
-      : String(base::span(characters, characters ? strlen(characters) : 0)) {}
+      : String(characters ? base::span(std::string_view(characters))
+                          : base::span<const char>()) {}
 
   // Construct a string referencing an existing StringImpl.
   String(StringImpl* impl) : impl_(impl) {}
@@ -144,6 +140,14 @@ class WTF_EXPORT String {
     return impl_->Span16();
   }
 
+  base::span<const uint16_t> SpanUint16() const {
+    if (!impl_) {
+      return {};
+    }
+    DCHECK(!impl_->Is8Bit());
+    return impl_->SpanUint16();
+  }
+
   // This exposes the underlying representation of the string. Use with
   // care. When interpreting the string as a sequence of code units
   // Span8()/Span16() should be used.
@@ -154,14 +158,16 @@ class WTF_EXPORT String {
     return impl_->RawByteSpan();
   }
 
-  const LChar* Characters8() const {
+  // Use Span8() instead.
+  UNSAFE_BUFFER_USAGE const LChar* Characters8() const {
     if (!impl_)
       return nullptr;
     DCHECK(impl_->Is8Bit());
     return impl_->Characters8();
   }
 
-  const UChar* Characters16() const {
+  // Use Span16() instead.
+  UNSAFE_BUFFER_USAGE const UChar* Characters16() const {
     if (!impl_)
       return nullptr;
     DCHECK(!impl_->Is8Bit());
@@ -174,10 +180,6 @@ class WTF_EXPORT String {
     return impl_->Bytes();
   }
 
-  // Return characters8() or characters16() depending on CharacterType.
-  template <typename CharacterType>
-  inline const CharacterType* GetCharacters() const;
-
   bool Is8Bit() const { return impl_->Is8Bit(); }
 
   [[nodiscard]] std::string Ascii() const;
@@ -185,6 +187,15 @@ class WTF_EXPORT String {
   [[nodiscard]] std::string Utf8(
       Utf8ConversionMode mode = Utf8ConversionMode::kLenient) const {
     return StringView(*this).Utf8(mode);
+  }
+  // Returns a std::u16string_view pointing this string.
+  // This should be called only if !Is8Bit().
+  //
+  // This function should be removed after enabling C++23 because
+  // std::u16string_view(Span16()) will work with C++23.
+  std::u16string_view View16() const LIFETIME_BOUND {
+    auto chars = Span16();
+    return std::u16string_view(chars.begin(), chars.end());
   }
 
   UChar operator[](wtf_size_t index) const {
@@ -618,18 +629,6 @@ template <wtf_size_t inlineCapacity>
 String::String(const Vector<UChar, inlineCapacity>& vector)
     : impl_(vector.size() ? StringImpl::Create(vector) : StringImpl::empty_) {}
 
-template <>
-inline const LChar* String::GetCharacters<LChar>() const {
-  DCHECK(Is8Bit());
-  return Characters8();
-}
-
-template <>
-inline const UChar* String::GetCharacters<UChar>() const {
-  DCHECK(!Is8Bit());
-  return Characters16();
-}
-
 inline bool String::ContainsOnlyLatin1OrEmpty() const {
   if (empty())
     return true;
@@ -734,5 +733,5 @@ using WTF::g_empty_string16_bit;
 using WTF::String;
 using WTF::Utf8ConversionMode;
 
-#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_operators.h"
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_WTF_STRING_H_

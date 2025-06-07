@@ -39,6 +39,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/memory_usage_estimator.h"
 #include "base/trace_event/typed_macros.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "components/google/core/common/google_util.h"
 #include "components/omnibox/common/omnibox_features.h"
@@ -54,10 +55,15 @@
 #include "net/base/mime_util.h"
 #include "net/base/url_util.h"
 #include "third_party/metrics_proto/omnibox_input_type.pb.h"
+#include "third_party/search_engines_data/resources/definitions/prepopulated_engines.h"
 #include "ui/base/device_form_factor.h"
 #include "url/gurl.h"
 
 namespace {
+
+const bool kEnableBuiltinSearchProviderAssets =
+    !!BUILDFLAG(ENABLE_BUILTIN_SEARCH_PROVIDER_ASSETS);
+
 // The TemplateURLRef has any number of terms that need to be replaced. Each of
 // the terms is enclosed in braces. If the character preceding the final brace
 // is a ?, it indicates the term is optional and can be replaced with an empty
@@ -494,7 +500,8 @@ std::string TemplateURLRef::ReplaceSearchTerms(
 #if BUILDFLAG(IS_ANDROID)
   if (!base::FeatureList::IsEnabled(
           switches::kRemoveSearchEngineChoiceAttribution) &&
-      owner_->created_from_play_api()) {
+      owner_->GetRegulatoryExtensionType() ==
+          RegulatoryExtensionType::kAndroidEEA) {
     // Append attribution parameter to query originating from Play API search
     // engine.
     query_params.push_back("chrome_dse_attribution=1");
@@ -1684,8 +1691,8 @@ bool TemplateURL::IsBetterThanConflictingEngine(
                                 : base::Time(),
         // Prefer engines that CANNOT be auto-replaced.
         !engine->safe_for_autoreplace(),
-        // Prefer engines created by Play API.
-        engine->created_from_play_api(),
+        // Prefer engines created by regulatory programs.
+        engine->CreatedByRegulatoryProgram(),
         // Favor prepopulated engines over other auto-generated engines.
         engine->prepopulate_id() > 0,
         // Favor starter pack engines over other auto-generated engines.
@@ -1804,6 +1811,47 @@ std::string TemplateURL::GetExtensionId() const {
   return GetExtensionInfo()->extension_id;
 }
 
+std::optional<std::string_view> TemplateURL::GetBaseBuiltinResourceId() const {
+  if constexpr (!kEnableBuiltinSearchProviderAssets) {
+    return std::nullopt;
+  }
+
+  if (!base_builtin_resource_id_.has_value()) {
+    const TemplateURLPrepopulateData::PrepopulatedEngine*
+        reference_builtin_engine = nullptr;
+    // Grab the first matching entry from the complete list. In case of IDs
+    // shared across multiple entries, we might be returning the wrong one for
+    // the profile country. We can look into better heuristics in future work.
+    // As there are no diverging icons per ID yet, it is not critical for now.
+    if (auto iter = std::ranges::find_if(
+            TemplateURLPrepopulateData::kAllEngines,
+            [&](const TemplateURLPrepopulateData::PrepopulatedEngine* engine) {
+              return engine->id == data().prepopulate_id;
+            });
+        iter != TemplateURLPrepopulateData::kAllEngines.end()) {
+      reference_builtin_engine = *iter;
+    }
+
+    if (reference_builtin_engine &&
+        reference_builtin_engine->base_builtin_resource_id) {
+      base_builtin_resource_id_ =
+          reference_builtin_engine->base_builtin_resource_id;
+    } else {
+      base_builtin_resource_id_ = std::optional<std::string_view>();
+    }
+  }
+
+  return base_builtin_resource_id_.value();
+}
+
+std::string TemplateURL::GetBuiltinImageResourceId() const {
+  std::optional<std::string_view> base_resource_id = GetBaseBuiltinResourceId();
+  if (base_resource_id.has_value()) {
+    return base::StrCat({base_resource_id.value(), "_IMAGE"});
+  }
+  return "IDR_DEFAULT_FAVICON";
+}
+
 SearchEngineType TemplateURL::GetEngineType(
     const SearchTermsData& search_terms_data) const {
   if (engine_type_ == SEARCH_ENGINE_UNKNOWN) {
@@ -1828,6 +1876,8 @@ BuiltinEngineType TemplateURL::GetBuiltinEngineType() const {
         return KEYWORD_MODE_STARTER_PACK_TABS;
       case TemplateURLStarterPackData::kGemini:
         return KEYWORD_MODE_STARTER_PACK_GEMINI;
+      case TemplateURLStarterPackData::kPage:
+        return KEYWORD_MODE_STARTER_PACK_PAGE;
       default:
         // In theory, this code path should never be reached.  However, it's
         // possible that when expanding the starter pack, a new entry may
@@ -2015,11 +2065,12 @@ bool TemplateURL::CreatedByEnterpriseSearchAggregatorPolicy() const {
   return data().CreatedByEnterpriseSearchAggregatorPolicy();
 }
 
+bool TemplateURL::CreatedByRegulatoryProgram() const {
+  return GetRegulatoryExtensionType() != RegulatoryExtensionType::kDefault;
+}
+
 RegulatoryExtensionType TemplateURL::GetRegulatoryExtensionType() const {
-  if (data().created_from_play_api) {
-    return RegulatoryExtensionType::kAndroidEEA;
-  }
-  return RegulatoryExtensionType::kDefault;
+  return data().regulatory_origin;
 }
 
 const TemplateURLData::RegulatoryExtension* TemplateURL::GetRegulatoryExtension(
@@ -2204,4 +2255,15 @@ void TemplateURL::CopyActiveValueToLocalAndAccount() {
   TemplateURLData new_data = data();
   local_data_ = new_data;
   account_data_ = new_data;
+}
+
+bool TemplateURL::CanPolicyBeOverridden() const {
+  switch (policy_origin()) {
+    case TemplateURLData::PolicyOrigin::kSiteSearch:
+      return !enforced_by_policy();
+    case TemplateURLData::PolicyOrigin::kDefaultSearchProvider:
+    case TemplateURLData::PolicyOrigin::kSearchAggregator:
+    case TemplateURLData::PolicyOrigin::kNoPolicy:
+      return false;
+  }
 }

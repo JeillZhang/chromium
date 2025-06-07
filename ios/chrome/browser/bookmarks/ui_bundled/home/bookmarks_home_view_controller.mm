@@ -30,6 +30,7 @@
 #import "ios/chrome/app/tests_hook.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view_configurator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/table_view_signin_promo_item.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_bridge_observer.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_storage_type.h"
@@ -53,7 +54,7 @@
 #import "ios/chrome/browser/favicon/model/favicon_loader.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
 #import "ios/chrome/browser/incognito_reauth/ui_bundled/incognito_reauth_scene_agent.h"
-#import "ios/chrome/browser/intents/intents_donation_helper.h"
+#import "ios/chrome/browser/intents/model/intents_donation_helper.h"
 #import "ios/chrome/browser/keyboard/ui_bundled/UIKeyCommand+Chrome.h"
 #import "ios/chrome/browser/menu/ui_bundled/browser_action_factory.h"
 #import "ios/chrome/browser/menu/ui_bundled/menu_histograms.h"
@@ -68,6 +69,7 @@
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/shared/public/commands/show_signin_command.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/ui/elements/home_waiting_view.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_url_item.h"
@@ -243,6 +245,8 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
   // Whether the navigation controller is being dismissed.
   // In which case, do not open anything on top of it.
   BOOL _isBeingDismissed;
+  // The Signin coordinator displayed, if any.
+  SigninCoordinator* _signinCoordinator;
 }
 
 @synthesize editingFolderCell = _editingFolderCell;
@@ -273,6 +277,7 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 
 - (void)shutdown {
   _isShutDown = YES;
+  [self stopSigninCoordinator];
   [self.editingFolderCell stopEdit];
   [self stopFolderChooserCoordinator];
   [self.bookmarksCoordinator stop];
@@ -294,6 +299,9 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 }
 
 - (BOOL)canDismiss {
+  if (self.mediator && ![self.mediator canDismiss]) {
+    return NO;
+  }
   if (self.folderChooserCoordinator &&
       ![self.folderChooserCoordinator canDismiss]) {
     return NO;
@@ -688,8 +696,16 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 }
 
 - (void)showSignin:(ShowSigninCommand*)command {
-  [self.applicationCommandsHandler showSignin:command
-                           baseViewController:self.navigationController];
+  __weak __typeof(self) weakSelf = self;
+  [command addSigninCompletion:^(SigninCoordinatorResult result,
+                                 id<SystemIdentity>) {
+    [weakSelf signinDidCompleteWithResult:result];
+  }];
+  _signinCoordinator = [SigninCoordinator
+      signinCoordinatorWithCommand:command
+                           browser:_browser.get()
+                baseViewController:self.navigationController];
+  [_signinCoordinator start];
 }
 
 - (void)configureSigninPromoWithConfigurator:
@@ -714,6 +730,13 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 - (void)showAccountSettings {
   [self ensureBookmarksCoordinator];
   [self.bookmarksCoordinator showAccountSettings];
+}
+
+#pragma mark - BookmarksHomeConsumer Helper
+
+- (void)signinDidCompleteWithResult:(SigninCoordinatorResult)result {
+  [self.mediator signinDidCompleteWithResult:result];
+  [self stopSigninCoordinator];
 }
 
 #pragma mark - Action sheet callbacks
@@ -1379,6 +1402,11 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 
 #pragma mark - private
 
+- (void)stopSigninCoordinator {
+  [_signinCoordinator stop];
+  _signinCoordinator = nil;
+}
+
 // Returns the profile.
 - (ProfileIOS*)profile {
   if (Browser* browser = _browser.get()) {
@@ -1615,14 +1643,30 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
     return 0;
   }
 
+  UITableView* tableView = self.tableView;
+
   // If no rows in table, return 0.
-  NSArray* visibleIndexPaths = [self.tableView indexPathsForVisibleRows];
+  NSArray* visibleIndexPaths = [tableView indexPathsForVisibleRows];
   if (!visibleIndexPaths.count) {
     return 0;
   }
 
-  // Return the first visible row.
-  NSIndexPath* topMostIndexPath = [visibleIndexPaths objectAtIndex:0];
+  NSIndexPath* topMostIndexPath;
+  UIView* navigationBar = self.navigationController.navigationBar;
+  CGRect navigationBarFrame = [navigationBar.superview
+      convertRect:self.navigationController.navigationBar.frame
+           toView:nil];
+  // Take the first row that has its center visible below the navigation bar.
+  for (NSIndexPath* indexPath in visibleIndexPaths) {
+    CGRect rowFrame =
+        [tableView convertRect:[tableView rectForRowAtIndexPath:indexPath]
+                        toView:nil];
+    if (CGRectGetMidY(rowFrame) > CGRectGetMaxY(navigationBarFrame)) {
+      topMostIndexPath = indexPath;
+      break;
+    }
+  }
+
   return topMostIndexPath.row;
 }
 
@@ -1728,22 +1772,28 @@ BookmarkNodeIDSet GetBookmarkNodeIDSet(
 // Show scrim overlay and hide toolbar.
 - (void)showScrim {
   self.navigationController.toolbarHidden = YES;
-  self.scrimView.alpha = 0.0f;
-  [self.tableView addSubview:self.scrimView];
+  UIView* scrimView = self.scrimView;
+  UITableView* tableView = self.tableView;
+  UIView* superview = tableView.superview;
+  scrimView.alpha = 0.0f;
+  [tableView addSubview:scrimView];
   // We attach our constraints to the superview because the tableView is
   // a scrollView and it seems that we get an empty frame when attaching to it.
-  AddSameConstraints(self.scrimView, self.view.superview);
-  self.tableView.accessibilityElementsHidden = YES;
-  self.tableView.scrollEnabled = NO;
-  __weak BookmarksHomeViewController* weakSelf = self;
+  [NSLayoutConstraint activateConstraints:@[
+    [scrimView.leadingAnchor constraintEqualToAnchor:superview.leadingAnchor],
+    [scrimView.trailingAnchor constraintEqualToAnchor:superview.trailingAnchor],
+    [scrimView.bottomAnchor constraintEqualToAnchor:superview.bottomAnchor],
+    [scrimView.topAnchor
+        constraintEqualToAnchor:self.navigationController.navigationBar
+                                    .bottomAnchor],
+
+  ]];
+  tableView.accessibilityElementsHidden = YES;
+  tableView.scrollEnabled = NO;
   [UIView animateWithDuration:kTableViewNavigationScrimFadeDuration
                    animations:^{
-                     BookmarksHomeViewController* strongSelf = weakSelf;
-                     if (!strongSelf) {
-                       return;
-                     }
-                     strongSelf.scrimView.alpha = 1.0f;
-                     [strongSelf.view layoutIfNeeded];
+                     scrimView.alpha = 1.0f;
+                     [superview layoutIfNeeded];
                    }];
 }
 

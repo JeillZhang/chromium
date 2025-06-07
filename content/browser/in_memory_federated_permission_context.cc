@@ -50,6 +50,9 @@ void InMemoryFederatedPermissionContext::RemoveEmbargoAndResetCounts(
   embargoed_origins_.erase(relying_party_embedder);
 }
 
+void InMemoryFederatedPermissionContext::RecordIgnoreAndEmbargo(
+    const url::Origin& relying_party_embedder) {}
+
 bool InMemoryFederatedPermissionContext::ShouldCompleteRequestImmediately()
     const {
   return base::CommandLine::ForCurrentProcess()->HasSwitch("run-web-tests");
@@ -239,15 +242,32 @@ std::optional<bool> InMemoryFederatedPermissionContext::GetIdpSigninStatus(
   }
 }
 
-std::vector<blink::common::webid::LoginStatusAccount>
-InMemoryFederatedPermissionContext::GetAccountProfiles(
+base::Value::List InMemoryFederatedPermissionContext::GetAccounts(
     const url::Origin& idp_origin) {
-  auto options = idp_login_status_options_.find(idp_origin.Serialize());
+  base::Value::List result;
 
-  if (options != idp_login_status_options_.end()) {
-    return options->second.accounts;
+  auto options = idp_login_status_options_.find(idp_origin.Serialize());
+  if (options == idp_login_status_options_.end()) {
+    return result;
   }
-  return {};
+
+  for (const auto& account : options->second.accounts) {
+    base::Value::Dict new_account = base::Value::Dict()
+                                        .Set("id", account.id)
+                                        .Set("email", account.email)
+                                        .Set("name", account.name);
+
+    if (account.given_name.has_value()) {
+      new_account.Set("given_name", account.given_name.value());
+    }
+
+    if (account.picture.has_value()) {
+      new_account.Set("picture", account.picture.value().spec());
+    }
+    result.Append(std::move(new_account));
+  }
+
+  return result;
 }
 
 void InMemoryFederatedPermissionContext::SetIdpSigninStatus(
@@ -285,9 +305,7 @@ void InMemoryFederatedPermissionContext::RegisterIdP(const ::GURL& configURL) {
 
 void InMemoryFederatedPermissionContext::UnregisterIdP(
     const ::GURL& configURL) {
-  idp_registry_.erase(
-      std::remove(idp_registry_.begin(), idp_registry_.end(), configURL),
-      idp_registry_.end());
+  std::erase(idp_registry_, configURL);
 }
 
 std::vector<GURL> InMemoryFederatedPermissionContext::GetRegisteredIdPs() {

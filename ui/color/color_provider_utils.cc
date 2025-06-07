@@ -29,15 +29,20 @@ struct RendererColorIdTable {
   ColorId color_id;
 };
 constexpr RendererColorIdTable kRendererColorIdMap[] = {
+    {RendererColorId::kColorCssSystemActiveText, kColorCssSystemActiveText},
     {RendererColorId::kColorCssSystemBtnFace, kColorCssSystemBtnFace},
     {RendererColorId::kColorCssSystemBtnText, kColorCssSystemBtnText},
+    {RendererColorId::kColorCssSystemField, kColorCssSystemField},
+    {RendererColorId::kColorCssSystemFieldText, kColorCssSystemFieldText},
     {RendererColorId::kColorCssSystemGrayText, kColorCssSystemGrayText},
     {RendererColorId::kColorCssSystemHighlight, kColorCssSystemHighlight},
     {RendererColorId::kColorCssSystemHighlightText,
      kColorCssSystemHighlightText},
     {RendererColorId::kColorCssSystemHotlight, kColorCssSystemHotlight},
+    {RendererColorId::kColorCssSystemLinkText, kColorCssSystemLinkText},
     {RendererColorId::kColorCssSystemMenuHilight, kColorCssSystemMenuHilight},
     {RendererColorId::kColorCssSystemScrollbar, kColorCssSystemScrollbar},
+    {RendererColorId::kColorCssSystemVisitedText, kColorCssSystemVisitedText},
     {RendererColorId::kColorCssSystemWindow, kColorCssSystemWindow},
     {RendererColorId::kColorCssSystemWindowText, kColorCssSystemWindowText},
     {RendererColorId::kColorMenuBackground, kColorMenuBackground},
@@ -402,6 +407,11 @@ void AddEmulatedForcedColorsToMixer(ColorMixer& mixer, bool dark_mode) {
   mixer[kColorCssSystemWindow] = {dark_mode ? SK_ColorBLACK : SK_ColorWHITE};
   mixer[kColorCssSystemWindowText] = {dark_mode ? SK_ColorWHITE
                                                 : SK_ColorBLACK};
+  mixer[kColorCssSystemField] = {kColorCssSystemWindow};
+  mixer[kColorCssSystemFieldText] = {kColorCssSystemWindowText};
+  mixer[kColorCssSystemActiveText] = {kColorCssSystemHotlight};
+  mixer[kColorCssSystemLinkText] = {kColorCssSystemHotlight};
+  mixer[kColorCssSystemVisitedText] = {kColorCssSystemHotlight};
 }
 
 std::unique_ptr<ColorProvider> CreateEmulatedForcedColorsColorProvider(
@@ -728,12 +738,17 @@ void CompleteControlsForcedColorsDefinition(ui::ColorMixer& mixer) {
 
 void CompleteDefaultCssSystemColorDefinition(ui::ColorMixer& mixer,
                                              bool dark_mode) {
+  mixer[kColorCssSystemActiveText] = {SkColorSetRGB(0xFF, 0x00, 0x00)};
   mixer[kColorCssSystemGrayText] = {SkColorSetRGB(0x80, 0x80, 0x80)};
   mixer[kColorCssSystemHighlight] = {SkColorSetRGB(0x19, 0x67, 0xD2)};
   mixer[kColorCssSystemHighlightText] = {SK_ColorWHITE};
+  mixer[kColorCssSystemLinkText] = {SkColorSetRGB(0x00, 0x00, 0xEE)};
+  mixer[kColorCssSystemVisitedText] = {SkColorSetRGB(0x55, 0x1A, 0x8B)};
   if (dark_mode) {
     mixer[kColorCssSystemBtnFace] = {SkColorSetRGB(0x6B, 0x6B, 0x6B)};
     mixer[kColorCssSystemBtnText] = {SK_ColorWHITE};
+    mixer[kColorCssSystemField] = {SkColorSetRGB(0x3B, 0x3B, 0x3B)};
+    mixer[kColorCssSystemFieldText] = {SK_ColorWHITE};
     mixer[kColorCssSystemMenuHilight] = {SkColorSetRGB(0x80, 0x00, 0x80)};
     mixer[kColorCssSystemScrollbar] = {SkColorSetRGB(0x12, 0x12, 0x12)};
     mixer[kColorCssSystemWindow] = {SkColorSetRGB(0x12, 0x12, 0x12)};
@@ -742,6 +757,8 @@ void CompleteDefaultCssSystemColorDefinition(ui::ColorMixer& mixer,
   } else {
     mixer[kColorCssSystemBtnFace] = {SkColorSetRGB(0xEF, 0xEF, 0xEF)};
     mixer[kColorCssSystemBtnText] = {SK_ColorBLACK};
+    mixer[kColorCssSystemField] = {SK_ColorWHITE};
+    mixer[kColorCssSystemFieldText] = {SK_ColorBLACK};
     mixer[kColorCssSystemMenuHilight] = {SK_ColorBLACK};
     mixer[kColorCssSystemScrollbar] = {SK_ColorWHITE};
     mixer[kColorCssSystemWindow] = {SK_ColorWHITE};

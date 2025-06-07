@@ -40,8 +40,9 @@ class FindBar {
   virtual void SetFindBarController(FindBarController* find_bar_controller) = 0;
 
   // Shows the find bar. Any previous search string will again be visible.
-  // If |animate| is true, we try to slide the find bar in.
-  virtual void Show(bool animate) = 0;
+  // If `animate` is true, we try to slide the find bar in.
+  // If `focus` is true, the find bar takes focus and accepts keyboard input.
+  virtual void Show(bool animate, bool focus) = 0;
 
   // Hide the find bar.  If |animate| is true, we try to slide the find bar
   // away.
@@ -96,6 +97,9 @@ class FindBar {
   // Returns a pointer to the testing interface to the FindBar, or NULL
   // if there is none.
   virtual const FindBarTesting* GetFindBarTesting() const = 0;
+
+  // Return |true| if find bar has focus.
+  virtual bool HasFocus() const = 0;
 
 #if BUILDFLAG(IS_MAC)
   // Get the host widget. Used by immersive fullscreen to detect the find bar

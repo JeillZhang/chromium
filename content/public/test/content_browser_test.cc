@@ -23,7 +23,7 @@
 #include "content/public/test/test_browser_context.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_browser_context.h"
-#include "content/shell/browser/shell_paths.h"
+#include "content/shell/common/shell_paths.h"
 #include "content/shell/common/shell_switches.h"
 #include "content/test/test_content_client.h"
 #include "ui/events/platform/platform_event_source.h"
@@ -76,20 +76,8 @@ ContentBrowserTest::ContentBrowserTest() {
                              /*is_absolute=*/false, /*create=*/false);
 #endif
 
-  // The HTTPS test server must be setup here as different browser test suites
-  // have different bundle behavior on macOS, and the HTTPS test server
-  // constructor reads in the local test root cert. It might be possible
-  // to move this to BrowserTestBase in the future.
-  embedded_https_test_server_ = std::make_unique<net::EmbeddedTestServer>(
-      net::EmbeddedTestServer::TYPE_HTTPS);
-  // Default hostnames for the HTTPS test server. Test fixtures can call this
-  // with different hostnames (before starting the server) to override.
-  embedded_https_test_server_->SetCertHostnames(
-      {"example.com", "*.example.com", "foo.com", "*.foo.com", "bar.com",
-       "*.bar.com", "a.com", "*.a.com", "b.com", "*.b.com", "c.com",
-       "*.c.com"});
-
   embedded_test_server()->AddDefaultHandlers(GetTestDataFilePath());
+  InitializeHTTPSTestServer();
   embedded_https_test_server().AddDefaultHandlers(GetTestDataFilePath());
 }
 

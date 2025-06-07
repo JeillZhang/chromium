@@ -129,7 +129,7 @@ class BrowserTabStripController : public TabStripController,
   std::u16string GetAccessibleTabName(const Tab* tab) const override;
   Profile* GetProfile() const override;
   BrowserWindowInterface* GetBrowserWindowInterface() override;
-  const Browser* GetBrowser() const override;
+  Browser* GetBrowser() override;
 #if BUILDFLAG(IS_CHROMEOS)
   bool IsLockedForOnTask() override;
 #endif
@@ -157,6 +157,8 @@ class BrowserTabStripController : public TabStripController,
                               int index) override;
   void SetTabNeedsAttentionAt(int index, bool attention) override;
   bool IsFrameButtonsRightAligned() const override;
+  void OnSplitTabChanged(const SplitTabChange& change) override;
+
   const Browser* browser() const { return browser_view_->browser(); }
 
   // Test-specific methods.
@@ -171,8 +173,9 @@ class BrowserTabStripController : public TabStripController,
   // Invokes tabstrip_->SetTabData.
   void SetTabDataAt(content::WebContents* web_contents, int model_index);
 
-  // Adds a tab.
-  void AddTab(content::WebContents* contents, int index);
+  // Adds tabs to the view model.
+  void AddTabs(
+      std::vector<std::pair<content::WebContents*, int>> contents_list);
 
   void OnDiscardRingTreatmentEnabledChanged();
 
@@ -189,7 +192,7 @@ class BrowserTabStripController : public TabStripController,
   HoverTabSelector hover_tab_selector_;
 
   // Forces the tabs to use the regular (non-immersive) style and the
-  // top-of-window views to be revealed when the user is dragging |tabstrip|'s
+  // top-of-window views to be revealed when the user is dragging `tabstrip`'s
   // tabs.
   std::unique_ptr<ImmersiveRevealedLock> immersive_reveal_lock_;
 

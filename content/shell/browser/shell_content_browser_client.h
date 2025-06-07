@@ -14,6 +14,7 @@
 #include "build/build_config.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/shell/browser/shell_speech_recognition_manager_delegate.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "services/network/public/mojom/network_context.mojom-forward.h"
 
 class PrefService;
@@ -25,6 +26,7 @@ class BluetoothDelegateImpl;
 #endif
 
 namespace content {
+class NavigationThrottleRegistry;
 class ShellBrowserContext;
 class ShellBrowserMainParts;
 
@@ -123,8 +125,8 @@ class ShellContentBrowserClient : public ContentBrowserClient {
   void OpenURL(SiteInstance* site_instance,
                const OpenURLParams& params,
                base::OnceCallback<void(WebContents*)> callback) override;
-  std::vector<std::unique_ptr<NavigationThrottle>> CreateThrottlesForNavigation(
-      NavigationHandle* navigation_handle) override;
+  void CreateThrottlesForNavigation(
+      NavigationThrottleRegistry& registry) override;
   std::unique_ptr<LoginDelegate> CreateLoginDelegate(
       const net::AuthChallengeInfo& auth_info,
       content::WebContents* web_contents,
@@ -136,7 +138,7 @@ class ShellContentBrowserClient : public ContentBrowserClient {
       scoped_refptr<net::HttpResponseHeaders> response_headers,
       bool first_auth_attempt,
       GuestPageHolder* guest,
-      LoginAuthRequiredCallback auth_required_callback) override;
+      LoginDelegate::LoginAuthRequiredCallback auth_required_callback) override;
   base::Value::Dict GetNetLogConstants() override;
   base::FilePath GetSandboxedStorageServiceDataDirectory() override;
   base::FilePath GetFirstPartySetsDirectory() override;
@@ -147,6 +149,7 @@ class ShellContentBrowserClient : public ContentBrowserClient {
       BrowserContext* browser_context,
       const url::Origin& origin,
       bool is_for_isolated_world,
+      bool is_for_service_worker,
       network::mojom::URLLoaderFactoryParams* factory_params) override;
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   void GetAdditionalMappedFilesForChildProcess(
@@ -178,7 +181,7 @@ class ShellContentBrowserClient : public ContentBrowserClient {
 
   // Turns on features via permissions policy for Isolated App
   // Web Platform Tests.
-  std::optional<blink::ParsedPermissionsPolicy>
+  std::optional<network::ParsedPermissionsPolicy>
   GetPermissionsPolicyForIsolatedWebApp(WebContents* web_contents,
                                         const url::Origin& app_origin) override;
 
@@ -209,13 +212,14 @@ class ShellContentBrowserClient : public ContentBrowserClient {
       base::RepeatingCallback<void(
           const network::mojom::URLLoaderFactoryParams*,
           const url::Origin&,
-          bool is_for_isolated_world)> url_loader_factory_params_callback) {
+          bool is_for_isolated_world,
+          bool is_for_service_worker)> url_loader_factory_params_callback) {
     url_loader_factory_params_callback_ =
         std::move(url_loader_factory_params_callback);
   }
   void set_create_throttles_for_navigation_callback(
-      base::RepeatingCallback<std::vector<std::unique_ptr<NavigationThrottle>>(
-          NavigationHandle*)> create_throttles_for_navigation_callback) {
+      base::RepeatingCallback<void(NavigationThrottleRegistry&)>
+          create_throttles_for_navigation_callback) {
     create_throttles_for_navigation_callback_ =
         create_throttles_for_navigation_callback;
   }
@@ -264,10 +268,10 @@ class ShellContentBrowserClient : public ContentBrowserClient {
       login_request_callback_;
   base::RepeatingCallback<void(const network::mojom::URLLoaderFactoryParams*,
                                const url::Origin&,
-                               bool is_for_isolated_world)>
+                               bool is_for_isolated_world,
+                               bool is_for_service_worker)>
       url_loader_factory_params_callback_;
-  base::RepeatingCallback<std::vector<std::unique_ptr<NavigationThrottle>>(
-      NavigationHandle*)>
+  base::RepeatingCallback<void(NavigationThrottleRegistry&)>
       create_throttles_for_navigation_callback_;
   base::RepeatingCallback<void(blink::web_pref::WebPreferences*)>
       override_web_preferences_callback_;

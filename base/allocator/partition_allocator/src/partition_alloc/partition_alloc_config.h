@@ -54,12 +54,6 @@ static_assert(sizeof(void*) != 8, "");
   (PA_BUILDFLAG(IS_LINUX) || PA_BUILDFLAG(IS_CHROMEOS) || \
    PA_BUILDFLAG(IS_ANDROID))
 
-// If defined, enables zeroing memory on Free() with roughly 1% probability.
-// This applies only to normal buckets, as direct-map allocations are always
-// decommitted.
-// TODO(bartekn): Re-enable once PartitionAlloc-Everywhere evaluation is done.
-#define PA_CONFIG_ZERO_RANDOMLY_ON_FREE() 0
-
 // Need TLS support.
 #define PA_CONFIG_THREAD_CACHE_SUPPORTED() \
   (PA_BUILDFLAG(IS_POSIX) || PA_BUILDFLAG(IS_WIN) || PA_BUILDFLAG(IS_FUCHSIA))
@@ -237,23 +231,6 @@ constexpr bool kUseLazyCommit = false;
 #define PA_CONFIG_PREFER_SMALLER_SLOT_SPANS() 1
 #else
 #define PA_CONFIG_PREFER_SMALLER_SLOT_SPANS() 0
-#endif
-
-// According to crbug.com/1349955#c24, macOS 11 has a bug where they assert that
-// malloc_size() of an allocation is equal to the requested size. This is
-// generally not true. The assert passed only because it happened to be true for
-// the sizes they requested. BRP changes that, hence can't be deployed without a
-// workaround.
-//
-// The bug has been fixed in macOS 12. Here we can only check the platform, and
-// the version is checked dynamically later.
-//
-// The settings has MAYBE_ in the name, because the final decision to enable is
-// based on the operarting system version check done at run-time.
-#if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT) && PA_BUILDFLAG(IS_MAC)
-#define PA_CONFIG_MAYBE_ENABLE_MAC11_MALLOC_SIZE_HACK() 1
-#else
-#define PA_CONFIG_MAYBE_ENABLE_MAC11_MALLOC_SIZE_HACK() 0
 #endif
 
 #if PA_BUILDFLAG(ENABLE_POINTER_COMPRESSION)

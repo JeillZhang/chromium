@@ -141,7 +141,10 @@ void CSSDefaultStyleSheets::Reset() {
   fullscreen_style_sheet_.Clear();
   marker_style_sheet_.Clear();
   scroll_button_style_sheet_.Clear();
+  scroll_marker_style_sheet_.Clear();
   permission_element_style_sheet_.Clear();
+  view_source_style_sheet_.Clear();
+  json_style_sheet_.Clear();
   // Recreate the default style sheet to clean up possible SVG resources.
   String default_rules = UncompressResourceAsASCIIString(IDR_UASTYLE_HTML_CSS) +
                          LayoutTheme::GetTheme().ExtraDefaultStyleSheet();
@@ -177,7 +180,7 @@ void CSSDefaultStyleSheets::VerifyUniversalRuleCount() {
 
   if (media_controls_style_sheet_) {
     default_media_controls_style_->CompactRulesIfNeeded();
-    DCHECK_EQ(default_media_controls_style_->UniversalRules().size(), 4u);
+    DCHECK_EQ(default_media_controls_style_->UniversalRules().size(), 5u);
   }
 
   if (fullscreen_style_sheet_) {
@@ -188,14 +191,18 @@ void CSSDefaultStyleSheets::VerifyUniversalRuleCount() {
            default_fullscreen_style_->UniversalRules().size() == 8u);
   }
 
-  if (marker_style_sheet_ || scroll_button_style_sheet_) {
+  if (marker_style_sheet_ || scroll_button_style_sheet_ ||
+      scroll_marker_style_sheet_) {
     default_pseudo_element_style_->CompactRulesIfNeeded();
     size_t expected_rule_count = 0u;
     if (marker_style_sheet_) {
       expected_rule_count += 3u;
     }
     if (scroll_button_style_sheet_) {
-      expected_rule_count += 32u;
+      expected_rule_count += 5u;
+    }
+    if (scroll_marker_style_sheet_) {
+      expected_rule_count += 6u;
     }
     DCHECK_EQ(default_pseudo_element_style_->UniversalRules().size(),
               expected_rule_count);
@@ -235,10 +242,10 @@ void CSSDefaultStyleSheets::InitializeDefaultStyles() {
 RuleSet* CSSDefaultStyleSheets::DefaultViewSourceStyle() {
   if (!default_view_source_style_) {
     default_view_source_style_ = MakeGarbageCollected<RuleSet>();
-    // Loaded stylesheet is leaked on purpose.
-    StyleSheetContents* stylesheet = ParseUASheet(
+    view_source_style_sheet_ = ParseUASheet(
         UncompressResourceAsASCIIString(IDR_UASTYLE_VIEW_SOURCE_CSS));
-    default_view_source_style_->AddRulesFromSheet(stylesheet, ScreenEval());
+    default_view_source_style_->AddRulesFromSheet(view_source_style_sheet_,
+                                                  ScreenEval());
     default_view_source_style_->CompactRulesIfNeeded();
   }
   return default_view_source_style_.Get();
@@ -246,10 +253,11 @@ RuleSet* CSSDefaultStyleSheets::DefaultViewSourceStyle() {
 
 RuleSet* CSSDefaultStyleSheets::DefaultJSONDocumentStyle() {
   if (!default_json_document_style_) {
-    StyleSheetContents* stylesheet = ParseUASheet(
+    json_style_sheet_ = ParseUASheet(
         UncompressResourceAsASCIIString(IDR_UASTYLE_JSON_DOCUMENT_CSS));
     default_json_document_style_ = MakeGarbageCollected<RuleSet>();
-    default_json_document_style_->AddRulesFromSheet(stylesheet, ScreenEval());
+    default_json_document_style_->AddRulesFromSheet(json_style_sheet_,
+                                                    ScreenEval());
     default_json_document_style_->CompactRulesIfNeeded();
   }
   return default_json_document_style_.Get();
@@ -365,8 +373,7 @@ bool CSSDefaultStyleSheets::EnsureDefaultStyleSheetsForElement(
       builder.Append("video::cue { ");
       if (CSSParser::ParseColor(
               color,
-              MaybeRemoveCSSImportant(settings->GetTextTrackWindowColor()),
-              /*strict=*/true) &&
+              MaybeRemoveCSSImportant(settings->GetTextTrackWindowColor())) &&
           color.Alpha() > 0) {
         AddTextTrackCSSProperties(&builder, CSSPropertyID::kBackgroundColor,
                                   settings->GetTextTrackWindowColor());
@@ -424,6 +431,28 @@ bool CSSDefaultStyleSheets::EnsureDefaultStyleSheetsForPseudoElement(
       default_pseudo_element_style_->AddRulesFromSheet(ScrollButtonStyleSheet(),
                                                        ScreenEval());
       default_pseudo_element_style_->CompactRulesIfNeeded();
+      // We just added a new :focus-visible rule to the UA stylesheet, and
+      // RuleSetGroup caches whether we have any such rules or not, so we need
+      // to clear the cache.
+      rule_set_group_cache_.clear();
+      return true;
+    }
+    case kPseudoIdScrollMarker: {
+      if (scroll_marker_style_sheet_) {
+        return false;
+      }
+      scroll_marker_style_sheet_ = ParseUASheet(
+          UncompressResourceAsASCIIString(IDR_UASTYLE_SCROLL_MARKER_CSS));
+      if (!default_pseudo_element_style_) {
+        default_pseudo_element_style_ = MakeGarbageCollected<RuleSet>();
+      }
+      default_pseudo_element_style_->AddRulesFromSheet(ScrollMarkerStyleSheet(),
+                                                       ScreenEval());
+      default_pseudo_element_style_->CompactRulesIfNeeded();
+      // We just added a new :focus-visible rule to the UA stylesheet, and
+      // RuleSetGroup caches whether we have any such rules or not, so we need
+      // to clear the cache.
+      rule_set_group_cache_.clear();
       return true;
     }
     case kPseudoIdMarker: {
@@ -530,23 +559,50 @@ bool CSSDefaultStyleSheets::EnsureDefaultStyleSheetForForcedColors() {
 
 void CSSDefaultStyleSheets::CollectFeaturesTo(const Document& document,
                                               RuleFeatureSet& features) {
+  ForEachRuleFeatureSet(document, /*call_for_each_stylesheet=*/false,
+                        WTF::BindRepeating(
+                            [](RuleFeatureSet& target_features,
+                               const RuleFeatureSet& default_style_features,
+                               StyleSheetContents* contents) {
+                              target_features.Merge(default_style_features);
+                            },
+                            std::ref(features)));
+}
+
+void CSSDefaultStyleSheets::ForEachRuleFeatureSet(
+    const Document& document,
+    bool call_for_each_stylesheet,
+    base::RepeatingCallback<void(const RuleFeatureSet&, StyleSheetContents*)>
+        func) {
   if (DefaultHtmlStyle()) {
-    features.Merge(DefaultHtmlStyle()->Features());
+    const RuleFeatureSet& features = DefaultHtmlStyle()->Features();
+    func.Run(features, default_style_sheet_);
+    if (call_for_each_stylesheet && permission_element_style_sheet_) {
+      func.Run(features, permission_element_style_sheet_);
+    }
   }
   if (DefaultMediaControlsStyle()) {
-    features.Merge(DefaultMediaControlsStyle()->Features());
+    const RuleFeatureSet& features = DefaultMediaControlsStyle()->Features();
+    func.Run(features, media_controls_style_sheet_);
+    if (call_for_each_stylesheet && text_track_style_sheet_) {
+      func.Run(features, text_track_style_sheet_);
+    }
   }
   if (DefaultMathMLStyle()) {
-    features.Merge(DefaultMathMLStyle()->Features());
+    const RuleFeatureSet& features = DefaultMathMLStyle()->Features();
+    func.Run(features, mathml_style_sheet_);
   }
   if (DefaultFullscreenStyle()) {
-    features.Merge(DefaultFullscreenStyle()->Features());
+    const RuleFeatureSet& features = DefaultFullscreenStyle()->Features();
+    func.Run(features, fullscreen_style_sheet_);
   }
   if (document.IsViewSource() && DefaultViewSourceStyle()) {
-    features.Merge(DefaultViewSourceStyle()->Features());
+    const RuleFeatureSet& features = DefaultViewSourceStyle()->Features();
+    func.Run(features, view_source_style_sheet_);
   }
   if (document.IsJSONDocument() && DefaultJSONDocumentStyle()) {
-    features.Merge(DefaultJSONDocumentStyle()->Features());
+    const RuleFeatureSet& features = DefaultJSONDocumentStyle()->Features();
+    func.Run(features, json_style_sheet_);
   }
 }
 
@@ -561,6 +617,9 @@ void CSSDefaultStyleSheets::Trace(Visitor* visitor) const {
   visitor->Trace(default_pseudo_element_style_);
   visitor->Trace(default_media_controls_style_);
   visitor->Trace(default_fullscreen_style_);
+  visitor->Trace(default_json_document_style_);
+  visitor->Trace(default_forced_colors_media_controls_style_);
+
   visitor->Trace(default_style_sheet_);
   visitor->Trace(quirks_style_sheet_);
   visitor->Trace(svg_style_sheet_);
@@ -572,8 +631,10 @@ void CSSDefaultStyleSheets::Trace(Visitor* visitor) const {
   visitor->Trace(fullscreen_style_sheet_);
   visitor->Trace(marker_style_sheet_);
   visitor->Trace(scroll_button_style_sheet_);
-  visitor->Trace(default_json_document_style_);
-  visitor->Trace(default_forced_colors_media_controls_style_);
+  visitor->Trace(scroll_marker_style_sheet_);
+  visitor->Trace(view_source_style_sheet_);
+  visitor->Trace(json_style_sheet_);
+
   visitor->Trace(rule_set_group_cache_);
 }
 

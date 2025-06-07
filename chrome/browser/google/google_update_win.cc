@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -36,6 +37,7 @@
 #include "base/win/atl.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/win_util.h"
+#include "chrome/browser/google/google_update_app_command.h"
 #include "chrome/browser/google/switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
@@ -117,18 +119,6 @@ GoogleUpdateErrorCode CanUpdateCurrentChrome(
              : CANNOT_UPGRADE_CHROME_IN_THIS_DIRECTORY;
 }
 
-// Explicitly allow the Google Update service to impersonate the client since
-// some COM code elsewhere in the browser process may have previously used
-// CoInitializeSecurity to set the impersonation level to something other than
-// the default. Ignore errors since an attempt to use Google Update may succeed
-// regardless.
-void ConfigureProxyBlanket(IUnknown* interface_pointer) {
-  ::CoSetProxyBlanket(
-      interface_pointer, RPC_C_AUTHN_DEFAULT, RPC_C_AUTHZ_DEFAULT,
-      COLE_DEFAULT_PRINCIPAL, RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
-      RPC_C_IMP_LEVEL_IMPERSONATE, nullptr, EOAC_DYNAMIC_CLOAKING);
-}
-
 // Creates a class factory for a COM Local Server class using the Elevation
 // moniker. |hwnd| must refer to a foregound window in order to get the UAC
 // prompt to appear in the foreground if running on Vista+. It can also be NULL
@@ -149,7 +139,7 @@ HRESULT CoGetClassObjectAsAdmin(gfx::AcceleratedWidget hwnd,
   BIND_OPTS3 bind_opts;
   // An explicit memset is needed rather than relying on value initialization
   // since BIND_OPTS3 is not an aggregate (it is a derived type).
-  memset(&bind_opts, 0, sizeof(bind_opts));
+  UNSAFE_TODO(memset(&bind_opts, 0, sizeof(bind_opts)));
   bind_opts.cbStruct = sizeof(bind_opts);
   bind_opts.dwClassContext = CLSCTX_LOCAL_SERVER;
   bind_opts.hwnd = hwnd;
@@ -608,12 +598,6 @@ UpdateCheckResult UpdateCheckDriver::BeginUpdateCheckInternal() {
     hresult = app_bundle->initialize();
     if (FAILED(hresult)) {
       return {error_code, hresult};
-    }
-    if (elevation_window_) {
-      // Likewise, a failure to set the parent window need not block an update
-      // check.
-      app_bundle->put_parentHWND(
-          reinterpret_cast<ULONG_PTR>(elevation_window_));
     }
     app_bundle_.Swap(app_bundle);
   }

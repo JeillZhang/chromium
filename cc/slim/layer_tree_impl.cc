@@ -11,6 +11,7 @@
 #include "base/auto_reset.h"
 #include "base/containers/adapters.h"
 #include "base/metrics/histogram.h"
+#include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/typed_macros.h"
 #include "cc/base/histograms.h"
@@ -491,7 +492,7 @@ void LayerTreeImpl::GenerateCompositorFrame(
     // embed something. There is no way to provide an offset value without an
     // embedded viz::Surface to look the value up from.
     // TODO(b/334144355): Don't tag quads if no definition is added.
-    if (layer->surface_id().is_valid()) {
+    if (layer->surface_range().IsValid()) {
       out_frame.metadata.offset_tag_definitions.push_back(
           layer->GetOffsetTagDefinition(tag));
     }

@@ -17,6 +17,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/process_memory_dump.h"
@@ -24,7 +25,7 @@
 #include "base/trace_event/traced_value.h"
 #include "build/build_config.h"
 #include "cc/debug/debug_colors.h"
-#include "cc/metrics/dropped_frame_counter.h"
+#include "cc/metrics/frame_sorter.h"
 #include "cc/paint/display_item_list.h"
 #include "cc/paint/image_provider.h"
 #include "cc/paint/paint_canvas.h"
@@ -244,32 +245,14 @@ void HeadsUpDisplayLayerImpl::UpdateHudTexture(
         internal_content_bounds_, raster_caps.tile_format, gfx::ColorSpace());
 
     if (!pool_resource.backing()) {
-      auto backing = std::make_unique<ResourcePool::Backing>();
       auto* sii = raster_context_provider->SharedImageInterface();
-      backing->overlay_candidate = raster_caps.tile_overlay_candidate;
 
-      gpu::SharedImageUsageSet flags = gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
-                                       gpu::SHARED_IMAGE_USAGE_RASTER_WRITE;
-      if (raster_caps.use_gpu_rasterization) {
-        flags |= gpu::SHARED_IMAGE_USAGE_OOP_RASTERIZATION;
-      }
-      if (backing->overlay_candidate) {
-        flags |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
-      }
-      backing->set_shared_image(sii->CreateSharedImage(
-          {pool_resource.format(), pool_resource.size(),
-           pool_resource.color_space(), flags, "HeadsUpDisplayLayer"},
-          gpu::kNullSurfaceHandle));
-      CHECK(backing->shared_image());
-      auto* ri = raster_context_provider->RasterInterface();
-      ri->WaitSyncTokenCHROMIUM(sii->GenUnverifiedSyncToken().GetConstData());
-      pool_resource.set_backing(std::move(backing));
+      pool_resource.InstallGpuBacking(sii, raster_caps.tile_overlay_candidate,
+                                      raster_caps.use_gpu_rasterization,
+                                      "HeadsUpDisplayLayer");
+      pool_resource.backing()->returned_sync_token =
+          pool_resource.backing()->shared_image()->creation_sync_token();
       needs_clear = true;
-    } else if (pool_resource.backing()->returned_sync_token.HasData()) {
-      auto* ri = raster_context_provider->RasterInterface();
-      ri->WaitSyncTokenCHROMIUM(
-          pool_resource.backing()->returned_sync_token.GetConstData());
-      pool_resource.backing()->returned_sync_token = gpu::SyncToken();
     }
   } else {
     DCHECK_EQ(draw_mode, DRAW_MODE_SOFTWARE);
@@ -281,14 +264,7 @@ void HeadsUpDisplayLayerImpl::UpdateHudTexture(
                                            gfx::ColorSpace());
 
     if (!pool_resource.backing()) {
-      auto backing = std::make_unique<ResourcePool::Backing>();
-      backing->shared_image_interface = sii;
-      backing->set_shared_image(sii->CreateSharedImageForSoftwareCompositor(
-          {pool_resource.format(), pool_resource.size(),
-           pool_resource.color_space(), gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY,
-           "HeadsUpDisplayLayer"}));
-      CHECK(backing->shared_image());
-      pool_resource.set_backing(std::move(backing));
+      pool_resource.InstallSoftwareBacking(sii, "HeadsUpDisplayLayer");
     }
   }
 
@@ -297,6 +273,12 @@ void HeadsUpDisplayLayerImpl::UpdateHudTexture(
     auto* backing = pool_resource.backing();
     auto* ri = raster_context_provider->RasterInterface();
 
+    std::unique_ptr<gpu::RasterScopedAccess> ri_access =
+        backing->shared_image()->BeginRasterAccess(
+            ri, backing->returned_sync_token, /*readonly=*/false);
+    if (backing->returned_sync_token.HasData()) {
+      backing->returned_sync_token = gpu::SyncToken();
+    }
     if (raster_caps.use_gpu_rasterization) {
       // If using |gpu_raster|, DrawHudContents() directly to a gpu texture
       // which is wrapped in an SkSurface.
@@ -354,7 +336,7 @@ void HeadsUpDisplayLayerImpl::UpdateHudTexture(
     }
 
     backing->mailbox_sync_token =
-        viz::ClientResourceProvider::GenerateSyncTokenHelper(ri);
+        gpu::RasterScopedAccess::EndAccess(std::move(ri_access));
   } else {
     // If not using gpu compositing, we DrawHudContents() directly into a shared
     // memory bitmap, wrapped in an SkSurface, that can be shared to the display
@@ -420,7 +402,7 @@ void HeadsUpDisplayLayerImpl::UpdateHudTexture(
             static_cast<double>(in_flight_resource_.size().height()));
       }
       quad->SetNew(sqs, quad_rect, visible_rect, /*needs_blending=*/true,
-                   resource_id, /*premultiplied_alpha=*/true,
+                   resource_id,
                    /*uv_top_left=*/gfx::PointF(),
                    /*uv_bottom_right=*/uv_bottom_right,
                    /*background_color=*/SkColors::kTransparent,
@@ -488,7 +470,7 @@ void HeadsUpDisplayLayerImpl::UpdateHudContents() {
 
     if (debug_state.show_fps_counter) {
       throughput_value_ =
-          layer_tree_impl()->dropped_frame_counter()->GetAverageThroughput();
+          layer_tree_impl()->frame_sorter()->GetAverageThroughput();
       const auto& args = layer_tree_impl()->CurrentBeginFrameArgs();
       if (args.IsValid())
         frame_interval_ = args.interval;
@@ -538,8 +520,7 @@ void HeadsUpDisplayLayerImpl::DrawHudContents(PaintCanvas* canvas) {
   SkRect area = SkRect::MakeXYWH(0, 0, 0, 0);
 
   if (debug_state.show_fps_counter) {
-    area = DrawFrameThroughputDisplay(
-        canvas, layer_tree_impl()->dropped_frame_counter(), 0, 0);
+    area = DrawFrameThroughputDisplay(canvas, 0, 0);
     area = DrawGpuRasterizationStatus(canvas, 0, area.bottom(),
                                       std::max<SkScalar>(area.width(), 150));
   }
@@ -653,9 +634,9 @@ void HeadsUpDisplayLayerImpl::DrawSeparatorLine(PaintCanvas* canvas,
 
 SkRect HeadsUpDisplayLayerImpl::DrawFrameThroughputDisplay(
     PaintCanvas* canvas,
-    const DroppedFrameCounter* dropped_frame_counter,
     int right,
     int top) const {
+  FrameSorter* frame_sorter = layer_tree_impl()->frame_sorter();
   const int kPadding = 4;
   const int kGap = 6;
 
@@ -663,7 +644,7 @@ SkRect HeadsUpDisplayLayerImpl::DrawFrameThroughputDisplay(
   const int kFontHeight = 12;
 
   const int kGraphWidth =
-      base::saturated_cast<int>(dropped_frame_counter->frame_history_size());
+      base::saturated_cast<int>(frame_sorter->frame_history_size());
   const int kGraphHeight = 40;
 
   int width = kGraphWidth + 4 * kPadding;
@@ -710,14 +691,13 @@ SkRect HeadsUpDisplayLayerImpl::DrawFrameThroughputDisplay(
   SkPath good_path;
   SkPath dropped_path;
   SkPath partial_path;
-  for (auto it = dropped_frame_counter->End(); it; --it) {
+  for (auto it = frame_sorter->End(); it; --it) {
     const auto state = **it;
     int x = graph_bounds.left() + it.index();
-    SkPath& path = state == DroppedFrameCounter::kFrameStateDropped
-                       ? dropped_path
-                       : state == DroppedFrameCounter::kFrameStateComplete
-                             ? good_path
-                             : partial_path;
+    SkPath& path = state == FrameInfo::FrameFinalState::kDropped ? dropped_path
+                   : state == FrameInfo::FrameFinalState::kPresentedAll
+                       ? good_path
+                       : partial_path;
     path.moveTo(x, graph_bounds.top());
     path.lineTo(x, graph_bounds.bottom());
   }

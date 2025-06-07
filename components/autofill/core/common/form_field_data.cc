@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <optional>
 #include <tuple>
+#include <variant>
 
 #include "base/notreached.h"
 #include "base/pickle.h"
@@ -15,10 +16,12 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/types/cxx23_to_underlying.h"
+#include "base/types/zip.h"
 #include "build/build_config.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_util.h"
 #include "components/autofill/core/common/logging/log_buffer.h"
+#include "components/autofill/core/common/logging/stream_operator_util.h"
 
 // TODO(crbug.com/41422062): Clean up the (de)serialization code.
 
@@ -172,9 +175,10 @@ bool DeserializeSection3(base::PickleIterator* iter,
   }
   field_data->set_text_direction(text_direction);
   std::vector<SelectOption> options;
-  for (size_t i = 0; i < option_values.size(); ++i) {
-    options.push_back({.value = std::move(option_values[i]),
-                       .text = std::move(option_texts[i])});
+  for (auto [option_value, option_text] :
+       base::zip(option_values, option_texts)) {
+    options.push_back(
+        {.value = std::move(option_value), .text = std::move(option_text)});
   }
   field_data->set_options(std::move(options));
   return true;
@@ -296,22 +300,22 @@ Section::operator bool() const {
 }
 
 bool Section::is_from_autocomplete() const {
-  return absl::holds_alternative<Autocomplete>(value_);
+  return std::holds_alternative<Autocomplete>(value_);
 }
 
 bool Section::is_from_fieldidentifier() const {
-  return absl::holds_alternative<FieldIdentifier>(value_);
+  return std::holds_alternative<FieldIdentifier>(value_);
 }
 
 bool Section::is_default() const {
-  return absl::holds_alternative<Default>(value_);
+  return std::holds_alternative<Default>(value_);
 }
 
 std::string Section::ToString() const {
   static constexpr char kDefaultSection[] = "-default";
 
   std::string section_name;
-  if (const Autocomplete* autocomplete = absl::get_if<Autocomplete>(&value_)) {
+  if (const Autocomplete* autocomplete = std::get_if<Autocomplete>(&value_)) {
     // To prevent potential section name collisions, append `kDefaultSection`
     // suffix to fields without a `HtmlFieldMode`. Without this, 'autocomplete'
     // attribute values "section--shipping street-address" and "shipping
@@ -320,8 +324,7 @@ std::string Section::ToString() const {
                    (autocomplete->mode != HtmlFieldMode::kNone
                         ? "-" + HtmlFieldModeToString(autocomplete->mode)
                         : kDefaultSection);
-  } else if (const FieldIdentifier* f =
-                 absl::get_if<FieldIdentifier>(&value_)) {
+  } else if (const FieldIdentifier* f = std::get_if<FieldIdentifier>(&value_)) {
     FieldIdentifier field_identifier = *f;
     section_name = base::StrCat(
         {field_identifier.field_name, "_",
@@ -367,13 +370,11 @@ base::optional_ref<const SelectOption> FormFieldData::selected_option() const {
 
 bool FormFieldData::SameFieldAs(const FormFieldData& field) const {
   auto equality_tuple = [](const FormFieldData& f) {
-    return std::tuple_cat(
-        std::tie(f.label_, f.name_, f.name_attribute_, f.id_attribute_,
-                 f.form_control_type_, f.autocomplete_attribute_,
-                 f.placeholder_, f.max_length_, f.css_classes_, f.is_focusable_,
-                 f.should_autocomplete_, f.role_, f.text_direction_,
-                 f.options_),
-        std::make_tuple(IsCheckable(f.check_status_)));
+    return std::tie(f.label_, f.name_, f.name_attribute_, f.id_attribute_,
+                    f.form_control_type_, f.autocomplete_attribute_,
+                    f.placeholder_, f.max_length_, f.css_classes_,
+                    f.is_focusable_, f.should_autocomplete_, f.role_,
+                    f.text_direction_, f.options_);
   };
   return equality_tuple(*this) == equality_tuple(field);
 }
@@ -398,7 +399,7 @@ bool FormFieldData::IsSelectElement() const {
 
 // static
 bool FormFieldData::DeepEqual(const FormFieldData& a, const FormFieldData& b) {
-  return a.renderer_id() == b.renderer_id() && a.SameFieldAs(b);
+  return a.global_id() == b.global_id() && a.SameFieldAs(b);
 }
 
 FormFieldData::FillData::FillData() = default;
@@ -424,6 +425,8 @@ std::string_view FormControlTypeToString(FormControlType type) {
       return "contenteditable";
     case FormControlType::kInputCheckbox:
       return "checkbox";
+    case FormControlType::kInputDate:
+      return "date";
     case FormControlType::kInputEmail:
       return "email";
     case FormControlType::kInputMonth:
@@ -626,33 +629,56 @@ bool DeserializeFormFieldData(base::PickleIterator* iter,
 }
 
 std::ostream& operator<<(std::ostream& os, const FormFieldData& field) {
-  return os << "label='" << field.label() << "' "
-            << "unique_Id=" << field.global_id() << " " << "origin='"
-            << field.origin().Serialize() << "' " << "name='" << field.name()
-            << "' " << "id_attribute='" << field.id_attribute() << "' "
-            << "name_attribute='" << field.name_attribute() << "' " << "value='"
-            << field.value() << "' " << "control='" << field.form_control_type()
-            << "' " << "autocomplete='" << field.autocomplete_attribute()
-            << "' " << "parsed_autocomplete='"
-            << (field.parsed_autocomplete()
-                    ? field.parsed_autocomplete()->ToString()
-                    : "")
-            << "' " << "placeholder='" << field.placeholder() << "' "
-            << "max_length=" << field.max_length() << " " << "css_classes='"
-            << field.css_classes() << "' "
-            << "autofilled=" << field.is_autofilled() << " "
-            << "check_status=" << field.check_status() << " "
-            << "is_focusable=" << field.is_focusable() << " "
-            << "should_autocomplete=" << field.should_autocomplete() << " "
-            << "role=" << field.role() << " "
-            << "text_direction=" << field.text_direction() << " "
-            << "is_enabled=" << field.is_enabled() << " "
-            << "is_readonly=" << field.is_readonly() << " "
-            << "user_input=" << field.user_input() << " "
-            << "properties_mask=" << field.properties_mask() << " "
-            << "label_source=" << field.label_source() << " "
-            << "bounds=" << field.bounds().ToString();
+  return internal::PrintWithIndentation(os, field, /*indentation=*/0);
 }
+
+namespace internal {
+
+std::ostream& PrintWithIndentation(std::ostream& os,
+                                   const FormFieldData& field,
+                                   int indentation,
+                                   std::string_view title) {
+  std::string space = std::string(indentation, ' ');
+  os << space << "{";
+  if (!title.empty()) {
+    os << " /*" << title << "*/";
+  }
+  os << '\n';
+#define PRINT_PROPERTY(property)                                             \
+  os << space << "  " << #property << ": " << PrintWrapper(field.property()) \
+     << ",\n"
+  PRINT_PROPERTY(global_id);
+  PRINT_PROPERTY(label);
+  PRINT_PROPERTY(origin);
+  PRINT_PROPERTY(name);
+  PRINT_PROPERTY(id_attribute);
+  PRINT_PROPERTY(name_attribute);
+  PRINT_PROPERTY(value);
+  PRINT_PROPERTY(form_control_type);
+  PRINT_PROPERTY(autocomplete_attribute);
+  PRINT_PROPERTY(parsed_autocomplete);
+  PRINT_PROPERTY(placeholder);
+  PRINT_PROPERTY(max_length);
+  PRINT_PROPERTY(css_classes);
+  PRINT_PROPERTY(is_autofilled);
+  PRINT_PROPERTY(check_status);
+  PRINT_PROPERTY(is_focusable);
+  PRINT_PROPERTY(should_autocomplete);
+  PRINT_PROPERTY(role);
+  PRINT_PROPERTY(text_direction);
+  PRINT_PROPERTY(is_enabled);
+  PRINT_PROPERTY(is_readonly);
+  PRINT_PROPERTY(is_focusable);
+  PRINT_PROPERTY(is_visible);
+  PRINT_PROPERTY(user_input);
+  PRINT_PROPERTY(label_source);
+  PRINT_PROPERTY(bounds);
+#undef PRINT_PROPERTY
+  os << space << "}";
+  return os;
+}
+
+}  // namespace internal
 
 LogBuffer& operator<<(LogBuffer& buffer, const FormFieldData& field) {
   buffer << Tag{"table"};

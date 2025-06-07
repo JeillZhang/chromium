@@ -144,7 +144,7 @@ public class OMADownloadHandlerTest {
 
     /** Helper class to verify the result of {@DownloadManagerDelegate.queryDownloadResult}. */
     private static class DownloadQueryResultVerifier implements Callback<DownloadQueryResult> {
-        private int mExpectedDownloadStatus;
+        private final int mExpectedDownloadStatus;
 
         public boolean mQueryCompleted;
 
@@ -312,7 +312,7 @@ public class OMADownloadHandlerTest {
      */
     @Test
     @MediumTest
-    @DisableIf.Build(sdk_is_greater_than = VERSION_CODES.Q) // https://crbug.com/338971643
+    @DisableIf.Build(sdk_is_greater_than = VERSION_CODES.P) // https://crbug.com/338971643
     @Feature({"Download"})
     public void testQueryDownloadResult() {
         Context context = getTestContext();
@@ -346,7 +346,7 @@ public class OMADownloadHandlerTest {
      */
     @Test
     @MediumTest
-    @DisableIf.Build(sdk_is_greater_than = VERSION_CODES.Q) // https://crbug.com/338971643
+    @DisableIf.Build(sdk_is_greater_than = VERSION_CODES.P) // https://crbug.com/338971643
     @Feature({"Download"})
     public void testClearPendingOMADownloads() {
         Context context = getTestContext();

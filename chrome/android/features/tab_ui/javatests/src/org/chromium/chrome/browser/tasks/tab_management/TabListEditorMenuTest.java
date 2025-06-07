@@ -14,6 +14,7 @@ import static androidx.test.espresso.matcher.ViewMatchers.withText;
 import static org.hamcrest.CoreMatchers.allOf;
 import static org.hamcrest.CoreMatchers.not;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -25,7 +26,9 @@ import android.view.LayoutInflater;
 import android.widget.LinearLayout;
 
 import androidx.appcompat.content.res.AppCompatResources;
+import androidx.core.view.ViewCompat;
 import androidx.test.filters.MediumTest;
+import androidx.test.filters.SmallTest;
 
 import org.junit.After;
 import org.junit.Before;
@@ -46,6 +49,7 @@ import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Feature;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModel;
@@ -56,6 +60,7 @@ import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.Icon
 import org.chromium.chrome.browser.tasks.tab_management.TabListEditorAction.ShowMode;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
 import org.chromium.chrome.test.R;
+import org.chromium.components.browser_ui.util.motion.MotionEventInfo;
 import org.chromium.components.browser_ui.widget.NumberRollView;
 import org.chromium.components.browser_ui.widget.selectable_list.SelectionDelegate;
 import org.chromium.ui.UiUtils;
@@ -89,7 +94,7 @@ public class TabListEditorMenuTest {
     private static final Integer[] TAB_IDS = new Integer[] {TAB_ID_0, TAB_ID_1, TAB_ID_2};
 
     @ParameterAnnotations.ClassParameter
-    private static List<ParameterSet> sClassParams =
+    private static final List<ParameterSet> sClassParams =
             new NightModeTestUtils.NightModeParams().getParameters();
 
     @ClassRule
@@ -137,12 +142,15 @@ public class TabListEditorMenuTest {
         }
 
         @Override
-        public void onSelectionStateChange(List<Integer> tabs) {
-            setEnabledAndItemCount(mShouldEnableAction, tabs.size());
+        public void onSelectionStateChange(List<TabListEditorItemSelectionId> itemIds) {
+            setEnabledAndItemCount(mShouldEnableAction, itemIds.size());
         }
 
         @Override
-        public boolean performAction(List<Tab> tabs) {
+        public boolean performAction(
+                List<Tab> tabs,
+                List<String> tabGroupSyncIds,
+                @Nullable MotionEventInfo triggeringMotion) {
             return true;
         }
 
@@ -154,10 +162,10 @@ public class TabListEditorMenuTest {
 
     @Mock private TabModel mTabModel;
     @Mock private TabGroupModelFilter mTabGroupModelFilter;
-    private SelectionDelegate<Integer> mSelectionDelegate;
+    private SelectionDelegate<TabListEditorItemSelectionId> mSelectionDelegate;
     @Mock private ActionDelegate mDelegate;
 
-    private List<Tab> mTabs = new ArrayList<>();
+    private final List<Tab> mTabs = new ArrayList<>();
 
     private TabListEditorToolbar mToolbar;
     private TabListEditorMenu mTabListEditorMenu;
@@ -190,8 +198,7 @@ public class TabListEditorMenuTest {
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    mSelectionDelegate = new SelectionDelegate<>();
-                    mSelectionDelegate.setSelectionModeEnabledForZeroItems(true);
+                    mSelectionDelegate = new SelectionDelegate<>(true);
                     LinearLayout layout = new LinearLayout(sActivity);
                     LinearLayout.LayoutParams layoutParams =
                             new LinearLayout.LayoutParams(
@@ -280,7 +287,13 @@ public class TabListEditorMenuTest {
                     configureMenuWithActions(actions);
                 });
 
-        setSelectedItems(new HashSet<>(Arrays.asList(new Integer[] {TAB_ID_0, TAB_ID_2})));
+        setSelectedItems(
+                new HashSet<>(
+                        Arrays.asList(
+                                new TabListEditorItemSelectionId[] {
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_0),
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_2)
+                                })));
         assertActionView(R.id.tab_list_editor_close_menu_item, true);
 
         forceFinishRollAnimation();
@@ -307,7 +320,12 @@ public class TabListEditorMenuTest {
                 });
 
         ThreadUtils.runOnUiThreadBlocking(() -> actions.get(0).setShouldEnableAction(false));
-        setSelectedItems(new HashSet<>(Arrays.asList(new Integer[] {TAB_ID_1})));
+        setSelectedItems(
+                new HashSet<>(
+                        Arrays.asList(
+                                new TabListEditorItemSelectionId[] {
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_1)
+                                })));
         assertActionView(R.id.tab_list_editor_close_menu_item, false);
 
         forceFinishRollAnimation();
@@ -334,7 +352,13 @@ public class TabListEditorMenuTest {
                 });
 
         setSelectedItems(
-                new HashSet<>(Arrays.asList(new Integer[] {TAB_ID_0, TAB_ID_1, TAB_ID_2})));
+                new HashSet<>(
+                        Arrays.asList(
+                                new TabListEditorItemSelectionId[] {
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_0),
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_1),
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_2)
+                                })));
         assertActionView(R.id.tab_list_editor_close_menu_item, true);
 
         forceFinishRollAnimation();
@@ -371,7 +395,13 @@ public class TabListEditorMenuTest {
                         helper.notifyCalled();
                     }
                 };
-        setSelectedItems(new HashSet<>(Arrays.asList(new Integer[] {TAB_ID_0, TAB_ID_2})));
+        setSelectedItems(
+                new HashSet<>(
+                        Arrays.asList(
+                                new TabListEditorItemSelectionId[] {
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_0),
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_2)
+                                })));
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     actions.get(0).addActionObserver(observer);
@@ -408,7 +438,13 @@ public class TabListEditorMenuTest {
                 });
 
         ThreadUtils.runOnUiThreadBlocking(() -> actions.get(0).setShouldEnableAction(false));
-        setSelectedItems(new HashSet<>(Arrays.asList(new Integer[] {TAB_ID_0, TAB_ID_1})));
+        setSelectedItems(
+                new HashSet<>(
+                        Arrays.asList(
+                                new TabListEditorItemSelectionId[] {
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_0),
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_1)
+                                })));
 
         PopupListener listener = new PopupListener();
         openMenu(listener);
@@ -451,7 +487,12 @@ public class TabListEditorMenuTest {
                     }
                 };
 
-        setSelectedItems(new HashSet<>(Arrays.asList(new Integer[] {TAB_ID_2})));
+        setSelectedItems(
+                new HashSet<>(
+                        Arrays.asList(
+                                new TabListEditorItemSelectionId[] {
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_2)
+                                })));
         ThreadUtils.runOnUiThreadBlocking(() -> actions.get(0).addActionObserver(observer));
 
         PopupListener listener = new PopupListener();
@@ -535,7 +576,12 @@ public class TabListEditorMenuTest {
                     configureMenuWithActions(actions);
                 });
 
-        setSelectedItems(new HashSet<>(Arrays.asList(new Integer[] {TAB_ID_2})));
+        setSelectedItems(
+                new HashSet<>(
+                        Arrays.asList(
+                                new TabListEditorItemSelectionId[] {
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_2)
+                                })));
 
         assertActionView(R.id.tab_list_editor_group_menu_item, true);
 
@@ -584,7 +630,7 @@ public class TabListEditorMenuTest {
                     actions.get(1).setShouldEnableAction(false);
                 });
 
-        setSelectedItems(new HashSet<>(Arrays.asList(new Integer[] {})));
+        setSelectedItems(new HashSet<>(Arrays.asList(new TabListEditorItemSelectionId[] {})));
 
         assertActionView(R.id.tab_list_editor_group_menu_item, false);
 
@@ -621,7 +667,12 @@ public class TabListEditorMenuTest {
                 });
 
         ThreadUtils.runOnUiThreadBlocking(() -> actions.get(1).setShouldEnableAction(false));
-        setSelectedItems(new HashSet<>(Arrays.asList(new Integer[] {TAB_ID_1})));
+        setSelectedItems(
+                new HashSet<>(
+                        Arrays.asList(
+                                new TabListEditorItemSelectionId[] {
+                                    TabListEditorItemSelectionId.createTabId(TAB_ID_1)
+                                })));
 
         PopupListener listener = new PopupListener();
         openMenu(listener);
@@ -633,10 +684,68 @@ public class TabListEditorMenuTest {
         closeMenu(listener);
     }
 
+    @Test
+    @SmallTest
+    public void testAccessibilityPaneDescription_beforeSelection() {
+        assertNull(ViewCompat.getAccessibilityPaneTitle(mToolbar));
+    }
+
+    @Test
+    @SmallTest
+    public void testAccessibilityPaneDescription_afterSelectOne() {
+        // Set has to be mutable. If not, modification will be attempted and throw an error.
+        setSelectedItems(new HashSet<>(Set.of(TabListEditorItemSelectionId.createTabId(TAB_ID_1))));
+        assertEquals(
+                mToolbar.getContext().getString(R.string.accessibility_toolbar_multi_select, 1),
+                ViewCompat.getAccessibilityPaneTitle(mToolbar));
+    }
+
+    @Test
+    @SmallTest
+    public void testAccessibilityPaneDescription_afterSelectTwo() {
+        setSelectedItems(new HashSet<>(Set.of(TabListEditorItemSelectionId.createTabId(TAB_ID_1))));
+        setSelectedItems(
+                new HashSet<>(
+                        Set.of(
+                                TabListEditorItemSelectionId.createTabId(TAB_ID_1),
+                                TabListEditorItemSelectionId.createTabId(TAB_ID_2))));
+        assertEquals(
+                mToolbar.getContext().getString(R.string.accessibility_toolbar_multi_select, 2),
+                ViewCompat.getAccessibilityPaneTitle(mToolbar));
+    }
+
+    @Test
+    @SmallTest
+    public void testAccessibilityPaneDescription_afterSelectThenDeselect() {
+        setSelectedItems(
+                new HashSet<>(
+                        Set.of(
+                                TabListEditorItemSelectionId.createTabId(TAB_ID_1),
+                                TabListEditorItemSelectionId.createTabId(TAB_ID_2))));
+        setSelectedItems(new HashSet<>());
+        assertEquals(
+                mToolbar.getContext().getString(R.string.accessibility_toolbar_multi_select, 0),
+                ViewCompat.getAccessibilityPaneTitle(mToolbar));
+    }
+
+    @Test
+    @SmallTest
+    public void testAccessibilityPaneDescription_afterSelectThenClear() {
+        setSelectedItems(
+                new HashSet<>(
+                        Set.of(
+                                TabListEditorItemSelectionId.createTabId(TAB_ID_1),
+                                TabListEditorItemSelectionId.createTabId(TAB_ID_2))));
+        ThreadUtils.runOnUiThreadBlocking(mSelectionDelegate::clearSelection);
+        assertEquals(
+                mToolbar.getContext().getString(R.string.accessibility_toolbar_multi_select, 0),
+                ViewCompat.getAccessibilityPaneTitle(mToolbar));
+    }
+
     /** Helper for detecting menu shown popup events. */
     static class PopupListener implements ListMenuHost.PopupMenuShownListener {
-        private CallbackHelper mShown = new CallbackHelper();
-        private CallbackHelper mHidden = new CallbackHelper();
+        private final CallbackHelper mShown = new CallbackHelper();
+        private final CallbackHelper mHidden = new CallbackHelper();
 
         @Override
         public void onPopupMenuShown() {
@@ -708,10 +817,10 @@ public class TabListEditorMenuTest {
                 .perform(click());
     }
 
-    private void setSelectedItems(Set<Integer> tabIds) {
+    private void setSelectedItems(Set<TabListEditorItemSelectionId> itemIds) {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    mSelectionDelegate.setSelectedItems(tabIds);
+                    mSelectionDelegate.setSelectedItems(itemIds);
                     mToolbar.invalidate();
                 });
     }

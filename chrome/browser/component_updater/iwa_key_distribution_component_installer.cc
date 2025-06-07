@@ -9,10 +9,12 @@
 #include <utility>
 #include <vector>
 
+#include "base/check_deref.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
@@ -22,12 +24,17 @@
 #include "base/values.h"
 #include "base/version.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/iwa_key_distribution_info_provider.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/chrome_switches.h"
 #include "components/component_updater/component_installer.h"
 #include "components/component_updater/component_updater_service.h"
 #include "components/crx_file/id_util.h"
 #include "components/update_client/update_client.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "content/public/common/content_features.h"
+#endif  // BUILDFLAG(IS_WIN)
 
 namespace {
 
@@ -48,10 +55,29 @@ void OnDemandUpdateCompleted(update_client::Error err) {
           << base::to_underlying(err);
 }
 
+component_updater::OnDemandUpdater::Priority GetOnDemandUpdatePriority() {
+#if BUILDFLAG(IS_WIN)
+  return component_updater::OnDemandUpdater::Priority::FOREGROUND;
+#else
+  return component_updater::OnDemandUpdater::Priority::BACKGROUND;
+#endif
+}
+
+bool IsOnDemandUpdateSupported() {
+  // `switches::kDisableComponentUpdate` is set by default in
+  // browsertests.
+  return component_updater::IwaKeyDistributionComponentInstallerPolicy::
+             IsSupported() &&
+         !base::CommandLine::ForCurrentProcess()->HasSwitch(
+             switches::kDisableComponentUpdate) &&
+         g_browser_process && g_browser_process->component_updater();
+}
+
 }  // namespace
 
 namespace component_updater {
 
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 BASE_FEATURE(kIwaKeyDistributionComponent,
              "IwaKeyDistributionComponent",
 #if BUILDFLAG(IS_CHROMEOS)
@@ -60,6 +86,7 @@ BASE_FEATURE(kIwaKeyDistributionComponent,
              base::FEATURE_DISABLED_BY_DEFAULT
 #endif  // !BUILDFLAG(IS_CHROMEOS)
 );
+#endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
 IwaKeyDistributionComponentInstallerPolicy::
     IwaKeyDistributionComponentInstallerPolicy() = default;
@@ -67,19 +94,33 @@ IwaKeyDistributionComponentInstallerPolicy::
     ~IwaKeyDistributionComponentInstallerPolicy() = default;
 
 // static
+bool IwaKeyDistributionComponentInstallerPolicy::IsSupported() {
+  // kIwaKeyDistributionComponent feature flag is somewhat useless without
+  // features::kIsolatedWebApps. On ChromeOS, it's kept separately for the time
+  // being as a kill switch and will be retired shortly; on Mac/Linux, the
+  // component logic is not fully supported, so it has to be kept separated from
+  // the main IWA feature.
+#if BUILDFLAG(IS_WIN)
+  return base::FeatureList::IsEnabled(features::kIsolatedWebApps);
+#elif BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  return base::FeatureList::IsEnabled(kIwaKeyDistributionComponent);
+#else
+  return false;
+#endif
+}
+
+// static
 bool IwaKeyDistributionComponentInstallerPolicy::QueueOnDemandUpdate(
     base::PassKey<web_app::IwaKeyDistributionInfoProvider>) {
   // static
-  if (!g_browser_process ||
-      !base::FeatureList::IsEnabled(kIwaKeyDistributionComponent)) {
+  if (!g_browser_process || !IsSupported()) {
     return false;
   }
 
   VLOG(1) << "Queueing on-demand update for the Iwa Key Distribution Component";
   g_browser_process->component_updater()->GetOnDemandUpdater().OnDemandUpdate(
       crx_file::id_util::GenerateIdFromHash(kIwaKeyDistributionPublicKeySHA256),
-      OnDemandUpdater::Priority::BACKGROUND,
-      base::BindOnce(&OnDemandUpdateCompleted));
+      GetOnDemandUpdatePriority(), base::BindOnce(&OnDemandUpdateCompleted));
 
   return true;
 }
@@ -120,10 +161,11 @@ void IwaKeyDistributionComponentInstallerPolicy::ComponentReady(
 
   VLOG(1) << "Iwa Key Distribution Component ready, version " << version
           << " in " << install_dir;
-  web_app::IwaKeyDistributionInfoProvider::GetInstance()
-      ->LoadKeyDistributionData(
-          version, install_dir.Append(kDataFileName),
-          /*is_preloaded=*/manifest.FindBool(kPreloadedKey).value_or(false));
+  web_app::IwaKeyDistributionInfoProvider& info_provider =
+      web_app::IwaKeyDistributionInfoProvider::GetInstance();
+  info_provider.LoadKeyDistributionData(
+      version, install_dir.Append(kDataFileName),
+      /*is_preloaded=*/manifest.FindBool(kPreloadedKey).value_or(false));
 }
 
 base::FilePath
@@ -155,13 +197,20 @@ IwaKeyDistributionComponentInstallerPolicy::GetInstallerAttributes() const {
 }
 
 void RegisterIwaKeyDistributionComponent(ComponentUpdateService* cus) {
-  if (!base::FeatureList::IsEnabled(kIwaKeyDistributionComponent)) {
+  if (!IwaKeyDistributionComponentInstallerPolicy::IsSupported()) {
     return;
   }
 
+  // `RegisterIwaKeyDistributionComponent` is effectively called before the user
+  // profile is created. Hence we can avoid eventual initialization race
+  // conditions for user sessions.
+  web_app::IwaKeyDistributionInfoProvider::GetInstance().SetUp(
+      IsOnDemandUpdateSupported(),
+      base::BindRepeating(
+          &IwaKeyDistributionComponentInstallerPolicy::QueueOnDemandUpdate));
+
   base::MakeRefCounted<ComponentInstaller>(
-      std::make_unique<IwaKeyDistributionComponentInstallerPolicy>(),
-      /*action_handler=*/nullptr, base::TaskPriority::USER_VISIBLE)
+      std::make_unique<IwaKeyDistributionComponentInstallerPolicy>())
       ->Register(cus, base::DoNothing());
 }
 

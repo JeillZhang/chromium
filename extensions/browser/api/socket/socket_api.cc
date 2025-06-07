@@ -166,7 +166,7 @@ ExtensionFunction::ResponseValue SocketApiFunction::ErrorWithCode(
     const std::string& error) {
   base::Value::List args;
   args.Append(error_code);
-  return ErrorWithArguments(std::move(args), error);
+  return ErrorWithArgumentsDoNotUse(std::move(args), error);
 }
 
 std::string SocketApiFunction::GetOriginId() const {
@@ -415,7 +415,7 @@ ExtensionFunction::ResponseAction SocketDisconnectFunction::Work() {
     base::Value::List args;
     args.Append(base::Value());
     return RespondNow(
-        ErrorWithArguments(std::move(args), kSocketNotFoundError));
+        ErrorWithArgumentsDoNotUse(std::move(args), kSocketNotFoundError));
   }
 }
 
@@ -537,7 +537,7 @@ ExtensionFunction::ResponseAction SocketAcceptFunction::Work() {
   } else {
     api::socket::AcceptInfo info;
     info.result_code = net::ERR_FAILED;
-    return RespondNow(ErrorWithArguments(
+    return RespondNow(ErrorWithArgumentsDoNotUse(
         api::socket::Accept::Results::Create(info), kSocketNotFoundError));
   }
 }
@@ -572,7 +572,7 @@ ExtensionFunction::ResponseAction SocketReadFunction::Work() {
   if (!socket) {
     api::socket::ReadInfo info;
     info.result_code = -1;
-    return RespondNow(ErrorWithArguments(
+    return RespondNow(ErrorWithArgumentsDoNotUse(
         api::socket::Read::Results::Create(info), kSocketNotFoundError));
   }
 
@@ -588,7 +588,7 @@ void SocketReadFunction::OnCompleted(int bytes_read,
   result.Set(kResultCodeKey, bytes_read);
   base::span<const uint8_t> data_span;
   if (bytes_read > 0) {
-    data_span = io_buffer->span().subspan(0u, static_cast<size_t>(bytes_read));
+    data_span = io_buffer->first(static_cast<size_t>(bytes_read));
   }
   result.Set(kDataKey, base::Value(data_span));
   Respond(WithArguments(std::move(result)));
@@ -619,7 +619,7 @@ ExtensionFunction::ResponseAction SocketWriteFunction::Work() {
   if (!socket) {
     api::socket::WriteInfo info;
     info.bytes_written = -1;
-    return RespondNow(ErrorWithArguments(
+    return RespondNow(ErrorWithArgumentsDoNotUse(
         api::socket::Write::Results::Create(info), kSocketNotFoundError));
   }
 
@@ -650,7 +650,7 @@ ExtensionFunction::ResponseAction SocketRecvFromFunction::Work() {
     api::socket::RecvFromInfo info;
     info.result_code = -1;
     info.port = 0;
-    return RespondNow(ErrorWithArguments(
+    return RespondNow(ErrorWithArgumentsDoNotUse(
         api::socket::RecvFrom::Results::Create(info), kSocketNotFoundError));
   }
 
@@ -668,7 +668,7 @@ void SocketRecvFromFunction::OnCompleted(int bytes_read,
   result.Set(kResultCodeKey, bytes_read);
   base::span<const uint8_t> data_span;
   if (bytes_read > 0) {
-    data_span = io_buffer->span().subspan(0u, static_cast<size_t>(bytes_read));
+    data_span = io_buffer->first(static_cast<size_t>(bytes_read));
   }
   result.Set(kDataKey, base::Value(data_span));
   result.Set(kAddressKey, address);
@@ -765,9 +765,9 @@ ExtensionFunction::ResponseAction SocketSetKeepAliveFunction::Work() {
 
   Socket* socket = GetSocket(params->socket_id);
   if (!socket) {
-    return RespondNow(
-        ErrorWithArguments(api::socket::SetKeepAlive::Results::Create(false),
-                           kSocketNotFoundError));
+    return RespondNow(ErrorWithArgumentsDoNotUse(
+        api::socket::SetKeepAlive::Results::Create(false),
+        kSocketNotFoundError));
   }
   int delay = 0;
   if (params->delay) {
@@ -794,7 +794,7 @@ ExtensionFunction::ResponseAction SocketSetNoDelayFunction::Work() {
 
   Socket* socket = GetSocket(params->socket_id);
   if (!socket) {
-    return RespondNow(ErrorWithArguments(
+    return RespondNow(ErrorWithArgumentsDoNotUse(
         api::socket::SetNoDelay::Results::Create(false), kSocketNotFoundError));
   }
   socket->SetNoDelay(

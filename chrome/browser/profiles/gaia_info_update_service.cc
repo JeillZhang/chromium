@@ -8,7 +8,6 @@
 
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
-#include "base/containers/to_vector.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
@@ -29,7 +28,6 @@
 #include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_utils.h"
-#include "components/signin/public/identity_manager/tribool.h"
 #include "content/public/browser/storage_partition.h"
 #include "google_apis/gaia/gaia_id.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -45,7 +43,7 @@ void UpdateAccountsPrefs(
     return;
   }
 
-  base::flat_set<GaiaId> account_ids_in_chrome =
+  const base::flat_set<GaiaId> account_ids_in_chrome =
       signin::GetAllGaiaIdsForKeyedPreferences(&identity_manager,
                                                accounts_in_cookie_jar_info);
 
@@ -56,8 +54,8 @@ void UpdateAccountsPrefs(
   // above checks on cookies and primary account.
 
   SigninPrefs signin_prefs(pref_service);
-  size_t removed_count = signin_prefs.RemoveAllAccountPrefsExcept(
-      base::ToVector(account_ids_in_chrome));
+  size_t removed_count =
+      signin_prefs.RemoveAllAccountPrefsExcept(account_ids_in_chrome);
 
   if (removed_count > 0) {
     // There is a maximum of 10 Gaia accounts on the web. If we add the Chrome
@@ -80,11 +78,13 @@ void UpdateAccountsPrefs(
 }  // namespace
 
 GAIAInfoUpdateService::GAIAInfoUpdateService(
+    Profile* profile,
     signin::IdentityManager* identity_manager,
     ProfileAttributesStorage* profile_attributes_storage,
     PrefService& pref_service,
     const base::FilePath& profile_path)
-    : identity_manager_(identity_manager),
+    : profile_(profile),
+      identity_manager_(identity_manager),
       profile_attributes_storage_(profile_attributes_storage),
       pref_service_(pref_service),
       profile_path_(profile_path) {
@@ -144,16 +144,12 @@ void GAIAInfoUpdateService::UpdatePrimaryAccount(const AccountInfo& info) {
     entry->SetGAIAPicture(info.last_downloaded_image_url_with_size,
                           info.account_image);
   }
-
-  // Treat `signin::Tribool::kUnknown` as ineligible.
-  entry->SetIsGlicEligible(
-      info.capabilities.can_use_model_execution_features() ==
-      signin::Tribool::kTrue);
 }
 
 void GAIAInfoUpdateService::UpdateAnyAccount(const AccountInfo& info) {
-  if (!info.IsValid())
+  if (!info.IsValid()) {
     return;
+  }
 
   ProfileAttributesEntry* entry =
       profile_attributes_storage_->GetProfileAttributesWithPath(profile_path_);
@@ -237,7 +233,7 @@ void GAIAInfoUpdateService::OnAccountsInCookieUpdated(
     // Regenerate based on the info from signed-in accounts (if not available
     // now, it will be regenerated soon via OnExtendedAccountInfoUpdated() once
     // downloaded).
-    for (gaia::ListedAccount account :
+    for (const gaia::ListedAccount& account :
          accounts_in_cookie_jar_info.GetPotentiallyInvalidSignedInAccounts()) {
       UpdateAnyAccount(
           identity_manager_->FindExtendedAccountInfoByAccountId(account.id));

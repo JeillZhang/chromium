@@ -40,9 +40,9 @@ BASE_DECLARE_FEATURE(kHistorySearchMqlsLogging);
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 BASE_DECLARE_FEATURE(kProductSpecificationsMqlsLogging);
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-BASE_DECLARE_FEATURE(kFormsPredictionsMqlsLogging);
+BASE_DECLARE_FEATURE(kFormsClassificationsMqlsLogging);
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-BASE_DECLARE_FEATURE(kFormsAnnotationsMqlsLogging);
+BASE_DECLARE_FEATURE(kPasswordChangeSubmissionMqlsLogging);
 }  // namespace features
 
 void RegisterGenAiFeatures(PrefRegistrySimple* registry);

@@ -7,7 +7,6 @@
 #include <memory>
 
 #include "base/functional/bind.h"
-#include "base/functional/overloaded.h"
 #include "base/hash/hash.h"
 #include "base/location.h"
 #include "base/metrics/histogram_functions.h"
@@ -27,6 +26,7 @@
 #include "components/policy/core/common/cloud/enterprise_metrics.h"
 #include "components/policy/core/common/cloud/policy_invalidation_util.h"
 #include "components/policy/policy_constants.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace policy {
 
@@ -292,7 +292,7 @@ void CloudPolicyInvalidator::OnCoreDisconnecting(CloudPolicyCore* core) {
   CHECK(state_ == State::STARTED || state_ == State::STOPPED);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (state_ == State::STARTED) {
-    std::visit(base::Overloaded{
+    std::visit(absl::Overload{
                    [this](invalidation::InvalidationService* service) {
                      UnregisterWithInvalidationService();
                    },
@@ -314,7 +314,7 @@ void CloudPolicyInvalidator::OnStoreLoaded(CloudPolicyStore* store) {
       store, /*is_registered_for_invalidations=*/IsRegistered(),
       /*invalidations_enabled=*/AreInvalidationsEnabled());
 
-  std::visit(base::Overloaded{
+  std::visit(absl::Overload{
                  [this, store](invalidation::InvalidationService* service) {
                    UpdateSubscriptionWithInvalidationService(store->policy());
                  },
@@ -366,7 +366,6 @@ void CloudPolicyInvalidator::OnStoreError(CloudPolicyStore* store) {}
 
 void CloudPolicyInvalidator::OnExpectationChanged(
     invalidation::InvalidationsExpected expected) {
-  CHECK(state_ == State::STARTED);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   are_invalidations_expected_ = expected;
@@ -377,10 +376,14 @@ void CloudPolicyInvalidator::OnExpectationChanged(
 
 void CloudPolicyInvalidator::OnInvalidationReceived(
     const invalidation::DirectInvalidation& invalidation) {
-  CHECK(state_ == State::STARTED);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   LOG(WARNING) << "Received incoming invalidation: " << invalidation.version();
+  if (!policy_invalidation_handler_.IsCoreReady()) {
+    LOG(WARNING) << "Core is disconnected, ignoring invalidation.";
+    return;
+  }
+
   policy_invalidation_handler_.HandleInvalidation(invalidation);
 }
 
@@ -401,7 +404,7 @@ std::string CloudPolicyInvalidator::GetType() const {
 
 bool CloudPolicyInvalidator::IsRegistered() const {
   return std::visit(
-      base::Overloaded{
+      absl::Overload{
           [this](invalidation::InvalidationService* service) {
             return service &&
                    invalidation_service_observation_.IsObservingSource(service);
@@ -420,14 +423,14 @@ bool CloudPolicyInvalidator::AreInvalidationsEnabled() const {
   }
 
   return std::visit(
-      base::Overloaded{[](invalidation::InvalidationService* service) {
-                         return service->GetInvalidatorState() ==
-                                invalidation::InvalidatorState::kEnabled;
-                       },
-                       [this](invalidation::InvalidationListener* listener) {
-                         return are_invalidations_expected_ ==
-                                invalidation::InvalidationsExpected::kYes;
-                       }},
+      absl::Overload{[](invalidation::InvalidationService* service) {
+                       return service->GetInvalidatorState() ==
+                              invalidation::InvalidatorState::kEnabled;
+                     },
+                     [this](invalidation::InvalidationListener* listener) {
+                       return are_invalidations_expected_ ==
+                              invalidation::InvalidationsExpected::kYes;
+                     }},
       invalidation_service_or_listener_);
 }
 
@@ -453,8 +456,10 @@ void CloudPolicyInvalidator::PolicyInvalidationHandler::HandleInvalidation(
   const std::string payload = invalidation.payload();
 
   // Ignore the invalidation if it is expired.
-  const auto last_fetch_time = base::Time::FromMillisecondsSinceUnixEpoch(
-      core_->store()->policy()->timestamp());
+  const auto* policy = core_->store()->policy();
+  const auto last_fetch_time =
+      policy ? base::Time::FromMillisecondsSinceUnixEpoch(policy->timestamp())
+             : base::Time();
   const auto current_time = clock_->Now();
   const bool is_expired =
       IsInvalidationExpired(invalidation, last_fetch_time, current_time);

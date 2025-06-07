@@ -21,6 +21,7 @@
 #include "chrome/common/pref_names.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/permissions/embedded_permission_prompt_flow_model.h"
 #include "components/permissions/permission_uma_util.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/color/color_id.h"
@@ -108,6 +109,14 @@ void EmbeddedPermissionPrompt::CloseCurrentViewAndMaybeShowNext(
   if (prompt_view) {
     prompt_view_tracker_.SetView(prompt_view);
     if (!content_scrim_widget_) {
+      scoped_ignore_input_events_ =
+          web_contents()->IgnoreInputEvents(std::nullopt);
+      // Creating the widget will display it. That's why we create it only if
+      // the tab can show modal UI.
+      tabs::TabInterface* tab =
+          tabs::TabInterface::GetFromContents(web_contents());
+      scoped_tab_modal_ui_ = tab->ShowModalUI();
+
       content_scrim_widget_ =
           EmbeddedPermissionPromptContentScrimView::CreateScrimWidget(
               weak_factory_.GetWeakPtr(),
@@ -163,6 +172,16 @@ EmbeddedPermissionPrompt::GetPromptPosition() const {
   return std::nullopt;
 }
 
+std::optional<gfx::Rect> EmbeddedPermissionPrompt::GetViewBoundsInScreen()
+    const {
+  if (prompt_view_tracker_.view()) {
+    // This is a modal prompt, the view bounds will cover the whole content
+    // view.
+    return web_contents()->GetContainerBounds();
+  }
+  return std::nullopt;
+}
+
 void EmbeddedPermissionPrompt::Allow() {
   prompt_model_->PrecalculateVariantsForMetrics();
   prompt_model_->RecordPermissionActionUKM(
@@ -185,9 +204,9 @@ void EmbeddedPermissionPrompt::AllowThisTime() {
 void EmbeddedPermissionPrompt::Dismiss() {
   prompt_model_->PrecalculateVariantsForMetrics();
   permissions::PermissionUmaUtil::RecordElementAnchoredBubbleDismiss(
-      delegate()->Requests(), permissions::DismissedReason::DISMISSED_X_BUTTON);
+      delegate()->Requests(), permissions::DismissedReason::kDismissedXButton);
   prompt_model_->RecordOsMetrics(
-      permissions::OsScreenAction::DISMISSED_X_BUTTON);
+      permissions::OsScreenAction::kDismissedXButton);
   prompt_model_->RecordPermissionActionUKM(
       permissions::ElementAnchoredBubbleAction::kDismissedXButton);
 
@@ -218,15 +237,31 @@ void EmbeddedPermissionPrompt::StopAllowing() {
 void EmbeddedPermissionPrompt::ShowSystemSettings() {
   const auto& requests = delegate()->Requests();
   CHECK_GT(requests.size(), 0U);
-  // TODO(crbug.com/40275129) Chrome always shows the first permission in a
-  // group, as it is not possible to open multiple System Setting pages. Figure
-  // out a better way to handle this scenario.
-  prompt_model_->RecordOsMetrics(permissions::OsScreenAction::SYSTEM_SETTINGS);
+
+  prompt_model_->RecordOsMetrics(permissions::OsScreenAction::kSystemSettings);
   prompt_model_->RecordPermissionActionUKM(
       permissions::ElementAnchoredBubbleAction::kSystemSettings);
-  system_permission_settings::OpenSystemSettings(
-      delegate()->GetAssociatedWebContents(),
-      Requests()[0]->GetContentSettingsType());
+  for (const auto& request : requests) {
+    if (system_permission_settings::IsDenied(
+            request->GetContentSettingsType())) {
+      system_permission_settings::OpenSystemSettings(
+          delegate()->GetAssociatedWebContents(),
+          request->GetContentSettingsType());
+      return;
+    }
+  }
+
+  // Since we don't observe system level permission status changes, there is a
+  // possibility that all permission settings have been granted at this point.
+  SystemPermissionsNoLongerDenied();
+}
+
+void EmbeddedPermissionPrompt::SystemPermissionsNoLongerDenied() {
+  CHECK(prompt_model_->prompt_variant() ==
+        permissions::EmbeddedPermissionPromptFlowModel::Variant::
+            kOsSystemSettings);
+  prompt_model_->PrecalculateVariantsForMetrics();
+  CloseCurrentViewAndMaybeShowNext(/*first_prompt=*/false);
 }
 
 base::WeakPtr<permissions::PermissionPrompt::Delegate>
@@ -234,15 +269,15 @@ EmbeddedPermissionPrompt::GetPermissionPromptDelegate() const {
   return delegate_->GetWeakPtr();
 }
 
-const std::vector<raw_ptr<permissions::PermissionRequest, VectorExperimental>>&
+const std::vector<base::WeakPtr<permissions::PermissionRequest>>&
 EmbeddedPermissionPrompt::Requests() const {
   return prompt_model_->requests();
 }
 
 void EmbeddedPermissionPrompt::DismissScrim() {
   permissions::PermissionUmaUtil::RecordElementAnchoredBubbleDismiss(
-      delegate()->Requests(), permissions::DismissedReason::DISMISSED_SCRIM);
-  prompt_model_->RecordOsMetrics(permissions::OsScreenAction::DISMISSED_SCRIM);
+      delegate()->Requests(), permissions::DismissedReason::kDismissedScrim);
+  prompt_model_->RecordOsMetrics(permissions::OsScreenAction::kDismissedScrim);
   prompt_model_->RecordPermissionActionUKM(
       permissions::ElementAnchoredBubbleAction::kDismissedScrim);
 
@@ -304,11 +339,11 @@ void EmbeddedPermissionPrompt::OnRequestSystemPermissionResponse(
         break;
       case system_permission_settings::SystemPermission::kDenied:
         prompt_model_->RecordOsMetrics(
-            permissions::OsScreenAction::OS_PROMPT_DENIED);
+            permissions::OsScreenAction::kOsPromptDenied);
         break;
       case system_permission_settings::SystemPermission::kAllowed:
         prompt_model_->RecordOsMetrics(
-            permissions::OsScreenAction::OS_PROMPT_ALLOWED);
+            permissions::OsScreenAction::kOsPromptAllowed);
         break;
       case system_permission_settings::SystemPermission::kNotDetermined:
         NOTREACHED();
@@ -341,7 +376,10 @@ void EmbeddedPermissionPrompt::CloseViewAndScrim() {
   if (content_scrim_widget_) {
     content_scrim_widget_->Close();
     content_scrim_widget_ = nullptr;
+    scoped_ignore_input_events_.reset();
   }
+
+  scoped_tab_modal_ui_.reset();
 }
 
 void EmbeddedPermissionPrompt::FinalizePrompt() {

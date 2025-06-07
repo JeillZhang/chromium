@@ -36,9 +36,6 @@ import org.chromium.components.signin.test.util.TestAccounts;
 /**
  * This test rule mocks AccountManagerFacade.
  *
- * <p>TODO(crbug.com/40228092): Migrate usages that need native to {@link SigninTestRule} and remove
- * the methods that call native from this rule.
- *
  * <p>The rule will not invoke any native code, therefore it is safe to use it in Robolectric tests.
  */
 public class AccountManagerTestRule implements TestRule {
@@ -179,10 +176,16 @@ public class AccountManagerTestRule implements TestRule {
         mFakeAccountManagerFacade.setAccountFetchFailed();
     }
 
-    /** See {@link FakeAccountManagerFacade#blockGetCoreAccountInfos(boolean)}. */
+    /** Scheduled for removal. Use blockGetAccountsUpdate instead. */
+    @Deprecated
     public FakeAccountManagerFacade.UpdateBlocker blockGetCoreAccountInfosUpdate(
             boolean populateCache) {
-        return mFakeAccountManagerFacade.blockGetCoreAccountInfos(populateCache);
+        return mFakeAccountManagerFacade.blockGetAccounts(populateCache);
+    }
+
+    /** See {@link FakeAccountManagerFacade#blockGetAccounts(boolean)}. */
+    public FakeAccountManagerFacade.UpdateBlocker blockGetAccountsUpdate(boolean populateCache) {
+        return mFakeAccountManagerFacade.blockGetAccounts(populateCache);
     }
 
     /**

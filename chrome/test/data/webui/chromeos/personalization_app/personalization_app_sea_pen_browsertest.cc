@@ -10,6 +10,7 @@
 #include "ash/webui/personalization_app/test/personalization_app_mojom_banned_mocha_test_base.h"
 #include "base/containers/span.h"
 #include "base/functional/callback_helpers.h"
+#include "base/strings/string_view_util.h"
 #include "base/test/gtest_tags.h"
 #include "base/test/test_future.h"
 #include "chrome/browser/ash/system_web_apps/apps/personalization_app/personalization_app_mocha_test_base.h"
@@ -54,7 +55,6 @@ class PersonalizationAppSeaPenBrowserTest
     scoped_feature_list_.InitWithFeatures(
         {
             ::manta::features::kMantaService,
-            ::ash::features::kSeaPen,
             ::ash::features::kFeatureManagementSeaPen,
         },
         {});
@@ -111,8 +111,7 @@ class PersonalizationAppSeaPenBrowserTest
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-// TODO(crbug.com/382330541): Fix this flaky test.
-IN_PROC_BROWSER_TEST_F(PersonalizationAppSeaPenBrowserTest, DISABLED_SeaPen) {
+IN_PROC_BROWSER_TEST_F(PersonalizationAppSeaPenBrowserTest, SeaPen) {
   RunTestWithoutTestLoader(
       "chromeos/personalization_app/personalization_app_test.js",
       "runMochaSuite('sea pen')");

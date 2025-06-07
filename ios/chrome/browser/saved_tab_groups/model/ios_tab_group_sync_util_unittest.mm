@@ -6,10 +6,13 @@
 
 #import "base/test/scoped_feature_list.h"
 #import "components/collaboration/test_support/mock_collaboration_service.h"
+#import "components/data_sharing/public/features.h"
 #import "components/saved_tab_groups/test_support/mock_tab_group_sync_service.h"
 #import "components/tab_groups/tab_group_id.h"
+#import "ios/chrome/browser/data_sharing/model/data_sharing_service_factory.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_local_update_observer.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
+#import "ios/chrome/browser/share_kit/model/test_share_kit_service.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list_factory.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
@@ -79,7 +82,7 @@ class TabGroupSyncUtilTest : public PlatformTest {
 
   void SetUp() override {
     feature_list_.InitWithFeatures(
-        {kTabGroupsIPad, kModernTabStrip, kTabGroupSync}, {});
+        {kTabGroupSync, data_sharing::features::kDataSharingFeature}, {});
     AppendNewWebState(browser_.get());
     AppendNewWebState(browser_.get());
     AppendNewWebState(browser_.get());

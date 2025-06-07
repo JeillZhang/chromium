@@ -13,9 +13,9 @@
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/core/common/autofill_features.h"
-#include "components/autofill_ai/core/browser/autofill_ai_features.h"
 #include "components/optimization_guide/core/feature_registry/feature_registration.h"
 #include "components/optimization_guide/core/model_execution/model_execution_prefs.h"
 #include "components/password_manager/core/browser/password_autofill_manager.h"
@@ -46,6 +46,13 @@ class AutofillAiPolicyTest
     : public PolicyTest,
       public testing::WithParamInterface<ModelExecutionEnterprisePolicyValue> {
  public:
+  AutofillAiPolicyTest() {
+    scoped_feature_list_.InitWithFeatures(
+        {autofill::features::kAutofillAiWithDataSchema,
+         autofill::features::kAutofillAiIgnoreGeoIp},
+        {});
+  }
+
   ModelExecutionEnterprisePolicyValue policy_value() const {
     return GetParam();
   }
@@ -104,8 +111,7 @@ class AutofillAiPolicyTest
         SetIdentityTestEnvironmentFactoriesOnBrowserContext(context);
   }
 
-  base::test::ScopedFeatureList scoped_feature_list_{
-      autofill::features::kAutofillAiWithDataSchema};
+  base::test::ScopedFeatureList scoped_feature_list_;
 
   // Identity test support.
   std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
@@ -119,30 +125,15 @@ INSTANTIATE_TEST_SUITE_P(,
                                          kAllowWithoutLogging,
                                          kDisable));
 
-// Tests that the chrome://settings entry for Autofill AI is reachable iff the
-// policy is enabled.
-IN_PROC_BROWSER_TEST_P(AutofillAiPolicyTest, SettingsDisabledByPolicy) {
+// Tests that the chrome://settings entry for Autofill AI is always reachable
+// even if the policy is disabled.
+IN_PROC_BROWSER_TEST_P(AutofillAiPolicyTest, SettingsNotDisabledByPolicy) {
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(),
       GURL(base::StrCat({"chrome://settings/", chrome::kAutofillAiSubPage}))));
-  EXPECT_EQ(
-      autofill_ai::IsAutofillAiSupported(browser()->profile()->GetPrefs()),
-      !disabled_by_policy());
+  EXPECT_TRUE(content::WaitForLoadStop(GetWebContents()));
   EXPECT_EQ(GetWebContents()->GetURL().path(),
-            base::StrCat(
-                {"/", disabled_by_policy() ? "" : chrome::kAutofillAiSubPage}));
-}
-
-// Tests that `AutofillAiDelegate` exists iff it is allowed by the policy.
-IN_PROC_BROWSER_TEST_P(AutofillAiPolicyTest, DelegateDisabledByPolicy) {
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), embedded_test_server()->GetURL(
-                     "/autofill/autofill_address_enabled.html")));
-  ChromeAutofillAiClient* client =
-      CHECK_DEREF(tabs::TabInterface::MaybeGetFromContents(GetWebContents()))
-          .GetTabFeatures()
-          ->chrome_autofill_ai_client();
-  EXPECT_EQ(client == nullptr, disabled_by_policy());
+            base::StrCat({"/", chrome::kAutofillAiSubPage}));
 }
 
 }  // namespace

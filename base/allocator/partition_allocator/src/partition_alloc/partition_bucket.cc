@@ -4,15 +4,12 @@
 
 #include "partition_alloc/partition_bucket.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <tuple>
 
 #include "partition_alloc/address_pool_manager.h"
 #include "partition_alloc/build_config.h"
 #include "partition_alloc/buildflags.h"
-#include "partition_alloc/freeslot_bitmap.h"
-#include "partition_alloc/freeslot_bitmap_constants.h"
 #include "partition_alloc/oom.h"
 #include "partition_alloc/page_allocator.h"
 #include "partition_alloc/page_allocator_constants.h"
@@ -21,6 +18,7 @@
 #include "partition_alloc/partition_alloc_base/bits.h"
 #include "partition_alloc/partition_alloc_base/compiler_specific.h"
 #include "partition_alloc/partition_alloc_base/component_export.h"
+#include "partition_alloc/partition_alloc_base/cxx_wrapper/algorithm.h"
 #include "partition_alloc/partition_alloc_base/debug/alias.h"
 #include "partition_alloc/partition_alloc_base/immediate_crash.h"
 #include "partition_alloc/partition_alloc_base/thread_annotations.h"
@@ -332,18 +330,8 @@ SlotSpanMetadata<MetadataKind::kReadOnly>* PartitionDirectMap(
     // so no other thread can update the same offset table entries at the
     // same time. Furthermore, nobody will be ready these offsets until this
     // function returns.
-    auto* offset_ptr = ReservationOffsetPointer(reservation_start);
-    [[maybe_unused]] const auto* offset_ptr_end =
-        GetReservationOffsetTableEnd(reservation_start);
-
-    // |raw_size| > MaxBucketed(). So |reservation_size| > 0.
-    PA_DCHECK(reservation_size > 0);
-    const uint16_t offset_end = (reservation_size - 1) >> kSuperPageShift;
-    for (uint16_t offset = 0; offset <= offset_end; ++offset) {
-      PA_DCHECK(offset < kOffsetTagNormalBuckets);
-      PA_DCHECK(offset_ptr < offset_ptr_end);
-      *offset_ptr++ = offset;
-    }
+    root->GetReservationOffsetTable().SetDirectMapReservationStart(
+        reservation_start, reservation_size);
 
     auto* super_page_extent = PartitionSuperPageToExtent(reservation_start);
     auto* writable_super_page_extent = super_page_extent->ToWritable(root);
@@ -459,8 +447,7 @@ SlotSpanMetadata<MetadataKind::kReadOnly>* PartitionDirectMap(
       return nullptr;
     }
 
-    auto* next_entry =
-        root->get_freelist_dispatcher()->EmplaceAndInitNull(slot_start);
+    auto* next_entry = FreelistEntry::EmplaceAndInitNull(slot_start);
 
     writable_page_metadata->slot_span_metadata.SetFreelistHead(next_entry,
                                                                root);
@@ -618,8 +605,7 @@ uint8_t ComputeSystemPagesPerSlotSpan(size_t slot_size,
   return ComputeSystemPagesPerSlotSpanInternal(slot_size);
 }
 
-void PartitionBucket::Init(uint32_t new_slot_size,
-                           bool use_small_single_slot_spans) {
+void PartitionBucket::Init(uint32_t new_slot_size) {
   slot_size = new_slot_size;
   slot_size_reciprocal = kReciprocalMask / new_slot_size + 1;
   active_slot_spans_head = SlotSpanMetadata<
@@ -636,8 +622,9 @@ void PartitionBucket::Init(uint32_t new_slot_size,
       ;
   num_system_pages_per_slot_span =
       ComputeSystemPagesPerSlotSpan(slot_size, prefer_smaller_slot_spans);
+  PA_CHECK(num_system_pages_per_slot_span > 0);
 
-  InitCanStoreRawSize(use_small_single_slot_spans);
+  InitCanStoreRawSize();
 }
 
 PA_ALWAYS_INLINE SlotSpanMetadata<MetadataKind::kReadOnly>*
@@ -722,7 +709,7 @@ PartitionBucket::AllocNewSlotSpan(PartitionRoot* root,
   return slot_span;
 }
 
-void PartitionBucket::InitCanStoreRawSize(bool use_small_single_slot_spans) {
+void PartitionBucket::InitCanStoreRawSize() {
   // By definition, direct map buckets can store the raw size. The value
   // of `can_store_raw_size` is set explicitly in that code path (see
   // `PartitionDirectMap()`), bypassing this method.
@@ -738,8 +725,7 @@ void PartitionBucket::InitCanStoreRawSize(bool use_small_single_slot_spans) {
   if (slot_size <= MaxRegularSlotSpanSize()) [[likely]] {
     // Even when the slot size is below the standard floor for single
     // slot spans, there exist spans that happen to have exactly one
-    // slot per. If `use_small_single_slot_spans` is true, we use more
-    // nuanced criteria for determining if a span is "single-slot."
+    // slot per.
     //
     // The conditions are all of:
     // *  Don't deal with slots trafficked by the thread cache [1].
@@ -756,9 +742,9 @@ void PartitionBucket::InitCanStoreRawSize(bool use_small_single_slot_spans) {
     // [2] ../../PartitionAlloc.md#layout-in-memory
     const bool not_handled_by_thread_cache =
         slot_size > kThreadCacheLargeSizeThreshold;
-    can_store_raw_size =
-        use_small_single_slot_spans && not_handled_by_thread_cache &&
-        get_slots_per_span() == 1u && get_pages_per_slot_span() > 1u;
+    can_store_raw_size = not_handled_by_thread_cache &&
+                         get_slots_per_span() == 1u &&
+                         get_pages_per_slot_span() > 1u;
     return;
   }
 
@@ -817,15 +803,13 @@ PA_ALWAYS_INLINE uintptr_t
 PartitionBucket::InitializeSuperPage(PartitionRoot* root,
                                      uintptr_t super_page,
                                      uintptr_t requested_address) {
-  *ReservationOffsetPointer(super_page) = kOffsetTagNormalBuckets;
+  root->GetReservationOffsetTable().SetNormalBucketsTag(super_page);
 
   root->total_size_of_super_pages.fetch_add(kSuperPageSize,
                                             std::memory_order_relaxed);
 
   root->next_super_page = super_page + kSuperPageSize;
-  uintptr_t state_bitmap =
-      super_page + PartitionPageSize() +
-      (is_direct_mapped() ? 0 : ReservedFreeSlotBitmapSize());
+  uintptr_t state_bitmap = super_page + PartitionPageSize();
   uintptr_t payload = state_bitmap;
 
   root->next_partition_page = payload;
@@ -851,7 +835,8 @@ PartitionBucket::InitializeSuperPage(PartitionRoot* root,
     }
   }
 
-  if (root->ChoosePool() == kBRPPoolHandle) {
+#if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
+  if (root->brp_enabled()) {
     // Allocate a system page for InSlotMetadata table (only one of its
     // elements will be used). Shadow metadata does not need to protect
     // this table, because (1) corrupting the table won't help with the
@@ -863,6 +848,7 @@ PartitionBucket::InitializeSuperPage(PartitionRoot* root,
                             PageAccessibilityConfiguration::kReadWrite),
                         PageAccessibilityDisposition::kRequireUpdate);
   }
+#endif  // PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
 
   // If we were after a specific address, but didn't get it, assume that
   // the system chose a lousy address. Here most OS'es have a default
@@ -916,19 +902,6 @@ PartitionBucket::InitializeSuperPage(PartitionRoot* root,
     PA_DCHECK(payload > SuperPagesBeginFromExtent(current_extent) &&
               payload < SuperPagesEndFromExtent(current_extent));
   }
-
-#if PA_BUILDFLAG(USE_FREESLOT_BITMAP)
-  // Commit the pages for freeslot bitmap.
-  if (!is_direct_mapped()) {
-    uintptr_t freeslot_bitmap_addr = super_page + PartitionPageSize();
-    PA_DCHECK(SuperPageFreeSlotBitmapAddr(super_page) == freeslot_bitmap_addr);
-    ScopedSyscallTimer timer{root};
-    RecommitSystemPages(freeslot_bitmap_addr, CommittedFreeSlotBitmapSize(),
-                        root->PageAccessibilityWithThreadIsolationIfEnabled(
-                            PageAccessibilityConfiguration::kReadWrite),
-                        PageAccessibilityDisposition::kRequireUpdate);
-  }
-#endif
 
   return payload;
 }
@@ -1031,11 +1004,9 @@ PA_ALWAYS_INLINE uintptr_t PartitionBucket::ProvisionMoreSlotsAndAllocOne(
   }
 #endif  // PA_BUILDFLAG(HAS_MEMORY_TAGGING)
   // Add all slots that fit within so far committed pages to the free list.
-  PartitionFreelistEntry* prev_entry = nullptr;
+  FreelistEntry* prev_entry = nullptr;
   uintptr_t next_slot_end = next_slot + slot_size;
   size_t free_list_entries_added = 0;
-
-  const auto* freelist_dispatcher = root->get_freelist_dispatcher();
 
   while (next_slot_end <= commit_end) {
     void* next_slot_ptr;
@@ -1053,7 +1024,7 @@ PA_ALWAYS_INLINE uintptr_t PartitionBucket::ProvisionMoreSlotsAndAllocOne(
     next_slot_ptr = reinterpret_cast<void*>(next_slot);
 #endif
 
-    auto* entry = freelist_dispatcher->EmplaceAndInitNull(next_slot_ptr);
+    auto* entry = FreelistEntry::EmplaceAndInitNull(next_slot_ptr);
 
     if (!slot_span->get_freelist_head()) {
       PA_DCHECK(!prev_entry);
@@ -1061,11 +1032,8 @@ PA_ALWAYS_INLINE uintptr_t PartitionBucket::ProvisionMoreSlotsAndAllocOne(
       writable_slot_span->SetFreelistHead(entry, root);
     } else {
       PA_DCHECK(free_list_entries_added);
-      freelist_dispatcher->SetNext(prev_entry, entry);
+      prev_entry->SetNext(entry);
     }
-#if PA_BUILDFLAG(USE_FREESLOT_BITMAP)
-    FreeSlotBitmapMarkSlotAsFree(next_slot);
-#endif
     next_slot = next_slot_end;
     next_slot_end = next_slot + slot_size;
     prev_entry = entry;
@@ -1073,10 +1041,6 @@ PA_ALWAYS_INLINE uintptr_t PartitionBucket::ProvisionMoreSlotsAndAllocOne(
     free_list_entries_added++;
 #endif
   }
-
-#if PA_BUILDFLAG(USE_FREESLOT_BITMAP)
-  FreeSlotBitmapMarkSlotAsFree(return_slot);
-#endif
 
 #if PA_BUILDFLAG(DCHECKS_ARE_ON)
   // The only provisioned slot not added to the free list is the one being
@@ -1086,8 +1050,7 @@ PA_ALWAYS_INLINE uintptr_t PartitionBucket::ProvisionMoreSlotsAndAllocOne(
   // is large), meaning that |slot_span->freelist_head| can be nullptr.
   if (slot_span->get_freelist_head()) {
     PA_DCHECK(free_list_entries_added);
-    freelist_dispatcher->CheckFreeList(slot_span->get_freelist_head(),
-                                       slot_size);
+    slot_span->get_freelist_head()->CheckFreeList(slot_size);
   }
 #endif
 
@@ -1411,7 +1374,7 @@ uintptr_t PartitionBucket::SlowPathAlloc(
   // false where it sweeps the active list and may move things into the empty or
   // decommitted lists which affects the subsequent conditional.
   if (is_direct_mapped()) [[unlikely]] {
-    PA_DCHECK(raw_size > kMaxBucketed);
+    PA_DCHECK(raw_size > BucketIndexLookup::kMaxBucketSize);
     PA_DCHECK(this == &root->sentinel_bucket);
     PA_DCHECK(
         active_slot_spans_head ==
@@ -1558,16 +1521,13 @@ uintptr_t PartitionBucket::SlowPathAlloc(
   // If we found an active slot span with free slots, or an empty slot span, we
   // have a usable freelist head.
   if (new_slot_span->get_freelist_head() != nullptr) [[likely]] {
-    const PartitionFreelistDispatcher* freelist_dispatcher =
-        root->get_freelist_dispatcher();
-    PartitionFreelistEntry* entry =
-        new_slot_span->ToWritable(root)->PopForAlloc(new_bucket->slot_size,
-                                                     freelist_dispatcher);
+    FreelistEntry* entry =
+        new_slot_span->ToWritable(root)->PopForAlloc(new_bucket->slot_size);
 
     // We may have set *is_already_zeroed to true above, make sure that the
     // freelist entry doesn't contain data. Either way, it wouldn't be a good
     // idea to let users see our internal data.
-    uintptr_t slot_start = freelist_dispatcher->ClearForAllocation(entry);
+    uintptr_t slot_start = entry->ClearForAllocation();
     return slot_start;
   }
 

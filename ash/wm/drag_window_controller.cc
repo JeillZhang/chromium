@@ -9,7 +9,7 @@
 #include "ash/shell.h"
 #include "ash/wm/window_mirror_view.h"
 #include "ash/wm/window_properties.h"
-#include "ash/wm/window_util.h"
+#include "ash/wm/wm_constants.h"
 #include "base/memory/raw_ptr.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/screen_position_client.h"
@@ -22,6 +22,7 @@
 #include "ui/compositor/paint_context.h"
 #include "ui/compositor_extra/shadow.h"
 #include "ui/display/display.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/geometry/transform_util.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
@@ -74,7 +75,7 @@ float GetDragWindowCornerRadius(const aura::Window* original_window) {
   // However the mini-window view has rounded corners and the shadow
   // associated with the mini-window should be rounded as well.
   if (original_window->GetProperty(kIsOverviewItemKey)) {
-    return window_util::GetMiniWindowRoundedCornerRadius();
+    return kWindowMiniViewCornerRadius;
   }
 
   return original_window->GetProperty(aura::client::kWindowCornerRadiusKey);
@@ -140,7 +141,8 @@ class DragWindowController::DragWindowDetails {
       params.shadow_type = views::Widget::InitParams::ShadowType::kNone;
     }
 
-    params.corner_radius = GetDragWindowCornerRadius(original_window);
+    params.rounded_corners =
+        gfx::RoundedCornersF(GetDragWindowCornerRadius(original_window));
 
     widget_ = std::make_unique<views::Widget>();
     widget_->set_focus_on_creation(false);
@@ -160,7 +162,6 @@ class DragWindowController::DragWindowDetails {
     gfx::Rect bounds = original_window->bounds();
     wm::ConvertRectToScreen(original_window->parent(), &bounds);
     window->SetBounds(bounds);
-    wm::SetShadowElevation(window, wm::kShadowElevationActiveWindow);
 
     // Show the widget the setup is done.
     widget_->Show();

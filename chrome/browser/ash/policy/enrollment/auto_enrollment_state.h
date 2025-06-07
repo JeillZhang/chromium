@@ -7,10 +7,10 @@
 
 #include <optional>
 #include <string_view>
+#include <variant>
 
 #include "base/types/expected.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace policy {
 
@@ -32,18 +32,6 @@ enum class AutoEnrollmentResult {
 struct AutoEnrollmentSafeguardTimeoutError {
   constexpr bool operator==(const AutoEnrollmentSafeguardTimeoutError&) const =
       default;
-};
-
-// Represents a state determination error during clock sync.
-struct AutoEnrollmentSystemClockSyncError {
-  constexpr bool operator==(const AutoEnrollmentSystemClockSyncError&) const =
-      default;
-};
-
-// Represents an error while retrieving serial number and brand code.
-struct AutoEnrollmentMachineInfoRetrievalError {
-  constexpr bool operator==(
-      const AutoEnrollmentMachineInfoRetrievalError&) const = default;
 };
 
 // Represents an error while retrieving state keys.
@@ -83,14 +71,12 @@ struct AutoEnrollmentStateRetrievalResponseError {
 };
 
 using AutoEnrollmentError =
-    absl::variant<AutoEnrollmentSafeguardTimeoutError,
-                  AutoEnrollmentSystemClockSyncError,
-                  AutoEnrollmentMachineInfoRetrievalError,
-                  AutoEnrollmentStateKeysRetrievalError,
-                  AutoEnrollmentDMServerError,
-                  AutoEnrollmentStateAvailabilityResponseError,
-                  AutoEnrollmentPsmError,
-                  AutoEnrollmentStateRetrievalResponseError>;
+    std::variant<AutoEnrollmentSafeguardTimeoutError,
+                 AutoEnrollmentStateKeysRetrievalError,
+                 AutoEnrollmentDMServerError,
+                 AutoEnrollmentStateAvailabilityResponseError,
+                 AutoEnrollmentPsmError,
+                 AutoEnrollmentStateRetrievalResponseError>;
 
 // Indicates the current state of the auto-enrollment check.
 using AutoEnrollmentState =

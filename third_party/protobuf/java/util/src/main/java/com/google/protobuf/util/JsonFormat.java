@@ -211,8 +211,7 @@ public class JsonFormat {
      * Creates a new {@link Printer} that will also print default-valued fields if their
      * FieldDescriptors are found in the supplied set. Empty repeated fields and map fields will be
      * printed as well, if they match. The new Printer clones all other configurations from the
-     * current {@link Printer}. Call includingDefaultValueFields() with no args to unconditionally
-     * output all fields.
+     * current {@link Printer}.
      *
      * <p>Note that non-repeated message fields or fields in a oneof are not honored if provided
      * here.
@@ -863,7 +862,7 @@ public class JsonFormat {
 
     /** Prints google.protobuf.Any */
     private void printAny(MessageOrBuilder message) throws IOException {
-      if (Any.getDefaultInstance().equals(message)) {
+      if (message.getDefaultInstanceForType().equals(message)) {
         generator.print("{}");
         return;
       }
@@ -1239,7 +1238,7 @@ public class JsonFormat {
           if (alwaysWithQuotes) {
             generator.print("\"");
           }
-          generator.print(unsignedToString((Integer) value));
+          generator.print(Integer.toUnsignedString((int) value));
           if (alwaysWithQuotes) {
             generator.print("\"");
           }
@@ -1247,7 +1246,7 @@ public class JsonFormat {
 
         case UINT64:
         case FIXED64:
-          generator.print("\"" + unsignedToString((Long) value) + "\"");
+          generator.print("\"" + Long.toUnsignedString((long) value) + "\"");
           break;
 
         case STRING:
@@ -1285,26 +1284,6 @@ public class JsonFormat {
           print((Message) value);
           break;
       }
-    }
-  }
-
-  /** Convert an unsigned 32-bit integer to a string. */
-  private static String unsignedToString(final int value) {
-    if (value >= 0) {
-      return Integer.toString(value);
-    } else {
-      return Long.toString(value & 0x00000000FFFFFFFFL);
-    }
-  }
-
-  /** Convert an unsigned 64-bit integer to a string. */
-  private static String unsignedToString(final long value) {
-    if (value >= 0) {
-      return Long.toString(value);
-    } else {
-      // Pull off the most-significant bit so that BigInteger doesn't think
-      // the number is negative, then set it again using setBit().
-      return BigInteger.valueOf(value & Long.MAX_VALUE).setBit(Long.SIZE - 1).toString();
     }
   }
 

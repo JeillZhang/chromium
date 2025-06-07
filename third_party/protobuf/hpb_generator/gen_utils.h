@@ -5,8 +5,8 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
-#ifndef PROTOBUF_COMPILER_HBP_GEN_UTILS_H_
-#define PROTOBUF_COMPILER_HBP_GEN_UTILS_H_
+#ifndef GOOGLE_PROTOBUF_COMPILER_HPB_GEN_UTILS_H__
+#define GOOGLE_PROTOBUF_COMPILER_HPB_GEN_UTILS_H__
 
 #include <string>
 #include <vector>
@@ -41,7 +41,9 @@ std::vector<const protobuf::FieldDescriptor*> FieldNumberOrder(
 
 std::string ToCamelCase(absl::string_view input, bool lower_first);
 
+std::string DefaultValue(const FieldDescriptor* field);
+
 }  // namespace protobuf
 }  // namespace google::hpb_generator
 
-#endif  // PROTOBUF_COMPILER_HBP_GEN_UTILS_H_
+#endif  // GOOGLE_PROTOBUF_COMPILER_HPB_GEN_UTILS_H__

@@ -17,9 +17,11 @@ android_library("java") {
     "java/src/org/chromium/chrome/browser/tab/TabAssociatedApp.java",
     "java/src/org/chromium/chrome/browser/tab/TabAttributeKeys.java",
     "java/src/org/chromium/chrome/browser/tab/TabAttributes.java",
+    "java/src/org/chromium/chrome/browser/tab/TabContextMenuData.java",
     "java/src/org/chromium/chrome/browser/tab/TabCreationState.java",
     "java/src/org/chromium/chrome/browser/tab/TabDelegateFactory.java",
     "java/src/org/chromium/chrome/browser/tab/TabHidingType.java",
+    "java/src/org/chromium/chrome/browser/tab/TabId.java",
     "java/src/org/chromium/chrome/browser/tab/TabIdManager.java",
     "java/src/org/chromium/chrome/browser/tab/TabLifecycle.java",
     "java/src/org/chromium/chrome/browser/tab/TabLoadIfNeededCaller.java",
@@ -62,7 +64,7 @@ android_library("java") {
     ":jni_headers",
 
     # TabSelectionType, TabLaunchType
-    "//chrome/browser/ui:tab_model_enums_java",
+    "//chrome/browser/ui/android/tab_model:enums_java",
 
     # SadTabEvent
     "//components/ui_metrics:ui_metrics_enums_java",
@@ -86,6 +88,7 @@ android_library("java") {
     "//chrome/browser/ui/android/native_page:java",
     "//chrome/browser/ui/android/pdf:java",
     "//chrome/browser/ui/android/strings:ui_strings_grd",
+    "//chrome/browser/util:java",
     "//components/autofill/android:autofill_features_java",
     "//components/browser_ui/util/android:java",
     "//components/commerce/core:proto_java",
@@ -150,6 +153,7 @@ robolectric_library("junit") {
   sources = [
     "java/src/org/chromium/chrome/browser/tab/CurrentTabObserverTest.java",
     "java/src/org/chromium/chrome/browser/tab/TabAssociatedAppTest.java",
+    "java/src/org/chromium/chrome/browser/tab/TabContextMenuDataUnitTest.java",
     "java/src/org/chromium/chrome/browser/tab/TabIdManagerTest.java",
     "java/src/org/chromium/chrome/browser/tab/TabStateAttributesTest.java",
     "java/src/org/chromium/chrome/browser/tab/TabSupplierObserverTest.java",

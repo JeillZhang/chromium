@@ -87,6 +87,7 @@ class TimeManagementContainer : public views::FlexLayoutView {
     if (chromeos::features::IsSystemBlurEnabled()) {
       layer()->SetFillsBoundsOpaquely(false);
       layer()->SetBackgroundBlur(ColorProvider::kBackgroundBlurSigma);
+      layer()->SetBackdropFilterQuality(ColorProvider::kBackgroundBlurQuality);
     }
 
     layer()->SetRoundedCornerRadius(
@@ -102,7 +103,7 @@ class TimeManagementContainer : public views::FlexLayoutView {
         chromeos::features::IsSystemBlurEnabled()
             ? cros_tokens::kCrosSysSystemBaseElevated
             : cros_tokens::kCrosSysSystemBaseElevatedOpaque;
-    SetBackground(views::CreateThemedSolidBackground(background_color_id));
+    SetBackground(views::CreateSolidBackground(background_color_id));
     SetBorder(std::make_unique<views::HighlightBorder>(
         kGlanceablesContainerCornerRadius,
         views::HighlightBorder::Type::kHighlightBorderOnShadow));

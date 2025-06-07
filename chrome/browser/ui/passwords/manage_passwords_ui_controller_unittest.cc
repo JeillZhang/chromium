@@ -22,6 +22,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/optimization_guide/mock_optimization_guide_keyed_service.h"
 #include "chrome/browser/password_manager/chrome_password_change_service.h"
+#include "chrome/browser/password_manager/password_change_delegate.h"
 #include "chrome/browser/password_manager/password_change_service_factory.h"
 #include "chrome/browser/ui/hats/mock_trust_safety_sentiment_service.h"
 #include "chrome/browser/ui/hats/trust_safety_sentiment_service_factory.h"
@@ -125,11 +126,16 @@ class PasswordLeakDialogMock : public CredentialLeakPrompt {
 
 class TestManagePasswordsIconView : public ManagePasswordsIconView {
  public:
-  void SetState(password_manager::ui::State state) override { state_ = state; }
+  void SetState(password_manager::ui::State state,
+                bool is_blocklisted) override {
+    state_ = state;
+    is_blocklisted_ = is_blocklisted;
+  }
   password_manager::ui::State state() { return state_; }
 
  private:
   password_manager::ui::State state_;
+  bool is_blocklisted_ = false;
 };
 
 class TestPasswordManagerClient
@@ -260,8 +266,7 @@ std::unique_ptr<MockPasswordFormManagerForUI> CreateFormManagerWithBestMatches(
       .Times(AtMost(2))
       .WillRepeatedly(ReturnRef(password_form->url));
   EXPECT_CALL(*form_manager, IsBlocklisted())
-      .Times(AtMost(1))
-      .WillOnce(Return(is_blocklisted));
+      .WillRepeatedly(Return(is_blocklisted));
   EXPECT_CALL(*form_manager, GetInteractionsStats())
       .Times(AtMost(1))
       .WillOnce(
@@ -1485,7 +1490,7 @@ TEST_F(ManagePasswordsUIControllerTest, SaveBubbleAfterLeakCheck) {
 
   // After closing the lead check dialog, the blocklisting will be checked again
   // to decide whether to reopen the save prompt.
-  EXPECT_CALL(*form_manager_ptr, IsBlocklisted()).WillOnce(Return(false));
+  EXPECT_CALL(*form_manager_ptr, IsBlocklisted()).WillRepeatedly(Return(false));
   EXPECT_CALL(*form_manager_ptr, GetInteractionsStats())
       .WillOnce(
           Return(base::span<const password_manager::InteractionsStats>()));
@@ -1527,7 +1532,7 @@ TEST_F(ManagePasswordsUIControllerTest,
 
   // After closing the lead check dialog, the blocklisting will be checked again
   // to decide whether to reopen the save prompt.
-  EXPECT_CALL(*form_manager_ptr, IsBlocklisted()).WillOnce(Return(true));
+  EXPECT_CALL(*form_manager_ptr, IsBlocklisted()).WillRepeatedly(Return(true));
 
   // Close the dialog.
   EXPECT_CALL(*controller(), OnUpdateBubbleAndIconVisibility());
@@ -1941,11 +1946,28 @@ TEST_F(ManagePasswordsUIControllerTest, PasswordChangeOngoing) {
       .WillOnce(testing::Return(GURL("https://example.com/password/")));
   auto* password_change_service =
       PasswordChangeServiceFactory::GetForProfile(profile());
+
+  // Assuming, the password form was just submitted and this is a new password.
+  std::vector<PasswordForm> best_matches;
+  auto test_form_manager =
+      CreateFormManagerWithBestMatches(best_matches, &submitted_form());
+  controller()->OnPasswordSubmitted(std::move(test_form_manager));
+  ASSERT_EQ(password_manager::ui::PENDING_PASSWORD_STATE,
+            controller()->GetState());
+
+  // Password change flow is started.
   password_change_service->OfferPasswordChangeUi(
       kUrl, u"new_username", u"new_password", web_contents());
-
   ASSERT_EQ(password_manager::ui::PASSWORD_CHANGE_STATE,
             controller()->GetState());
+
+  // Password change flow is finished successfully. The state should change to
+  // `MANAGE_STATE`.
+  controller()->OnPasswordChangeFinishedSuccessfully();
+  static_cast<PasswordChangeDelegate::Observer*>(password_change_service)
+      ->OnPasswordChangeStopped(
+          password_change_service->GetPasswordChangeDelegate(web_contents()));
+  ASSERT_EQ(password_manager::ui::MANAGE_STATE, controller()->GetState());
 }
 
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)

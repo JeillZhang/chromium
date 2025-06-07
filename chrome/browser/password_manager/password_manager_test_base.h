@@ -8,13 +8,13 @@
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
-#include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "chrome/browser/ssl/cert_verifier_browser_test.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_store/password_store_consumer.h"
+#include "components/password_manager/core/common/password_manager_ui.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 
@@ -99,6 +99,8 @@ class BubbleObserver {
   void WaitForSaveUnsyncedCredentialsPrompt() const;
 
  private:
+  void WaitForState(password_manager::ui::State target_state) const;
+
   const raw_ptr<ManagePasswordsUIController> passwords_ui_controller_;
 };
 
@@ -119,11 +121,6 @@ class PasswordManagerBrowserTestBase : public CertVerifierBrowserTest {
   void SetUpOnMainThread() override;
   void TearDownOnMainThread() override;
   void SetUpCommandLine(base::CommandLine* command_line) override;
-
-  // Creates a new tab with all the password manager test hooks and returns it.
-  // Closes previously active tab when `open_new_tab` is false.
-  static content::WebContents* GetNewTab(Browser* browser,
-                                         bool open_new_tab = false);
 
   // Make sure that the password store associated with the given browser
   // processed all the previous calls, calls executed on another thread.

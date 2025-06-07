@@ -114,6 +114,7 @@ const char kFormHtml[] =
          <input style='display: none' id=displaynone>
          <input type=month id=month>
          <input type=month id='month-nonempty' value='2011-12'>
+         <input type=date id='date'>
          <select id=select>
            <option></option>
            <option value=CA>California</option>
@@ -151,6 +152,7 @@ const char kUnownedFormHtml[] =
        <input style='display: none' id=displaynone>
        <input type=month id=month>
        <input type=month id='month-nonempty' value='2011-12'>
+       <input type=date id='date'>
        <select id=select>
          <option></option>
          <option value=CA>California</option>
@@ -186,6 +188,7 @@ const char kUnownedUntitledFormHtml[] =
        <input style='display: none' id=displaynone>
        <input type=month id=month>
        <input type=month id='month-nonempty' value='2011-12'>
+       <input type=date id='date'>
        <select id=select>
          <option></option>
          <option value=CA>California</option>
@@ -222,6 +225,7 @@ const char kUnownedNonEnglishFormHtml[] =
          <input style='display: none' id=displaynone>
          <input type=month id=month>
          <input type=month id='month-nonempty' value='2011-12'>
+         <input type=date id='date'>
          <select id=select>
            <option></option>
            <option value=CA>California</option>
@@ -316,7 +320,8 @@ static constexpr CallTimerState kUpdateFormCacheCallTimerStateDummy = {
 FormData FindForm(const blink::WebFormControlElement& element) {
   if (auto p = FindFormAndFieldForFormControlElement(
           element, *base::MakeRefCounted<FieldDataManager>(),
-          kExtractFormDataCallTimerStateDummy, /*extract_options=*/{},
+          kExtractFormDataCallTimerStateDummy, /*button_titles_cache=*/nullptr,
+          /*extract_options=*/{},
           /*form_cache=*/{})) {
     return p->first;
   }
@@ -376,7 +381,8 @@ class FormAutofillTest : public test::AutofillRendererTest {
       DenseSet<ExtractOption> extract_options = {}) {
     return form_util::ExtractFormData(
         GetDocument(), form, *base::MakeRefCounted<FieldDataManager>(),
-        kExtractFormDataCallTimerStateDummy, extract_options);
+        kExtractFormDataCallTimerStateDummy, /*button_titles_cache=*/nullptr,
+        extract_options);
   }
 
   std::optional<std::pair<FormData, raw_ref<const FormFieldData>>>
@@ -385,7 +391,8 @@ class FormAutofillTest : public test::AutofillRendererTest {
       DenseSet<ExtractOption> extract_options = {}) {
     return form_util::FindFormAndFieldForFormControlElement(
         control, *base::MakeRefCounted<FieldDataManager>(),
-        kExtractFormDataCallTimerStateDummy, extract_options,
+        kExtractFormDataCallTimerStateDummy, /*button_titles_cache=*/nullptr,
+        extract_options,
         /*form_cache=*/{});
   }
 
@@ -585,6 +592,9 @@ class FormAutofillTest : public test::AutofillRendererTest {
         {FormControlType::kInputMonth, "month", "", true, "2017-11", "2017-11"},
         {FormControlType::kInputMonth, "month-nonempty", "2011-12", true,
          "2017-11", "2017-11"},
+        // Regular <input type=date> should be be autofilled.
+        {FormControlType::kInputDate, "date", "", true, "2017-11-12",
+         "2017-11-12"},
         // Regular select fields should be autofilled.
         {FormControlType::kSelectOne, "select", "", true, "TX", "TX"},
         // Select fields should be autofilled even if they already have a
@@ -638,6 +648,9 @@ class FormAutofillTest : public test::AutofillRendererTest {
         {FormControlType::kInputMonth, "month", "", true, "2017-11", "2017-11"},
         {FormControlType::kInputMonth, "month-nonempty", "2011-12", true,
          "2017-11", "2017-11"},
+        // Regular <input type=date> should be previewed.
+        {FormControlType::kInputDate, "date", "", true, "2017-11-12",
+         "2017-11-12"},
         // Regular select fields should be previewed.
         {FormControlType::kSelectOne, "select", "", true, "TX", "TX"},
         // Select fields should be previewed even if they already have a

@@ -12,6 +12,7 @@
 #include "base/location.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -83,14 +84,12 @@ class FocusChangeObserver : public views::FocusChangeListener,
   FocusChangeObserver(views::FocusManager* focus_manager,
                       content::WebContents* web_contents)
       : content::WebContentsObserver(web_contents) {
-    obs_.Observe(focus_manager);
+    focus_manager_observation_.Observe(focus_manager);
   }
 
   void WaitForFocusChange() { run_loop_.Run(); }
 
   // FocusChangeListener:
-  void OnWillChangeFocus(views::View* focused_before,
-                         views::View* focused_now) override {}
   void OnDidChangeFocus(views::View* focused_before,
                         views::View* focused_now) override {
     if (focused_now) {
@@ -111,27 +110,12 @@ class FocusChangeObserver : public views::FocusChangeListener,
   }
 
  private:
-  base::ScopedObservation<views::FocusManager, FocusChangeObserver> obs_{this};
+  base::ScopedObservation<views::FocusManager, views::FocusChangeListener>
+      focus_manager_observation_{this};
   base::RunLoop run_loop_;
 };
 
 }  // namespace
-
-namespace base {
-
-template <>
-struct ScopedObservationTraits<views::FocusManager, FocusChangeObserver> {
-  static void AddObserver(views::FocusManager* source,
-                          FocusChangeObserver* observer) {
-    source->AddFocusChangeListener(observer);
-  }
-  static void RemoveObserver(views::FocusManager* source,
-                             FocusChangeObserver* observer) {
-    source->RemoveFocusChangeListener(observer);
-  }
-};
-
-}  // namespace base
 
 namespace {
 

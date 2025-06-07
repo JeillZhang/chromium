@@ -18,7 +18,7 @@
 #include "base/observer_list.h"
 #include "base/scoped_observation.h"
 #include "build/build_config.h"
-#include "ui/accessibility/ax_mode_observer.h"
+#include "ui/accessibility/platform/ax_mode_observer.h"
 #include "ui/base/class_property.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-forward.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -31,6 +31,7 @@
 #include "ui/display/display.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/events/event_source.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/native_theme/native_theme_observer.h"
@@ -38,6 +39,10 @@
 #include "ui/views/widget/native_widget_delegate.h"
 #include "ui/views/window/client_view.h"
 #include "ui/views/window/non_client_view.h"
+
+#if BUILDFLAG(IS_OZONE)
+#include "ui/ozone/public/platform_session_manager.h"
+#endif
 
 namespace base {
 class TimeDelta;
@@ -214,6 +219,11 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     kMaxValue = kAcceptButtonClicked
   };
 
+  // This struct had unused fields that were removed, but may be of interest to
+  // future users:
+  // - force_show_in_taskbar: https://crrev.com/c/6356649
+  // - native_theme: https://crrev.com/c/6356535
+  // - wants_mouse_events_when_inactive: https://crrev.com/c/6354158
   struct VIEWS_EXPORT InitParams {
     enum Type {
       TYPE_WINDOW,  // A decorated Window, like a frame window.
@@ -252,25 +262,39 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     };
 
     enum Ownership {
-      // Default. Creator is not responsible for managing the lifetime of the
-      // Widget, it is destroyed when the corresponding NativeWidget is
-      // destroyed.
+      // The client (caller) manages the lifetime of the Widget, typically via
+      // std::unique_ptr<Widget>. This is the preferred ownership mode.
+      //
+      // If you encounter problems with this ownership mode, please file a bug.
+      //
+      // - The Widget remains valid even after the platform window
+      //   (HWND, NSWindow, etc.) is closed.
+      // - Widget API calls are safe after the platform window closes, but
+      //   most will become no-ops (e.g., Show() will do nothing).
+      // - The NativeWidget is destroyed when the platform window closes.
+      // - When the client destroys the Widget, a close request is sent to the
+      //   platform window (if it's still open).
+      CLIENT_OWNS_WIDGET,
+
+      // The NativeWidget manages the lifetime of the Widget. The Widget is
+      // destroyed when the corresponding NativeWidget is destroyed.
+      //
+      // DEPRECATED: Prone to memory issues. A Widget* can be invalidated
+      // at any time, leading to dangling pointers.  This does not fit typical
+      // C++ memory management idioms.
       NATIVE_WIDGET_OWNS_WIDGET,
-      // Used when the Widget is owned by someone other than the NativeWidget,
-      // e.g. a scoped_ptr in tests. Production use is discouraged because the
-      // Widget API might become unsafe after the platform window is closed.
+
+      // The Widget owns the NativeWidget. The NativeWidget is destroyed when
+      // the corresponding Widget is destroyed.
+      //
+      // DEPRECATED: Causes problems with platform window shutdown. The OS
+      // usually does not expect the NativeWidget to be destroyed immediately
+      // when the platform window is closed. For example, if the platform window
+      // has a close animation, it must remain valid until the animation
+      // finishes to avoid prematurely destroying the compositor and its layer.
+      // This would also cause other platform-specific issues
+      // (e.g., crbug.com/40619853).
       WIDGET_OWNS_NATIVE_WIDGET,
-      // Preferred Ownership mode. This is intended to be a safe replacement for
-      // WIDGET_OWNS_NATIVE_WIDGET. The NativeWidget will be closed along with
-      // the platform window.
-      // The above "default" reflects the behavior of various platforms in which
-      // the NativeWidget is effectively "owned" by the platform itself. It is
-      // possible that the NativeWidget is destroyed at the behest of the plat-
-      // form, leaving the associated Widget reference dangling.
-      // Using this ownership mode allows for the Widget being resilient to the
-      // NativeWidget being destroyed out from under the Widget while being
-      // able to manage the Widget independently.
-      CLIENT_OWNS_WIDGET
     };
 
     enum class ShadowType {
@@ -281,11 +305,6 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
       kDrop,     // Draw a drop shadow that emphasizes Z-order
                  // relationship to other windows.
     };
-
-    // TODO(crbug.com/339619005): Remove this constructor once call sites
-    //                            have been migrated to always specifying
-    //                            the ownership mode as well as the type.
-    explicit InitParams(Type type);
 
     // The preferred constructor. Must specify the ownership mode. The ownership
     // mode will eventually go away and will implicitly be CLIENT_OWNS_WIDGET.
@@ -340,7 +359,8 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     // If kOpaque, we can perform optimizations based on the widget being fully
     // opaque. Default is based on ViewsDelegate::GetOpacityForInitParams().
     // Defaults to kOpaque for non-window widgets. Translucent windows may not
-    // always be supported.
+    // always be supported, e.g., resizable windows cannot be translucent
+    // on Windows.
     WindowOpacity opacity = WindowOpacity::kInferred;
 
     bool accept_events = true;
@@ -368,8 +388,17 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     // be ignored on some platforms. No value indicates no preference.
     std::optional<int> shadow_elevation;
 
-    // The window corner radius. May be ignored on some platforms.
-    std::optional<int> corner_radius;
+    // Specifies the desired rounded corners for the window, in dips (device
+    // independent pixels). This is handled by the OS windowing system, and the
+    // support varies:
+    // - ChromeOS Ash & macOS: Fully effective; the specified radius is used.
+    // - Windows 11: Partially effective; if a value is set positive, it enables
+    //   system-managed rounded corners via the DWMWCP_ROUND window style. The
+    //   actual radius is determined by the OS, not this specific value.
+    // - Windows 10 & other platforms: Has no effect.
+    // Alternatively, you can set WindowOpacity to kTranslucent and use
+    // views::RoundedRectBackground. This has limitations (see `opacity`).
+    std::optional<gfx::RoundedCornersF> rounded_corners;
 
     // Specifies that the system default caption and icon should not be
     // rendered, and that the client area should be equivalent to the window
@@ -411,9 +440,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     gfx::NativeView parent = gfx::NativeView();
 
     // Specifies the initial bounds of the Widget. Default is empty, which means
-    // the NativeWidget may specify a default size. If the parent is specified,
-    // |bounds| is in the parent's coordinate system. If the parent is not
-    // specified, it's in screen's global coordinate system.
+    // the NativeWidget may specify a default size. If the parent is specified
+    // and the widget type is not WINDOW_TYPE_POPUP, `bounds` is in the parent's
+    // coordinate system. Otherwise, it's in screen coordinates.
+    // TODO(crbug.com/40287810): can we use screen coordinates universally?
     gfx::Rect bounds;
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -451,10 +481,6 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     // the default desktop for new windows.
     gfx::NativeWindow context = gfx::NativeWindow();
 
-    // If true, forces the window to be shown in the taskbar, even for window
-    // types that do not appear in the taskbar by default (popup and bubble).
-    bool force_show_in_taskbar = false;
-
 #if BUILDFLAG(IS_WIN)
     // If true, force the window not to be shown in the taskbar, even for
     // window types that do appear in the taskbar by default.
@@ -462,8 +488,9 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
     // If true, adds the WS_SYSMENU style to TYPE_WINDOW_FRAMELESS windows.
     bool force_system_menu_for_frameless = false;
-#endif  //  BUILDFLAG(IS_WIN)
+#endif  // BUILDFLAG(IS_WIN)
 
+#if BUILDFLAG(IS_LINUX)
     // Only used by X11, for root level windows. Specifies the res_name and
     // res_class fields, respectively, of the WM_CLASS window property. Controls
     // window grouping and desktop file matching in Linux window managers.
@@ -473,12 +500,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
     // Only used by Wayland, for root level windows.
     std::string wayland_app_id;
+#endif  // BUILDFLAG(IS_LINUX)
 
     // If true then the widget uses software compositing.
     bool force_software_compositing = false;
-
-    // If set, mouse events will be sent to the widget even if inactive.
-    bool wants_mouse_events_when_inactive = false;
 
     // If set, the widget was created in headless mode.
     bool headless_mode = false;
@@ -508,20 +533,24 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     // window should request the wayland compositor to send key events,
     // even if it matches with the compositor's keyboard shortcuts.
     bool inhibit_keyboard_shortcuts = false;
-#endif
 
-    // Directly sets the NativeTheme used by the Widget. Providing the
-    // NativeTheme here vs setting afterwards potentially avoids lots of
-    // notifications of theme changes.
-    // A value of null results in the default theme being used.
-    raw_ptr<ui::NativeTheme> native_theme = nullptr;
+    // Used by Ozone platforms that implement support for display server backed
+    // session management. E.g: Wayland with xdg-session-management protocol.
+    std::optional<ui::PlatformSessionWindowData> session_data;
+#endif
 
 #if BUILDFLAG(IS_MAC)
     // If set to true, tags the widget as an invisible overlay widget that
     // allows the Views tree to be broken up into distinct NSViews for use by
     // immersive fullscreen. Not for general use.
     bool is_overlay = false;
+
+    // If set to true, enable system default show and hide animations.
+    bool animation_enabled = false;
 #endif
+
+    // Initial native widget background color, if supported.
+    std::optional<SkColor> background_color;
   };
 
   // Represents a lock held on the widget's ShouldPaintAsActive() state. As
@@ -590,16 +619,11 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   // Returns all Widgets in |native_view|'s hierarchy, including itself if
   // it is one.
-  // TODO(tluk): This API should be updated to return Widgets rather than take
-  // an out param.
-  static void GetAllChildWidgets(gfx::NativeView native_view,
-                                 Widgets* children);
+  static Widgets GetAllChildWidgets(gfx::NativeView native_view);
 
   // Returns all Widgets owned by |native_view| (including child widgets, but
   // not including itself).
-  // TODO(tluk): This API should be updated to return Widgets rather than take
-  // an out param.
-  static void GetAllOwnedWidgets(gfx::NativeView native_view, Widgets* owned);
+  static Widgets GetAllOwnedWidgets(gfx::NativeView native_view);
 
   // https://crbug.com/391414831: This is only used by some views
   // implementation details for content::WebContents glue, and for ChromeOS.
@@ -735,7 +759,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   std::string GetWorkspace() const;
 
   // Sizes and/or places the widget to the specified bounds, size or position.
-  // `bounds` is in screen coordinates.
+  // `bounds` is in screen coordinates for top-level (is_top_level() == true)
+  // widgets and WINDOW_TYPE_POPUP widgets. Other widgets use its parent
+  // widget's client area coordinates.
+  // TODO(crbug.com/40287810): can we use screen coordinates universally?
   void SetBounds(const gfx::Rect& bounds);
   void SetSize(const gfx::Size& size);
 
@@ -933,6 +960,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   void Minimize();
   void Restore();
 
+  // Shows a menu with controls beyond minimize/maximize/restore. Only
+  // implemented on Linux.
+  void ShowWindowControlsMenu(const gfx::Point& point);
+
   // Whether or not the window is maximized or minimized.
   virtual bool IsMaximized() const;
   bool IsMinimized() const;
@@ -983,8 +1014,23 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   }
   bool is_secondary_widget() const { return is_secondary_widget_; }
 
-  // Returns whether the Widget is visible to the user.
-  virtual bool IsVisible() const;
+  // Returns whether the Widget is mapped by the window server. It doesn't
+  // necessarily mean the window's pixels are currently visible on a physical
+  // display to the user.
+  // Example: a mapped Widget on a hidden virtual desktop returns true for
+  // IsVisible(), but is not physically visible to the user.
+  //
+  // On some platforms (e.g., macOS), this is asynchronously updated, i.e.
+  // calling Show() or Hide() will not synchronously update this.
+  bool IsVisible() const;
+
+  // Returns true if the Widget is physically visible to the user on any screen.
+  // This is implemented only on macOS and Windows. On other platforms this is
+  // equivalent to IsVisible().
+  //
+  // On some platforms (e.g., macOS), this is asynchronously updated, i.e.
+  // calling Show() or Hide() will not synchronously update this.
+  bool IsVisibleOnScreen() const;
 
   // Returns the ThemeProvider that provides theme resources for this Widget.
   virtual const ui::ThemeProvider* GetThemeProvider() const;
@@ -1231,6 +1277,11 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // closes.
   virtual void OnOwnerClosing();
 
+  // Returns true if the NativeWidget is a desktop widget. A desktop widget owns
+  // a platform window (NSWindow, HWND, etc.) and is not clipped to a parent
+  // window.
+  bool GetIsDesktopWidget() const;
+
   // Returns the internal name for this Widget and NativeWidget.
   std::string GetName() const;
 
@@ -1270,6 +1321,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   void OnNativeFocus() override;
   void OnNativeBlur() override;
   void OnNativeWidgetVisibilityChanged(bool visible) override;
+  void OnNativeWidgetVisibilityOnScreenChanged(bool visible) override;
   void OnNativeWidgetCreated() override;
   void OnNativeWidgetDestroying() override;
   void OnNativeWidgetDestroyed() override;
@@ -1278,6 +1330,8 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   gfx::Size GetMaximumSize() const override;
   void OnNativeWidgetMove() override;
   void OnNativeWidgetSizeChanged(const gfx::Size& new_size) override;
+  void OnNativeWidgetUserResizeStarted() override;
+  void OnNativeWidgetUserResizeEnded() override;
   void OnNativeWidgetWorkspaceChanged() override;
   void OnNativeWidgetWindowShowStateChanged() override;
   void OnNativeWidgetBeginUserBoundsChange() override;
@@ -1326,7 +1380,8 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // Sets an override for `color_mode` when `GetColorProvider()` is requested.
   // e.g. if set to kDark, colors will always be for the dark theme.
   void SetColorModeOverride(
-      std::optional<ui::ColorProviderKey::ColorMode> color_mode);
+      std::optional<ui::ColorProviderKey::ColorMode> color_mode,
+      std::optional<SkColor> background_color);
 
   // ui::ColorProviderSource:
   const ui::ColorProvider* GetColorProvider() const override;
@@ -1426,6 +1481,9 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   GetDisableActivationChangeHandling() {
     return g_disable_activation_change_handling_;
   }
+
+  // Helper for Init() to handle accessibility-specific work.
+  void InitAccessibility();
 
   // Persists the window's restored position and "show" state using the
   // window delegate.
@@ -1652,6 +1710,9 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   // Replaces the implementation of Close() and CloseWithReason().
   base::OnceCallback<void(ClosedReason)> override_close_;
+
+  // Color used to fill the native widget if supported, overriding theme colors.
+  std::optional<SkColor> background_color_;
 
   base::ScopedObservation<ui::NativeTheme, ui::NativeThemeObserver>
       native_theme_observation_{this};

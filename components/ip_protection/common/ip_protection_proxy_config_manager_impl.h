@@ -111,10 +111,7 @@ class IpProtectionProxyConfigManagerImpl
   const base::TimeDelta proxy_list_refresh_interval_;
 
   // If false, proxy list refresh interval is not fuzzed.
-  bool enable_proxy_list_fetch_interval_fuzzing_for_testing_ = true;
-
-  // Feature flag to safely introduce token caching by geo.
-  const bool enable_token_caching_by_geo_;
+  bool enable_proxy_list_fetch_interval_fuzzing_ = true;
 
   // A timer to run `RefreshProxyList()` when necessary.
   base::OneShotTimer next_refresh_proxy_list_;

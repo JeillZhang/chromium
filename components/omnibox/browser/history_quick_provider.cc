@@ -68,9 +68,11 @@ void HistoryQuickProvider::Start(const AutocompleteInput& input,
 
   // Remove the keyword from input if we're in keyword mode for a starter pack
   // engine.
-  autocomplete_input_ = input;
-  starter_pack_engine_ = AutocompleteInput::AdjustInputForStarterPackEngines(
-      client()->GetTemplateURLService(), &autocomplete_input_);
+  const auto [adjusted_input, starter_pack_engine] =
+      AdjustInputForStarterPackKeyword(input,
+                                       client()->GetTemplateURLService());
+  autocomplete_input_ = std::move(adjusted_input);
+  starter_pack_engine_ = starter_pack_engine;
 
   if (in_memory_url_index_) {
     DoAutocomplete();
@@ -366,8 +368,8 @@ AutocompleteMatch HistoryQuickProvider::QuickMatchToACMatch(
       ACMatchClassification::NONE);
 
   // Set |inline_autocompletion| and |allowed_to_be_default_match| if possible.
-  if (match.TryRichAutocompletion(match.contents, match.description,
-                                  autocomplete_input_)) {
+  if (match.TryRichAutocompletion(autocomplete_input_, match.contents,
+                                  match.description)) {
     // If rich autocompletion applies, we skip trying the alternatives below.
   } else if (inline_autocomplete_offset != std::u16string::npos) {
     match.inline_autocompletion =

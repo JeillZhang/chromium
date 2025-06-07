@@ -24,6 +24,7 @@
 #include "ui/color/color_provider.h"
 #include "ui/compositor/layer.h"
 #include "ui/display/screen.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/vector_icon_types.h"
 #include "ui/views/accessibility/view_accessibility.h"
@@ -128,7 +129,7 @@ views::UniqueWidgetPtr RichAnswersView::CreateWidget(
   params.shadow_elevation = 2;
   params.shadow_type = views::Widget::InitParams::ShadowType::kDrop;
   params.z_order = ui::ZOrderLevel::kFloatingUIElement;
-  params.corner_radius = kRoundedCornerRadius;
+  params.rounded_corners = gfx::RoundedCornersF(kRoundedCornerRadius);
   params.name = kWidgetName;
   views::UniqueWidgetPtr widget =
       std::make_unique<views::Widget>(std::move(params));
@@ -200,7 +201,7 @@ void RichAnswersView::SetUpBaseView() {
   views::ScrollView* scroll_view = AddChildView(
       views::Builder<views::ScrollView>()
           .ClipHeightTo(kMinimumRichCardHeight, kMaximumRichCardHeight)
-          .SetBackgroundThemeColorId(ui::kColorPrimaryBackground)
+          .SetBackgroundColor(ui::kColorPrimaryBackground)
           .SetHorizontalScrollBarMode(
               views::ScrollView::ScrollBarMode::kDisabled)
           .SetDrawOverflowIndicator(false)
@@ -239,7 +240,7 @@ void RichAnswersView::AddResultTypeIcon() {
   // a circle background behind the icon.
   auto* vector_icon_container =
       main_view_->AddChildView(std::make_unique<views::FlexLayoutView>());
-  vector_icon_container->SetBackground(views::CreateThemedRoundedRectBackground(
+  vector_icon_container->SetBackground(views::CreateRoundedRectBackground(
       ui::kColorSysPrimary, kRichAnswersIconContainerRadius));
   vector_icon_container->SetBorder(
       views::CreateEmptyBorder(kRichAnswersIconBorderDip));
@@ -306,7 +307,7 @@ void RichAnswersView::AddGoogleSearchLink() {
       &RichAnswersView::OnGoogleSearchLinkClicked, weak_factory_.GetWeakPtr()));
   search_link_label->SetFontList(GetFontList(TypographyToken::kCrosButton2));
   search_link_label->SetForceUnderline(false);
-  search_link_label->SetEnabledColorId(ui::kColorSysPrimary);
+  search_link_label->SetEnabledColor(ui::kColorSysPrimary);
 }
 
 void RichAnswersView::OnGoogleSearchLinkClicked() {

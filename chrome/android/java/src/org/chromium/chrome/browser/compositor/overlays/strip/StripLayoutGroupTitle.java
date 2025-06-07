@@ -16,15 +16,15 @@ import org.chromium.base.Callback;
 import org.chromium.base.MathUtils;
 import org.chromium.base.Token;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.data_sharing.ui.shared_image_tiles.SharedImageTilesColor;
+import org.chromium.chrome.browser.data_sharing.ui.shared_image_tiles.SharedImageTilesConfig;
 import org.chromium.chrome.browser.data_sharing.ui.shared_image_tiles.SharedImageTilesCoordinator;
-import org.chromium.chrome.browser.data_sharing.ui.shared_image_tiles.SharedImageTilesType;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tasks.tab_management.TabBubbler;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiThemeUtil;
 import org.chromium.components.collaboration.CollaborationService;
 import org.chromium.components.data_sharing.DataSharingService;
+import org.chromium.components.tab_groups.TabGroupColorId;
+import org.chromium.components.tab_groups.TabGroupColorPickerUtils;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.resources.dynamics.ViewResourceAdapter;
 
@@ -35,16 +35,14 @@ import org.chromium.ui.resources.dynamics.ViewResourceAdapter;
  */
 public class StripLayoutGroupTitle extends StripLayoutView {
 
-    private final Context mContext;
-
     /** Delegate for additional group title functionality. */
     public interface StripLayoutGroupTitleDelegate extends StripLayoutViewOnClickHandler {
         /**
          * Releases the resources associated with this group indicator.
          *
-         * @param rootId The root ID of the given group indicator.
+         * @param groupId The ID of this group indicator.
          */
-        void releaseResourcesForGroupTitle(int rootId);
+        void releaseResourcesForGroupTitle(Token groupId);
 
         /**
          * Rebuilds the resources associated with this group indicator.
@@ -109,7 +107,7 @@ public class StripLayoutGroupTitle extends StripLayoutView {
     private int mRootId;
     private final Token mTabGroupId;
     private String mTitle;
-    @ColorInt private int mColor;
+    @TabGroupColorId private int mColorId;
 
     // Bottom indicator variables
     private float mBottomIndicatorWidth;
@@ -117,10 +115,10 @@ public class StripLayoutGroupTitle extends StripLayoutView {
     // Shared state
     private boolean mIsShared;
     @Nullable private SharedImageTilesCoordinator mSharedImageTilesCoordinator;
+    @Nullable private SharedImageTilesConfig.Builder mSharedImageTilesConfigBuilder;
     @Nullable private ViewResourceAdapter mAvatarResource;
     private float mAvatarWidthWithPadding;
     @ColorInt private final int mBubbleTint;
-    private boolean mShowBubble;
     @Nullable private TabBubbler mTabBubbler;
 
     // Reorder state
@@ -130,6 +128,7 @@ public class StripLayoutGroupTitle extends StripLayoutView {
      * Create a {@link StripLayoutGroupTitle} that represents the TabGroup for the {@code rootId}.
      *
      * @param delegate The delegate for additional strip group title functionality.
+     * @param keyboardFocusHandler Handles keyboard focus gain/loss on this view.
      * @param incognito Whether or not this tab group is Incognito.
      * @param rootId The root ID for the tab group.
      * @param tabGroupId The tab group ID for the tab group.
@@ -137,13 +136,14 @@ public class StripLayoutGroupTitle extends StripLayoutView {
     public StripLayoutGroupTitle(
             Context context,
             StripLayoutGroupTitleDelegate delegate,
+            StripLayoutViewOnKeyboardFocusHandler keyboardFocusHandler,
             boolean incognito,
             int rootId,
             Token tabGroupId) {
-        super(incognito, delegate);
-        assert rootId != Tab.INVALID_TAB_ID : "Tried to create a group title for an invalid group.";
+        super(incognito, delegate, keyboardFocusHandler, context);
+        assert rootId != Tab.INVALID_TAB_ID && tabGroupId != null
+                : "Tried to create a group title for an invalid group.";
         mRootId = rootId;
-        mContext = context;
         mDelegate = delegate;
         mTabGroupId = tabGroupId;
         mBubbleTint = TabUiThemeUtil.getGroupTitleBubbleColor(mContext);
@@ -155,18 +155,13 @@ public class StripLayoutGroupTitle extends StripLayoutView {
         if (newVisibility) {
             mDelegate.rebuildResourcesForGroupTitle(this);
         } else {
-            mDelegate.releaseResourcesForGroupTitle(mRootId);
+            mDelegate.releaseResourcesForGroupTitle(mTabGroupId);
         }
     }
 
     @Override
     public void setIncognito(boolean incognito) {
         assert false : "Incognito state of a group title cannot change";
-    }
-
-    @Override
-    public boolean hasClickAction() {
-        return ChromeFeatureList.sTabStripGroupCollapse.isEnabled();
     }
 
     /**
@@ -203,31 +198,45 @@ public class StripLayoutGroupTitle extends StripLayoutView {
      * @param out Rect to set the bounds.
      */
     public void getPaddedBoundsPx(Rect out) {
-        float dpToPx = mContext.getResources().getDisplayMetrics().density;
+        float dpToPx = getDpToPx();
         out.set(
-                (int) (getPaddedX() * dpToPx),
-                (int) (getPaddedY() * dpToPx),
-                (int) ((getPaddedX() + getPaddedWidth()) * dpToPx),
-                (int) ((getPaddedY() + getPaddedHeight()) * dpToPx));
+                Math.round(getPaddedX() * dpToPx),
+                Math.round(getPaddedY() * dpToPx),
+                Math.round((getPaddedX() + getPaddedWidth()) * dpToPx),
+                Math.round((getPaddedY() + getPaddedHeight()) * dpToPx));
+    }
+
+    @Override
+    public void getAnchorRect(Rect out) {
+        // For the context menu, we should use the unpadded height (so that the anchor rect will
+        // stretch to the bottom of the toolbar), but we should use the padded width (so that the
+        // left edge of the context menu will visually align with the tab group indicator oval).
+        float dpToPx = getDpToPx();
+        out.set(
+                Math.round(getPaddedX() * dpToPx),
+                Math.round(getDrawY() * dpToPx),
+                Math.round((getPaddedX() + getPaddedWidth()) * dpToPx),
+                Math.round((getDrawY() + getHeight()) * dpToPx));
     }
 
     /**
-     * @return The tint color resource that represents the tab group title indicator background.
+     * @return The tab group color id that represents the tab group title indicator background.
      */
-    public @ColorInt int getTint() {
-        return mColor;
+    public @TabGroupColorId int getTint() {
+        return TabGroupColorPickerUtils.getTabGroupColorPickerItemColor(
+                mContext, mColorId, isIncognito());
     }
 
     /**
-     * @param color The color used when displaying this group.
+     * @param colorId The colorId used when displaying this group.
      */
-    public void updateTint(@ColorInt int color) {
-        mColor = color;
+    public void updateTint(@TabGroupColorId int colorId) {
+        mColorId = colorId;
 
         // Update the shared group avatar border color if a shared image tiles coordinator exists.
         if (mSharedImageTilesCoordinator != null) {
-            mSharedImageTilesCoordinator.updateColorStyle(
-                    new SharedImageTilesColor(SharedImageTilesColor.Style.TAB_GROUP, mColor));
+            mSharedImageTilesCoordinator.updateConfig(
+                    mSharedImageTilesConfigBuilder.setTabGroupColor(mContext, colorId).build());
         }
     }
 
@@ -320,14 +329,6 @@ public class StripLayoutGroupTitle extends StripLayoutView {
         return BOTTOM_INDICATOR_HEIGHT_DP;
     }
 
-    /**
-     * Returns {@code true} if the reorder background should be visible. This is the case when the
-     * group indicator is foregrounded for reorder and is not collapsed.
-     */
-    public boolean shouldShowReorderBackground() {
-        return isForegrounded() && !isCollapsed();
-    }
-
     /** Returns the {@link ColorInt} for the reorder background. */
     public @ColorInt int getReorderBackgroundTint() {
         return mReorderBackgroundTint;
@@ -356,12 +357,13 @@ public class StripLayoutGroupTitle extends StripLayoutView {
 
         // Initialize the shared image tiles coordinator if it doesn't exist.
         if (mSharedImageTilesCoordinator == null) {
+            mSharedImageTilesConfigBuilder =
+                    SharedImageTilesConfig.Builder.createForTabGroupColorContext(
+                            mContext, mColorId);
             mSharedImageTilesCoordinator =
                     new SharedImageTilesCoordinator(
                             mContext,
-                            SharedImageTilesType.SMALL,
-                            new SharedImageTilesColor(
-                                    SharedImageTilesColor.Style.TAB_GROUP, mColor),
+                            mSharedImageTilesConfigBuilder.build(),
                             dataSharingService,
                             collaborationService);
         }
@@ -437,20 +439,6 @@ public class StripLayoutGroupTitle extends StripLayoutView {
     }
 
     /**
-     * @param showBubble Whether the tab notification bubble should show.
-     */
-    public void setShowBubble(boolean showBubble) {
-        mShowBubble = showBubble;
-    }
-
-    /**
-     * @return Whether the notification bubble should show.
-     */
-    public boolean shouldShowBubble() {
-        return mShowBubble;
-    }
-
-    /**
      * @param tabBubbler The {@link TabBubbler} that responsible for managing shared group
      *     notification bubbles. The current {@link TabBubbler} is destroyed if set null.
      */
@@ -474,7 +462,7 @@ public class StripLayoutGroupTitle extends StripLayoutView {
      *     if the bubble is not shown.
      */
     public float getBubbleWidthWithPadding() {
-        return shouldShowBubble()
+        return getNotificationBubbleShown()
                 ? NOTIFICATION_BUBBLE_PADDING_DP + NOTIFICATION_BUBBLE_SIZE_DP
                 : 0;
     }
@@ -483,7 +471,7 @@ public class StripLayoutGroupTitle extends StripLayoutView {
      * @return Notification bubble drawX accounting for padding.
      */
     public float getBubbleDrawX() {
-        assert mShowBubble;
+        assert getNotificationBubbleShown();
         return LocalizationUtils.isLayoutRtl()
                 ? getPaddedX() + getTitleEndPadding()
                 : getPaddedX() + getPaddedWidth() - getTitleEndPadding() - getBubbleSize();
@@ -513,7 +501,7 @@ public class StripLayoutGroupTitle extends StripLayoutView {
     /**
      * @return Whether the group is shared.
      */
-    public boolean isGroupSharedForTesting() {
+    public boolean isGroupShared() {
         return mIsShared;
     }
 
@@ -529,5 +517,17 @@ public class StripLayoutGroupTitle extends StripLayoutView {
      */
     public ViewResourceAdapter getAvatarResourceForTesting() {
         return mAvatarResource;
+    }
+
+    /**
+     * {@return The keyboard focus ring's offset (how far it is outside the group indicator) in px}
+     */
+    public int getKeyboardFocusRingOffset() {
+        return TabUiThemeUtil.getFocusRingOffset(mContext);
+    }
+
+    /** {@return The width of the keyboard focus ring stroke in px} */
+    public int getKeyboardFocusRingWidth() {
+        return TabUiThemeUtil.getLineWidth(mContext);
     }
 }

@@ -4,12 +4,13 @@
 
 """Library for defining chromium_tests_builder_config properties."""
 
-load("@stdlib//internal/graph.star", "graph")
-load("@stdlib//internal/luci/common.star", "keys", "kinds", "triggerer")
+load("@stdlib//internal/luci/common.star", "kinds")
 load("//project.star", "settings")
 load("./args.star", "args")
+load("./branches.star", "branches")
 load(
     "./builder_exemptions.star",
+    "exempted_gardened_mirrors_in_cq_builders",
     "mega_cq_excluded_builders",
     "mega_cq_excluded_gardener_rotations",
     "standalone_trybot_excluded_builder_groups",
@@ -162,7 +163,7 @@ def _android_config(*, config, apply_configs = None):
         fail("config must be provided")
     return struct(
         config = config,
-        apply_configs = args.listify(apply_configs),
+        apply_configs = apply_configs,
     )
 
 def _skylab_upload_location(*, gs_bucket, gs_extra = None):
@@ -318,19 +319,24 @@ def _builder_spec(
 
 def _ci_settings(
         *,
-        retry_failed_shards = None):
+        retry_failed_shards = None,
+        retry_invalid_shards = None):
     """Settings specific to CI builders.
 
     Args:
         retry_failed_shards: (bool) Whether or not failing shards of a test will
             be retried. If retries for all failed shards of a test succeed, the
             test will be considered to have passed.
+        retry_invalid_shards: (bool) Whether or not infra failed shards of tests
+            should be retried. If retries for all failed shards of a test
+            succeed, the test will be considered to have passed.
 
     Returns:
         A struct that can be passed to the `ci_settings` argument of the builder.
     """
     return struct(
         retry_failed_shards = retry_failed_shards,
+        retry_invalid_shards = retry_invalid_shards,
     )
 
 def _try_settings(
@@ -396,9 +402,10 @@ def _copy_from(builder, modifier_fn = None):
     )
 
 builder_config = struct(
-    # Function for expressing builder spec or mirrors in terms of another
+    # Functions for expressing builder spec or mirrors in terms of another
     # builder's
     copy_from = _copy_from,
+    is_copy_from = _is_copy_from,
 
     # Functions and associated constants for defining builder spec
     builder_spec = _builder_spec,
@@ -431,6 +438,12 @@ builder_config = struct(
 # Nodes containing the builder config details for a builder
 _BUILDER_CONFIG = nodes.create_node_type_with_builder_ref("builder_config")
 
+_BUILDER_CONFIG_PARENT = nodes.create_link_node_type(
+    "builder_config_parent",
+    _BUILDER_CONFIG,
+    _BUILDER_CONFIG,
+)
+
 # Nodes representing a link to a mirrored builder
 _BUILDER_CONFIG_MIRROR = nodes.create_link_node_type(
     "builder_config_mirror",
@@ -455,6 +468,7 @@ def register_builder_config(
         name,
         builder_group,
         builder_spec,
+        parent,
         mirrors,
         bc_settings,
         targets,
@@ -471,6 +485,7 @@ def register_builder_config(
         name: The name of the builder.
         builder_group: The name of the group the builder belongs to.
         builder_spec: The spec describing the configuration for the builder.
+        parent: Reference to the parent builder of the builder.
         mirrors: References to the builders that the builder should mirror.
         bc_settings: The object determining the additional settings applied to
             builder_config.
@@ -489,6 +504,9 @@ def register_builder_config(
         # TODO(gbeaty) Eventually make this a failure for the chromium
         # family of recipes
         return
+
+    if not builder_spec and parent:
+        fail("parent can't be specified without builder_spec")
 
     if not builder_group:
         fail("builder_group must be set to use chromium_tests_builder_config")
@@ -521,6 +539,9 @@ def register_builder_config(
     if _is_copy_from(builder_spec):
         _BUILDER_SPEC_COPY_FROM.link(builder_config_key, builder_spec.builder)
 
+    if parent:
+        _BUILDER_CONFIG_PARENT.link(builder_config_key, parent)
+
     if _is_copy_from(mirrors):
         _MIRRORS_COPY_FROM.link(builder_config_key, mirrors.builder)
     else:
@@ -542,8 +563,6 @@ def register_builder_config(
             builder_group = builder_group,
             builder_name = name,
         )
-
-    graph.add_edge(builder_config_key, keys.builder(bucket, name))
 
 def _builder_name(node):
     key = node.key
@@ -727,6 +746,7 @@ def _set_builder_config_property(ctx):
 
     bc_state = _bc_state()
     needs_mega_cq_mode = set()
+    trybot_ungardened_mirrors = {}
 
     for bucket in cfg.buckets:
         if not proto.has(bucket, "swarming"):
@@ -734,6 +754,10 @@ def _set_builder_config_property(ctx):
         bucket_name = bucket.name
         for builder in bucket.swarming.builders:
             builder_name = builder.name
+
+            mirror_description = _get_builder_mirror_description(bucket_name, builder, bc_state)
+            builder.description_html = _get_builder_owner_description(mirror_description, builder.contact_team_email)
+
             node = _BUILDER_CONFIG.get(bucket_name, builder_name)
             if not node:
                 continue
@@ -850,9 +874,6 @@ def _set_builder_config_property(ctx):
             )
             builder.properties = json.encode(builder_properties)
 
-            mirror_description = _get_builder_mirror_description(bucket_name, builder, bc_state)
-            builder.description_html = _get_builder_owner_description(mirror_description, builder.contact_team_email)
-
             # Enforce that most gardened CI bots have a matching trybot.
             rotations = get_gardener_rotations(bucket_name, builder.name)
             is_excluded = (
@@ -862,6 +883,22 @@ def _set_builder_config_property(ctx):
             )
             if rotations and not mirroring_builders and not is_excluded:
                 fail("{} is on a sheriff/gardener rotation, but lacks a matching trybot".format(builder.name))
+
+            # If the builder is part of CQ it must have gardeners for the builders it mirrors
+            if branches.matches(branches.selector.MAIN) and bucket_name == "try":
+                for m in mirrors:
+                    mirror_id = _builder_id(m)
+                    mirror_rotations = get_gardener_rotations(mirror_id["bucket"], mirror_id["builder"])
+                    mirror = "{}/{}".format(mirror_id["bucket"], mirror_id["builder"])
+                    if len(mirror_rotations) == 0 and mirror not in exempted_gardened_mirrors_in_cq_builders:
+                        cq_identifier = "{}/{}/{}".format(
+                            settings.project,
+                            bucket_name,
+                            builder.name,
+                        )
+                        if cq_identifier not in trybot_ungardened_mirrors:
+                            trybot_ungardened_mirrors[cq_identifier] = set()
+                        trybot_ungardened_mirrors[cq_identifier] = trybot_ungardened_mirrors[cq_identifier].union([mirror])
 
             if (bucket_name == "try" and not mirrors and
                 builder_properties.get("builder_group") not in standalone_trybot_excluded_builder_groups and
@@ -917,6 +954,9 @@ def _set_builder_config_property(ctx):
         if cq_group.name != "cq":
             continue
         for b in cq_group.verifiers.tryjob.builders:
+            if b.name in trybot_ungardened_mirrors and not b.includable_only and b.experiment_percentage == 0:
+                fail("{} is being added to the CQ but it is mirroring an ungardened and unexempted builder(s): {}".format(b.name, ", ".join(trybot_ungardened_mirrors[b.name])))
+        for b in cq_group.verifiers.tryjob.builders:
             if b.name not in needs_mega_cq_mode:
                 continue
 
@@ -953,38 +993,7 @@ def _bc_state():
         if node.key.kind != _BUILDER_CONFIG.kind:
             fail("Expected {} node, got {}".format(_BUILDER_CONFIG.kind, node))
 
-        builder_nodes = graph.children(node.key, kinds.BUILDER)
-        if len(builder_nodes) != 1:
-            fail(
-                "internal error: builder_config node should have edge to exactly 1 builder node",
-                node.trace,
-            )
-
-        # To find the builder config of the parent builder, we need to find the
-        # builder that triggers the builder we're looking at, then the builder
-        # config node will be the parent node of that builder.
-        #
-        # To find the parent builder, we traverse parent nodes of the builder
-        # node. The builder node will have builder_ref nodes as parents, which
-        # abstract being able to refer to a builder by bucket-qualified name
-        # (ci/foo-builder) or simple name (foo-builder). The builder_ref nodes
-        # will have triggerer nodes as parents, which abstract things that can
-        # trigger builders (pollers or builders). Finally, the triggerer nodes
-        # for builders will have a builder node as a parent.
-        triggerers = set()
-        parents = set()
-        for ref in graph.parents(builder_nodes[0].key, kinds.BUILDER_REF):
-            for t in graph.parents(ref.key, kinds.TRIGGERER):
-                triggerers = triggerers.union([t])
-                for b in graph.parents(t.key, kinds.BUILDER):
-                    builder_configs = graph.parents(b.key, _BUILDER_CONFIG.kind)
-                    if len(builder_configs) > 1:
-                        fail(
-                            "internal error: multiple builder_config parents for {}: {}"
-                                .format(b, builder_configs),
-                            b.trace,
-                        )
-                    parents = parents.union(builder_configs)
+        parents = _BUILDER_CONFIG_PARENT.children(node.key)
 
         if len(parents) > 1:
             fail("{} has multiple parents: {}".format(
@@ -997,22 +1006,10 @@ def _bc_state():
         execution_mode = bc_state.builder_spec(node).execution_mode
 
         if execution_mode == _execution_mode.TEST:
-            if len(triggerers) > 1:
+            if not parent:
                 fail(
-                    "builder {} has multiple triggerers: {}"
-                        .format(_builder_name(node), [t.key.id for t in triggerers]),
-                    node.trace,
-                )
-            elif not triggerers:
-                fail(
-                    "builder {} has execution_mode {} and has no parent"
-                        .format(_builder_name(node), execution_mode),
-                    node.trace,
-                )
-            elif not parent:
-                fail(
-                    "builder {} is triggered by {} which does not have a builder spec"
-                        .format(_builder_name(node), list(triggerers)[0]),
+                    "test-only builder {} does not have a parent"
+                        .format(_builder_name(node)),
                     node.trace,
                 )
         elif execution_mode == _execution_mode.COMPILE_AND_TEST:
@@ -1029,28 +1026,7 @@ def _bc_state():
         if node.key.kind != _BUILDER_CONFIG.kind:
             fail("Expected {} node, got {}".format(_BUILDER_CONFIG.kind, node))
 
-        builder_nodes = graph.children(node.key, kinds.BUILDER)
-        if len(builder_nodes) != 1:
-            fail(
-                "internal error: builder_config node should have edge to exactly 1 builder node",
-                node.trace,
-            )
-
-        children = set()
-        for b in triggerer.targets(builder_nodes[0]):
-            b_children = graph.parents(b.key, _BUILDER_CONFIG.kind)
-            if not b_children:
-                fail(
-                    "{} is triggered by {}, but does not have a builder spec"
-                        .format(_builder_name(b), _builder_name(node)),
-                    b.trace,
-                )
-            if len(b_children) > 1:
-                fail(
-                    "internal error: builder node should be the target of exactly 1 edge from a builder_config node",
-                    b.trace,
-                )
-            children = children.union(b_children)
+        children = _BUILDER_CONFIG_PARENT.parents(node.key)
 
         execution_mode = bc_state.builder_spec(node).execution_mode
 

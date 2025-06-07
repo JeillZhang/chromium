@@ -9,10 +9,10 @@
 
 #include "base/feature_list.h"
 #include "base/path_service.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/trusted_vault/trusted_vault_service_factory.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/chrome_test_utils.h"
@@ -48,11 +48,6 @@
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/trusted_vault/standalone_trusted_vault_client.h"
 #endif  // BUILDFLAG(IS_ANDROID)
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/crosapi/mojom/trusted_vault.mojom.h"
-#include "chromeos/lacros/lacros_service.h"
-#endif
 
 namespace {
 
@@ -272,13 +267,13 @@ class TrustedVaultEncryptionKeysTabHelperBrowserTest
     // of available memory when running the test (otherwise low-memory bots may
     // run into test failures).
     feature_list_.InitAndEnableFeatureWithParameters(
-        site_isolation::features::kSiteIsolationMemoryThresholds,
+        site_isolation::features::kSiteIsolationMemoryThresholdsAndroid,
         {{site_isolation::features::
               kStrictSiteIsolationMemoryThresholdParamName,
           "0"},
-         { site_isolation::features::
-               kPartialSiteIsolationMemoryThresholdParamName,
-           "0" }});
+         {site_isolation::features::
+              kPartialSiteIsolationMemoryThresholdParamName,
+          "0"}});
 #else
     feature_list_.InitAndEnableFeature(
         trusted_vault::kSetClientEncryptionKeysJsApi);

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/profiles/profile.h"
@@ -797,7 +798,7 @@ IN_PROC_BROWSER_TEST_F(
   ExtensionTestMessageListener page_script_loaded("page script loaded");
   // Navigate to page.html to get the content_script to load.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), extension->GetResourceURL("page.html")));
+      browser(), extension->ResolveExtensionURL("page.html")));
   ASSERT_TRUE(content::WaitForLoadStop(web_contents()));
   ASSERT_TRUE(page_script_loaded.WaitUntilSatisfied());
 

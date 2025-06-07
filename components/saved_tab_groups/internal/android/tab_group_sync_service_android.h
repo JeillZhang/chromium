@@ -64,7 +64,8 @@ class TabGroupSyncServiceAndroid : public base::SupportsUserData::Data,
   void MakeTabGroupShared(JNIEnv* env,
                           const JavaParamRef<jobject>& j_caller,
                           const JavaParamRef<jobject>& j_group_id,
-                          const JavaParamRef<jstring>& j_collaboration_id);
+                          const JavaParamRef<jstring>& j_collaboration_id,
+                          const JavaParamRef<jobject>& j_boolean_callback);
 
   void AboutToUnShareTabGroup(JNIEnv* env,
                               const JavaParamRef<jobject>& j_caller,
@@ -144,6 +145,10 @@ class TabGroupSyncServiceAndroid : public base::SupportsUserData::Data,
                         const JavaParamRef<jobject>& j_group_id,
                         const JavaParamRef<jstring>& j_sync_tab_id,
                         jint j_local_tab_id);
+  bool WasTabGroupClosedLocally(
+      JNIEnv* env,
+      const JavaParamRef<jobject>& j_caller,
+      const JavaParamRef<jstring>& j_sync_tab_group_id);
 
   // Helper methods for attributions.
   bool IsRemoteDevice(JNIEnv* env,
@@ -156,6 +161,16 @@ class TabGroupSyncServiceAndroid : public base::SupportsUserData::Data,
                            jint j_local_tab_id,
                            jint j_opening_source,
                            jint j_closing_source);
+
+  void UpdateArchivalStatus(JNIEnv* env,
+                            const JavaParamRef<jobject>& j_caller,
+                            const JavaParamRef<jstring>& j_sync_group_id,
+                            const jboolean j_archival_status);
+
+  void SetCollaborationAvailableInFinderForTesting(
+      JNIEnv* env,
+      const JavaParamRef<jobject>& j_caller,
+      const JavaParamRef<jstring>& j_collaboration_id);
 
  private:
   // A reference to the Java counterpart of this class.  See

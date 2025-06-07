@@ -24,7 +24,7 @@ class TabGroupSyncService;
 }  // namespace tab_groups
 
 class AuthenticationService;
-class TabGroupFaviconsGridConfigurator;
+class TabGroupService;
 
 // Configuration object used by the ShareKitService.
 struct ShareKitServiceConfiguration {
@@ -34,8 +34,7 @@ struct ShareKitServiceConfiguration {
       raw_ptr<data_sharing::DataSharingService> data_sharing_service,
       raw_ptr<collaboration::CollaborationService> collaboration_service,
       raw_ptr<tab_groups::TabGroupSyncService> sync_service,
-      std::unique_ptr<TabGroupFaviconsGridConfigurator>
-          favicons_grid_configurator);
+      raw_ptr<TabGroupService> tab_group_service);
   ShareKitServiceConfiguration(const ShareKitServiceConfiguration&) = delete;
   ShareKitServiceConfiguration& operator=(const ShareKitServiceConfiguration&) =
       delete;
@@ -56,8 +55,8 @@ struct ShareKitServiceConfiguration {
   // The service to handle tab group sync.
   raw_ptr<tab_groups::TabGroupSyncService> sync_service;
 
-  // Configures favicons for TabGroupFaviconsGrid objects.
-  std::unique_ptr<TabGroupFaviconsGridConfigurator> favicons_grid_configurator;
+  // The service related to tab groups.
+  raw_ptr<TabGroupService> tab_group_service;
 };
 
 #endif  // IOS_CHROME_BROWSER_SHARE_KIT_MODEL_SHARE_KIT_SERVICE_CONFIGURATION_H_

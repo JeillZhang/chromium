@@ -50,7 +50,7 @@ class CORE_EXPORT HTMLButtonElement final : public HTMLFormControlElement {
   HTMLSelectElement* OwnerSelect() const;
 
   // Invoker Commands (https://github.com/whatwg/html/pull/9841)
-  Element* commandForElement();
+  Element* commandForElement() const;
   AtomicString command() const;
   void setCommand(const AtomicString& type);
   CommandEventType GetCommandEventType(const AtomicString& type) const;
@@ -112,6 +112,10 @@ class CORE_EXPORT HTMLButtonElement final : public HTMLFormControlElement {
   bool RecalcWillValidate() const override;
 
   int DefaultTabIndex() const override;
+
+  static std::optional<Type> TypeFromString(const AtomicString&);
+
+  void SetTypeInternal(Type type);
 
   Type type_ = kSubmit;
   bool is_activated_submit_ = false;

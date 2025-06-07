@@ -19,11 +19,13 @@ import "services/network/public/mojom/data_pipe_getter.mojom";
 import "services/network/public/mojom/device_bound_sessions.mojom";
 import "services/network/public/mojom/devtools_observer.mojom";
 import "services/network/public/mojom/fetch_api.mojom";
+import "services/network/public/mojom/fetch_retry_options.mojom";
 import "services/network/public/mojom/http_raw_headers.mojom";
 import "services/network/public/mojom/http_request_headers.mojom";
 import "services/network/public/mojom/ip_address_space.mojom";
 import "services/network/public/mojom/isolation_info.mojom";
 import "services/network/public/mojom/network_param.mojom";
+import "services/network/public/mojom/permissions_policy/permissions_policy.mojom";
 import "services/network/public/mojom/referrer_policy.mojom";
 import "services/network/public/mojom/request_priority.mojom";
 import "services/network/public/mojom/shared_dictionary_access_observer.mojom";
@@ -39,12 +41,24 @@ import "url/mojom/origin.mojom";
 import "url/mojom/url.mojom";
 
 // See documentation at `URLRequest.trusted_params`.
+//
+// For values that have a corresponding value in URLLoaderFactoryParams
+// (e.g., `isolation_info`, `client_security_state`, and `disable_secure_dns`),
+// the values in the TrustedParams are preferred, if set, unless stated
+// otherwise. `isolation_info` cannot be null, so it always takes precedence
+// when TrustedUrlRequestParams are provided.
+//
+// TODO(https://crbug.com/409959475): Make `isolation_info` and
+// `disable_secure_dns` optional, and take precedence over the corresponding
+// URLLoaderFactoryParams value when set, so they behave consistently.
 struct TrustedUrlRequestParams {
   // If non-empty, this value will be used to set the SiteForCookies and
   // NetworkIsolationKey used by the network request.
   IsolationInfo isolation_info;
 
-  // Whether secure DNS should be disabled for the request.
+  // Whether secure DNS should be disabled for the request. The effective value
+  // for the request is the logical or of this field and the corresponding
+  // values in URLLoaderFactoryParams.
   bool disable_secure_dns;
 
   // Whether a navigation is triggered with a user gesture.
@@ -316,7 +330,7 @@ struct URLRequest {
   // to populate an `Accept-Signatures` header.
   //
   // https://www.rfc-editor.org/rfc/rfc9421.html#name-the-accept-signature-field
-  array<string> expected_signatures;
+  array<string> expected_public_keys;
 
   // https://fetch.spec.whatwg.org/#concept-request-destination
   RequestDestination destination;
@@ -579,9 +593,29 @@ struct URLRequest {
   // CompressionDictionaryTransport feature.
   bool shared_dictionary_writer_enabled = false;
 
+  // If true, disables content decoding (e.g., gzip, brotli) within the network
+  // service for this request. The client becomes responsible for decoding the
+  // response body and setting `decoded_body_length` of
+  // `URLLoaderCompletionStatus`.
+  bool client_side_content_decoding_enabled = false;
+
   // The socket tag to associate this request with. This is typically set by the
   // embedder.
   SocketTag socket_tag;
+
+  // Whether this request is allowed to register new device bound
+  // sessions or process challenges for existing device bound sessions
+  // (e.g. due to an Origin Trial).
+  bool allows_device_bound_session_registration;
+
+  // Permissions Policy of the request.
+  // If it's nullopt then the request's initiator didn't set the permissions
+  // policy. Example: https://crrev.com/c/6295903
+  network.mojom.PermissionsPolicy? permissions_policy;
+
+  // The policies to be used when retrying a fetch. Will only be set on fetch
+  // requests who specified its RetryOptions.
+  network.mojom.FetchRetryOptions? fetch_retry_options;
 };
 
 // URLRequestBody represents body (i.e. upload data) of a HTTP request.

@@ -6,10 +6,12 @@ package org.chromium.chrome.browser.hub;
 
 import android.view.animation.Interpolator;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.ui.interpolators.Interpolators;
 
 /** Animation constants for the Hub. */
+@NullMarked
 public class HubAnimationConstants {
     // Copied from TabSwitcherLayout.
     /** Duration in milliseconds of translate animations for the Hub Layout.. */
@@ -26,6 +28,9 @@ public class HubAnimationConstants {
 
     /** Duration in milliseconds before a fallback animation will occur for the Hub Layout. */
     public static final long HUB_LAYOUT_TIMEOUT_MS = 300L;
+
+    /** Duration in milliseconds of tab list animation for the Hub Layout. */
+    public static final long HUB_LAYOUT_TAB_LIST_FADE_DURATION_MS = 400L;
 
     /**
      * Duration in milliseconds of color blend animations for Hub Pane changes. Chosen to exactly

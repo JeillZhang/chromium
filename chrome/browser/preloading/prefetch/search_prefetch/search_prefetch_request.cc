@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "base/check.h"
+#include "base/check_is_test.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_functions.h"
@@ -21,7 +23,6 @@
 #include "base/time/time.h"
 #include "base/trace_event/named_trigger.h"
 #include "base/trace_event/trace_event.h"
-#include "chrome/browser/prefetch/prefetch_headers.h"
 #include "chrome/browser/preloading/chrome_preloading.h"
 #include "chrome/browser/preloading/prefetch/search_prefetch/field_trial_settings.h"
 #include "chrome/browser/preloading/prefetch/search_prefetch/streaming_search_prefetch_url_loader.h"
@@ -45,7 +46,9 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/client_hints.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
+#include "third_party/blink/public/common/navigation/preloading_headers.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
 #include "url/origin.h"
 
@@ -125,7 +128,29 @@ void MaybeRecordTraceFromSearchPrefetchRequestStartToNavigationIntercepted(
       trace_id, base::TimeTicks::Now());
 }
 
+// TODO(crbug.com/413557424): remove this block.
+bool is_test = false;
+// Restrict per-client to report one check failure.
+bool has_reported = false;
+bool CheckPrefetchParameterExistence(const GURL& url) {
+  std::string_view query_piece = url.query_piece();
+  url::Component query(0, url.query_piece().length());
+  url::Component key, value;
+  while (url::ExtractQueryKeyValue(query_piece, &query, &key, &value)) {
+    if (query_piece.substr(key.begin, key.len) == "pf" && !value.is_empty()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
+
+// static
+void SearchPrefetchRequest::SetIsTest() {
+  CHECK_IS_TEST();
+  is_test = true;
+}
 
 SearchPrefetchRequest::SearchPrefetchRequest(
     const GURL& canonical_search_url,
@@ -245,11 +270,13 @@ bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
   resource_request->headers.SetHeader(
       net::HttpRequestHeaders::kUserAgent,
       GetUserAgentValue(resource_request->headers));
-  resource_request->headers.SetHeader(content::kCorsExemptPurposeHeaderName,
-                                      "prefetch");
-  resource_request->headers.SetHeader(
-      prefetch::headers::kSecPurposeHeaderName,
-      prefetch::headers::kSecPurposePrefetchHeaderValue);
+  if (!base::FeatureList::IsEnabled(
+          blink::features::kRemovePurposeHeaderForPrefetch)) {
+    resource_request->headers.SetHeader(blink::kPurposeHeaderName,
+                                        blink::kSecPurposePrefetchHeaderValue);
+  }
+  resource_request->headers.SetHeader(blink::kSecPurposeHeaderName,
+                                      blink::kSecPurposePrefetchHeaderValue);
   resource_request->headers.SetHeader(
       net::HttpRequestHeaders::kAccept,
       content::FrameAcceptHeaderValue(/*allow_sxg_responses=*/true, profile));
@@ -317,6 +344,14 @@ bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
   }
 
   prefetch_url_ = resource_request->url;
+
+  // It is quite common that a test does not specify the parameter.
+  if (!has_reported &&
+      !CheckPrefetchParameterExistence(resource_request->url) && !is_test) {
+    has_reported = true;
+    base::debug::DumpWithoutCrashing();
+  }
+
   SetSearchPrefetchStatus(SearchPrefetchStatus::kCanBeServed);
   streaming_url_loader_ =
       base::MakeRefCounted<StreamingSearchPrefetchURLLoader>(

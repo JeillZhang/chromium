@@ -19,11 +19,10 @@
 
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/buildflags.h"
 #include "components/keep_alive_registry/keep_alive_state_observer.h"
@@ -210,9 +209,7 @@ class BrowserProcessImpl : public BrowserProcess,
 
   StartupData* startup_data() override;
 
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_WIN) || (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
   void StartAutoupdateTimer() override;
 #endif
 
@@ -275,6 +272,9 @@ class BrowserProcessImpl : public BrowserProcess,
 
   void ApplyDefaultBrowserPolicy();
 
+  // ApplicationLocaleStorage callback
+  void OnLocaleChanged(const std::string& new_locale);
+
   // Methods called to control our lifetime. The browser process can be "pinned"
   // to make sure it keeps running.
   void Pin();
@@ -282,8 +282,12 @@ class BrowserProcessImpl : public BrowserProcess,
 
   const raw_ptr<StartupData> startup_data_;
 
+  // Must be destroyed after |browser_policy_connector_|.
+  std::unique_ptr<gcm::GCMDriver> gcm_driver_;
+
   // Must be destroyed after |local_state_|.
   // Must be destroyed after |profile_manager_|.
+  // Must be destroyed before |gcm_driver_|.
   std::unique_ptr<policy::ChromeBrowserPolicyConnector> const
       browser_policy_connector_;
 
@@ -297,13 +301,14 @@ class BrowserProcessImpl : public BrowserProcess,
   std::unique_ptr<signin::ActivePrimaryAccountsMetricsRecorder>
       active_primary_accounts_metrics_recorder_;
 
-  // |metrics_services_manager_| owns this.
-  raw_ptr<ChromeMetricsServicesManagerClient, AcrossTasksDanglingUntriaged>
-      metrics_services_manager_client_ = nullptr;
-
-  // Must be destroyed before |local_state_|.
+  // Must be destroyed before |local_state_| and after
+  // |metrics_services_manager_client_|.
   std::unique_ptr<metrics_services_manager::MetricsServicesManager>
       metrics_services_manager_;
+
+  // |metrics_services_manager_| owns this.
+  raw_ptr<ChromeMetricsServicesManagerClient> metrics_services_manager_client_ =
+      nullptr;
 
 #if BUILDFLAG(IS_ANDROID)
   // Must be destroyed before |local_state_|.
@@ -396,7 +401,7 @@ class BrowserProcessImpl : public BrowserProcess,
   std::unique_ptr<printing::PrintJobManager> print_job_manager_;
 #endif
 
-  std::string locale_;
+  base::CallbackListSubscription on_locale_changed_callback_subscription_;
 
   // Download status updates (like a changing application icon on dock/taskbar)
   // are global per-application. DownloadStatusUpdater does no work in the ctor
@@ -411,9 +416,7 @@ class BrowserProcessImpl : public BrowserProcess,
 
   std::unique_ptr<BatteryMetrics> battery_metrics_;
 
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if BUILDFLAG(IS_WIN) || (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
   base::RepeatingTimer autoupdate_timer_;
 
   // Gets called by autoupdate timer to see if browser needs restart and can be
@@ -422,8 +425,7 @@ class BrowserProcessImpl : public BrowserProcess,
   bool IsRunningInBackground() const;
   void OnPendingRestartResult(bool is_update_pending_restart);
   void RestartBackgroundInstance();
-#endif  // BUILDFLAG(IS_WIN) || (BUILDFLAG(IS_LINUX) ||
-        // BUILDFLAG(IS_CHROMEOS_LACROS))
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
 
   // component updater is normally not used under ChromeOS due
   // to concerns over integrity of data shared between profiles,
@@ -455,8 +457,6 @@ class BrowserProcessImpl : public BrowserProcess,
 
   std::unique_ptr<network_time::NetworkTimeTracker> network_time_tracker_;
 
-  std::unique_ptr<gcm::GCMDriver> gcm_driver_;
-
   std::unique_ptr<resource_coordinator::ResourceCoordinatorParts>
       resource_coordinator_parts_;
 
@@ -486,8 +486,6 @@ class BrowserProcessImpl : public BrowserProcess,
       application_breadcrumbs_logger_;
 
   std::unique_ptr<os_crypt_async::OSCryptAsync> os_crypt_async_;
-  std::optional<base::CallbackListSubscription>
-      os_crypt_async_init_subscription_;
 
   std::optional<std::pair<size_t, std::unique_ptr<os_crypt_async::KeyProvider>>>
       additional_provider_for_test_;

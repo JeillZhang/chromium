@@ -192,7 +192,17 @@ void TerminateSelfOnDisconnect() {
   __lsan_do_leak_check();
 #endif
 #else
+#if BUILDFLAG(IS_ANDROID) && BUILDFLAG(CLANG_PROFILING)
+  // TerminateSelfOnDisconnect() is called upon an IPC `OnChannelError`. Then,
+  // clang will dump the profile to a file in
+  // TerminateCurrentProcessImmediately. However, if the Android ActivityManager
+  // detects the render thread as an 'isolated not needed' process, it sends
+  // SIGKILL to this process, which corrupts the PGO profile. Here we call
+  // `_exit()` without dumping the `clang` profile.
+  _exit(0);
+#else
   base::Process::TerminateCurrentProcessImmediately(0);
+#endif  // IS_ANDROID && CLANG_PROFILING
 #endif
 }
 
@@ -228,6 +238,10 @@ mojo::IncomingInvitation InitializeMojoIPCChannel() {
   endpoint = mojo::PlatformChannel::RecoverPassedEndpointFromCommandLine(
       *base::CommandLine::ForCurrentProcess());
 #elif BUILDFLAG(IS_APPLE)
+#if BUILDFLAG(IS_IOS_TVOS)
+  endpoint = mojo::PlatformChannel::RecoverPassedEndpointFromCommandLine(
+      *base::CommandLine::ForCurrentProcess());
+#else
   auto* client = base::MachPortRendezvousClient::GetInstance();
   if (!client) {
     LOG(ERROR) << "Mach rendezvous failed, terminating process (parent died?)";
@@ -240,6 +254,7 @@ mojo::IncomingInvitation InitializeMojoIPCChannel() {
   }
   endpoint =
       mojo::PlatformChannelEndpoint(mojo::PlatformHandle(std::move(receive)));
+#endif
 #elif BUILDFLAG(IS_POSIX)
 #if BUILDFLAG(IS_ANDROID)
   // If the endpoint is backed by a BinderRef it will be recovered here.
@@ -401,7 +416,7 @@ class ChildThreadImpl::IOThreadState
 #if BUILDFLAG(IS_POSIX)
     // Take the file descriptor so that |file| does not close it.
     base::ScopedFD fd(file.TakePlatformFile());
-#if BUILDFLAG(CLANG_PGO) || BUILDFLAG(USE_CLANG_COVERAGE)
+#if BUILDFLAG(CLANG_PGO_PROFILING) || BUILDFLAG(USE_CLANG_COVERAGE)
     FILE* f = fdopen(fd.release(), "r+b");
     __llvm_profile_set_file_object(f, 1);
 #else

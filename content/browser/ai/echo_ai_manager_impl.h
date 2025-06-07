@@ -43,7 +43,7 @@ class EchoAIManagerImpl : public blink::mojom::AIManager {
 
   // `blink::mojom::AIManager` implementation.
   void CanCreateLanguageModel(
-      blink::mojom::AILanguageModelAvailabilityOptionsPtr options,
+      blink::mojom::AILanguageModelCreateOptionsPtr options,
       CanCreateLanguageModelCallback callback) override;
   void CreateLanguageModel(
       mojo::PendingRemote<blink::mojom::AIManagerCreateLanguageModelClient>
@@ -69,16 +69,33 @@ class EchoAIManagerImpl : public blink::mojom::AIManager {
       mojo::PendingRemote<blink::mojom::ModelDownloadProgressObserver>
           observer_remote) override;
 
+  template <typename AICreateOptions, typename CanCreateCallback>
+  void CanCreateWritingAssistanceClient(AICreateOptions options,
+                                        CanCreateCallback callback);
+
+  template <typename AICreateOptions,
+            typename AIClientRemote,
+            typename AIPendingRemote,
+            typename EchoAIClient>
+  void CreateWritingAssistanceClient(mojo::PendingRemote<AIClientRemote> client,
+                                     AICreateOptions options);
+
+  template <typename AIClientRemote,
+            typename AIPendingRemote,
+            typename EchoAIClient>
+  void ReturnAIClientCreationResult(mojo::Remote<AIClientRemote> client_remote);
+
   void ReturnAILanguageModelCreationResult(
       mojo::Remote<blink::mojom::AIManagerCreateLanguageModelClient>
-          client_remote);
-  void ReturnAISummarizerCreationResult(
-      mojo::Remote<blink::mojom::AIManagerCreateSummarizerClient>
-          client_remote);
+          client_remote,
+      blink::mojom::AILanguageModelSamplingParamsPtr sampling_params,
+      base::flat_set<blink::mojom::AILanguageModelPromptType>
+          enabled_input_types);
 
   void DoMockDownloadingAndReturn(base::OnceClosure callback);
 
-  bool summarizer_downloaded_ = false;
+  // The mocked download status of an imagined foundational model.
+  bool model_downloaded_ = false;
 
   mojo::RemoteSet<blink::mojom::ModelDownloadProgressObserver>
       download_progress_observers_;

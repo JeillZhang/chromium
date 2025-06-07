@@ -168,9 +168,9 @@ public class WebApkUpdateManagerTest {
      * the constructor when it has been determined whether an update is needed.
      */
     private class TestWebApkUpdateManager extends WebApkUpdateManager {
-        private CallbackHelper mWaiter;
-        private CallbackHelper mCompleteCallback;
-        private boolean mAcceptDialogIfAppears;
+        private final CallbackHelper mWaiter;
+        private final CallbackHelper mCompleteCallback;
+        private final boolean mAcceptDialogIfAppears;
 
         public TestWebApkUpdateManager(
                 Activity activity,
@@ -513,7 +513,7 @@ public class WebApkUpdateManagerTest {
         creationData.startUrl =
                 mTestServer.getURL("/chrome/test/data/banners/manifest_test_page.html");
 
-        List<Integer> expectedUpdateReasons = new ArrayList<Integer>();
+        List<Integer> expectedUpdateReasons = new ArrayList<>();
         creationData.name += "!";
         creationData.shortName += "!";
         creationData.backgroundColor -= 1;
@@ -554,7 +554,7 @@ public class WebApkUpdateManagerTest {
         creationData.startUrl =
                 mTestServer.getURL("/chrome/test/data/banners/manifest_test_page.html");
 
-        List<Integer> expectedUpdateReasons = new ArrayList<Integer>();
+        List<Integer> expectedUpdateReasons = new ArrayList<>();
 
         boolean expectIconChange = false;
 

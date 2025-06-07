@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chrome/browser/media/webrtc/display_media_access_handler.h"
 
 #include <array>
@@ -19,6 +14,7 @@
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/mock_callback.h"
+#include "base/types/expected.h"
 #include "build/build_config.h"
 #include "chrome/browser/media/webrtc/fake_desktop_media_picker_factory.h"
 #include "chrome/common/pref_names.h"
@@ -75,7 +71,7 @@ class DisplayMediaAccessHandlerTest : public ChromeRenderViewHostTestHarness {
          .expect_tabs = true,
          .expect_current_tab = false,
          .expect_audio = request_audio,
-         .selected_source =
+         .picker_result =
              content::DesktopMediaID(content::DesktopMediaID::TYPE_SCREEN,
                                      content::DesktopMediaID::kFakeId)});
   }
@@ -159,15 +155,18 @@ class DisplayMediaAccessHandlerTest : public ChromeRenderViewHostTestHarness {
   }
 
   void ProcessRequest(
-      const content::DesktopMediaID& fake_desktop_media_id_response,
+      base::expected<content::DesktopMediaID,
+                     blink::mojom::MediaStreamRequestResult> response,
       blink::mojom::MediaStreamRequestResult* request_result,
       blink::mojom::StreamDevices& devices_result,
       bool request_audio,
       bool expect_result = true) {
-    SetTestFlags({{true /* expect_screens */, true /* expect_windows*/,
-                   true /* expect_tabs */, /* expect_current_tab, */ false,
-                   request_audio,
-                   fake_desktop_media_id_response /* selected_source */}});
+    SetTestFlags({{.expect_screens = true,
+                   .expect_windows = true,
+                   .expect_tabs = true,
+                   .expect_current_tab = false,
+                   .expect_audio = request_audio,
+                   .picker_result = response}});
 
     content::MediaStreamRequest request = MakeRequest(request_audio);
 
@@ -260,7 +259,7 @@ TEST_F(DisplayMediaAccessHandlerTest, PermissionGiven) {
 #if BUILDFLAG(IS_MAC)
   // On macOS, screen capture requires system permissions that are disabled by
   // default.
-  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::SYSTEM_PERMISSION_DENIED,
+  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED_BY_SYSTEM,
             result);
   return;
 #endif
@@ -302,7 +301,7 @@ TEST_F(DisplayMediaAccessHandlerTest, PermissionGivenToRequestWithAudio) {
 #if BUILDFLAG(IS_MAC)
   // On macOS, screen capture requires system permissions that are disabled by
   // default.
-  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::SYSTEM_PERMISSION_DENIED,
+  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED_BY_SYSTEM,
             result);
   return;
 #endif
@@ -319,8 +318,9 @@ TEST_F(DisplayMediaAccessHandlerTest, PermissionGivenToRequestWithAudio) {
 TEST_F(DisplayMediaAccessHandlerTest, PermissionDenied) {
   blink::mojom::MediaStreamRequestResult result;
   blink::mojom::StreamDevices devices;
-  ProcessRequest(content::DesktopMediaID(), &result, devices,
-                 true /* request_audio */);
+  ProcessRequest(base::unexpected(
+                     blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED),
+                 &result, devices, true /* request_audio */);
   EXPECT_EQ(blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED, result);
   EXPECT_EQ(0u, blink::CountDevices(devices));
 }
@@ -652,7 +652,7 @@ TEST_F(DisplayMediaAccessHandlerTest, MultipleRequests) {
 #if BUILDFLAG(IS_MAC)
   // On macOS, screen capture requires system permissions that are disabled by
   // default.
-  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::SYSTEM_PERMISSION_DENIED,
+  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED_BY_SYSTEM,
             result);
   return;
 #endif
@@ -758,7 +758,7 @@ TEST_F(DisplayMediaAccessHandlerTest, ChangeSourceWithPendingPickerRequest) {
 #if BUILDFLAG(IS_MAC)
   // On macOS, screen capture requires system permissions that are disabled by
   // default.
-  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::SYSTEM_PERMISSION_DENIED,
+  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED_BY_SYSTEM,
             results[0]);
   return;
 #endif
@@ -793,7 +793,7 @@ TEST_F(DisplayMediaAccessHandlerTest,
 #if BUILDFLAG(IS_MAC)
   // On macOS, screen capture requires system permissions that are disabled by
   // default.
-  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::SYSTEM_PERMISSION_DENIED,
+  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED_BY_SYSTEM,
             results[0]);
   return;
 #endif
@@ -829,7 +829,7 @@ TEST_F(DisplayMediaAccessHandlerTest,
 #if BUILDFLAG(IS_MAC)
   // On macOS, screen capture requires system permissions that are disabled by
   // default.
-  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::SYSTEM_PERMISSION_DENIED,
+  EXPECT_EQ(blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED_BY_SYSTEM,
             results[0]);
   return;
 #endif
@@ -891,7 +891,9 @@ TEST_P(DisplayMediaAccessHandlerTestWithMonitorTypeSurfaces,
   SetTestFlags({{/*expect_screens=*/!exclude_monitor_type_surfaces_,
                  /*expect_windows=*/true,
                  /*expect_tabs=*/true, /*expect_current_tab=*/false,
-                 /*expect_audio=*/false, content::DesktopMediaID(),
+                 /*expect_audio=*/false,
+                 base::unexpected(
+                     blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED),
                  /*cancelled=*/false}});
   blink::mojom::MediaStreamRequestResult result;
   blink::mojom::StreamDevices devices;

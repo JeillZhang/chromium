@@ -138,6 +138,28 @@ TEST_P(FeaturePromoControllerQueueTest, QueuePromo) {
   EXPECT_NE(GetHelpBubble(), nullptr);
 }
 
+// Regression test for https://crbug.com/417487540.
+TEST_P(FeaturePromoControllerQueueTest, QueuePromoTwice) {
+  UNCALLED_MOCK_CALLBACK(FeaturePromoController::ShowPromoResultCallback,
+                         result);
+  UNCALLED_MOCK_CALLBACK(FeaturePromoController::ShowPromoResultCallback,
+                         result2);
+
+  FeaturePromoParams params(kIPHTestLowPrioritySnooze);
+  params.show_promo_result_callback = result.Get();
+  EXPECT_ASYNC_CALL_IN_SCOPE(
+      result, Run(FeaturePromoResult::Success()),
+      promo_controller().MaybeShowStartupPromo(std::move(params)));
+  EXPECT_TRUE(promo_controller().IsPromoActive(kIPHTestLowPrioritySnooze));
+
+  FeaturePromoParams params2(kIPHTestLowPrioritySnooze);
+  params2.show_promo_result_callback = result2.Get();
+  EXPECT_ASYNC_CALL_IN_SCOPE(
+      result2, Run(FeaturePromoResult(FeaturePromoResult::kAlreadyQueued)),
+      promo_controller().MaybeShowStartupPromo(std::move(params2)));
+  EXPECT_TRUE(promo_controller().IsPromoActive(kIPHTestLowPrioritySnooze));
+}
+
 TEST_P(FeaturePromoControllerQueueTest, QueueTwoPromosTogetherBothAreEligible) {
   UNCALLED_MOCK_CALLBACK(FeaturePromoController::ShowPromoResultCallback,
                          result);
@@ -186,8 +208,10 @@ TEST_P(FeaturePromoControllerQueueTest,
     case PromoControllerVersion::kV20: {
       // In 2.0, promos will fail immediately.
       EXPECT_ASYNC_CALLS_IN_SCOPE_2(
-          result, Run(FeaturePromoResult(FeaturePromoResult::kBlockedByUi)),
-          result2, Run(FeaturePromoResult(FeaturePromoResult::kBlockedByUi)), {
+          result,
+          Run(FeaturePromoResult(FeaturePromoResult::kAnchorNotVisible)),
+          result2,
+          Run(FeaturePromoResult(FeaturePromoResult::kAnchorNotVisible)), {
             promo_controller().MaybeShowStartupPromo(std::move(params));
             promo_controller().MaybeShowStartupPromo(std::move(params2));
           });
@@ -227,7 +251,7 @@ TEST_P(FeaturePromoControllerQueueTest,
       // In 2.0, second fails immediately.
       EXPECT_ASYNC_CALLS_IN_SCOPE_2(
           closed, Run, result2,
-          Run(FeaturePromoResult(FeaturePromoResult::kBlockedByUi)),
+          Run(FeaturePromoResult(FeaturePromoResult::kAnchorNotVisible)),
           anchor_element().Hide());
     }
   }

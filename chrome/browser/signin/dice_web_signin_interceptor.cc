@@ -606,8 +606,6 @@ void DiceWebSigninInterceptor::MaybeInterceptWebSignin(
         SigninInterceptionHeuristicOutcome::kAbortInterceptInProgress);
     return;
   }
-  DCHECK_EQ(state_->interception_start_time_, base::TimeTicks());
-  state_->interception_start_time_ = base::TimeTicks::Now();
   state_->access_point_ = access_point;
 
   if (!web_contents) {
@@ -788,6 +786,17 @@ bool DiceWebSigninInterceptor::ShouldShowEnterpriseDialog(
     return false;
   }
 
+  if (!intercepted_account_info.IsManaged()) {
+    return false;
+  }
+
+  // If the user has declined profile creation twice, stop asking them.
+  if (HasUserDeclinedProfileCreation(intercepted_account_info.email)) {
+    return false;
+  }
+
+  // Enterprise dialog not shown if profile separation is enforced (another
+  // dialog will be shown) or disabled.
   if (state_->intercepted_account_profile_separation_policies_
           .value_or(policy::ProfileSeparationPolicies())
           .profile_separation_settings()
@@ -796,19 +805,15 @@ bool DiceWebSigninInterceptor::ShouldShowEnterpriseDialog(
     return false;
   }
 
-  // Check if the intercepted account is managed and has not yet accepted
-  // management.
-  if (!intercepted_account_info.IsManaged() ||
-      enterprise_util::UserAcceptedAccountManagement(profile_)) {
+  // Primary account re-auth should not see any dialogs.
+  if (IsPrimaryAccountInterception(intercepted_account_info.account_id,
+                                   identity_manager_)) {
     return false;
   }
 
-  if (IsPrimaryAccountInterception(intercepted_account_info.account_id,
-                                   identity_manager_)) {
-    return true;
-  }
-
   // If there is no primary account, propose to the user to sign into Chrome.
+  // Here account who do not have management enabled might see this, but it is
+  // fine, because they were not even signed in the browser.
   return !identity_manager_->HasPrimaryAccount(signin::ConsentLevel::kSignin);
 }
 
@@ -988,7 +993,7 @@ void DiceWebSigninInterceptor::OnInterceptionReadyToBeProcessed(
       RecordSigninInterceptionHeuristicOutcome(
           SigninInterceptionHeuristicOutcome::kInterceptEnterpriseForced);
     }
-  } else if (ShouldShowEnterpriseDialog(info)) {
+  } else if (!switch_to_entry && ShouldShowEnterpriseDialog(info)) {
     interception_type = WebSigninInterceptor::SigninInterceptionType::
         kEnterpriseAcceptManagement;
     show_link_data_option = true;
@@ -1510,23 +1515,6 @@ void DiceWebSigninInterceptor::RecordSigninInterceptionHeuristicOutcome(
     SigninInterceptionHeuristicOutcome outcome) const {
   // Record the outcome.
   base::UmaHistogramEnumeration("Signin.Intercept.HeuristicOutcome", outcome);
-
-  // Record the latency, except in the case where this is a duplicate request
-  // for the same interception.
-  DCHECK_NE(state_->interception_start_time_, base::TimeTicks());
-  if (outcome ==
-      SigninInterceptionHeuristicOutcome::kAbortInterceptInProgress) {
-    // This is a special-case where we immediately abort the intercept request
-    // without first updating interception_start_time_ (because the previous
-    // request has not completed).
-    // Record the histogram for this request with zero duration.
-    base::UmaHistogramTimes("Signin.Intercept.HeuristicLatency",
-                            base::Milliseconds(0));
-  } else {
-    base::UmaHistogramTimes(
-        "Signin.Intercept.HeuristicLatency",
-        base::TimeTicks::Now() - state_->interception_start_time_);
-  }
 }
 
 bool DiceWebSigninInterceptor::IsFullExtendedAccountInfoAvailable(

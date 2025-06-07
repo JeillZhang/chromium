@@ -14,10 +14,13 @@
 #include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "build/branding_buildflags.h"
+#include "build/build_config.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_store.h"
@@ -32,7 +35,7 @@ namespace {
 std::vector<const char*>* GetDeprecatedPrefs() {
   // Add deprecated previously tracked preferences below for them to be cleaned
   // up from both the pref files and the hash store.
-  static std::vector<const char*> prefs{
+  static base::NoDestructor<std::vector<const char*>> prefs({
 #if BUILDFLAG(IS_WIN)
       // TODO(crbug.com/40265803): Remove after Oct 2024
       "software_reporter.prompt_version",
@@ -48,9 +51,13 @@ std::vector<const char*>* GetDeprecatedPrefs() {
       // Added Aug'24. Remove after Aug'25.
       "google.services.last_account_id",
 #endif
-  };
+#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      // Deprecated 05/2025. Remove after 05/2026.
+      "module_blocklist_cache_md5_digest",
+#endif
+  });
 
-  return &prefs;
+  return prefs.get();
 }
 
 void CleanupDeprecatedTrackedPreferences(

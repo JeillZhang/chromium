@@ -92,9 +92,8 @@ class CORE_EXPORT WorkerOrWorkletGlobalScope
       BlockingDetails details) override {}
 
   // BackForwardCacheLoaderHelperImpl::Delegate
-  void EvictFromBackForwardCache(
-      mojom::blink::RendererEvictionReason reason,
-      std::unique_ptr<SourceLocation> source_location) override {}
+  void EvictFromBackForwardCache(mojom::blink::RendererEvictionReason reason,
+                                 SourceLocation* source_location) override {}
   void DidBufferLoadWhileInBackForwardCache(bool update_process_wide_count,
                                             size_t num_bytes) override {}
 
@@ -121,14 +120,6 @@ class CORE_EXPORT WorkerOrWorkletGlobalScope
 
   // Returns nullptr if this global scope is a WorkletGlobalScope
   virtual WorkerNavigator* navigator() const { return nullptr; }
-
-  // Returns true when we should reject a response without
-  // cross-origin-embedder-policy: require-corp.
-  // TODO(crbug.com/1064920): Remove this once PlzDedicatedWorker ships.
-  virtual RejectCoepUnsafeNone ShouldRejectCoepUnsafeNoneTopModuleScript()
-      const {
-    return RejectCoepUnsafeNone(false);
-  }
 
   // Returns the resource fetcher for subresources (a.k.a. inside settings
   // resource fetcher). See core/workers/README.md for details.
@@ -178,10 +169,6 @@ class CORE_EXPORT WorkerOrWorkletGlobalScope
   void SetDefersLoadingForResourceFetchers(LoaderFreezeMode);
 
   virtual int GetOutstandingThrottledLimit() const;
-
-  // TODO(crbug.com/1146824): Remove this once PlzDedicatedWorker and
-  // PlzServiceWorker ship.
-  virtual bool IsInitialized() const = 0;
 
   // TODO(crbug/964467): Currently all workers fetch cached code but only
   // services workers use them. Dedicated / Shared workers don't use the cached

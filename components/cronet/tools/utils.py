@@ -8,6 +8,7 @@ Contains general-purpose methods that can be used to execute shell,
 GN and Ninja commands.
 """
 
+import shlex
 import subprocess
 import os
 import re
@@ -21,33 +22,36 @@ REPOSITORY_ROOT = os.path.abspath(
 _MB_PATH = os.path.join(REPOSITORY_ROOT, 'tools/mb/mb.py')
 GN_PATH = os.path.join(REPOSITORY_ROOT, 'buildtools/linux64/gn')
 NINJA_PATH = os.path.join(REPOSITORY_ROOT, 'third_party/ninja/ninja')
+MIN_SDK_VERSION_FOR_AOSP = 30
 ARCHS = ['x86', 'x64', 'arm', 'arm64', 'riscv64']
-AOSP_EXTRA_ARGS = ('is_cronet_for_aosp_build=true', 'use_nss_certs=false', 'use_allocator_shim=false')
+AOSP_EXTRA_ARGS = ('is_cronet_for_aosp_build=true', 'use_nss_certs=false',
+                   'use_allocator_shim=false',
+                   f'default_min_sdk_version={MIN_SDK_VERSION_FOR_AOSP}')
 _GN_ARG_MATCHER = re.compile("^.*=.*$")
 
 
 def run(command, **kwargs):
-  """See the official documentation for subprocess.call.
+  """See the official documentation for subprocess.check_call.
+
+  Args:
+    command (list[str]): command to be executed
+  """
+  print('Executing: ' + ' '.join(shlex.quote(arg) for arg in command))
+  subprocess.check_call(command, **kwargs)
+
+
+def run_and_get_stdout(command, **kwargs):
+  """See the official documentation for subprocess.run.
 
   Args:
     command (list[str]): command to be executed
 
   Returns:
-    int: the return value of subprocess.call
+    str: stdout for the executed command
   """
-  print(command, kwargs)
-  return subprocess.call(command, **kwargs)
-
-
-def run_shell(command, extra_options=''):
-  """Runs a shell command.
-
-  Runs a shell command with no escaping. It is recommended
-  to use `run` instead.
-  """
-  command = command + ' ' + extra_options
-  print(command)
-  return os.system(command)
+  print('Executing: ' + ' '.join(shlex.quote(arg) for arg in command))
+  return subprocess.run(command, capture_output=True,
+                        check=True, **kwargs).stdout.decode('utf-8').strip()
 
 
 def gn(out_dir, gn_args, gn_extra=None, **kwargs):
@@ -61,14 +65,11 @@ def gn(out_dir, gn_args, gn_extra=None, **kwargs):
     out_dir (str): Path to delegate to `gn gen`.
     gn_args (str): Args as a string delimited by space.
     gn_extra (str): extra args as a string delimited by space.
-
-  Returns:
-    Exit code of running `gn gen` command with argument provided.
   """
   cmd = [GN_PATH, 'gen', out_dir, '--args=%s' % gn_args]
   if gn_extra:
     cmd += gn_extra
-  return run(cmd, **kwargs)
+  run(cmd, **kwargs)
 
 
 def compare_text_and_generate_diff(generated_text, golden_text,
@@ -102,20 +103,22 @@ def read_file(path):
   return pathlib.Path(path).read_text()
 
 
+def write_file(path, contents):
+  """Writes contents to a file"""
+  return pathlib.Path(path).write_text(contents)
+
+
 def build(out_dir, build_target, extra_options=None):
   """Runs `ninja build`.
 
   Runs `ninja -C |out_dir| |build_target| |extra_options|` which will build
   the target |build_target| for the GN configuration living under |out_dir|.
   This is done locally on the same chromium checkout.
-
-  Returns:
-    Exit code of running `ninja ..` command with the argument provided.
   """
   cmd = [NINJA_PATH, '-C', out_dir, build_target]
   if extra_options:
     cmd += extra_options
-  return run(cmd)
+  run(cmd)
 
 
 def build_all(out_dir, build_targets, extra_options=None):
@@ -124,15 +127,12 @@ def build_all(out_dir, build_targets, extra_options=None):
   Runs `ninja -C |out_dir| |build_targets| |extra_options|` which will build
   the targets |build_targets| for the GN configuration living under |out_dir|.
   This is done locally on the same chromium checkout.
-
-  Returns:
-    Exit code of running `ninja ..` command with the argument provided.
   """
   cmd = [NINJA_PATH, '-C', out_dir]
   cmd.extend(build_targets)
   if extra_options:
     cmd += extra_options
-  return run(cmd)
+  run(cmd)
 
 
 def get_transitive_deps_build_files(repo_path: str, out_dir: str,
@@ -159,9 +159,10 @@ def get_transitive_deps_build_files(repo_path: str, out_dir: str,
 
 
 def get_gn_args_for_aosp(arch: str) -> List[str]:
-  default_args = get_android_gn_args(True, arch)
+  default_args = filter_gn_args(get_android_gn_args(True, arch),
+                                ["use_remoteexec", "default_min_sdk_version"])
   default_args.extend(AOSP_EXTRA_ARGS)
-  return filter_gn_args(default_args, ["use_remoteexec"])
+  return default_args
 
 
 def android_gn_gen(is_release, target_cpu, out_dir):

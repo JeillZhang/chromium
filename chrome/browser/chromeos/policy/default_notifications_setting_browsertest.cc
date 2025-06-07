@@ -9,6 +9,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/permissions/features.h"
 #include "components/policy/policy_constants.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -30,6 +31,11 @@ class DefaultNotificationsSettingBrowserTest
     : public policy::PolicyTest,
       public testing::WithParamInterface<int> {
  public:
+  DefaultNotificationsSettingBrowserTest() {
+    feature_list_.InitWithFeatures(
+        {}, {permissions::features::kPermissionSiteSettingsRadioButton});
+  }
+
   void SetUpInProcessBrowserTestFixture() override {
     policy::PolicyTest::SetUpInProcessBrowserTestFixture();
 
@@ -92,6 +98,7 @@ IN_PROC_BROWSER_TEST_P(DefaultNotificationsSettingBrowserTest, Policy) {
       "  querySelector('settings-main').shadowRoot."
       "  querySelector('settings-basic-page').shadowRoot."
       "  querySelector('settings-privacy-page').shadowRoot."
+      "  querySelector('settings-notifications-page').shadowRoot."
       "  querySelectorAll('cr-radio-button');";
   std::string kGetRadiosChecked = kGetRadios +
                                   "let radiosChecked = [];"

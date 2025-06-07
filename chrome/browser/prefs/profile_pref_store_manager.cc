@@ -13,7 +13,6 @@
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/common/chrome_constants.h"
 #include "components/prefs/json_pref_store.h"
@@ -40,7 +39,7 @@ const std::wstring* g_preference_validation_registry_path_for_testing = nullptr;
 // Preference tracking and protection is not required on platforms where other
 // apps do not have access to chrome's persistent storage.
 const bool ProfilePrefStoreManager::kPlatformSupportsPreferenceTracking =
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS)
     false;
 #else
     true;
@@ -48,11 +47,8 @@ const bool ProfilePrefStoreManager::kPlatformSupportsPreferenceTracking =
 
 ProfilePrefStoreManager::ProfilePrefStoreManager(
     const base::FilePath& profile_path,
-    const std::string& seed,
-    const std::string& legacy_device_id)
-    : profile_path_(profile_path),
-      seed_(seed),
-      legacy_device_id_(legacy_device_id) {}
+    const std::string& seed)
+    : profile_path_(profile_path), seed_(seed) {}
 
 ProfilePrefStoreManager::~ProfilePrefStoreManager() = default;
 
@@ -147,7 +143,7 @@ ProfilePrefStoreManager::CreateTrackedPrefStoreConfiguration(
       profile_path_.Append(chrome::kPreferencesFilename),
       profile_path_.Append(chrome::kSecurePreferencesFilename),
       std::move(tracking_configuration), reporting_ids_count, seed_,
-      legacy_device_id_, "ChromeRegistryHashStoreValidationSeed",
+      "ChromeRegistryHashStoreValidationSeed",
 #if BUILDFLAG(IS_WIN)
       base::AsString16(g_preference_validation_registry_path_for_testing
                            ? *g_preference_validation_registry_path_for_testing

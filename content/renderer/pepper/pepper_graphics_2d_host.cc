@@ -10,6 +10,7 @@
 
 #include "base/check.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/read_only_shared_memory_region.h"
@@ -33,7 +34,6 @@
 #include "gpu/command_buffer/common/capabilities.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/ipc/client/client_shared_image_interface.h"
-#include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "ppapi/c/pp_bool.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/pp_rect.h"
@@ -789,9 +789,10 @@ bool PepperGraphics2DHost::PrepareTransferableResource(
 
   void* src = image_data_->Map();
   auto dest = shared_image->Map();
-  memcpy(dest->GetMemoryForPlane(0).data(), src,
-         viz::ResourceSizes::CheckedSizeInBytes<size_t>(
-             pixel_image_size, viz::SinglePlaneFormat::kBGRA_8888));
+  UNSAFE_TODO(
+      memcpy(dest->GetMemoryForPlane(0).data(), src,
+             viz::ResourceSizes::CheckedSizeInBytes<size_t>(
+                 pixel_image_size, viz::SinglePlaneFormat::kBGRA_8888)));
   image_data_->Unmap();
 
   *release_callback =

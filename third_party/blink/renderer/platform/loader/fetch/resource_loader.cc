@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <optional>
 #include <utility>
+#include <variant>
 
 #include "base/compiler_specific.h"
 #include "base/containers/span.h"
@@ -55,7 +56,6 @@
 #include "services/network/public/mojom/fetch_api.mojom-blink.h"
 #include "third_party/blink/public/common/client_hints/client_hints.h"
 #include "third_party/blink/public/common/features.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/blob/blob_registry.mojom-blink.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
@@ -102,7 +102,7 @@
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
-#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "url/url_constants.h"
 
 namespace blink {
@@ -324,6 +324,8 @@ void ResourceLoader::Start() {
 
   if (!resource_->Url().ProtocolIsData()) {
     network_resource_request_ = CreateNetworkRequest(request, request_body_);
+    fetcher_->PopulateResourceRequestPermissionsPolicy(
+        network_resource_request_.get());
     if (is_cache_aware_loading_activated_) {
       // Override cache policy for cache-aware loading. If this request fails, a
       // reload with original request will be triggered in DidFail().
@@ -662,6 +664,7 @@ bool ResourceLoader::WillFollowRedirect(
 
     // CanRequest() checks only enforced CSP, so check report-only here to
     // ensure that violations are sent.
+    // CanRequest() will also perform IntegrityPolicy verifications if needed.
     Context().CheckCSPForRequest(
         request_context, request_destination, request_mode,
         new_url_prior_upgrade, options, reporting_disposition,
@@ -674,8 +677,8 @@ bool ResourceLoader::WillFollowRedirect(
                              new_request->GetRedirectInfo());
 
     if (Context().CalculateIfAdSubresource(
-            *new_request, std::nullopt /* alias_url */, resource_type,
-            options.initiator_info)) {
+            *new_request, /*alias_url=*/std::nullopt, resource_type,
+            options.initiator_info, /*out_rule=*/nullptr)) {
       new_request->SetIsAdResource();
     }
 
@@ -767,7 +770,7 @@ FetchContext& ResourceLoader::Context() const {
 
 void ResourceLoader::DidReceiveResponse(
     const WebURLResponse& response,
-    absl::variant<mojo::ScopedDataPipeConsumerHandle, SegmentedBuffer> body,
+    std::variant<mojo::ScopedDataPipeConsumerHandle, SegmentedBuffer> body,
     std::optional<mojo_base::BigBuffer> cached_metadata) {
   DCHECK(!response.IsNull());
 
@@ -795,24 +798,24 @@ void ResourceLoader::DidReceiveResponse(
     // the body of 304 Not Modified response. And Blink don't fetch the
     // revalidating request when the page is controlled by a service worker.
     // So, We don't need to handle the body for 304 Not Modified responses.
-    if (absl::holds_alternative<SegmentedBuffer>(body)) {
-      CHECK(absl::get<SegmentedBuffer>(body).empty());
+    if (std::holds_alternative<SegmentedBuffer>(body)) {
+      CHECK(std::get<SegmentedBuffer>(body).empty());
     } else {
-      CHECK(absl::holds_alternative<mojo::ScopedDataPipeConsumerHandle>(body));
+      CHECK(std::holds_alternative<mojo::ScopedDataPipeConsumerHandle>(body));
       // If the `body` is released here, the network service will treat the
       // disconnection of the `body` handle as if the request was cancelled. So
       // we keeps the `body` handle.
       empty_body_handle_for_revalidation_ =
-          std::move(absl::get<mojo::ScopedDataPipeConsumerHandle>(body));
+          std::move(std::get<mojo::ScopedDataPipeConsumerHandle>(body));
     }
     return;
   }
-  if (absl::holds_alternative<SegmentedBuffer>(body)) {
-    DidReceiveDataImpl(std::move(absl::get<SegmentedBuffer>(body)));
+  if (std::holds_alternative<SegmentedBuffer>(body)) {
+    DidReceiveDataImpl(std::move(std::get<SegmentedBuffer>(body)));
     return;
   }
   mojo::ScopedDataPipeConsumerHandle body_handle =
-      std::move(absl::get<mojo::ScopedDataPipeConsumerHandle>(body));
+      std::move(std::get<mojo::ScopedDataPipeConsumerHandle>(body));
   if (!body_handle) {
     return;
   }
@@ -890,6 +893,25 @@ void ResourceLoader::DidReceiveResponseInternal(
         mojom::WebFeature::kAuthorizationCoveredByWildcard);
   }
 
+  if (response.HttpHeaderField(http_names::kSecSessionRegistration)) {
+    fetcher_->GetUseCounter().CountUse(
+        WebFeature::kDeviceBoundSessionRegistered);
+  }
+
+  switch (response.DeviceBoundSessionUsage()) {
+    case network::mojom::DeviceBoundSessionUsage::kDeferred:
+      fetcher_->GetUseCounter().CountUse(
+          WebFeature::kDeviceBoundSessionRequestDeferral);
+      [[fallthrough]];
+    case network::mojom::DeviceBoundSessionUsage::kInScopeNotDeferred:
+      fetcher_->GetUseCounter().CountUse(
+          WebFeature::kDeviceBoundSessionRequestInScope);
+      break;
+    case network::mojom::DeviceBoundSessionUsage::kNoUsage:
+    case network::mojom::DeviceBoundSessionUsage::kUnknown:
+      break;
+  }
+
   CountPrivateNetworkAccessPreflightResult(
       response.PrivateNetworkAccessPreflightResult());
 
@@ -926,20 +948,6 @@ void ResourceLoader::DidReceiveResponseInternal(
     return;
   }
 
-  // https://wicg.github.io/cross-origin-embedder-policy/#integration-html
-  // TODO(crbug.com/1064920): Remove this once PlzDedicatedWorker ships.
-  if (options.reject_coep_unsafe_none &&
-      !network::CompatibleWithCrossOriginIsolated(
-          response.GetCrossOriginEmbedderPolicy()) &&
-      !response.CurrentRequestUrl().ProtocolIsData() &&
-      !response.CurrentRequestUrl().ProtocolIs("blob")) {
-    DCHECK(!base::FeatureList::IsEnabled(features::kPlzDedicatedWorker));
-    HandleError(ResourceError::BlockedByResponse(
-        response.CurrentRequestUrl(), network::mojom::BlockedByResponseReason::
-                                          kCoepFrameResourceNeedsCoepHeader));
-    return;
-  }
-
   // Redirect information for possible post-request checks below.
   const std::optional<ResourceRequest::RedirectInfo>& previous_redirect_info =
       request.GetRedirectInfo();
@@ -971,6 +979,7 @@ void ResourceLoader::DidReceiveResponseInternal(
     //
     // CanRequest() below only checks enforced policies: check report-only
     // here to ensure violations are sent.
+    // CanRequest() will also perform IntegrityPolicy verifications if needed.
     const KURL& response_url = response.ResponseUrl();
     Context().CheckCSPForRequest(
         request_context, request_destination, request_mode, response_url,
@@ -1070,22 +1079,22 @@ void ResourceLoader::DidReceiveData(base::span<const char> data) {
 }
 
 void ResourceLoader::DidReceiveDataImpl(
-    absl::variant<SegmentedBuffer, base::span<const char>> data) {
+    std::variant<SegmentedBuffer, base::span<const char>> data) {
   size_t data_size = 0;
   // If a BackgroundResponseProcessor consumed the body data on the background
   // thread, this method is called with a SegmentedBuffer data. Otherwise, it is
   // called with a span<const char> data several times.
-  if (absl::holds_alternative<SegmentedBuffer>(data)) {
-    data_size = absl::get<SegmentedBuffer>(data).size();
+  if (std::holds_alternative<SegmentedBuffer>(data)) {
+    data_size = std::get<SegmentedBuffer>(data).size();
     if (auto* observer = fetcher_->GetResourceLoadObserver()) {
-      for (const auto& span : absl::get<SegmentedBuffer>(data)) {
+      for (const auto& span : std::get<SegmentedBuffer>(data)) {
         observer->DidReceiveData(resource_->InspectorId(),
                                  base::SpanOrSize(span));
       }
     }
   } else {
-    CHECK(absl::holds_alternative<base::span<const char>>(data));
-    base::span<const char> span = absl::get<base::span<const char>>(data);
+    CHECK(std::holds_alternative<base::span<const char>>(data));
+    base::span<const char> span = std::get<base::span<const char>>(data);
     data_size = span.size();
     if (auto* observer = fetcher_->GetResourceLoadObserver()) {
       observer->DidReceiveData(resource_->InspectorId(),
@@ -1503,11 +1512,11 @@ ResourceLoader::CheckResponseNosniff(
     fetcher_->GetConsoleLogger().AddConsoleMessage(
         mojom::ConsoleMessageSource::kSecurity,
         mojom::ConsoleMessageLevel::kError,
-        "Refused to apply style from '" +
-            response.CurrentRequestUrl().ElidedString() +
-            "' because its MIME type ('" + mime_type + "') " +
-            "is not a supported stylesheet MIME type, and strict MIME checking "
-            "is enabled.");
+        WTF::StrCat({"Refused to apply style from '",
+                     response.CurrentRequestUrl().ElidedString(),
+                     "' because its MIME type ('", mime_type,
+                     "') is not a supported stylesheet MIME type, and strict "
+                     "MIME checking is enabled."}));
     return ResourceRequestBlockedReason::kContentType;
   }
   // TODO(mkwst): Move the 'nosniff' bit of 'AllowedByNosniff::MimeTypeAsScript'
@@ -1614,9 +1623,9 @@ bool ResourceLoader::ShouldBlockRequestBasedOnSubresourceFilterDnsAliasCheck(
     }
 
     if (!resource_->GetResourceRequest().IsAdResource() &&
-        Context().CalculateIfAdSubresource(resource_->GetResourceRequest(),
-                                           alias_url, resource_type,
-                                           options.initiator_info)) {
+        Context().CalculateIfAdSubresource(
+            resource_->GetResourceRequest(), alias_url, resource_type,
+            options.initiator_info, /*out_rule=*/nullptr)) {
       resource_->SetIsAdResource();
       cname_alias_info_for_testing_.was_ad_tagged_based_on_alias = true;
     }

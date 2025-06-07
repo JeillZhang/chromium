@@ -206,6 +206,8 @@ ASH_EXPORT inline constexpr auto kDebugAcceleratorData =
          AcceleratorAction::kDebugToggleFocusModeState},
         {true, ui::VKEY_8, kDebugModifier,
          AcceleratorAction::kDebugStartSunfishSession},
+        {true, ui::VKEY_0, kDebugModifier,
+         AcceleratorAction::kDebugShowTestWindow},
     });
 
 // Developer accelerators that are enabled only with the command-line switch
@@ -532,7 +534,7 @@ ASH_EXPORT inline constexpr std::array kActionsNeedingWindow = {
     AcceleratorAction::kToggleFloating,
     AcceleratorAction::kToggleFullscreen,
     AcceleratorAction::kToggleMaximized,
-    AcceleratorAction::kCreateSnapGroup,
+    AcceleratorAction::kToggleSnapGroup,
     AcceleratorAction::kToggleSnapGroupWindowsMinimizeAndRestore,
     AcceleratorAction::kWindowCycleSnapLeft,
     AcceleratorAction::kWindowCycleSnapRight,

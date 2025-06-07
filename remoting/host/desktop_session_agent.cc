@@ -26,6 +26,7 @@
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "remoting/base/auto_thread_task_runner.h"
+#include "remoting/base/errors.h"
 #include "remoting/host/action_executor.h"
 #include "remoting/host/audio_capturer.h"
 #include "remoting/host/base/desktop_environment_options.h"
@@ -48,7 +49,6 @@
 #include "remoting/proto/event.pb.h"
 #include "remoting/proto/url_forwarder_control.pb.h"
 #include "remoting/protocol/clipboard_stub.h"
-#include "remoting/protocol/errors.h"
 #include "remoting/protocol/input_event_tracker.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 #include "third_party/webrtc/modules/desktop_capture/mouse_cursor.h"
@@ -165,9 +165,13 @@ const std::string& DesktopSessionAgent::client_jid() const {
   return client_jid_;
 }
 
-void DesktopSessionAgent::DisconnectSession(protocol::ErrorCode error) {
+void DesktopSessionAgent::DisconnectSession(
+    ErrorCode error,
+    std::string_view error_details,
+    const SourceLocation& error_location) {
   if (desktop_session_state_handler_) {
-    desktop_session_state_handler_->DisconnectSession(error);
+    desktop_session_state_handler_->DisconnectSession(
+        error, std::string(error_details), error_location);
   }
 }
 
@@ -175,6 +179,10 @@ void DesktopSessionAgent::OnLocalKeyPressed(std::uint32_t usb_keycode) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
   remote_input_filter_->LocalKeyPressed(usb_keycode);
+
+  if (desktop_session_event_handler_) {
+    desktop_session_event_handler_->OnLocalKeyboardInputDetected(usb_keycode);
+  }
 }
 
 void DesktopSessionAgent::OnLocalPointerMoved(
@@ -183,6 +191,13 @@ void DesktopSessionAgent::OnLocalPointerMoved(
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
   remote_input_filter_->LocalPointerMoved(new_pos, type);
+
+  if (desktop_session_event_handler_) {
+    // |type| is always kMouseMoved, if this changes, we need to convey this
+    // information to the network process.
+    DCHECK_EQ(type, ui::EventType::kMouseMoved);
+    desktop_session_event_handler_->OnLocalMouseMoveDetected(new_pos);
+  }
 }
 
 void DesktopSessionAgent::SetDisableInputs(bool disable_inputs) {

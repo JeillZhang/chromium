@@ -12,17 +12,20 @@ import android.os.Bundle;
 
 import androidx.annotation.AnyThread;
 import androidx.annotation.MainThread;
-import androidx.annotation.Nullable;
 
 import org.chromium.base.Callback;
 import org.chromium.base.Promise;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.signin.base.AccountCapabilities;
 import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
+import org.chromium.google_apis.gaia.GoogleServiceAuthError;
 
 import java.util.List;
 
 /** Interface for {@link AccountManagerFacadeImpl}. */
+@NullMarked
 public interface AccountManagerFacade {
     /** A callback for getAccessToken. */
     interface GetAccessTokenCallback {
@@ -36,10 +39,9 @@ public interface AccountManagerFacade {
         /**
          * Invoked on the UI thread if no token is available.
          *
-         * @param isTransientError Indicates if the error is transient (network timeout or
-         *     unavailable, etc) or persistent (bad credentials, permission denied, etc).
+         * @param authError The {@link GoogleServiceAuthError} encountered during token fetch.
          */
-        void onGetTokenFailure(boolean isTransientError);
+        void onGetTokenFailure(GoogleServiceAuthError authError);
     }
 
     // TODO(crbug.com/40201126): consider refactoring this interface to use Promises.
@@ -63,26 +65,11 @@ public interface AccountManagerFacade {
 
     /**
      * Removes an observer that was previously added using {@link #addObserver}.
+     *
      * @param observer the observer to remove.
      */
     @MainThread
     void removeObserver(AccountsChangeObserver observer);
-
-    /**
-     * Retrieves corresponding {@link CoreAccountInfo}s for filtered accounts. The {@link Promise}
-     * will be fulfilled once the accounts cache is populated and gaia ids are fetched. If an error
-     * occurs while getting account list, the returned {@link Promise} will wrap an empty array.
-     *
-     * <p>Since a different {@link Promise} will be returned every time the accounts get updated,
-     * this makes he {@link Promise}t a bad candidate for end users to cache locally unless the end
-     * users are awaiting the {@link CoreAccountInfo}s for current list of accounts only.
-     *
-     * @deprecated, use {@link #getAccounts} instead.
-     *     <p>TODO(crbug.com/385309416): Migrate usages to {@link #getAccounts()} and remove.
-     */
-    @Deprecated
-    @MainThread
-    Promise<List<CoreAccountInfo>> getCoreAccountInfos();
 
     /**
      * Retrieves corresponding {@link AccountInfo}s for filtered accounts. The {@link Promise} will
@@ -160,14 +147,14 @@ public interface AccountManagerFacade {
     Promise<AccountCapabilities> getAccountCapabilities(CoreAccountInfo coreAccountInfo);
 
     /**
-     * Creates an intent that will ask the user to add a new account to the device. See
-     * {@link AccountManager#addAccount} for details.
-     * @param callback The callback to get the created intent. Will be invoked on the main
-     *         thread. If there is an issue while creating the intent, callback will receive
-     *         null.
+     * Creates an intent that will ask the user to add a new account to the device. See {@link
+     * AccountManager#addAccount} for details.
+     *
+     * @param callback The callback to get the created intent. Will be invoked on the main thread.
+     *     If there is an issue while creating the intent, callback will receive null.
      */
     @AnyThread
-    void createAddAccountIntent(Callback<Intent> callback);
+    void createAddAccountIntent(Callback<@Nullable Intent> callback);
 
     /**
      * Asks the user to enter a new password for an account, updating the saved credentials for the
@@ -187,7 +174,8 @@ public interface AccountManagerFacade {
      *     knowledge of the account's credentials.
      */
     @AnyThread
-    void confirmCredentials(Account account, Activity activity, Callback<Bundle> callback);
+    void confirmCredentials(
+            Account account, @Nullable Activity activity, Callback<@Nullable Bundle> callback);
 
     /** Whether fetching the list of accounts from the device eventually succeeded. */
     // TODO(crbug.com/330304719): Handle this with exceptions rather than a boolean.

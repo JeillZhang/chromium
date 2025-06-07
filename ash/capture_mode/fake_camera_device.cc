@@ -7,6 +7,7 @@
 #include <cstring>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
@@ -19,7 +20,6 @@
 #include "cc/paint/skia_paint_canvas.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
-#include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
 #include "gpu/command_buffer/common/shared_image_capabilities.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/ipc/common/surface_handle.h"
@@ -30,6 +30,7 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/video_capture/public/mojom/video_frame_handler.mojom.h"
+#include "services/video_effects/public/cpp/buildflags.h"
 #include "third_party/skia/include/core/SkRect.h"
 #include "ui/aura/env.h"
 #include "ui/compositor/compositor.h"
@@ -169,7 +170,7 @@ class SharedMemoryBufferStrategy : public BufferStrategy {
     DCHECK(mapping_.IsValid());
     uint8_t* buffer_ptr = mapping_.GetMemoryAsSpan<uint8_t>().data();
     const int buffer_size = mapping_.size();
-    memset(buffer_ptr, 0, buffer_size);
+    UNSAFE_TODO(memset(buffer_ptr, 0, buffer_size));
     SkBitmap bitmap;
     bitmap.setInfo(
         SkImageInfo::MakeN32Premul(frame_size.width(), frame_size.height()));
@@ -421,11 +422,13 @@ void FakeCameraDevice::CreatePushSubscription(
       requested_settings);
 }
 
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
 void FakeCameraDevice::RegisterVideoEffectsProcessor(
     mojo::PendingRemote<video_effects::mojom::VideoEffectsProcessor> remote) {}
 
 void FakeCameraDevice::RegisterReadonlyVideoEffectsManager(
     mojo::PendingRemote<media::mojom::ReadonlyVideoEffectsManager> remote) {}
+#endif
 
 void FakeCameraDevice::OnFinishedConsumingBuffer(int32_t buffer_id) {
   auto iter = buffer_pool_.find(buffer_id);

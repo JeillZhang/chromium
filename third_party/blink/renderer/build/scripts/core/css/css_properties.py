@@ -304,14 +304,22 @@ class CSSProperties(object):
             if (not property_.alias_for and not property_.longhands)
         ]
 
-        # Sort the properties by priority, then alphabetically. Ensure that
-        # the resulting order is deterministic.
-        # Sort properties by priority, then alphabetically.
+        # Sort the properties by priority, then internal-visited first,
+        # then alphabetically. Ensures that the resulting order is deterministic.
+        # (internal-visited is because we want to fit their number into an
+        # uint8_t for kPropertyVisitedIDs.)
         for property_ in self._longhands + self._shorthands:
             name_without_leading_dash = property_.name.original
             if name_without_leading_dash.startswith('-'):
                 name_without_leading_dash = name_without_leading_dash[1:]
+            internal_visited_order = 1
+            if name_without_leading_dash.startswith(
+                    'internal-visited-'
+            ) or name_without_leading_dash.startswith(
+                    'internal-forced-visited-'):
+                internal_visited_order = 0
             property_.sorting_key = (-property_.priority,
+                                     internal_visited_order,
                                      name_without_leading_dash)
 
         sorting_keys = {}
@@ -363,6 +371,12 @@ class CSSProperties(object):
         assert not unvisited_property.visited_property, \
             'A property may not have multiple visited properties'
         unvisited_property.visited_property = property_
+        # NOTE: Currently, we note that a property is valid for :visited
+        # iff it has a corresponding -internal-visited-* property
+        # (i.e., some other property is visited_property_for it). Once
+        # those properties go away, we will need to make this flag explicit
+        # on the (unvisited) property instead.
+        unvisited_property.valid_for_visited = True
 
     def set_derived_surrogate_attributes(self, property_):
         if not property_.surrogate_for:
@@ -602,6 +616,10 @@ class CSSProperties(object):
 
         return sorted(unprefixed, key=sorting_name) + \
             sorted(prefixed, key=sorting_name)
+
+    @property
+    def includes_currentcolor(self):
+        return [p for p in self._longhands if p.includes_currentcolor]
 
     @property
     def shorthands(self):

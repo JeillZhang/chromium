@@ -35,12 +35,14 @@ import androidx.test.filters.SmallTest;
 import com.google.protobuf.ByteString;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 import org.robolectric.android.controller.ActivityController;
 import org.robolectric.annotation.Config;
@@ -78,6 +80,7 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.feed.proto.FeedUiProto;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.url.JUnitTestGURLs;
 
 import java.nio.charset.StandardCharsets;
@@ -99,6 +102,7 @@ public class FeedStreamTest {
     private static final String HEADER_PREFIX = "header";
     private static final OpenUrlOptions DEFAULT_OPEN_URL_OPTIONS = new OpenUrlOptions() {};
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     private ActivityController<Activity> mActivityController;
     private Activity mActivity;
     private RecyclerView mRecyclerView;
@@ -115,8 +119,9 @@ public class FeedStreamTest {
     @Captor private ArgumentCaptor<Snackbar> mSnackbarCaptor;
     @Mock private BottomSheetController mBottomSheetController;
     @Mock private WindowAndroid mWindowAndroid;
+    @Mock private ModalDialogManager mModalDialogManager;
     @Mock private Supplier<ShareDelegate> mShareDelegateSupplier;
-    private StubSnackbarController mSnackbarController = new StubSnackbarController();
+    private final StubSnackbarController mSnackbarController = new StubSnackbarController();
     @Mock private Runnable mMockRunnable;
     @Mock private Callback<Boolean> mMockRefreshCallback;
     @Mock private FeedStream.ShareHelperWrapper mShareHelper;
@@ -164,7 +169,6 @@ public class FeedStreamTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         mActivityController = Robolectric.buildActivity(Activity.class);
         mActivity = mActivityController.get();
 
@@ -178,6 +182,7 @@ public class FeedStreamTest {
                 .thenReturn(LOAD_MORE_TRIGGER_LOOKAHEAD);
         when(mFeedServiceBridgeJniMock.getLoadMoreTriggerScrollDistanceDp())
                 .thenReturn(LOAD_MORE_TRIGGER_SCROLL_DISTANCE_DP);
+        when(mWindowAndroid.getModalDialogManager()).thenReturn(mModalDialogManager);
         mFeedStream =
                 new FeedStream(
                         mActivity,

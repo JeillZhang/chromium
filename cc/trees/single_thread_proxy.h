@@ -71,10 +71,14 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
                              PaintHoldingReason reason) override;
   void StopDeferringCommits(PaintHoldingCommitTrigger) override;
   bool IsDeferringCommits() const override;
+  void SetShouldThrottleFrameRate(bool flag) override;
   bool CommitRequested() const override;
   void Start() override;
   void Stop() override;
-  void QueueImageDecode(int request_id, const DrawImage& image) override;
+  void QueueImageDecode(int request_id,
+                        const DrawImage& image,
+                        bool speculative) override;
+  bool SpeculativeDecodeRequestInFlight() const override;
   void SetMutator(std::unique_ptr<LayerTreeMutator> mutator) override;
   void SetPaintWorkletLayerPainter(
       std::unique_ptr<PaintWorkletLayerPainter> painter) override;
@@ -82,6 +86,8 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void RequestBeginMainFrameNotExpected(bool new_state) override;
   void SetSourceURL(ukm::SourceId source_id, const GURL& url) override;
   void SetUkmSmoothnessDestination(
+      base::WritableSharedMemoryMapping ukm_smoothness_data) override;
+  void SetUkmDroppedFramesDestination(
       base::WritableSharedMemoryMapping ukm_smoothness_data) override;
   void SetRenderFrameObserver(
       std::unique_ptr<RenderFrameMetadataObserver> observer) override;
@@ -147,6 +153,7 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void SetNeedsImplSideInvalidation(
       bool needs_first_draw_on_activation) override;
   void NotifyImageDecodeRequestFinished(int request_id,
+                                        bool speculative,
                                         bool decode_succeeded) override;
   void NotifyTransitionRequestFinished(
       uint32_t sequence_id,
@@ -168,6 +175,8 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void ClearHistory() override;
   void SetHasActiveThreadedScroll(bool is_scrolling) override;
   void SetWaitingForScrollEvent(bool waiting_for_scroll_event) override;
+  bool IsRenderingPaused() const override;
+  void NotifyNewLocalSurfaceIdExpectedWhilePaused() override;
 
   size_t CommitDurationSampleCountForTesting() const override;
 
@@ -245,6 +254,9 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   // When output surface is lost, is set to true until a new output surface is
   // initialized.
   bool layer_tree_frame_sink_lost_;
+
+  // Only one speculative decode request may be in flight at a time.
+  bool speculative_decode_request_in_flight_ = false;
 
   // A number that kept incrementing in CompositeImmediately, which indicates a
   // new impl frame.

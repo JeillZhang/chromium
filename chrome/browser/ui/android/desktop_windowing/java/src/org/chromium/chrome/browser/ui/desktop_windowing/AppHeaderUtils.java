@@ -5,18 +5,28 @@
 package org.chromium.chrome.browser.ui.desktop_windowing;
 
 import android.app.Activity;
+import android.os.Build;
+import android.text.TextUtils;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.Nullable;
 
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher.ActivityState;
 import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateManager;
 
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
+
 /** Utility class for the desktop windowing feature implementation. */
 // TODO (crbug/328055199): Rename this to DesktopWindowUtils.
+@NullMarked
 public class AppHeaderUtils {
     // These values are persisted to logs. Entries should not be renumbered and
     // numeric values should never be reused.
@@ -26,6 +36,8 @@ public class AppHeaderUtils {
         DesktopWindowHeuristicResult.CAPTION_BAR_TOP_INSETS_ABSENT,
         DesktopWindowHeuristicResult.CAPTION_BAR_BOUNDING_RECT_INVALID_HEIGHT,
         DesktopWindowHeuristicResult.WIDEST_UNOCCLUDED_RECT_EMPTY,
+        DesktopWindowHeuristicResult.DISALLOWED_ON_EXTERNAL_DISPLAY,
+        DesktopWindowHeuristicResult.COMPLEX_UNOCCLUDED_REGION,
         DesktopWindowHeuristicResult.NUM_ENTRIES,
     })
     public @interface DesktopWindowHeuristicResult {
@@ -34,9 +46,11 @@ public class AppHeaderUtils {
         int CAPTION_BAR_TOP_INSETS_ABSENT = 2;
         int CAPTION_BAR_BOUNDING_RECT_INVALID_HEIGHT = 3;
         int WIDEST_UNOCCLUDED_RECT_EMPTY = 4;
+        int DISALLOWED_ON_EXTERNAL_DISPLAY = 5;
+        int COMPLEX_UNOCCLUDED_REGION = 6;
 
         // Be sure to also update enums.xml when updating these values.
-        int NUM_ENTRIES = 5;
+        int NUM_ENTRIES = 7;
     }
 
     // These values are persisted to logs. Entries should not be renumbered and
@@ -75,7 +89,8 @@ public class AppHeaderUtils {
         int NUM_ENTRIES = 5;
     }
 
-    private static Boolean sIsAppInDesktopWindowForTesting;
+    private static @Nullable Boolean sHeaderCustomizationDisallowedOnExternalDisplayForOem;
+    private static @Nullable Boolean sIsAppInDesktopWindowForTesting;
 
     /**
      * Determines whether the currently starting activity is focused, based on the {@link
@@ -117,7 +132,7 @@ public class AppHeaderUtils {
             @DesktopWindowHeuristicResult int result) {
         assert result != DesktopWindowHeuristicResult.UNKNOWN;
         RecordHistogram.recordEnumeratedHistogram(
-                "Android.DesktopWindowHeuristicResult",
+                "Android.DesktopWindowHeuristicResult4",
                 result,
                 DesktopWindowHeuristicResult.NUM_ENTRIES);
     }
@@ -174,6 +189,32 @@ public class AppHeaderUtils {
     }
 
     /**
+     * @return {@code true} if app header customization should be allowed on an external display,
+     *     {@code false} otherwise.
+     */
+    public static boolean shouldAllowHeaderCustomizationOnNonDefaultDisplay() {
+        // Determine if app header customization will be ignored on the external display on specific
+        // OEMs.
+        if (sHeaderCustomizationDisallowedOnExternalDisplayForOem == null) {
+            Set<String> denylist = new HashSet<>();
+            String denylistStr =
+                    ChromeFeatureList.sTabStripLayoutOptimizationOnExternalDisplayOemDenylist
+                            .getValue();
+            if (!TextUtils.isEmpty(denylistStr)) {
+                Collections.addAll(denylist, denylistStr.split(","));
+            }
+            sHeaderCustomizationDisallowedOnExternalDisplayForOem =
+                    !denylist.isEmpty()
+                            && denylist.contains(Build.MANUFACTURER.toLowerCase(Locale.US));
+        }
+        if (sHeaderCustomizationDisallowedOnExternalDisplayForOem) {
+            return false;
+        }
+
+        return ChromeFeatureList.sTabStripLayoutOptimizationOnExternalDisplay.getValue();
+    }
+
+    /**
      * Sets the desktop windowing mode for tests.
      *
      * @param isAppInDesktopWindow Whether desktop windowing mode is activated.
@@ -181,5 +222,10 @@ public class AppHeaderUtils {
     public static void setAppInDesktopWindowForTesting(boolean isAppInDesktopWindow) {
         sIsAppInDesktopWindowForTesting = isAppInDesktopWindow;
         ResettersForTesting.register(() -> sIsAppInDesktopWindowForTesting = null);
+    }
+
+    /** Resets |sHeaderCustomizationDisallowedOnExternalDisplayForOem| in tests. */
+    public static void resetHeaderCustomizationDisallowedOnExternalDisplayForOemForTesting() {
+        sHeaderCustomizationDisallowedOnExternalDisplayForOem = null;
     }
 }

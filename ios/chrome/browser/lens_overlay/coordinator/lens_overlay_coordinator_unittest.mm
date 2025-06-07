@@ -11,6 +11,7 @@
 #import "base/test/scoped_feature_list.h"
 #import "components/lens/lens_overlay_permission_utils.h"
 #import "components/variations/scoped_variations_ids_provider.h"
+#import "ios/chrome/app/profile/profile_state.h"
 #import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_controller.h"
 #import "ios/chrome/browser/lens_overlay/model/lens_overlay_tab_helper.h"
 #import "ios/chrome/browser/lens_overlay/ui/lens_overlay_consent_view_controller.h"
@@ -28,6 +29,7 @@
 #import "ios/chrome/browser/shared/public/commands/lens_commands.h"
 #import "ios/chrome/browser/shared/public/commands/lens_overlay_commands.h"
 #import "ios/chrome/browser/shared/public/commands/load_query_commands.h"
+#import "ios/chrome/browser/shared/public/commands/toolbar_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
@@ -51,6 +53,7 @@ using base::test::ios::WaitUntilConditionOrTimeout;
 
 @interface LensOverlayCoordinator ()
 - (BOOL)isUICreated;
+- (BOOL)isLensOverlayVisible;
 @end
 
 namespace {
@@ -85,10 +88,13 @@ class LensOverlayCoordinatorTest : public PlatformTest {
     UIWindow* window =
         [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 320, 520)];
     OCMStub([mock_scene_state window]).andReturn(window);
+    profile_state_ = [[ProfileState alloc] initWithAppState:nil];
+    profile_state_.profile = profile_.get();
+    OCMStub([mock_scene_state profileState]).andReturn(profile_state_);
     browser_ = std::make_unique<TestBrowser>(profile_, mock_scene_state);
     dispatcher_ = [[CommandDispatcher alloc] init];
 
-    GetApplicationContext()->GetLocalState()->SetInteger(
+    profile_->GetPrefs()->SetInteger(
         lens::prefs::kLensOverlaySettings,
         static_cast<int>(
             lens::prefs::LensOverlaySettingsPolicyValue::kEnabled));
@@ -96,6 +102,7 @@ class LensOverlayCoordinatorTest : public PlatformTest {
     base_view_controller_ = [[UIViewController alloc] init];
 
     OmniboxPositionBrowserAgent::CreateForBrowser(browser_.get());
+    FullscreenController::CreateForBrowser(browser_.get());
 
     // LensOverlayCoordinator
     coordinator_ = [[LensOverlayCoordinator alloc]
@@ -127,15 +134,23 @@ class LensOverlayCoordinatorTest : public PlatformTest {
         startDispatchingToTarget:browser_coordinator_commands_handler_
                      forProtocol:@protocol(BrowserCoordinatorCommands)];
 
+    toolbar_commands_handler_ = OCMProtocolMock(@protocol(ToolbarCommands));
+
+    [browser_->GetCommandDispatcher()
+        startDispatchingToTarget:toolbar_commands_handler_
+                     forProtocol:@protocol(ToolbarCommands)];
+
     // Tab helper
-    web_state_ = std::make_unique<web::FakeWebState>();
-    LensOverlayTabHelper::CreateForWebState(web_state_.get());
-    SnapshotTabHelper::CreateForWebState(web_state_.get());
-    tab_helper_ = LensOverlayTabHelper::FromWebState(web_state_.get());
+    std::unique_ptr<web::FakeWebState> web_state =
+        std::make_unique<web::FakeWebState>();
+    web_state->SetBrowserState(profile_.get());
+    LensOverlayTabHelper::CreateForWebState(web_state.get());
+    SnapshotTabHelper::CreateForWebState(web_state.get());
+    tab_helper_ = LensOverlayTabHelper::FromWebState(web_state.get());
 
     // Attach SnapshotTabHelper to allow snapshot generation.
     delegate_ = [[FakeSnapshotGeneratorDelegate alloc] init];
-    SnapshotTabHelper::FromWebState(web_state_.get())->SetDelegate(delegate_);
+    SnapshotTabHelper::FromWebState(web_state.get())->SetDelegate(delegate_);
 
     // Add a fake view to the delgate, which will be used to capture snapshots.
     CGRect frame = {CGPointZero, CGSizeMake(300, 400)};
@@ -143,7 +158,7 @@ class LensOverlayCoordinatorTest : public PlatformTest {
     delegate_.view.backgroundColor = [UIColor blueColor];
 
     // Mark the only web state as active.
-    browser_.get()->GetWebStateList()->InsertWebState(std::move(web_state_));
+    browser_.get()->GetWebStateList()->InsertWebState(std::move(web_state));
     browser_.get()->GetWebStateList()->ActivateWebStateAt(0);
 
     // Increment the fullscreen disabled counter.
@@ -188,20 +203,24 @@ class LensOverlayCoordinatorTest : public PlatformTest {
       }));
     }
 
+    [coordinator_ stop];
+
     PlatformTest::TearDown();
   }
 
  protected:
   web::WebTaskEnvironment task_environment_{
       web::WebTaskEnvironment::IOThreadType::REAL_THREAD};
+  variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
+      variations::VariationsIdsProvider::Mode::kUseSignedInState};
   base::RunLoop run_loop_;
   FakeSnapshotGeneratorDelegate* delegate_;
   IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   TestProfileManagerIOS profile_manager_;
   LensOverlayCoordinator* coordinator_;
   raw_ptr<TestProfileIOS> profile_;
+  ProfileState* profile_state_;
   std::unique_ptr<TestBrowser> browser_;
-  std::unique_ptr<web::WebState> web_state_;
   UIViewController* base_view_controller_;
   base::test::ScopedFeatureList feature_list_;
   ScopedKeyWindow scoped_window_;
@@ -212,8 +231,7 @@ class LensOverlayCoordinatorTest : public PlatformTest {
   id<LoadQueryCommands> load_query_handler_;
   id<LensCommands> lens_commands_handler_;
   id<BrowserCoordinatorCommands> browser_coordinator_commands_handler_;
-  variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
-      variations::VariationsIdsProvider::Mode::kUseSignedInState};
+  id<ToolbarCommands> toolbar_commands_handler_;
 
   void DeliverMemoryWarningNotification() {
     [[NSNotificationCenter defaultCenter]
@@ -272,7 +290,7 @@ TEST_F(LensOverlayCoordinatorTest, ShouldNotShowTheOverlayWhenUIIsNotCreated) {
   [HandlerForProtocol(dispatcher_, LensOverlayCommands) showLensUI:NO];
 
   // Then nothing should be presented.
-  EXPECT_TRUE(base_view_controller_.presentedViewController == nil);
+  EXPECT_FALSE(coordinator_.isLensOverlayVisible);
 }
 
 // Showing the overlay should present the container view controller.
@@ -281,7 +299,7 @@ TEST_F(LensOverlayCoordinatorTest, ShouldPresentVCOnShowCommandDispatched) {
   [coordinator_ start];
 
   // Before showing anything nothing should appear presented.
-  EXPECT_TRUE(base_view_controller_.presentedViewController == nil);
+  EXPECT_FALSE(coordinator_.isLensOverlayVisible);
 
   // Dispatch the create & show command.
   [HandlerForProtocol(dispatcher_, LensOverlayCommands)
@@ -293,7 +311,7 @@ TEST_F(LensOverlayCoordinatorTest, ShouldPresentVCOnShowCommandDispatched) {
   // appear presented.
   EXPECT_TRUE(
       WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, true, ^bool {
-        return base_view_controller_.presentedViewController != nil;
+        return coordinator_.isLensOverlayVisible;
       }));
 }
 
@@ -312,7 +330,7 @@ TEST_F(LensOverlayCoordinatorTest, ShouldDismissVCOnHideCommandDispatched) {
   // appear presented.
   EXPECT_TRUE(
       WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, true, ^bool {
-        return base_view_controller_.presentedViewController != nil;
+        return coordinator_.isLensOverlayVisible;
       }));
 
   __block BOOL completion_called = NO;
@@ -324,7 +342,7 @@ TEST_F(LensOverlayCoordinatorTest, ShouldDismissVCOnHideCommandDispatched) {
 
   // The presented view controller is set to `nil` when the dismiss is over.
   EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, ^bool {
-    return base_view_controller_.presentedViewController == nil;
+    return !coordinator_.isLensOverlayVisible;
   }));
 
   // The completion is called.
@@ -352,7 +370,7 @@ TEST_F(LensOverlayCoordinatorTest,
 
   EXPECT_TRUE(
       WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, true, ^bool {
-        return base_view_controller_.presentedViewController != nil;
+        return coordinator_.isLensOverlayVisible;
       }));
 
   // Then the UI should appear created.
@@ -367,7 +385,7 @@ TEST_F(LensOverlayCoordinatorTest,
                                                               YES;
                                                         }];
   EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, ^bool {
-    return base_view_controller_.presentedViewController == nil;
+    return !coordinator_.isLensOverlayVisible;
   }));
 
   EXPECT_TRUE(WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, ^bool {
@@ -399,7 +417,7 @@ TEST_F(LensOverlayCoordinatorTest,
   run_loop_.Run();
   EXPECT_TRUE(
       WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, true, ^bool {
-        return base_view_controller_.presentedViewController != nil;
+        return coordinator_.isLensOverlayVisible;
       }));
 
   // Then the UI should appear created and shown to the user.
@@ -434,15 +452,15 @@ TEST_F(LensOverlayCoordinatorTest, ShouldPresentConsentDialog) {
 
   EXPECT_TRUE(
       WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, true, ^bool {
-        return base_view_controller_.presentedViewController != nil;
+        return coordinator_.isLensOverlayVisible;
       }));
 
   // After the overlay is displayed, wait once more for the constent dialog to
   // be presented.
-  UIViewController* containerVC = base_view_controller_.presentedViewController;
   EXPECT_TRUE(
       WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, true, ^bool {
-        return [containerVC.presentedViewController
+        return [base_view_controller_.childViewControllers.firstObject
+                    .presentedViewController
             isKindOfClass:[LensOverlayConsentViewController class]];
       }));
 }
@@ -467,7 +485,7 @@ TEST_F(LensOverlayCoordinatorTest, DoesntPromptForConsentWhenAlreadyReceived) {
 
   EXPECT_TRUE(
       WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, true, ^bool {
-        return base_view_controller_.presentedViewController != nil;
+        return coordinator_.isLensOverlayVisible;
       }));
 
   EXPECT_TRUE([coordinator_ isUICreated]);

@@ -33,6 +33,9 @@ enum class IdentityRequestDialogDisclosureField {
   kUsername
 };
 
+// The client metadata that will be used to display a FedCM dialog. This data is
+// extracted from the client metadata endpoint from the FedCM API, where
+// 'client' is essentially the relying party which invoked the API.
 struct CONTENT_EXPORT ClientMetadata {
   ClientMetadata(const GURL& terms_of_service_url,
                  const GURL& privacy_policy_url,
@@ -48,11 +51,18 @@ struct CONTENT_EXPORT ClientMetadata {
   gfx::Image brand_decoded_icon;
 };
 
+// The information about an error that will be used to display a FedCM dialog.
+// This data is extracted from the error object returned by the identity
+// provider when the user attempts to login via the FedCM API and an error
+// occurs.
 struct CONTENT_EXPORT IdentityCredentialTokenError {
   std::string code;
   GURL url;
 };
 
+// The metadata about the identity provider that will be used to display a FedCM
+// dialog. This data is extracted from the config file which is fetched when the
+// FedCM API is invoked.
 struct CONTENT_EXPORT IdentityProviderMetadata {
   IdentityProviderMetadata();
   IdentityProviderMetadata(const IdentityProviderMetadata& other);
@@ -81,6 +91,10 @@ struct CONTENT_EXPORT IdentityProviderMetadata {
   gfx::Image brand_decoded_icon;
 };
 
+// This class contains all of the data specific to an identity provider that is
+// going to be used to display a FedCM dialog. This data is gathered from
+// endpoints fetched when the FedCM API is invoked as well as from the
+// parameters provided by the relying party when the API is invoked.
 class CONTENT_EXPORT IdentityProviderData
     : public base::RefCounted<IdentityProviderData> {
  public:
@@ -88,6 +102,7 @@ class CONTENT_EXPORT IdentityProviderData
                        const IdentityProviderMetadata& idp_metadata,
                        const ClientMetadata& client_metadata,
                        blink::mojom::RpContext rp_context,
+                       std::optional<blink::mojom::Format> format,
                        const std::vector<IdentityRequestDialogDisclosureField>&
                            disclosure_fields,
                        bool has_login_status_mismatch);
@@ -96,6 +111,7 @@ class CONTENT_EXPORT IdentityProviderData
   IdentityProviderMetadata idp_metadata;
   ClientMetadata client_metadata;
   blink::mojom::RpContext rp_context;
+  std::optional<blink::mojom::Format> format;
   // For which fields should the dialog request permission for (assuming
   // this is for signup).
   std::vector<IdentityRequestDialogDisclosureField> disclosure_fields;
@@ -107,6 +123,23 @@ class CONTENT_EXPORT IdentityProviderData
   friend class base::RefCounted<IdentityProviderData>;
 
   ~IdentityProviderData();
+};
+
+// The relying party data that will be used to display a FedCM dialog. This data
+// is extracted from the website which invoked the API, not from the FedCM
+// endpoints themselves.
+struct CONTENT_EXPORT RelyingPartyData {
+ public:
+  RelyingPartyData(const std::u16string& rp_for_display,
+                   const std::u16string& iframe_for_display);
+  RelyingPartyData(const RelyingPartyData& other);
+  ~RelyingPartyData();
+
+  std::u16string rp_for_display;
+  // The formatted iframe origin. Empty if the iframe is same-site with
+  // `rp_for_display`.
+  std::u16string iframe_for_display;
+  gfx::Image rp_icon;
 };
 
 // IdentityRequestDialogController is an interface, overridden and implemented
@@ -132,8 +165,9 @@ class CONTENT_EXPORT IdentityRequestDialogController {
     kBackPress = 6,
     // Android-specific
     kTapScrim = 7,
+    kSuppressed = 8,
 
-    kMaxValue = kTapScrim,
+    kMaxValue = kSuppressed,
   };
 
   // A Java counterpart will be generated for this enum.
@@ -177,20 +211,19 @@ class CONTENT_EXPORT IdentityRequestDialogController {
 
   // Shows and accounts selections for the given IDP. The `on_selected` callback
   // is called with the selected account id or empty string otherwise.
-  // `sign_in_mode` represents whether this is an auto re-authn flow.
   // `new_accounts` are the accounts that were just logged in, which should
-  // be prioritized in the UI. Returns true if the method successfully showed
-  // UI. When false, the caller should assume that the API invocation was
-  // terminated and the cleanup methods invoked.
+  // be prioritized in the UI. The `accounts_display_callback` is called when
+  // the dialog is successfully shown so that the backend can record the time of
+  // display for metrics purposes. Returns true if the method successfully
+  // showed UI. When false, the caller should assume that the API invocation was
+  // terminated and the cleanup methods invoked. `rp_data` may be modified by
+  // this method, such as by setting the RP icon.
   virtual bool ShowAccountsDialog(
-      const std::string& rp_for_display,
-      const std::vector<scoped_refptr<content::IdentityProviderData>>& idp_list,
-      const std::vector<scoped_refptr<content::IdentityRequestAccount>>&
-          accounts,
-      content::IdentityRequestAccount::SignInMode sign_in_mode,
+      RelyingPartyData rp_data,
+      const std::vector<scoped_refptr<IdentityProviderData>>& idp_list,
+      const std::vector<scoped_refptr<IdentityRequestAccount>>& accounts,
       blink::mojom::RpMode rp_mode,
-      const std::vector<scoped_refptr<content::IdentityRequestAccount>>&
-          new_accounts,
+      const std::vector<scoped_refptr<IdentityRequestAccount>>& new_accounts,
       AccountSelectionCallback on_selected,
       LoginToIdPCallback on_add_account,
       DismissCallback dismiss_callback,
@@ -202,7 +235,7 @@ class CONTENT_EXPORT IdentityRequestDialogController {
   // Returns true if the method successfully showed UI. When false, the caller
   // should assume that the API invocation was terminated and the cleanup
   // methods invoked.
-  virtual bool ShowFailureDialog(const std::string& rp_for_display,
+  virtual bool ShowFailureDialog(const RelyingPartyData& rp_data,
                                  const std::string& idp_for_display,
                                  blink::mojom::RpContext rp_context,
                                  blink::mojom::RpMode rp_mode,
@@ -214,7 +247,7 @@ class CONTENT_EXPORT IdentityRequestDialogController {
   // the method successfully showed UI. When false, the caller should assume
   // that the API invocation was terminated and the cleanup methods invoked.
   virtual bool ShowErrorDialog(
-      const std::string& rp_for_display,
+      const RelyingPartyData& rp_data,
       const std::string& idp_for_display,
       blink::mojom::RpContext rp_context,
       blink::mojom::RpMode rp_mode,
@@ -227,11 +260,25 @@ class CONTENT_EXPORT IdentityRequestDialogController {
   // for their accounts to be fetched. Returns true if the method successfully
   // showed UI. When false, the caller should assume that the API invocation was
   // terminated and the cleanup methods invoked.
-  virtual bool ShowLoadingDialog(const std::string& rp_for_display,
+  virtual bool ShowLoadingDialog(const RelyingPartyData& rp_data,
                                  const std::string& idp_for_display,
                                  blink::mojom::RpContext rp_context,
                                  blink::mojom::RpMode rp_mode,
                                  DismissCallback dismiss_callback);
+
+  // Shows a verifying dialog to the user. This is called after an account is
+  // selected, either by the user in the explicit authentication flow or by the
+  // browser in the auto re-authentication flow. The `accounts_display_callback`
+  // is called when the dialog is successfully shown so that the backend can
+  // record the time of display for metrics purposes. Returns true if it was
+  // possible to show UI.
+  virtual bool ShowVerifyingDialog(
+      const content::RelyingPartyData& rp_data,
+      const scoped_refptr<IdentityProviderData>& idp_data,
+      const scoped_refptr<IdentityRequestAccount>& account,
+      IdentityRequestAccount::SignInMode sign_in_mode,
+      blink::mojom::RpMode rp_mode,
+      AccountsDisplayedCallback accounts_displayed_callback);
 
   // Only to be called after a dialog is shown.
   virtual std::string GetTitle() const;
@@ -258,6 +305,9 @@ class CONTENT_EXPORT IdentityRequestDialogController {
   virtual void RequestIdPRegistrationPermision(
       const url::Origin& origin,
       base::OnceCallback<void(bool accepted)> callback);
+
+  // Notifies when the autofill data source is ready to be queried.
+  virtual void NotifyAutofillSourceReadyForTesting();
 
  protected:
   bool is_interception_enabled_{false};

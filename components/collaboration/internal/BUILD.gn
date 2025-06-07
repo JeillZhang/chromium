@@ -22,6 +22,7 @@ static_library("core_internal") {
     "//chrome/browser/collaboration:*",
     "//chrome/test:*",
     "//ios/chrome/browser/collaboration/model",
+    "//ios/chrome/browser/data_sharing/model",
   ]
 
   sources = [
@@ -35,11 +36,17 @@ static_library("core_internal") {
     "metrics.h",
   ]
 
-  deps = [ "//components/sync/service:service" ]
+  deps = [
+    "//components/data_sharing/public:group_data",
+    "//components/data_sharing/public:logger",
+    "//components/sync/service",
+    "//ui/base",
+  ]
 
   public_deps = [
     "//base",
     "//components/collaboration/public",
+    "//components/collaboration/public:prefs",
     "//components/data_sharing/public",
     "//components/keyed_service/core",
   ]
@@ -81,8 +88,9 @@ static_library("messaging_internal") {
     "messaging/data_sharing_change_notifier.h",
     "messaging/data_sharing_change_notifier_impl.cc",
     "messaging/data_sharing_change_notifier_impl.h",
-    "messaging/empty_messaging_backend_service.cc",
-    "messaging/empty_messaging_backend_service.h",
+    "messaging/instant_message_processor.h",
+    "messaging/instant_message_processor_impl.cc",
+    "messaging/instant_message_processor_impl.h",
     "messaging/messaging_backend_service_impl.cc",
     "messaging/messaging_backend_service_impl.h",
     "messaging/storage/collaboration_message_util.cc",
@@ -105,6 +113,7 @@ static_library("messaging_internal") {
   deps = [
     "//base",
     "//components/collaboration/internal/messaging/storage/protocol",
+    "//components/collaboration/public:empty_messaging_backend_service",
     "//components/collaboration/public:messaging_public",
     "//components/data_sharing/public",
     "//components/saved_tab_groups/public",
@@ -172,6 +181,7 @@ source_set("messaging_unit_tests") {
   testonly = true
   sources = [
     "messaging/data_sharing_change_notifier_impl_unittest.cc",
+    "messaging/instant_message_processor_impl_unittest.cc",
     "messaging/messaging_backend_service_impl_unittest.cc",
     "messaging/storage/messaging_backend_database_impl_unittest.cc",
     "messaging/storage/messaging_backend_store_impl_unittest.cc",
@@ -181,6 +191,7 @@ source_set("messaging_unit_tests") {
     ":messaging_internal",
     "//base",
     "//base/test:test_support",
+    "//components/collaboration:test_support",
     "//components/collaboration/internal/messaging/storage/protocol",
     "//components/collaboration/public:messaging_public",
     "//components/data_sharing:test_support",
@@ -242,6 +253,7 @@ if (is_android) {
       "//build/android:build_java",
       "//components/collaboration/public:java",
       "//components/data_sharing/public:public_java",
+      "//components/saved_tab_groups/public:java",
       "//third_party/jni_zero:jni_zero_java",
       "//url:url_java",
     ]

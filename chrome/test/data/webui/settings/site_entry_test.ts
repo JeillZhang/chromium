@@ -5,6 +5,7 @@
 // clang-format off
 import 'chrome://webui-test/cr_elements/cr_policy_strings.js';
 
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import type {SiteEntryElement} from 'chrome://settings/lazy_load.js';
 import {SiteSettingsPrefsBrowserProxyImpl, SortMethod} from 'chrome://settings/lazy_load.js';
@@ -44,6 +45,11 @@ suite('SiteEntry', function() {
    * A site list element created before each test.
    */
   let testElement: SiteEntryElement;
+
+  function createPage() {
+    testElement = document.createElement('site-entry');
+    document.body.appendChild(testElement);
+  }
 
   // Initialize a site-list before each test.
   setup(function() {
@@ -510,8 +516,44 @@ suite('SiteEntry', function() {
   });
 
   test(
-      'related website set information showed when available',
+      'related website set information showed when not in filtered view',
+      function() {
+        // Set unowned site group.
+        testElement.siteGroup = structuredClone(TEST_SINGLE_SITE_GROUP);
+        flush();
+
+        const rwsMembershipLabel = testElement.$.rwsMembership;
+        // Assert related website set membership information when no rws owner
+        // is set.
+        assertTrue(rwsMembershipLabel.hidden);
+
+        // Update related website set information and set siteGroup
+        const fooSiteGroup = structuredClone(TEST_SINGLE_SITE_GROUP);
+        fooSiteGroup.rwsOwner = 'foo.com';
+        fooSiteGroup.rwsNumMembers = 1;
+        testElement.siteGroup = fooSiteGroup;
+        flush();
+
+        // Assert related website set membership information is set correctly.
+        assertFalse(rwsMembershipLabel.hidden);
+        assertEquals(
+            '· ' + loadTimeData.getString('allSitesRwsMembershipLabel'),
+            rwsMembershipLabel.innerText.trim());
+
+        testElement.isRwsFiltered = true;
+        flush();
+        // Label should be hidden in filtered view.
+        assertTrue(rwsMembershipLabel.hidden);
+      });
+
+  // TODO(crbug.com/396463421): Remove once RelatedWebsiteSetsUi launched.
+  test(
+      'related website set information showed when available and isRelatedWebsiteSetsV2UiEnabled disabled',
       async function() {
+        loadTimeData.overrideValues({
+          isRelatedWebsiteSetsV2UiEnabled: false,
+        });
+        await createPage();
         // Set unowned site group.
         testElement.siteGroup = structuredClone(TEST_SINGLE_SITE_GROUP);
         flush();

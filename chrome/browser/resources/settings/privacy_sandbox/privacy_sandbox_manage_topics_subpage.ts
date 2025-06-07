@@ -72,14 +72,6 @@ export class SettingsPrivacySandboxManageTopicsSubpageElement extends
 
   static get properties() {
     return {
-      /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
       firstLevelTopicsList_: {
         type: Array,
         value() {
@@ -108,11 +100,11 @@ export class SettingsPrivacySandboxManageTopicsSubpageElement extends
       PrivacySandboxBrowserProxyImpl.getInstance();
   private metricsBrowserProxy_: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
-  private firstLevelTopicsList_: PrivacySandboxInterest[];
+  declare private firstLevelTopicsList_: PrivacySandboxInterest[];
   private topicBeingToggled_?: PrivacySandboxInterest;
-  private blockTopicDialogTitle_: string;
-  private blockTopicDialogBody_: string;
-  private shouldShowBlockTopicDialog_: boolean;
+  declare private blockTopicDialogTitle_: string;
+  declare private blockTopicDialogBody_: string;
+  declare private shouldShowBlockTopicDialog_: boolean;
 
   override ready() {
     super.ready();

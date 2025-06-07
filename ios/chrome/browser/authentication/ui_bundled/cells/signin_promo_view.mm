@@ -373,7 +373,7 @@ constexpr CGFloat kNonProfileBackgroundImageCompactHeightWidth = 54.0;
 
 // Configures primary button with a standard font.
 - (void)configurePrimaryButtonWithTitle:(NSString*)title {
-  CHECK_GT(title.length, 0ul, base::NotFatalUntil::M135);
+  CHECK_GT(title.length, 0ul);
   // Declaring variables that are used throughout different switch cases.
   UIFont* font;
   NSAttributedString* attributedTitle;
@@ -408,8 +408,15 @@ constexpr CGFloat kNonProfileBackgroundImageCompactHeightWidth = 54.0;
 }
 
 - (NSString*)accessibilityLabel {
-  return [NSString stringWithFormat:@"%@ %@", self.textLabel.text,
-                                    [self primaryButtonTitle]];
+  switch (self.promoViewStyle) {
+    case SigninPromoViewStyleStandard:
+    case SigninPromoViewStyleCompact:
+      return [NSString stringWithFormat:@"%@ %@", self.textLabel.text,
+                                        [self primaryButtonTitle]];
+    case SigninPromoViewStyleOnlyButton:
+      return [self primaryButtonTitle];
+  }
+  NOTREACHED();
 }
 
 - (BOOL)accessibilityActivate {
@@ -449,15 +456,7 @@ constexpr CGFloat kNonProfileBackgroundImageCompactHeightWidth = 54.0;
 - (NSArray<NSString*>*)accessibilityUserInputLabels {
   // The name for Voice Control includes only
   // `self.primaryButton.titleLabel.text`.
-  NSString* buttonTitle = [self primaryButtonTitle];
-  if (!buttonTitle) {
-    // TODO(crbug.com/365995361): At M135, this `if` can be removed.
-    // Before M135, the CHECK in `-[SigninPromoView primaryButtonTitle]` is
-    // non fatal if the title was not set. So to avoid a fatal exception,
-    // this `if` is required.
-    return @[];
-  }
-  return @[ buttonTitle ];
+  return @[ [self primaryButtonTitle] ];
 }
 
 #pragma mark - Setters
@@ -583,7 +582,7 @@ constexpr CGFloat kNonProfileBackgroundImageCompactHeightWidth = 54.0;
 - (NSString*)primaryButtonTitle {
   NSString* buttonTitle = self.primaryButton.configuration.title;
   // The primary button should always be set.
-  CHECK_GT(buttonTitle.length, 0ul, base::NotFatalUntil::M135);
+  CHECK_GT(buttonTitle.length, 0ul);
   return buttonTitle;
 }
 

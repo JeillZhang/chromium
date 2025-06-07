@@ -188,7 +188,7 @@ void WebView::SetCrashedOverlayView(View* crashed_overlay_view) {
 
   if (crashed_overlay_view_.view()) {
     CHECK(crashed_overlay_view_.view()->owned_by_client());
-    AddChildView(crashed_overlay_view_.view());
+    AddChildViewRaw(crashed_overlay_view_.view());
     holder_->SetVisible(false);
     crashed_overlay_view_.view()->SetBoundsRect(GetLocalBounds());
   }
@@ -199,6 +199,16 @@ void WebView::SetCrashedOverlayView(View* crashed_overlay_view) {
 base::CallbackListSubscription WebView::AddWebContentsAttachedCallback(
     WebContentsAttachedCallback callback) {
   return web_contents_attached_callbacks_.Add(callback);
+}
+
+base::CallbackListSubscription WebView::AddWebContentsDetachedCallback(
+    WebContentsDetachedCallback callback) {
+  return web_contents_detached_callbacks_.Add(callback);
+}
+
+base::CallbackListSubscription WebView::AddWebContentsFocusedCallback(
+    WebContentsFocusedCallback callback) {
+  return web_contents_focused_callbacks_.Add(callback);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -317,7 +327,7 @@ void WebView::RemovedFromWidget() {
   // Immediately clear the accessible parent upon being removed, as it's a
   // weak reference to an object that is about to be destroyed.
   if (holder_->native_view()) {
-    holder_->SetParentAccessible(nullptr);
+    holder_->SetParentAccessible(gfx::NativeViewAccessible());
   }
 }
 
@@ -407,6 +417,7 @@ void WebView::DidToggleFullscreenModeForTab(bool entered_fullscreen,
 void WebView::OnWebContentsFocused(
     content::RenderWidgetHost* render_widget_host) {
   RequestFocus();
+  web_contents_focused_callbacks_.Notify(this);
 }
 
 void WebView::AXTreeIDForMainFrameHasChanged() {
@@ -469,6 +480,7 @@ void WebView::DetachWebContentsNativeView() {
   TRACE_EVENT0("views", "WebView::DetachWebContentsNativeView");
   if (web_contents()) {
     holder_->Detach();
+    web_contents_detached_callbacks_.Notify(this);
   }
 }
 

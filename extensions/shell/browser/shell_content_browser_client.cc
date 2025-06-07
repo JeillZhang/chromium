@@ -12,11 +12,13 @@
 #include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/task/sequenced_task_runner.h"
+#include "components/embedder_support/user_agent_utils.h"
 #include "components/guest_view/common/guest_view.mojom.h"
 #include "components/nacl/common/buildflags.h"
 #include "content/public/browser/browser_main_runner.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/navigation_throttle_registry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/service_worker_version_base_info.h"
@@ -26,7 +28,6 @@
 #include "content/public/common/content_descriptors.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
-#include "content/public/common/user_agent.h"
 #include "content/shell/browser/shell_browser_context.h"
 #include "content/shell/browser/shell_devtools_manager_delegate.h"
 #include "extensions/browser/api/web_request/web_request_api.h"
@@ -251,22 +252,17 @@ void ShellContentBrowserClient::
                           render_frame_host.GetGlobalId()));
 }
 
-std::vector<std::unique_ptr<content::NavigationThrottle>>
-ShellContentBrowserClient::CreateThrottlesForNavigation(
-    content::NavigationHandle* navigation_handle) {
-  std::vector<std::unique_ptr<content::NavigationThrottle>> throttles;
+void ShellContentBrowserClient::CreateThrottlesForNavigation(
+    content::NavigationThrottleRegistry& registry) {
+  content::NavigationHandle& navigation_handle =
+      registry.GetNavigationHandle();
   if (!extensions::ExtensionsBrowserClient::Get()
            ->AreExtensionsDisabledForContext(
-               navigation_handle->GetWebContents()->GetBrowserContext())) {
-    throttles.push_back(
-        std::make_unique<ExtensionNavigationThrottle>(navigation_handle));
+               navigation_handle.GetWebContents()->GetBrowserContext())) {
+    registry.AddThrottle(
+        std::make_unique<ExtensionNavigationThrottle>(registry));
   }
-
-  if (auto throttle =
-          WebViewGuest::MaybeCreateNavigationThrottle(navigation_handle)) {
-    throttles.push_back(std::move(throttle));
-  }
-  return throttles;
+  WebViewGuest::MaybeCreateAndAddNavigationThrottle(registry);
 }
 
 std::unique_ptr<content::NavigationUIData>
@@ -375,9 +371,11 @@ void ShellContentBrowserClient::OverrideURLLoaderFactoryParams(
     content::BrowserContext* browser_context,
     const url::Origin& origin,
     bool is_for_isolated_world,
+    bool is_for_service_worker,
     network::mojom::URLLoaderFactoryParams* factory_params) {
   URLLoaderFactoryManager::OverrideURLLoaderFactoryParams(
-      browser_context, origin, is_for_isolated_world, factory_params);
+      browser_context, origin, is_for_isolated_world, is_for_service_worker,
+      factory_params);
 }
 
 base::FilePath
@@ -388,7 +386,7 @@ ShellContentBrowserClient::GetSandboxedStorageServiceDataDirectory() {
 std::string ShellContentBrowserClient::GetUserAgent() {
   // Must contain a user agent string for version sniffing. For example,
   // pluginless WebRTC Hangouts checks the Chrome version number.
-  return content::BuildUserAgentFromProduct("Chrome/" PRODUCT_VERSION);
+  return embedder_support::GetUserAgent();
 }
 
 std::unique_ptr<ShellBrowserMainParts>

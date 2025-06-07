@@ -26,6 +26,7 @@ import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 import org.chromium.android_webview.AwConsoleMessage;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwSettings;
+import org.chromium.android_webview.AwWebResourceRequest;
 import org.chromium.android_webview.test.AwActivityTestRule.TestDependencyFactory;
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
@@ -107,7 +108,7 @@ public class WebExposedTest extends AwParameterizedTest {
                                         "onReceivedError: "
                                                 + error.description
                                                 + ", "
-                                                + request.url
+                                                + request.getUrl()
                                                 + "\n"));
                     }
 
@@ -140,8 +141,8 @@ public class WebExposedTest extends AwParameterizedTest {
                     settings.setAllowFileAccessFromFileUrls(true);
                     settings.setJavaScriptEnabled(true);
 
-                    // Exposes window.openDatabase
-                    settings.setDatabaseEnabled(true);
+                    // Exposes Payment APIs
+                    settings.setPaymentRequestEnabled(true);
 
                     class SynchronousConsole {
                         @JavascriptInterface

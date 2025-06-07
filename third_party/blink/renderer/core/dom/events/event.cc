@@ -273,6 +273,15 @@ void Event::SetRelatedTargetIfExists(EventTarget* related_target) {
 
 void Event::ReceivedTarget() {}
 
+Element* Event::Retarget(const Element* element) const {
+  CHECK(RuntimeEnabledFeatures::ImprovedSourceRetargetingEnabled());
+  EventTarget* retarget_against = currentTarget() ? currentTarget() : target();
+  if (element && retarget_against && retarget_against->ToNode()) {
+    return &retarget_against->ToNode()->GetTreeScope().Retarget(*element);
+  }
+  return nullptr;
+}
+
 void Event::SetUnderlyingEvent(const Event* ue) {
   // Prohibit creation of a cycle -- just do nothing in that case.
   for (const Event* e = ue; e; e = e->UnderlyingEvent())
@@ -322,17 +331,20 @@ HeapVector<Member<EventTarget>> Event::composedPath(
   if (Node* node = current_target_->ToNode()) {
     DCHECK(event_path_);
     for (auto& context : event_path_->NodeEventContexts()) {
-      if (node == context.GetNode())
-        return context.GetTreeScopeEventContext().EnsureEventPath(*event_path_);
+      if (node == context.GetNode()) {
+        return HeapVector<Member<EventTarget>>(
+            context.GetTreeScopeEventContext().EnsureEventPath(*event_path_));
+      }
     }
     NOTREACHED();
   }
 
   if (LocalDOMWindow* window = current_target_->ToLocalDOMWindow()) {
     if (event_path_ && !event_path_->IsEmpty()) {
-      return event_path_->TopNodeEventContext()
-          .GetTreeScopeEventContext()
-          .EnsureEventPath(*event_path_);
+      return HeapVector<Member<EventTarget>>(
+          event_path_->TopNodeEventContext()
+              .GetTreeScopeEventContext()
+              .EnsureEventPath(*event_path_));
     }
     return HeapVector<Member<EventTarget>>(1, window);
   }

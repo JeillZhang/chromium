@@ -25,10 +25,12 @@ ci.defaults.set(
     os = os.WINDOWS_DEFAULT,
     gardener_rotations = gardener_rotations.CHROMIUM,
     tree_closing = True,
+    tree_closing_notifiers = ci.DEFAULT_TREE_CLOSING_NOTIFIERS,
     main_console_view = "main",
     contact_team_email = "chrome-desktop-engprod@google.com",
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
     health_spec = health_spec.DEFAULT,
+    reclient_enabled = False,
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
     shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
     siso_enabled = True,
@@ -57,7 +59,7 @@ consoles.console_view(
 
 ci.builder(
     name = "WebKit Win10",
-    triggered_by = ["Win Builder"],
+    parent = "Win Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -122,6 +124,7 @@ ci.builder(
             "chromium_win_scripts",
         ],
         additional_compile_targets = [
+            "ipc_fuzzer",
             "pdf_fuzzers",
         ],
     ),
@@ -177,7 +180,7 @@ ci.builder(
 
 ci.builder(
     name = "Win10 Tests x64 (dbg)",
-    triggered_by = ["Win x64 Builder (dbg)"],
+    parent = "Win x64 Builder (dbg)",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -363,6 +366,7 @@ ci.builder(
             "blink_platform_nocompile_tests",
             "blink_probes_nocompile_tests",
             "content_nocompile_tests",
+            "ipc_fuzzer",
             "pdf_fuzzers",
         ],
     ),
@@ -380,7 +384,7 @@ ci.builder(
 ci.builder(
     name = "Win10 Tests x64",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
-    triggered_by = ["ci/Win x64 Builder"],
+    parent = "ci/Win x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -404,6 +408,7 @@ ci.builder(
         targets = [
             "chromium_win10_gtests",
             "chromium_win_rel_isolated_scripts_once",
+            "gtests_once",
         ],
         mixins = [
             "x86-64",
@@ -478,8 +483,50 @@ ci.builder(
 )
 
 ci.thin_tester(
+    name = "Win10 Tests x86",
+    description_html = "Windows x86 release build running on x64 testing bots.",
+    parent = "ci/Win Builder",
+    builder_spec = builder_config.builder_spec(
+        execution_mode = builder_config.execution_mode.TEST,
+        gclient_config = builder_config.gclient_config(
+            config = "chromium",
+            apply_configs = [
+                "use_clang_coverage",
+            ],
+        ),
+        chromium_config = builder_config.chromium_config(
+            config = "chromium",
+            apply_configs = [
+                "mb",
+            ],
+            build_config = builder_config.build_config.RELEASE,
+            target_bits = 32,
+            target_platform = builder_config.target_platform.WIN,
+        ),
+        build_gs_bucket = "chromium-win-archive",
+    ),
+    targets = targets.bundle(
+        targets = [
+            "win_x86_specific_smoke_tests",
+        ],
+        mixins = [
+            "x86-64",
+            "win10",
+            "isolate_profile_data",
+        ],
+    ),
+    builderless = True,
+    gardener_rotations = args.ignore_default(None),
+    tree_closing = False,
+    console_view_entry = consoles.console_view_entry(
+        category = "misc",
+        short_name = "x86",
+    ),
+)
+
+ci.thin_tester(
     name = "Win11 Tests x64",
-    triggered_by = ["ci/Win x64 Builder"],
+    parent = "ci/Win x64 Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -621,9 +668,9 @@ ci.builder(
     ),
     cq_mirrors_console_view = "mirrors",
     contact_team_email = "chrome-desktop-engprod@google.com",
-    # Can flakily hit the default 3 hour timeout due to inconsistent compile
-    # times.
-    execution_timeout = 4 * time.hour,
+    # 20min (bot update) + 3hr (compile time without cache) +
+    # 40min (isolate tests) with 1hr buffer
+    execution_timeout = 5 * time.hour,
     # Increase timeout for connecting to dependency scanner
     reclient_bootstrap_env = {
         "RBE_depsscan_connect_timeout": "120s",
@@ -634,7 +681,7 @@ ci.thin_tester(
     name = "win11-arm64-rel-tests",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     description_html = "Windows11 ARM64 Release Tester.",
-    triggered_by = ["ci/win-arm64-rel"],
+    parent = "ci/win-arm64-rel",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -654,6 +701,10 @@ ci.thin_tester(
             target_platform = builder_config.target_platform.WIN,
         ),
         build_gs_bucket = "chromium-win-archive",
+    ),
+    builder_config_settings = builder_config.ci_settings(
+        retry_failed_shards = True,
+        retry_invalid_shards = True,
     ),
     targets = targets.bundle(
         targets = [
@@ -708,6 +759,9 @@ ci.thin_tester(
             ),
             "telemetry_unittests": targets.remove(
                 reason = "Disabled on similar Windows testers due to crbug/40622135.",
+            ),
+            "webui_resources_tools_python_unittests": targets.remove(
+                reason = "Unneeded; only run on non-cross-compiling bots",
             ),
         },
     ),
@@ -768,7 +822,7 @@ ci.builder(
 ci.thin_tester(
     name = "win11-arm64-dbg-tests",
     description_html = "Windows11 ARM64 Debug Tester.",
-    triggered_by = ["ci/win-arm64-dbg"],
+    parent = "ci/win-arm64-dbg",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -866,8 +920,6 @@ ci.builder(
     reclient_bootstrap_env = {
         "RBE_ip_timeout": "10m",
     },
-    # TODO: crbug.com/379584977 - Remove this after fixing the recipe. https://crrev.com/c/6242260
-    reclient_enabled = True,
 )
 
 ci.builder(
@@ -957,6 +1009,9 @@ ci.builder(
             ),
             "telemetry_unittests": targets.remove(
                 reason = "Shadow Win10 Tests x64.",
+            ),
+            "webui_resources_tools_python_unittests": targets.remove(
+                reason = "Unneeded; only run on non-cross-compiling bots",
             ),
         },
     ),

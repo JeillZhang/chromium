@@ -40,7 +40,7 @@ class ThreadDebuggerCommonImpl : public ThreadDebugger {
   unsigned PromiseRejected(v8::Local<v8::Context>,
                            const WTF::String& error_message,
                            v8::Local<v8::Value> exception,
-                           std::unique_ptr<SourceLocation>) override;
+                           SourceLocation*) override;
   void PromiseRejectionRevoked(v8::Local<v8::Context>,
                                unsigned promise_rejection_id) override;
 
@@ -94,6 +94,12 @@ class ThreadDebuggerCommonImpl : public ThreadDebugger {
                       v8::Local<v8::String> label) override;
   void consoleTimeStamp(v8::Isolate* isolate,
                         v8::Local<v8::String> label) override;
+
+  void consoleTimeStampWithArgs(
+      v8::Isolate* isolate,
+      v8::Local<v8::String> label,
+      const v8::LocalVector<v8::Value>& args) override;
+
   void startRepeatingTimer(double,
                            v8_inspector::V8InspectorClient::TimerCallback,
                            void* data) override;

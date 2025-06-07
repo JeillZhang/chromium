@@ -4,6 +4,8 @@
 
 #include "chrome/browser/keyboard_accessory/android/manual_filling_controller_impl.h"
 
+#include <inttypes.h>
+
 #include <numeric>
 #include <optional>
 #include <utility>
@@ -123,10 +125,11 @@ void ManualFillingControllerImpl::NotifyFocusedInputChanged(
   }
 
   // Whenever the focus changes, reset the accessory.
-  if (ShouldShowAccessory())
+  if (ShouldShowAccessory()) {
     view_->SwapSheetWithKeyboard();
-  else
+  } else {
     view_->CloseAccessorySheet();
+  }
 
   UpdateVisibility();
 }
@@ -151,8 +154,9 @@ void ManualFillingControllerImpl::ShowAccessorySheetTab(
 void ManualFillingControllerImpl::UpdateSourceAvailability(
     FillingSource source,
     bool has_suggestions) {
-  if (has_suggestions == available_sources_.contains(source))
+  if (has_suggestions == available_sources_.contains(source)) {
     return;
+  }
 
   if (has_suggestions) {
     available_sources_.insert(source);
@@ -161,8 +165,9 @@ void ManualFillingControllerImpl::UpdateSourceAvailability(
   }
 
   available_sources_.erase(source);
-  if (!ShouldShowAccessory())
+  if (!ShouldShowAccessory()) {
     UpdateVisibility();
+  }
 }
 
 void ManualFillingControllerImpl::Hide() {
@@ -173,8 +178,9 @@ void ManualFillingControllerImpl::OnFillingTriggered(
     AccessoryTabType type,
     const autofill::AccessorySheetField& selection) {
   AccessoryController* controller = GetControllerForTabType(type);
-  if (!controller)
+  if (!controller) {
     return;  // Controller not available anymore.
+  }
   controller->OnFillingTriggered(last_focused_field_id_, selection);
   view_->SwapSheetWithKeyboard();  // Soft-close the keyboard.
 }
@@ -195,8 +201,9 @@ void ManualFillingControllerImpl::OnOptionSelected(
   UMA_HISTOGRAM_ENUMERATION("KeyboardAccessory.AccessoryActionSelected",
                             selected_action, AccessoryAction::COUNT);
   AccessoryController* controller = GetControllerForAction(selected_action);
-  if (!controller)
+  if (!controller) {
     return;  // Controller not available anymore.
+  }
   controller->OnOptionSelected(selected_action);
 }
 
@@ -204,8 +211,9 @@ void ManualFillingControllerImpl::OnToggleChanged(
     AccessoryAction toggled_action,
     bool enabled) const {
   AccessoryController* controller = GetControllerForAction(toggled_action);
-  if (!controller)
+  if (!controller) {
     return;  // Controller not available anymore.
+  }
   controller->OnToggleChanged(toggled_action, enabled);
 }
 
@@ -243,8 +251,9 @@ ManualFillingControllerImpl::AsWeakPtr() {
 void ManualFillingControllerImpl::Initialize() {
   DCHECK(FromWebContents(&GetWebContents())) << "Don't call from constructor!";
   RegisterObserverForAllowedSources();
-  if (address_controller_)
+  if (address_controller_) {
     address_controller_->RefreshSuggestions();
+  }
 }
 
 ManualFillingControllerImpl::ManualFillingControllerImpl(
@@ -346,8 +355,9 @@ void ManualFillingControllerImpl::UpdateVisibility() {
   TRACE_EVENT0("passwords", "ManualFillingControllerImpl::UpdateVisibility");
   if (ShouldShowAccessory()) {
     for (const FillingSource& source : available_sources_) {
-      if (source == FillingSource::AUTOFILL)
+      if (source == FillingSource::AUTOFILL) {
         continue;  // Autofill suggestions have no sheet.
+      }
       AccessoryController* controller = GetControllerForFillingSource(source);
       if (!controller) {
         continue;  // Most-likely, the controller was cleaned up already.
@@ -376,8 +386,9 @@ void ManualFillingControllerImpl::RegisterObserverForAllowedSources() {
   for (FillingSource source : kAllowedFillingSources) {
     AccessoryController* sheet_controller =
         GetControllerForFillingSource(source);
-    if (!sheet_controller)
+    if (!sheet_controller) {
       continue;  // Ignore disallowed sheets.
+    }
     sheet_controller->RegisterFillingSourceObserver(base::BindRepeating(
         &ManualFillingControllerImpl::OnSourceAvailabilityChanged,
         weak_factory_.GetWeakPtr(), source));
@@ -430,6 +441,7 @@ AccessoryController* ManualFillingControllerImpl::GetControllerForAction(
     case AccessoryAction::CREATE_PLUS_ADDRESS_FROM_PASSWORD_SHEET:
     case AccessoryAction::SELECT_PLUS_ADDRESS_FROM_PASSWORD_SHEET:
     case AccessoryAction::MANAGE_PLUS_ADDRESS_FROM_PASSWORD_SHEET:
+    case AccessoryAction::RETRIEVE_TRUSTED_VAULT_KEY:
       return pwd_controller_.get();
     case AccessoryAction::MANAGE_ADDRESSES:
     case AccessoryAction::CREATE_PLUS_ADDRESS_FROM_ADDRESS_SHEET:
@@ -437,6 +449,7 @@ AccessoryController* ManualFillingControllerImpl::GetControllerForAction(
     case AccessoryAction::MANAGE_PLUS_ADDRESS_FROM_ADDRESS_SHEET:
       return address_controller_.get();
     case AccessoryAction::MANAGE_CREDIT_CARDS:
+    case AccessoryAction::MANAGE_LOYALTY_CARDS:
       return payment_method_controller_.get();
     case AccessoryAction::AUTOFILL_SUGGESTION:
     case AccessoryAction::COUNT:

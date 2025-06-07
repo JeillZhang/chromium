@@ -9,6 +9,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "base/compiler_specific.h"
@@ -18,6 +19,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "base/types/optional_ref.h"
 #include "base/types/strong_alias.h"
 #include "components/autofill/content/common/mojom/autofill_agent.mojom.h"
 #include "components/autofill/content/common/mojom/autofill_driver.mojom.h"
@@ -26,6 +28,7 @@
 #include "components/autofill/content/renderer/form_tracker.h"
 #include "components/autofill/content/renderer/timing.h"
 #include "components/autofill/core/common/autofill_features.h"
+#include "components/autofill/core/common/autofill_util.h"
 #include "components/autofill/core/common/dense_set.h"
 #include "components/autofill/core/common/field_data_manager.h"
 #include "components/autofill/core/common/form_data_predictions.h"
@@ -178,6 +181,7 @@ class AutofillAgent : public content::RenderFrameObserver,
       uint32_t number_of_ancestor_levels_to_search,
       base::OnceCallback<void(const std::string&)> callback) override;
 
+  void ExposeDomNodeIDs() override;
   void FieldTypePredictionsAvailable(
       const std::vector<FormDataPredictions>& forms) override;
   // Besides cases that "actually" clear the form, this function needs to be
@@ -239,6 +243,10 @@ class AutofillAgent : public content::RenderFrameObserver,
     return *field_data_manager_.get();
   }
 
+  form_util::ButtonTitlesCache* button_titles_cache() {
+    return &button_titles_cache_;
+  }
+
  protected:
   // blink::WebAutofillClient:
 
@@ -296,6 +304,14 @@ class AutofillAgent : public content::RenderFrameObserver,
   void FireHostSubmitEvents(const FormData& form_data,
                             mojom::SubmissionSource source);
 
+  // Tries to show the given `passwords_request` for the given fields and update
+  // `is_popup_possibly_visible` accordingly. Returns true if the password agent
+  // handles the request.
+  bool TryShowPasswordSuggestions(
+      const blink::WebInputElement& input,
+      IsPasswordRequestManuallyTriggered manually_triggered_password_request,
+      base::optional_ref<const PasswordSuggestionRequest> password_request);
+
   // blink::WebAutofillClient:
   void TextFieldCleared(const blink::WebFormControlElement&) override;
   void TextFieldDidEndEditing(const blink::WebInputElement& element) override;
@@ -350,26 +366,27 @@ class AutofillAgent : public content::RenderFrameObserver,
 
   void DidChangeScrollOffsetImpl(FieldRendererId element_id);
 
+  // At least on Android, multiple AskForValuesToFill() events may be fired in
+  // short succession. Since getting the event handling right in AutofillAgent
+  // is difficult we ignore duplicate AskForValuesToFill() as a workaround.
+  // See crbug.com/40284788 for details.
+  bool ShouldThrottleAskForValuesToFill(FieldRendererId field);
+
   // Shows Password Manager, password generation, or Autofill suggestions for
   // `element`. This call is asynchronous and may or may not lead to the showing
   // of a suggestion popup (no popup is shown if there are no available
   // suggestions). `form_cache` can be used to optimize form extractions
   // occurring synchronously after this function call.
-  void ShowSuggestions(const blink::WebFormControlElement& element,
-                       AutofillSuggestionTriggerSource trigger_source,
-                       const SynchronousFormCache& form_cache);
+  void ShowSuggestions(
+      const blink::WebFormControlElement& element,
+      AutofillSuggestionTriggerSource trigger_source,
+      const SynchronousFormCache& form_cache,
+      const std::optional<PasswordSuggestionRequest>& password_request);
 
   // Shows Autofill suggestions for `element` if `element` is a contenteditable.
   void ShowSuggestionsForContentEditable(
       const blink::WebElement& element,
       AutofillSuggestionTriggerSource trigger_source);
-
-  // Queries the browser for Autocomplete and Autofill suggestions for the given
-  // `element`. `form_cache` can be used to optimize form extractions occurring
-  // synchronously after this function call.
-  void QueryAutofillSuggestions(const blink::WebFormControlElement& element,
-                                AutofillSuggestionTriggerSource trigger_source,
-                                const SynchronousFormCache& form_cache);
 
   // Sets the selected value of the the field identified by `field_id` to
   // `suggested_value`.
@@ -422,13 +439,13 @@ class AutofillAgent : public content::RenderFrameObserver,
   // `source` is the type of submission requesting the submitted form.
   std::optional<FormData> GetSubmittedForm(
       mojom::SubmissionSource source,
-      std::optional<blink::WebFormElement> submitted_form_element) const;
+      std::optional<blink::WebFormElement> submitted_form_element);
 
   void ResetLastInteractedElements();
   // A form_id means that the user last interacted with a FormElement.
   // A field_id means that the user last interacted with a formless control.
   void UpdateLastInteractedElement(
-      absl::variant<FormRendererId, FieldRendererId> element_id);
+      std::variant<FormRendererId, FieldRendererId> element_id);
 
   // Called when current form is no longer submittable, submitted_forms_ is
   // cleared in this method.
@@ -537,6 +554,10 @@ class AutofillAgent : public content::RenderFrameObserver,
   scoped_refptr<FieldDataManager> field_data_manager_ =
       base::MakeRefCounted<FieldDataManager>();
 
+  // Stores the mapping from a form element's ID to results of button titles
+  // heuristics for that form.
+  form_util::ButtonTitlesCache button_titles_cache_;
+
   // State for, and only for, HandleFocusChangeComplete().
   struct Caret {
    private:
@@ -557,6 +578,14 @@ class AutofillAgent : public content::RenderFrameObserver,
     base::TimeTicks last_autofill_agent_reset = base::TimeTicks::Now();
     base::TimeTicks last_dom_content_loaded;
   } timing_;
+
+  struct {
+    base::TimeTicks time;
+    FieldRendererId field = {};
+  } last_ask_for_values_to_fill_;
+
+  const bool optimize_form_extraction_ = false;
+  const bool replace_form_element_observer_ = false;
 
   base::WeakPtrFactory<AutofillAgent> weak_ptr_factory_{this};
 };

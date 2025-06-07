@@ -272,8 +272,7 @@
       {
         "args": [
           "--flag-specific=webgpu",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -306,8 +305,7 @@
         "args": [
           "--flag-specific=webgpu-with-backend-validation",
           "--timeout-ms=30000",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -420,8 +418,7 @@
       {
         "args": [
           "--flag-specific=webgpu-swiftshader",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -454,8 +451,7 @@
         "args": [
           "--flag-specific=webgpu-swiftshader-with-backend-validation",
           "--timeout-ms=30000",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -591,7 +587,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -619,7 +615,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -646,7 +642,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -674,7 +670,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -702,7 +698,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -728,7 +724,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -758,7 +754,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -788,7 +784,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -811,7 +807,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -825,8 +821,7 @@
       {
         "args": [
           "--flag-specific=webgpu",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -843,7 +838,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -857,8 +852,7 @@
         "args": [
           "--flag-specific=webgpu-with-backend-validation",
           "--timeout-ms=30000",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -875,7 +869,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -911,7 +905,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -950,7 +944,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -965,8 +959,7 @@
       {
         "args": [
           "--flag-specific=webgpu-swiftshader",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -983,7 +976,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -997,8 +990,7 @@
         "args": [
           "--flag-specific=webgpu-swiftshader-with-backend-validation",
           "--timeout-ms=30000",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -1015,7 +1007,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -1053,7 +1045,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -1094,7 +1086,7 @@
             "cpu": "x86-64",
             "display_attached": "1",
             "gpu": "8086:3e9b",
-            "os": "Mac-15.0"
+            "os": "Mac-15.5"
           },
           "expiration": 21600,
           "hard_timeout": 1800,
@@ -1371,8 +1363,7 @@
       {
         "args": [
           "--flag-specific=webgpu",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -1404,8 +1395,7 @@
         "args": [
           "--flag-specific=webgpu-with-backend-validation",
           "--timeout-ms=30000",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -1515,8 +1505,7 @@
       {
         "args": [
           "--flag-specific=webgpu-swiftshader",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -1548,8 +1537,7 @@
         "args": [
           "--flag-specific=webgpu-swiftshader-with-backend-validation",
           "--timeout-ms=30000",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -1907,8 +1895,7 @@
       {
         "args": [
           "--flag-specific=webgpu",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -1938,8 +1925,7 @@
         "args": [
           "--flag-specific=webgpu-with-backend-validation",
           "--timeout-ms=30000",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -2043,8 +2029,7 @@
       {
         "args": [
           "--flag-specific=webgpu-swiftshader",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [
@@ -2074,8 +2059,7 @@
         "args": [
           "--flag-specific=webgpu-swiftshader-with-backend-validation",
           "--timeout-ms=30000",
-          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000",
-          "--platform=mac-mac11"
+          "--initialize-webgpu-adapter-at-startup-timeout-ms=60000"
         ],
         "merge": {
           "args": [

@@ -116,18 +116,22 @@ JavaScriptTabModalDialogViewViews::JavaScriptTabModalDialogViewViews(
         }
       },
       base::Unretained(this)));
-  RegisterWindowWillCloseCallback(base::BindOnce(
-      [](JavaScriptTabModalDialogViewViews* dialog) {
-        // Since the window is closing, reset the ScopedTabModalUI so it removes
-        // its reference to the TabModel prior to the TabModel being destroyed.
-        dialog->scoped_tab_modal_ui_.reset();
-        // If the force-close callback still exists at this point we're not
-        // closed due to a user action (would've been caught in Accept/Cancel).
-        if (dialog->dialog_force_closed_callback_) {
-          std::move(dialog->dialog_force_closed_callback_).Run();
-        }
-      },
-      base::Unretained(this)));
+  RegisterWindowWillCloseCallback(
+      RegisterWillCloseCallbackPassKey(),
+      base::BindOnce(
+          [](JavaScriptTabModalDialogViewViews* dialog) {
+            // Since the window is closing, reset the ScopedTabModalUI so it
+            // removes its reference to the TabModel prior to the TabModel being
+            // destroyed.
+            dialog->scoped_tab_modal_ui_.reset();
+            // If the force-close callback still exists at this point we're not
+            // closed due to a user action (would've been caught in
+            // Accept/Cancel).
+            if (dialog->dialog_force_closed_callback_) {
+              std::move(dialog->dialog_force_closed_callback_).Run();
+            }
+          },
+          base::Unretained(this)));
 
   message_box_view_ = new views::MessageBoxView(
       message_text, /* detect_directionality = */ true);
@@ -136,7 +140,7 @@ JavaScriptTabModalDialogViewViews::JavaScriptTabModalDialogViewViews(
   }
 
   SetLayoutManager(std::make_unique<views::FillLayout>());
-  AddChildView(message_box_view_.get());
+  AddChildViewRaw(message_box_view_.get());
 
   constrained_window::ShowWebModalDialogViews(this, parent_web_contents);
 }

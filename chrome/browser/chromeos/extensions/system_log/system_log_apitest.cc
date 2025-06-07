@@ -7,18 +7,18 @@
 #include "ash/constants/ash_switches.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/test_future.h"
 #include "base/values.h"
 #include "chrome/browser/ash/login/test/device_state_mixin.h"
 #include "chrome/browser/ash/login/test/login_manager_mixin.h"
 #include "chrome/browser/ash/login/test/scoped_policy_update.h"
 #include "chrome/browser/ash/login/test/session_manager_state_waiter.h"
-#include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/policy/core/device_local_account.h"
 #include "chrome/browser/ash/policy/core/device_policy_cros_browser_test.h"
 #include "chrome/browser/ash/policy/test_support/embedded_policy_test_server_mixin.h"
-#include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
 #include "chrome/browser/ash/settings/stub_cros_settings_provider.h"
+#include "chrome/browser/ash/test/kiosk_app_logged_in_browser_test_mixin.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/mixin_based_extension_apitest.h"
 #include "chrome/browser/feedback/system_logs/log_sources/device_event_log_source.h"
@@ -27,7 +27,7 @@
 #include "chrome/common/chrome_paths.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
-#include "chromeos/components/kiosk/kiosk_test_utils.h"
+#include "chromeos/ash/components/settings/device_settings_cache_test_support.h"
 #include "components/device_event_log/device_event_log.h"
 #include "components/feedback/system_logs/system_logs_source.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
@@ -37,7 +37,6 @@
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/policy_constants.h"
-#include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/browser/api/test/test_api.h"
 #include "extensions/common/extension_api.h"
@@ -297,10 +296,11 @@ INSTANTIATE_TEST_SUITE_P(All,
                          /*system_logging_enabled=*/testing::Bool());
 
 // Verifies the systemLog API logs in regular user sessions.
-class SystemLogUserSessionApitest : public MixinBasedExtensionApiTest,
-                                    public ::testing::WithParamInterface<bool> {
+class SystemLogUserSessionApitestBase
+    : public MixinBasedExtensionApiTest,
+      public ::testing::WithParamInterface<bool> {
  public:
-  SystemLogUserSessionApitest()
+  SystemLogUserSessionApitestBase()
       : log_level_(system_logging_enabled() ? "DEBUG" : "EVENT") {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -321,6 +321,21 @@ class SystemLogUserSessionApitest : public MixinBasedExtensionApiTest,
         &mock_policy_provider_);
   }
 
+  void SetUpLocalStatePrefService(PrefService* local_state) override {
+    MixinBasedExtensionApiTest::SetUpLocalStatePrefService(local_state);
+
+    ash::device_settings_cache::Update(
+        local_state, [&](em::PolicyData& policy_data) {
+          em::ChromeDeviceSettingsProto settings;
+          if (policy_data.has_policy_value()) {
+            CHECK(settings.ParseFromString(policy_data.policy_value()));
+          }
+          settings.mutable_deviceextensionssystemlogenabled()->set_value(
+              system_logging_enabled());
+          policy_data.set_policy_value(settings.SerializeAsString());
+        });
+  }
+
   void SetUpOnMainThread() override {
     extension_force_install_mixin_.InitWithMockPolicyProvider(
         profile(), &mock_policy_provider_);
@@ -329,11 +344,6 @@ class SystemLogUserSessionApitest : public MixinBasedExtensionApiTest,
   }
 
   bool system_logging_enabled() const { return GetParam(); }
-
-  void SetSystemLogPolicy() {
-    scoped_testing_cros_settings_.device_settings()->SetBoolean(
-        ash::kDeviceExtensionsSystemLogEnabled, system_logging_enabled());
-  }
 
   void ForceInstallExtension() {
     base::FilePath test_dir_path =
@@ -351,14 +361,13 @@ class SystemLogUserSessionApitest : public MixinBasedExtensionApiTest,
   ExtensionForceInstallMixin extension_force_install_mixin_{&mixin_host_};
   testing::NiceMock<policy::MockConfigurationPolicyProvider>
       mock_policy_provider_;
-  ash::ScopedTestingCrosSettings scoped_testing_cros_settings_;
 };
+
+using SystemLogUserSessionApitest = SystemLogUserSessionApitestBase;
 
 // Logs EVENT extension logs irrespective of the
 // DeviceExtensionsSystemLogEnabled policy.
 IN_PROC_BROWSER_TEST_P(SystemLogUserSessionApitest, AddLogFromUserSession) {
-  SetSystemLogPolicy();
-
   SetCustomArg(kSystemLogAvailableTestName);
   ResultCatcher catcher;
 
@@ -375,8 +384,6 @@ IN_PROC_BROWSER_TEST_P(SystemLogUserSessionApitest, AddLogFromUserSession) {
 
 IN_PROC_BROWSER_TEST_P(SystemLogUserSessionApitest,
                        DeniesNonPolicyInstalledExtensions) {
-  SetSystemLogPolicy();
-
   SetCustomArg(kSystemLogUndefinedTestName);
   ResultCatcher catcher;
 
@@ -398,30 +405,22 @@ INSTANTIATE_TEST_SUITE_P(All,
                          /*system_logging_enabled=*/testing::Bool());
 
 // Verifies the systemLog API logs in Kiosk sessions.
-class SystemLogKioskSessionApitest : public SystemLogUserSessionApitest {
+class SystemLogKioskSessionApitest : public SystemLogUserSessionApitestBase {
  public:
-  void SetUpOnMainThread() override {
-    user_manager_.Reset(std::make_unique<ash::FakeChromeUserManager>());
-    chromeos::SetUpFakeKioskSession();
-
-    SystemLogUserSessionApitest::SetUpOnMainThread();
-  }
-
-  void TearDownOnMainThread() override {
-    user_manager_.Reset();
-    SystemLogUserSessionApitest::TearDownOnMainThread();
+  SystemLogKioskSessionApitest() {
+    // Do not create User by LoggedInUserMixin, because
+    // user log-in is handled by KioskBrowserTestMixin.
+    set_chromeos_user_ = false;
   }
 
  private:
-  user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
-      user_manager_;
+  ash::KioskAppLoggedInBrowserTestMixin kiosk_mixin_{&mixin_host_,
+                                                     "kiosk-account"};
 };
 
 // Logs EVENT or DEBUG extension logs depending on the
 // DeviceExtensionsSystemLogEnabled policy.
 IN_PROC_BROWSER_TEST_P(SystemLogKioskSessionApitest, AddLogFromKioskSession) {
-  SetSystemLogPolicy();
-
   SetCustomArg(kSystemLogAvailableTestName);
   ResultCatcher catcher;
 

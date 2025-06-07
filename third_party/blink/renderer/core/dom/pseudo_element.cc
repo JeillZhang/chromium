@@ -105,8 +105,7 @@ PseudoElement* PseudoElement::Create(Element* parent,
   if (pseudo_id == kPseudoIdFirstLetter) {
     return MakeGarbageCollected<FirstLetterPseudoElement>(parent);
   } else if (IsTransitionPseudoElement(pseudo_id)) {
-    auto* transition =
-        ViewTransitionUtils::GetTransition(parent->GetDocument());
+    auto* transition = ViewTransitionUtils::GetTransition(*parent);
     DCHECK(transition);
     return transition->CreatePseudoElement(parent, pseudo_id,
                                            view_transition_name);
@@ -209,6 +208,11 @@ const QualifiedName& PseudoElementTagName(PseudoId pseudo_id) {
                           (AtomicString("::view-transition-group")));
       return transition_container;
     }
+    case kPseudoIdViewTransitionGroupChildren: {
+      DEFINE_STATIC_LOCAL(QualifiedName, transition_nested_groups,
+                          (AtomicString("::view-transition-group-children")));
+      return transition_nested_groups;
+    }
     case kPseudoIdViewTransitionImagePair: {
       DEFINE_STATIC_LOCAL(QualifiedName, transition_image_wrapper,
                           (AtomicString("::view-transition-image-pair")));
@@ -239,6 +243,7 @@ AtomicString PseudoElement::PseudoElementNameForEvents(Element* element) {
     case kPseudoIdNone:
       return g_null_atom;
     case kPseudoIdViewTransitionGroup:
+    case kPseudoIdViewTransitionGroupChildren:
     case kPseudoIdViewTransitionImagePair:
     case kPseudoIdViewTransitionNew:
     case kPseudoIdViewTransitionOld: {
@@ -286,7 +291,7 @@ PseudoElement::PseudoElement(Element* parent,
       view_transition_name_(view_transition_name) {
   DCHECK_NE(pseudo_id, kPseudoIdNone);
   parent->GetTreeScope().AdoptIfNeeded(*this);
-  SetParentOrShadowHostNode(parent);
+  SetParentNode(parent);
   SetHasCustomStyleCallbacks();
   if ((pseudo_id == kPseudoIdBefore || pseudo_id == kPseudoIdAfter) &&
       parent->HasTagName(html_names::kInputTag)) {
@@ -367,6 +372,18 @@ const ComputedStyle* PseudoElement::AdjustedLayoutStyle(
     // the originating element of the scroll marker.
     StyleAdjuster::AdjustStyleForDisplay(builder, layout_parent_style, this,
                                          &GetDocument());
+    if (style.IsCSSInertIsInherited() &&
+        style.IsCSSInert() != layout_parent_style.IsCSSInert()) {
+      // A ::scroll-marker gets its inertness from its ::scroll-marker-group
+      // instead of its originating element unless the inertness is applied
+      // directly to the ::scroll-marker itself.
+      builder.SetIsCSSInert(layout_parent_style.IsCSSInert());
+      builder.SetIsCSSInertIsInherited(false);
+    }
+    if (style.IsHTMLInert() != layout_parent_style.IsHTMLInert()) {
+      builder.SetIsHTMLInert(layout_parent_style.IsHTMLInert());
+      builder.SetIsHTMLInertIsInherited(false);
+    }
     return builder.TakeStyle();
   }
 
@@ -384,7 +401,7 @@ void PseudoElement::Dispose() {
   DetachLayoutTree();
   Element* parent = ParentOrShadowHostElement();
   GetDocument().AdoptIfNeeded(*this);
-  SetParentOrShadowHostNode(nullptr);
+  SetParentNode(nullptr);
   RemovedFrom(*parent);
 }
 
@@ -480,8 +497,14 @@ void PseudoElement::AttachLayoutTree(AttachContext& context) {
 
   DCHECK(!style.ContentBehavesAsNormal());
   DCHECK(!style.ContentPreventsBoxGeneration());
-  for (const ContentData* content = style.GetContentData(); content;
+  for (ContentData* content = style.GetContentData(); content;
        content = content->Next()) {
+    if (auto* alt_counter_data = DynamicTo<AltCounterContentData>(content)) {
+      alt_counter_data->UpdateText(context.counters_context,
+                                   GetDocument().GetStyleEngine(),
+                                   *layout_object);
+      continue;
+    }
     if (!content->IsAltText()) {
       LayoutObject* child = content->CreateLayoutObject(*layout_object);
       if (layout_object->IsChildAllowed(child, style)) {
@@ -577,21 +600,29 @@ Node* PseudoElement::InnerNodeForHitTesting() {
 
 void PseudoElement::AccessKeyAction(
     SimulatedClickCreationScope creation_scope) {
-  // Even though pseudo elements can't use the accesskey attribute, assistive
-  // tech can still attempt to interact with pseudo elements if they are in
-  // the AX tree (usually due to their text/image content).
+  // If this is a pseudo element with activation behavior such as a
+  // ::scroll-marker or ::scroll-button, we should invoke it.
+  if (HasActivationBehavior()) {
+    DispatchSimulatedClick(nullptr, creation_scope);
+    return;
+  }
+
+  // Even though regular pseudo elements can't use the accesskey attribute,
+  // assistive tech can still attempt to interact with pseudo elements if
+  // they are in the AX tree (usually due to their text/image content).
   // Just pass this request to the originating element.
-  DCHECK(UltimateOriginatingElement());
-  UltimateOriginatingElement()->AccessKeyAction(creation_scope);
+  UltimateOriginatingElement().AccessKeyAction(creation_scope);
 }
 
-Element* PseudoElement::UltimateOriginatingElement() const {
+Element& PseudoElement::UltimateOriginatingElement() const {
   auto* parent = parentElement();
 
   while (parent && parent->IsPseudoElement())
     parent = parent->parentElement();
 
-  return parent;
+  // Should not invoke this method on disposed pseudo elements.
+  CHECK(parent);
+  return *parent;
 }
 
 bool PseudoElementLayoutObjectIsNeeded(PseudoId pseudo_id,
@@ -616,6 +647,7 @@ bool PseudoElementLayoutObjectIsNeeded(PseudoId pseudo_id,
     case kPseudoIdBackdrop:
     case kPseudoIdViewTransition:
     case kPseudoIdViewTransitionGroup:
+    case kPseudoIdViewTransitionGroupChildren:
     case kPseudoIdViewTransitionImagePair:
     case kPseudoIdViewTransitionNew:
     case kPseudoIdViewTransitionOld:

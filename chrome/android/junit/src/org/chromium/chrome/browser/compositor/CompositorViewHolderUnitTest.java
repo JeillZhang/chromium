@@ -24,6 +24,7 @@ import android.app.Activity;
 import android.content.Context;
 import android.os.IBinder;
 import android.view.ContextThemeWrapper;
+import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
@@ -34,12 +35,14 @@ import androidx.test.core.app.ApplicationProvider;
 
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
@@ -60,6 +63,7 @@ import org.chromium.chrome.browser.compositor.layouts.LayoutManagerImpl;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.fullscreen.BrowserControlsManager;
 import org.chromium.chrome.browser.layouts.EventFilter.EventType;
+import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.MockTab;
 import org.chromium.chrome.browser.tab.Tab;
@@ -79,6 +83,7 @@ import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.KeyboardVisibilityDelegate;
 import org.chromium.ui.base.ApplicationViewportInsetSupplier;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.mojom.VirtualKeyboardMode;
 import org.chromium.ui.resources.ResourceManager;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
@@ -109,16 +114,48 @@ public class CompositorViewHolderUnitTest {
     private static final MotionEvent MOTION_ACTION_HOVER_ENTER =
             MotionEvent.obtain(TOUCH_TIME, TOUCH_TIME, MotionEvent.ACTION_HOVER_ENTER, 1, 1, 0);
 
+    private static final MotionEvent MOTION_ACTION_BUTTON_RELEASE_MOUSE;
+
     private static final WindowInsetsCompat VISIBLE_SYSTEM_BARS_WINDOW_INSETS =
             new WindowInsetsCompat.Builder()
                     .setInsets(WindowInsetsCompat.Type.systemBars(), Insets.of(0, 100, 0, 100))
                     .build();
+
+    static {
+        MotionEvent.PointerCoords[] coords = new MotionEvent.PointerCoords[1];
+        coords[0] = new MotionEvent.PointerCoords();
+        coords[0].x = 1f;
+        coords[0].y = 1f;
+
+        MotionEvent.PointerProperties[] properties = new MotionEvent.PointerProperties[1];
+        properties[0] = new MotionEvent.PointerProperties();
+        properties[0].id = 0;
+        properties[0].toolType = MotionEvent.TOOL_TYPE_MOUSE;
+
+        MOTION_ACTION_BUTTON_RELEASE_MOUSE =
+                MotionEvent.obtain(
+                        0,
+                        0,
+                        MotionEvent.ACTION_BUTTON_RELEASE,
+                        1,
+                        properties,
+                        coords,
+                        0,
+                        0,
+                        1f,
+                        1f,
+                        0,
+                        0,
+                        InputDevice.SOURCE_CLASS_POINTER,
+                        0);
+    }
 
     enum EventSource {
         IN_MOTION,
         TOUCH_EVENT_OBSERVER;
     }
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private Activity mActivity;
     @Mock private Profile mProfile;
     @Mock private Profile mIncognitoProfile;
@@ -140,6 +177,8 @@ public class CompositorViewHolderUnitTest {
     @Mock private OnscreenContentProvider.Natives mOnscreenContentProviderJni;
     @Mock private ContentCaptureFeatures.Natives mContentCaptureFeaturesJni;
     @Mock private InputHintChecker.Natives mInputHintCheckerJni;
+    @Mock private MultiWindowModeStateDispatcher mMultiWindowModeStateDispatcher;
+    @Mock private InsetObserver mInsetObserver;
 
     @Captor private ArgumentCaptor<TabObserver> mTabObserverCaptor;
 
@@ -155,7 +194,6 @@ public class CompositorViewHolderUnitTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         OnscreenContentProviderJni.setInstanceForTesting(mOnscreenContentProviderJni);
         ContentCaptureFeaturesJni.setInstanceForTesting(mContentCaptureFeaturesJni);
         InputHintCheckerJni.setInstanceForTesting(mInputHintCheckerJni);
@@ -166,6 +204,9 @@ public class CompositorViewHolderUnitTest {
         KeyboardVisibilityDelegate.setInstance(mMockKeyboard);
 
         mViewportInsets = ApplicationViewportInsetSupplier.createForTests();
+        when(mInsetObserver.isKeyboardInOverlayMode()).thenReturn(false);
+        mViewportInsets.setInsetObserver(mInsetObserver);
+
         mKeyboardInsetSupplier = new ObservableSupplierImpl<>();
         mViewportInsets.setKeyboardInsetSupplier(mKeyboardInsetSupplier);
         mKeyboardAccessoryInsetSupplier = new ObservableSupplierImpl<>();
@@ -195,7 +236,9 @@ public class CompositorViewHolderUnitTest {
 
         BrowserControlsManager browserControlsManager =
                 new BrowserControlsManager(
-                        mActivity, BrowserControlsStateProvider.ControlsPosition.TOP);
+                        mActivity,
+                        BrowserControlsStateProvider.ControlsPosition.TOP,
+                        mMultiWindowModeStateDispatcher);
         mBrowserControlsManager = spy(browserControlsManager);
         mBrowserControlsManager.initialize(
                 mControlContainer,
@@ -683,6 +726,55 @@ public class CompositorViewHolderUnitTest {
                 .notifyVirtualKeyboardOverlayRect(mWebContents, 0, 0, 0, 0);
     }
 
+    // Keyboard resize tests for geometrychange event fired to JS.
+    @Test
+    public void testWebContentResizeTriggeredDueToKeyboardShow_keyboardInOverlayMode() {
+        mCompositorViewHolder.updateVirtualKeyboardMode(VirtualKeyboardMode.OVERLAYS_CONTENT);
+        reset(mWebContents);
+
+        // Viewport dimensions when keyboard is hidden.
+        int fullViewportHeight = 941;
+        int fullViewportWidth = 1080;
+
+        // adjustedHeight is the height of the CompositorViewHolder from Android View layout
+        // after showing the keyboard. This simulates a reduced layout height from the keyboard
+        // taking up the bottom space.
+        int adjustedHeight = fullViewportHeight - KEYBOARD_HEIGHT;
+
+        when(mMockKeyboard.isKeyboardShowing(any(), any())).thenReturn(true);
+        when(mMockKeyboard.calculateTotalKeyboardHeight(any())).thenReturn(KEYBOARD_HEIGHT);
+        when(mCompositorViewHolder.getWidth()).thenReturn(fullViewportWidth);
+        // The CompositorViewHolder does not account for the keyboard since the keyboard inset has
+        // been consumed by an inset consumer, which deliberately did not update the CVH.
+        when(mCompositorViewHolder.getHeight()).thenReturn(fullViewportHeight);
+        when(mInsetObserver.isKeyboardInOverlayMode()).thenReturn(true);
+
+        mKeyboardInsetSupplier.set(KEYBOARD_HEIGHT);
+        mCompositorViewHolder.updateWebContentsSize(mTab);
+
+        // Expect fullViewportHeight since in OVERLAYS_CONTENT the keyboard doesn't cause a resize
+        // to the WebContents.
+        verify(mWebContents, times(1)).setSize(fullViewportWidth, fullViewportHeight);
+        verify(mCompositorViewHolder, times(1))
+                .notifyVirtualKeyboardOverlayRect(
+                        mWebContents, 0, 0, fullViewportWidth, KEYBOARD_HEIGHT);
+
+        reset(mWebContents);
+
+        // Hide the keyboard.
+        when(mMockKeyboard.isKeyboardShowing(any(), any())).thenReturn(false);
+        when(mMockKeyboard.calculateTotalKeyboardHeight(any())).thenReturn(0);
+        when(mCompositorViewHolder.getWidth()).thenReturn(fullViewportWidth);
+        when(mCompositorViewHolder.getHeight()).thenReturn(fullViewportHeight);
+        when(mInsetObserver.isKeyboardInOverlayMode()).thenReturn(true);
+        mKeyboardInsetSupplier.set(0);
+        mCompositorViewHolder.updateWebContentsSize(mTab);
+
+        verify(mWebContents, times(1)).setSize(fullViewportWidth, fullViewportHeight);
+        verify(mCompositorViewHolder, times(1))
+                .notifyVirtualKeyboardOverlayRect(mWebContents, 0, 0, 0, 0);
+    }
+
     @Test
     public void testOverlayGeometryNotTriggeredDueToNoKeyboard() {
         mCompositorViewHolder.updateVirtualKeyboardMode(VirtualKeyboardMode.OVERLAYS_CONTENT);
@@ -901,6 +993,20 @@ public class CompositorViewHolderUnitTest {
     }
 
     @Test
+    public void testDispatchGenericMotionEvent() {
+        when(mLayoutManager.dispatchGenericMotionEvent(MOTION_ACTION_BUTTON_RELEASE_MOUSE))
+                .thenReturn(true);
+        boolean consumed =
+                mCompositorViewHolder.dispatchGenericMotionEvent(
+                        MOTION_ACTION_BUTTON_RELEASE_MOUSE);
+        verify(mLayoutManager).dispatchGenericMotionEvent(MOTION_ACTION_BUTTON_RELEASE_MOUSE);
+        Assert.assertTrue(
+                "#dispatchGenericMotionEvent should return true if the LayoutManager consumes the"
+                        + " event.",
+                consumed);
+    }
+
+    @Test
     public void testInMotionOrdering() {
         // With the 'defer in motion' experiment enabled, touch events are routed to android UI
         // after being sent to native/web content.
@@ -927,6 +1033,31 @@ public class CompositorViewHolderUnitTest {
         framesUntilHideBackground = 0;
         mCompositorViewHolder.didSwapBuffers(swappedCurrentSize, framesUntilHideBackground);
         verifyBackgroundRemoved();
+    }
+
+    @Test
+    public void testFocusOnWebContent_resetsKeyboardFocus() {
+        mCompositorViewHolder.setFocusOnFirstContentViewItem();
+        verify(mCompositorViewHolder).resetKeyboardFocus();
+    }
+
+    @Test
+    public void testOnControlsOffsetChanged_NoRequestRenderIfScrolling() {
+        mCompositorViewHolder.dispatchTouchEvent(MOTION_EVENT_DOWN);
+        mCompositorViewHolder.onControlsOffsetChanged(0, 0, false, 0, 0, false, true, false);
+        verify(mCompositorView, never()).requestRender();
+        mCompositorViewHolder.dispatchTouchEvent(MOTION_EVENT_UP);
+
+        mCompositorViewHolder.setContentViewScrollingStateForTesting(true);
+        mCompositorViewHolder.onControlsOffsetChanged(0, 0, false, 0, 0, false, true, false);
+        verify(mCompositorView, never()).requestRender();
+        mCompositorViewHolder.setContentViewScrollingStateForTesting(false);
+    }
+
+    @Test
+    public void testOnControlsOffsetChanged_RequestRender() {
+        mCompositorViewHolder.onControlsOffsetChanged(0, 0, false, 0, 0, false, true, false);
+        verify(mCompositorView, times(1)).requestRender();
     }
 
     private static void runCurrentTasks() {

@@ -214,12 +214,12 @@ public abstract class TabModalPresenter extends ModalDialogManager.Presenter {
      *         is hiding and text selection should be restored.
      */
     protected void saveOrRestoreTextSelection(WebContents webContents, boolean save) {
-        SelectionPopupController controller =
-                assumeNonNull(SelectionPopupController.fromWebContents(webContents));
+        SelectionPopupController controller = SelectionPopupController.fromWebContents(webContents);
         if (save) {
             // Dismiss the action bar that obscures the dialogs but preserve the text selection.
             controller.setPreserveSelectionOnNextLossOfFocus(true);
-            assumeNonNull(webContents.getViewAndroidDelegate()).getContainerView().clearFocus();
+            assumeNonNull(assumeNonNull(webContents.getViewAndroidDelegate()).getContainerView())
+                    .clearFocus();
             controller.updateTextSelectionUI(false);
             mDidClearTextControls = true;
         } else if (mDidClearTextControls) {

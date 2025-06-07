@@ -60,10 +60,6 @@ CompositorFrameReportingController::CompositorFrameReportingController(
 }
 
 CompositorFrameReportingController::~CompositorFrameReportingController() {
-  if (global_trackers_.dropped_frame_counter) {
-    global_trackers_.dropped_frame_counter->SetSortedFrameCallback(
-        base::NullCallback());
-  }
   base::TimeTicks now = Now();
   for (int i = 0; i < PipelineStage::kNumPipelineStages; ++i) {
     if (reporters_[i]) {
@@ -78,6 +74,16 @@ CompositorFrameReportingController::~CompositorFrameReportingController() {
 
   predictor_jank_tracker_->set_scroll_jank_ukm_reporter(nullptr);
   scroll_jank_dropped_frame_tracker_->set_scroll_jank_ukm_reporter(nullptr);
+  if (global_trackers_.frame_sorter) {
+    if (global_trackers_.dropped_frame_counter) {
+      global_trackers_.frame_sorter->RemoveObserver(
+          global_trackers_.dropped_frame_counter);
+    }
+    if (global_trackers_.frame_sequence_trackers) {
+      global_trackers_.frame_sorter->RemoveObserver(
+          global_trackers_.frame_sequence_trackers);
+    }
+  }
 }
 
 void CompositorFrameReportingController::SetVisible(bool visible) {
@@ -122,11 +128,16 @@ void CompositorFrameReportingController::ProcessSkippedFramesIfNecessary(
       previous_frame.frame_id.source_id == args.frame_id.source_id) {
     CreateReportersForDroppedFrames(previous_frame, args);
   }
-
+  FrameSequenceTrackerCollection* trackers =
+      global_trackers_.frame_sequence_trackers;
   last_started_compositor_frame_.args = args;
-  last_started_compositor_frame_.scrolling_thread = scrolling_thread_;
-  last_started_compositor_frame_.active_trackers = active_trackers_;
-  last_started_compositor_frame_.smooth_thread = GetSmoothThread();
+  if (trackers) {
+    last_started_compositor_frame_.scrolling_thread =
+        trackers->GetScrollingThread();
+    last_started_compositor_frame_.active_trackers =
+        trackers->GetActiveTrackers();
+    last_started_compositor_frame_.smooth_thread = trackers->GetSmoothThread();
+  }
 }
 
 void CompositorFrameReportingController::WillBeginImplFrame(
@@ -150,9 +161,20 @@ void CompositorFrameReportingController::WillBeginImplFrame(
                                Now());
     }
   }
+  FrameSequenceTrackerCollection* trackers =
+      global_trackers_.frame_sequence_trackers;
+  ActiveTrackers active_trackers;
+  FrameInfo::SmoothEffectDrivingThread scrolling_thread =
+      FrameInfo::SmoothEffectDrivingThread::kUnknown;
+  FrameInfo::SmoothThread smooth_thread = FrameInfo::SmoothThread::kSmoothNone;
+  if (trackers) {
+    active_trackers = trackers->GetActiveTrackers();
+    scrolling_thread = trackers->GetScrollingThread();
+    smooth_thread = trackers->GetSmoothThread();
+  }
   auto reporter = std::make_unique<CompositorFrameReporter>(
-      active_trackers_, args, should_report_histograms_, GetSmoothThread(),
-      scrolling_thread_, layer_tree_host_id_, global_trackers_);
+      active_trackers, args, should_report_histograms_, smooth_thread,
+      scrolling_thread, layer_tree_host_id_, global_trackers_);
   reporter->set_tick_clock(tick_clock_);
   reporter->StartStage(StageType::kBeginImplFrameToSendBeginMainFrame,
                        begin_time);
@@ -178,9 +200,13 @@ void CompositorFrameReportingController::WillBeginMainFrame(
     // beginMain frame before next BeginImplFrame (Not reached the ImplFrame
     // deadline yet). So will start a new reporter at BeginMainFrame, and use
     // the state(s) from the ImplFrame where necessary.
-    auto scrolling_thread = scrolling_thread_;
-    auto active_trackers = active_trackers_;
-    auto smooth_thread = GetSmoothThread();
+    FrameSequenceTrackerCollection* trackers =
+        global_trackers_.frame_sequence_trackers;
+    ActiveTrackers active_trackers;
+    FrameInfo::SmoothEffectDrivingThread scrolling_thread =
+        FrameInfo::SmoothEffectDrivingThread::kUnknown;
+    FrameInfo::SmoothThread smooth_thread =
+        FrameInfo::SmoothThread::kSmoothNone;
     if (args.frame_id == last_started_compositor_frame_.args.frame_id) {
       // TODO(crbug.com/40207819): Instead of replacing all current information
       // with the older information from when the impl-frame started, merge the
@@ -188,6 +214,10 @@ void CompositorFrameReportingController::WillBeginMainFrame(
       scrolling_thread = last_started_compositor_frame_.scrolling_thread;
       active_trackers = last_started_compositor_frame_.active_trackers;
       smooth_thread = last_started_compositor_frame_.smooth_thread;
+    } else if (trackers) {
+      active_trackers = trackers->GetActiveTrackers();
+      scrolling_thread = trackers->GetScrollingThread();
+      smooth_thread = trackers->GetSmoothThread();
     }
     auto reporter = std::make_unique<CompositorFrameReporter>(
         active_trackers, args, should_report_histograms_, smooth_thread,
@@ -341,13 +371,20 @@ void CompositorFrameReportingController::DidSubmitCompositorFrame(
     DCHECK_EQ(main_reporter->frame_id(), current_frame_id);
     submit_info.events_metrics.main_event_metrics.reserve(
         submit_info.events_metrics.main_event_metrics.size() +
-        submit_info.events_metrics.impl_event_metrics.size());
+        submit_info.events_metrics.impl_event_metrics.size() +
+        submit_info.events_metrics.raster_event_metrics.size());
     submit_info.events_metrics.main_event_metrics.insert(
         submit_info.events_metrics.main_event_metrics.end(),
         std::make_move_iterator(
             submit_info.events_metrics.impl_event_metrics.begin()),
         std::make_move_iterator(
             submit_info.events_metrics.impl_event_metrics.end()));
+    submit_info.events_metrics.main_event_metrics.insert(
+        submit_info.events_metrics.main_event_metrics.end(),
+        std::make_move_iterator(
+            submit_info.events_metrics.raster_event_metrics.begin()),
+        std::make_move_iterator(
+            submit_info.events_metrics.raster_event_metrics.end()));
   }
 
   if (main_reporter) {
@@ -373,6 +410,8 @@ void CompositorFrameReportingController::DidSubmitCompositorFrame(
         submit_info.time);
     impl_reporter->AddEventsMetrics(
         std::move(submit_info.events_metrics.impl_event_metrics));
+    impl_reporter->AddEventsMetrics(
+        std::move(submit_info.events_metrics.raster_event_metrics));
     impl_reporter->set_checkerboarded_needs_raster(
         submit_info.checkerboarded_needs_raster);
     impl_reporter->set_checkerboarded_needs_record(
@@ -478,6 +517,7 @@ void CompositorFrameReportingController::MaybePassEventMetricsFromDroppedFrames(
          it = events_metrics_from_dropped_frames_.erase(it)) {
       reporter.AddEventsMetrics(std::move(it->second.main_event_metrics));
       reporter.AddEventsMetrics(std::move(it->second.impl_event_metrics));
+      reporter.AddEventsMetrics(std::move(it->second.raster_event_metrics));
     }
   } else {
     // Main with accompanying impl - just take main events and don't remove them
@@ -692,71 +732,6 @@ void CompositorFrameReportingController::NotifyReadyToCommit(
                        PipelineStage::kReadyToCommit);
 }
 
-void CompositorFrameReportingController::AddActiveTracker(
-    FrameSequenceTrackerType type) {
-  active_trackers_.set(static_cast<size_t>(type));
-}
-
-void CompositorFrameReportingController::RemoveActiveTracker(
-    FrameSequenceTrackerType type) {
-  active_trackers_.reset(static_cast<size_t>(type));
-  if (global_trackers_.dropped_frame_counter)
-    global_trackers_.dropped_frame_counter->ReportFrames();
-}
-
-void CompositorFrameReportingController::SetScrollingThread(
-    FrameInfo::SmoothEffectDrivingThread thread) {
-  auto current_scrolling_thread = scrolling_thread_;
-  base::TimeTicks set_time = Now();
-
-  // Assign the thread.
-  scrolling_thread_ = thread;
-
-  // keep the history for the last 3 seconds.
-  if (!scroll_thread_history_.empty()) {
-    auto expired_scrolling_thread =
-        scroll_thread_history_.lower_bound(set_time - base::Seconds(3));
-    scroll_thread_history_.erase(scroll_thread_history_.begin(),
-                                 expired_scrolling_thread);
-  }
-
-  // Only traces the history if there is a change in scrolling_thread
-  if (current_scrolling_thread != scrolling_thread_) {
-    scroll_thread_history_.insert(
-        std::make_pair(set_time, current_scrolling_thread));
-  }
-}
-
-void CompositorFrameReportingController::SetThreadAffectsSmoothness(
-    FrameInfo::SmoothEffectDrivingThread thread_type,
-    bool affects_smoothness) {
-  auto current_smooth_thread = GetSmoothThread();
-  base::TimeTicks set_time = Now();
-
-  if (thread_type == FrameInfo::SmoothEffectDrivingThread::kCompositor) {
-    is_compositor_thread_driving_smoothness_ = affects_smoothness;
-  } else if (thread_type == FrameInfo::SmoothEffectDrivingThread::kRaster) {
-    is_raster_thread_driving_smoothness_ = affects_smoothness;
-  } else {
-    DCHECK_EQ(thread_type, FrameInfo::SmoothEffectDrivingThread::kMain);
-    is_main_thread_driving_smoothness_ = affects_smoothness;
-  }
-
-  // keep the history for the last 3 seconds.
-  if (!smooth_thread_history_.empty()) {
-    auto expired_smooth_thread =
-        smooth_thread_history_.lower_bound(set_time - base::Seconds(3));
-    smooth_thread_history_.erase(smooth_thread_history_.begin(),
-                                 expired_smooth_thread);
-  }
-
-  // Only trackes the history if there is a change in smooth_thread_
-  if (current_smooth_thread != GetSmoothThread()) {
-    smooth_thread_history_.insert(
-        std::make_pair(set_time, current_smooth_thread));
-  }
-}
-
 void CompositorFrameReportingController::AdvanceReporterStage(
     PipelineStage start,
     PipelineStage target) {
@@ -836,41 +811,6 @@ void CompositorFrameReportingController::SetSourceId(ukm::SourceId source_id) {
   latency_ukm_reporter_->SetSourceId(source_id);
 }
 
-CompositorFrameReportingController::SmoothThread
-CompositorFrameReportingController::GetSmoothThread() const {
-  if (is_main_thread_driving_smoothness_) {
-    return is_compositor_thread_driving_smoothness_ ? SmoothThread::kSmoothBoth
-                                                    : SmoothThread::kSmoothMain;
-  }
-  if (is_raster_thread_driving_smoothness_) {
-    return SmoothThread::kSmoothRaster;
-  }
-
-  return is_compositor_thread_driving_smoothness_
-             ? SmoothThread::kSmoothCompositor
-             : SmoothThread::kSmoothNone;
-}
-
-CompositorFrameReportingController::SmoothThread
-CompositorFrameReportingController::GetSmoothThreadAtTime(
-    base::TimeTicks timestamp) const {
-  auto last_smooth_thread = smooth_thread_history_.lower_bound(timestamp);
-  if (last_smooth_thread == smooth_thread_history_.end()) {
-    return GetSmoothThread();
-  }
-  return last_smooth_thread->second;
-}
-
-CompositorFrameReporter::SmoothEffectDrivingThread
-CompositorFrameReportingController::GetScrollThreadAtTime(
-    base::TimeTicks timestamp) const {
-  auto last_scroll_thread = scroll_thread_history_.lower_bound(timestamp);
-  if (last_scroll_thread == scroll_thread_history_.end()) {
-    return scrolling_thread_;
-  }
-  return last_scroll_thread->second;
-}
-
 CompositorFrameReporter*
 CompositorFrameReportingController::GetOutstandingUpdatesFromMain(
     const viz::BeginFrameId& id) const {
@@ -919,6 +859,12 @@ void CompositorFrameReportingController::CreateReportersForDroppedFrames(
     return;
 
   auto timestamp = old_args.frame_time + old_args.interval;
+  FrameSequenceTrackerCollection* trackers =
+      global_trackers_.frame_sequence_trackers;
+  ActiveTrackers active_trackers;
+  FrameInfo::SmoothEffectDrivingThread scrolling_thread =
+      FrameInfo::SmoothEffectDrivingThread::kUnknown;
+  FrameInfo::SmoothThread smooth_thread = FrameInfo::SmoothThread::kSmoothNone;
   for (uint32_t i = 1; i < interval; ++i, timestamp += old_args.interval) {
     auto args = viz::BeginFrameArgs::Create(
         BEGINFRAME_FROM_HERE, old_args.frame_id.source_id,
@@ -931,10 +877,14 @@ void CompositorFrameReportingController::CreateReportersForDroppedFrames(
     // Set the scrolling thread based on the global frame sequence trackers
     // rather than the `scrolling_thread_` member, because the scrolling thread
     // might have changed for a skipped or backfilled frame.
+    if (trackers) {
+      active_trackers = trackers->GetActiveTrackers();
+      scrolling_thread = trackers->GetScrollThreadAtTime(timestamp);
+      smooth_thread = trackers->GetSmoothThreadAtTime(timestamp);
+    }
     auto reporter = std::make_unique<CompositorFrameReporter>(
-        active_trackers_, args, should_report_histograms_,
-        GetSmoothThreadAtTime(timestamp), GetScrollThreadAtTime(timestamp),
-        layer_tree_host_id_, global_trackers_);
+        active_trackers, args, should_report_histograms_, smooth_thread,
+        scrolling_thread, layer_tree_host_id_, global_trackers_);
     reporter->set_tick_clock(tick_clock_);
     reporter->StartStage(StageType::kBeginImplFrameToSendBeginMainFrame,
                          timestamp);
@@ -944,22 +894,16 @@ void CompositorFrameReportingController::CreateReportersForDroppedFrames(
   }
 }
 
-void CompositorFrameReportingController::AddSortedFrame(
-    const viz::BeginFrameArgs& args,
-    const FrameInfo& frame_info) {
-  if (global_trackers_.frame_sequence_trackers) {
-    global_trackers_.frame_sequence_trackers->AddSortedFrame(args, frame_info);
-  }
-}
-
 void CompositorFrameReportingController::SetDroppedFrameCounter(
     DroppedFrameCounter* counter) {
-  global_trackers_.dropped_frame_counter = counter;
-  if (counter) {
-    counter->SetSortedFrameCallback(
-        base::BindRepeating(&CompositorFrameReportingController::AddSortedFrame,
-                            base::Unretained(this)));
+  if (global_trackers_.dropped_frame_counter && global_trackers_.frame_sorter) {
+    global_trackers_.frame_sorter->RemoveObserver(
+        global_trackers_.dropped_frame_counter);
   }
+  if (global_trackers_.frame_sorter) {
+    global_trackers_.frame_sorter->AddObserver(counter);
+  }
+  global_trackers_.dropped_frame_counter = counter;
 }
 
 }  // namespace cc

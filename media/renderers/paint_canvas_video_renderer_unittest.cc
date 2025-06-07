@@ -40,11 +40,11 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/libyuv/include/libyuv/convert.h"
 #include "third_party/libyuv/include/libyuv/scale.h"
-#include "third_party/skia/include/core/SkColorPriv.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
+#include "third_party/skia/include/private/chromium/SkPMColor.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gl/gl_implementation.h"
@@ -649,8 +649,7 @@ TEST_F(PaintCanvasVideoRendererTest, HighBitDepth) {
   struct params {
     int bit_depth;
     VideoPixelFormat format;
-  } kBitDepthAndFormats[] = {{9, PIXEL_FORMAT_YUV420P9},
-                             {10, PIXEL_FORMAT_YUV420P10},
+  } kBitDepthAndFormats[] = {{10, PIXEL_FORMAT_YUV420P10},
                              {12, PIXEL_FORMAT_YUV420P12}};
   for (const auto param : kBitDepthAndFormats) {
     // Copy cropped_frame into a highbit frame.
@@ -832,19 +831,19 @@ TEST_F(PaintCanvasVideoRendererTest, I420WithFilters) {
   int i = 1;
   int j = 1;
   uint32_t color = rgba[i * kImgWidth + j];
-  EXPECT_EQ(SkGetPackedA32(color), 255u);
-  EXPECT_EQ(SkGetPackedR32(color), 249u);
-  EXPECT_EQ(SkGetPackedG32(color), 1u);
-  EXPECT_EQ(SkGetPackedB32(color), 7u);
+  EXPECT_EQ(SkPMColorGetA(color), 255u);
+  EXPECT_EQ(SkPMColorGetR(color), 249u);
+  EXPECT_EQ(SkPMColorGetG(color), 1u);
+  EXPECT_EQ(SkPMColorGetB(color), 7u);
   // The pixel at coordinates (2, 2) will have U = 105 and V = 235 if nearest
   // neighbor is used. (The correct values are U = 101 and V = 239.)
   i = 2;
   j = 2;
   color = rgba[i * kImgWidth + j];
-  EXPECT_EQ(SkGetPackedA32(color), 255u);
-  EXPECT_EQ(SkGetPackedR32(color), 226u);
-  EXPECT_EQ(SkGetPackedG32(color), 7u);
-  EXPECT_EQ(SkGetPackedB32(color), 35u);
+  EXPECT_EQ(SkPMColorGetA(color), 255u);
+  EXPECT_EQ(SkPMColorGetR(color), 226u);
+  EXPECT_EQ(SkPMColorGetG(color), 7u);
+  EXPECT_EQ(SkPMColorGetB(color), 35u);
 
   // Then convert with kFilterBilinear (bilinear interpolation).
   PaintCanvasVideoRenderer::ConvertVideoFrameToRGBPixels(
@@ -856,19 +855,19 @@ TEST_F(PaintCanvasVideoRendererTest, I420WithFilters) {
   i = 1;
   j = 1;
   color = rgba[i * kImgWidth + j];
-  EXPECT_EQ(SkGetPackedA32(color), 255u);
-  EXPECT_EQ(SkGetPackedR32(color), 243u);
-  EXPECT_EQ(SkGetPackedG32(color), 2u);
-  EXPECT_EQ(SkGetPackedB32(color), 14u);
+  EXPECT_EQ(SkPMColorGetA(color), 255u);
+  EXPECT_EQ(SkPMColorGetR(color), 243u);
+  EXPECT_EQ(SkPMColorGetG(color), 2u);
+  EXPECT_EQ(SkPMColorGetB(color), 14u);
   // The pixel at coordinates (2, 2) will have the correct values U = 101 and
   // V = 239 if bilinear interpolation is used.
   i = 2;
   j = 2;
   color = rgba[i * kImgWidth + j];
-  EXPECT_EQ(SkGetPackedA32(color), 255u);
-  EXPECT_EQ(SkGetPackedR32(color), 232u);
-  EXPECT_EQ(SkGetPackedG32(color), 5u);
-  EXPECT_EQ(SkGetPackedB32(color), 28u);
+  EXPECT_EQ(SkPMColorGetA(color), 255u);
+  EXPECT_EQ(SkPMColorGetR(color), 232u);
+  EXPECT_EQ(SkPMColorGetG(color), 5u);
+  EXPECT_EQ(SkPMColorGetB(color), 28u);
 }
 
 namespace {
@@ -1043,7 +1042,8 @@ TEST_F(PaintCanvasVideoRendererTest, TexImage2D_Y16_RGBA32F) {
       });
   PaintCanvasVideoRenderer::TexImage2D(
       GL_TEXTURE_2D, 0, &gles2, gpu::Capabilities(), video_frame.get(), 0,
-      GL_RGBA, GL_RGBA, GL_FLOAT, true /*flip_y*/, true);
+      GL_RGBA, GL_RGBA, GL_FLOAT, kBottomLeft_GrSurfaceOrigin,
+      kPremul_SkAlphaType);
 }
 
 TEST_F(PaintCanvasVideoRendererTest, TexSubImage2D_Y16_R32F) {
@@ -1091,7 +1091,8 @@ TEST_F(PaintCanvasVideoRendererTest, TexSubImage2D_Y16_R32F) {
       });
   PaintCanvasVideoRenderer::TexSubImage2D(
       GL_TEXTURE_2D, &gles2, video_frame.get(), 0, GL_RED, GL_FLOAT,
-      2 /*xoffset*/, 1 /*yoffset*/, false /*flip_y*/, true);
+      2 /*xoffset*/, 1 /*yoffset*/, kTopLeft_GrSurfaceOrigin,
+      kPremul_SkAlphaType);
 }
 
 // Fixture for tests that require a GL context as destination.
@@ -1144,8 +1145,8 @@ class PaintCanvasVideoRendererWithGLTest : public testing::Test {
 
     renderer_.CopyVideoFrameTexturesToGLTexture(
         media_context_.get(), destination_gl, frame, target, texture, GL_RGBA,
-        GL_RGBA, GL_UNSIGNED_BYTE, 0, false /* premultiply_alpha */,
-        false /* flip_y */);
+        GL_RGBA, GL_UNSIGNED_BYTE, 0, kUnpremul_SkAlphaType,
+        kTopLeft_GrSurfaceOrigin);
 
     gfx::Size expected_size = frame->visible_rect().size();
 
@@ -1303,8 +1304,8 @@ TEST_F(PaintCanvasVideoRendererWithGLTest, CopyVideoFrameYUVDataToGLTexture) {
 
   renderer_.CopyVideoFrameYUVDataToGLTexture(
       media_context_.get(), destination_gl, cropped_frame(), target, texture,
-      GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 0, false /* premultiply_alpha */,
-      false /* flip_y */);
+      GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 0, kUnpremul_SkAlphaType,
+      kTopLeft_GrSurfaceOrigin);
 
   gfx::Size expected_size = cropped_frame()->visible_rect().size();
 
@@ -1335,8 +1336,8 @@ TEST_F(PaintCanvasVideoRendererWithGLTest,
 
   renderer_.CopyVideoFrameYUVDataToGLTexture(
       media_context_.get(), destination_gl, cropped_frame(), target, texture,
-      GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 0, false /* premultiply_alpha */,
-      true /* flip_y */);
+      GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 0, kUnpremul_SkAlphaType,
+      kBottomLeft_GrSurfaceOrigin);
 
   gfx::Size expected_size = cropped_frame()->visible_rect().size();
 

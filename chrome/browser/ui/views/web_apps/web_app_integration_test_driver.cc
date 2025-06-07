@@ -38,6 +38,7 @@
 #include "base/path_service.h"
 #include "base/strings/pattern.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -170,6 +171,7 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/ui/views/apps/app_dialog/app_uninstall_dialog_view.h"
 #else
+#include "chrome/browser/apps/link_capturing/enable_link_capturing_infobar_delegate.h"
 #include "chrome/browser/ui/webui/app_home/app_home.mojom.h"
 #include "chrome/browser/ui/webui/app_home/app_home_page_handler.h"
 #include "chrome/browser/ui/webui/app_management/web_app_settings_page_handler.h"
@@ -1777,6 +1779,17 @@ void WebAppIntegrationTestDriver::LaunchFromLaunchIcon(Site site) {
   ASSERT_TRUE(app_browser_->is_type_app());
   ASSERT_TRUE(AppBrowserController::IsForWebApp(app_browser_, app_id));
   active_app_id_ = app_browser()->app_controller()->app_id();
+
+#if !BUILDFLAG(IS_CHROMEOS)
+  // In certain tests where window controls overlay is being tested, if the app
+  // does not capture navigations by default, the EnableLinkCapturingInfoBar
+  // shows up, preventing the WCO area from being drawn. Since current tests
+  // using the integration testing framework do not interact with that UI, close
+  // it to prevent WCO related tests from flaking.
+  apps::EnableLinkCapturingInfoBarDelegate::RemoveInfoBar(
+      app_browser_->tab_strip_model()->GetActiveWebContents());
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+
   AfterStateChangeAction();
 }
 
@@ -2718,15 +2731,13 @@ void WebAppIntegrationTestDriver::CorruptAppShim(Site site,
       EXPECT_TRUE(base::WriteFile(bin_path, bin_contents));
 
       // Since we modified the binary, we need to re-sign it.
-      if (base::mac::MacOSMajorVersion() >= 12) {
-        std::string codesign_output;
-        std::vector<std::string> codesign_argv = {
-            "codesign", "--force", "--sign", "-", bin_path.value()};
-        EXPECT_TRUE(base::GetAppOutputAndError(base::CommandLine(codesign_argv),
-                                               &codesign_output))
-            << "Failed to sign executable at " << bin_path << ": "
-            << codesign_output;
-      }
+      std::string codesign_output;
+      std::vector<std::string> codesign_argv = {"codesign", "--force", "--sign",
+                                                "-", bin_path.value()};
+      EXPECT_TRUE(base::GetAppOutputAndError(base::CommandLine(codesign_argv),
+                                             &codesign_output))
+          << "Failed to sign executable at " << bin_path << ": "
+          << codesign_output;
       break;
     }
   }
@@ -4153,7 +4164,8 @@ WebAppIntegrationTestDriver::ConstructStateSnapshot() {
       bool launch_icon_shown = false;
       bool is_app_browser = AppBrowserController::IsWebApp(browser);
       if (!is_app_browser && active_tab_contents != nullptr) {
-        AwaitIntentPickerTabHelperIconUpdateComplete(active_tab_contents);
+        EXPECT_TRUE(
+            AwaitIntentPickerTabHelperIconUpdateComplete(active_tab_contents));
         launch_icon_shown = intent_chip_view()->GetVisible();
       }
       webapps::AppId app_id;
@@ -4736,7 +4748,6 @@ WebAppIntegrationTest::WebAppIntegrationTest() : helper_(this) {
   enabled_features.push_back(features::kIsolatedWebApps);
   enabled_features.push_back(features::kPwaUpdateDialogForIcon);
   enabled_features.push_back(features::kRecordWebAppDebugInfo);
-  enabled_features.push_back(features::kWebAppDontAddExistingAppsToSync);
 #if !BUILDFLAG(IS_CHROMEOS)
   // TODO(b/313492499): Update test driver to work with new intent picker UI.
   enabled_features.push_back(features::kPwaNavigationCapturing);

@@ -7,11 +7,13 @@
 #include <algorithm>
 #include <memory>
 #include <queue>
+#include <variant>
 
 #include "base/no_destructor.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/enterprise/data_controls/chrome_rules_service.h"
 #include "chrome/browser/enterprise/data_protection/paste_allowed_request.h"
+#include "chrome/browser/profiles/profile.h"
 #include "components/enterprise/common/files_scan_data.h"
 #include "components/enterprise/connectors/core/connectors_prefs.h"
 #include "components/enterprise/content/clipboard_restriction_service.h"
@@ -125,21 +127,15 @@ void HandleStringData(
             // would avoid a copy.
 
             bool text_blocked =
-                result.text_results.empty() || !result.text_results[0];
-            if (text_blocked && !result.image_result) {
+                !result.text_results.empty() && !result.text_results[0];
+
+            // Image scan results are ignore for non local scans.
+            bool image_blocked =
+                data.settings.cloud_or_local_settings.is_local_analysis() &&
+                !clipboard_paste_data.png.empty() && !result.image_result;
+            if (text_blocked || image_blocked) {
               std::move(callback).Run(std::nullopt);
               return;
-            }
-
-            if (text_blocked) {
-              clipboard_paste_data.text.clear();
-              clipboard_paste_data.html.clear();
-              clipboard_paste_data.svg.clear();
-              clipboard_paste_data.rtf.clear();
-              clipboard_paste_data.custom_data.clear();
-            }
-            if (!result.image_result) {
-              clipboard_paste_data.png.clear();
             }
 
             std::move(callback).Run(std::move(clipboard_paste_data));
@@ -434,7 +430,9 @@ void IsCopyRestrictedByDialog(
     const content::ClipboardEndpoint& source,
     const content::ClipboardMetadata& metadata,
     const content::ClipboardPasteData& data,
-    content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback) {
+    content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback,
+    data_controls::DataControlsDialog::Type block_dialog_type,
+    data_controls::DataControlsDialog::Type warn_dialog_type) {
   if (SkipDataControlOrContentAnalysisChecks(source)) {
     std::move(callback).Run(metadata.format_type, data, std::nullopt);
     return;
@@ -449,9 +447,7 @@ void IsCopyRestrictedByDialog(
   if (source_only_verdict.level() == data_controls::Rule::Level::kBlock) {
     MaybeReportDataControlsCopy(source, metadata, source_only_verdict);
     if (factory) {
-      factory->ShowDialogIfNeeded(
-          source.web_contents(),
-          data_controls::DataControlsDialog::Type::kClipboardCopyBlock);
+      factory->ShowDialogIfNeeded(source.web_contents(), block_dialog_type);
     }
     return;
   }
@@ -470,8 +466,7 @@ void IsCopyRestrictedByDialog(
     MaybeReportDataControlsCopy(source, metadata, verdict);
     if (factory) {
       factory->ShowDialogIfNeeded(
-          source.web_contents(),
-          data_controls::DataControlsDialog::Type::kClipboardCopyWarn,
+          source.web_contents(), warn_dialog_type,
           base::BindOnce(&OnDataControlsCopyWarning, source, metadata, data,
                          std::move(verdict), std::move(callback)));
     }
@@ -512,7 +507,7 @@ void PasteIfAllowedByPolicy(
   }
 #else
   if (ui::DataTransferPolicyController::HasInstance()) {
-    absl::variant<size_t, std::vector<base::FilePath>> pasted_content;
+    std::variant<size_t, std::vector<base::FilePath>> pasted_content;
     if (clipboard_paste_data.file_paths.empty()) {
       DCHECK(metadata.size.has_value());
       pasted_content = *metadata.size;
@@ -580,8 +575,63 @@ void IsClipboardCopyAllowedByPolicy(
   }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-  IsCopyRestrictedByDialog(source, metadata, data, std::move(callback));
+  IsCopyRestrictedByDialog(
+      source, metadata, data, std::move(callback),
+      data_controls::DataControlsDialog::Type::kClipboardCopyBlock,
+      data_controls::DataControlsDialog::Type::kClipboardCopyWarn);
 }
+
+#if BUILDFLAG(IS_ANDROID)
+void IsClipboardShareAllowedByPolicy(
+    const content::ClipboardEndpoint& source,
+    const content::ClipboardMetadata& metadata,
+    const content::ClipboardPasteData& data,
+    content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback) {
+  if (!base::FeatureList::IsEnabled(
+          data_controls::kEnableClipboardDataControlsAndroid)) {
+    std::move(callback).Run(metadata.format_type, data, std::nullopt);
+    return;
+  }
+
+  if (SkipDataControlOrContentAnalysisChecks(source)) {
+    std::move(callback).Run(metadata.format_type, data, std::nullopt);
+    return;
+  }
+
+  DCHECK(source.web_contents());
+  DCHECK(source.browser_context());
+
+  IsCopyRestrictedByDialog(
+      source, metadata, data, std::move(callback),
+      data_controls::DataControlsDialog::Type::kClipboardShareBlock,
+      data_controls::DataControlsDialog::Type::kClipboardShareWarn);
+}
+
+void IsClipboardGenericCopyActionAllowedByPolicy(
+    const content::ClipboardEndpoint& source,
+    const content::ClipboardMetadata& metadata,
+    const content::ClipboardPasteData& data,
+    content::ContentBrowserClient::IsClipboardCopyAllowedCallback callback) {
+  if (!base::FeatureList::IsEnabled(
+          data_controls::kEnableClipboardDataControlsAndroid)) {
+    std::move(callback).Run(metadata.format_type, data, std::nullopt);
+    return;
+  }
+
+  if (SkipDataControlOrContentAnalysisChecks(source)) {
+    std::move(callback).Run(metadata.format_type, data, std::nullopt);
+    return;
+  }
+
+  DCHECK(source.web_contents());
+  DCHECK(source.browser_context());
+
+  IsCopyRestrictedByDialog(
+      source, metadata, data, std::move(callback),
+      data_controls::DataControlsDialog::Type::kClipboardActionBlock,
+      data_controls::DataControlsDialog::Type::kClipboardActionWarn);
+}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 void ReplaceSameTabClipboardDataIfRequiredByPolicy(
     ui::ClipboardSequenceNumberToken seqno,

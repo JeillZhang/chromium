@@ -22,8 +22,8 @@
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/font_selector_client.h"
+#include "third_party/blink/renderer/platform/geometry/path_types.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_types.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_filter.h"
 #include "third_party/blink/renderer/platform/graphics/pattern.h"
 #include "third_party/blink/renderer/platform/heap/forward.h"  // IWYU pragma: keep (blink::Visitor)
@@ -57,14 +57,14 @@ class String;
 
 namespace blink {
 
-class BaseRenderingContext2D;
+class Canvas2DRecorderContext;
 class CSSValue;
 class CanvasFilter;
 class CanvasGradient;
 class CanvasRenderingContext2D;
 class Element;
-class FontSelector;
 enum class FontInvalidationReason;
+class UniqueFontSelector;
 class V8ImageSmoothingQuality;
 
 enum ShadowMode {
@@ -140,11 +140,12 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
   }
 
   void SetFont(const FontDescription& passed_font_description,
-               FontSelector* selector);
+               UniqueFontSelector* selector);
   bool IsFontDirtyForFilter() const;
   const Font* GetFont() const;
   const FontDescription& GetFontDescription() const;
   inline bool HasRealizedFont() const { return realized_font_; }
+  inline bool LangIsDirty() const { return lang_is_dirty_; }
   void SetUnparsedFont(const String& font) { unparsed_font_ = font; }
   const String& UnparsedFont() const { return unparsed_font_; }
 
@@ -161,7 +162,7 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
                                gfx::Size canvas_size,
                                CanvasRenderingContext2D*);
   sk_sp<PaintFilter> GetFilterForOffscreenCanvas(gfx::Size canvas_size,
-                                                 BaseRenderingContext2D*);
+                                                 Canvas2DRecorderContext*);
   ALWAYS_INLINE bool IsFilterUnresolved() const {
     return filter_state_ == FilterState::kUnresolved;
   }
@@ -221,6 +222,9 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
     return Style(type).GetCanvasPattern()->GetPattern()->IsTextureBacked();
   }
 
+  void SetLang(const String& lang);
+  String GetLang() const { return lang_; }
+
   void SetDirection(V8CanvasDirection direction) { direction_ = direction; }
   V8CanvasDirection GetDirection() const { return direction_; }
 
@@ -232,27 +236,29 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
   }
   V8CanvasTextBaseline GetTextBaseline() const { return text_baseline_; }
 
-  void SetLetterSpacing(const String& letter_spacing);
+  void SetLetterSpacing(const String& letter_spacing,
+                        UniqueFontSelector* selector);
   String GetLetterSpacing() const { return parsed_letter_spacing_; }
 
-  void SetWordSpacing(const String& word_spacing);
+  void SetWordSpacing(const String& word_spacing, UniqueFontSelector* selector);
   String GetWordSpacing() const { return parsed_word_spacing_; }
 
   void SetTextRendering(V8CanvasTextRendering text_rendering,
-                        FontSelector* selector);
+                        UniqueFontSelector* selector);
   V8CanvasTextRendering GetTextRendering() const {
     return text_rendering_mode_;
   }
 
   void SetFontKerning(FontDescription::Kerning font_kerning,
-                      FontSelector* selector);
+                      UniqueFontSelector* selector);
   FontDescription::Kerning GetFontKerning() const { return font_kerning_; }
 
-  void SetFontStretch(V8CanvasFontStretch font_stretch, FontSelector* selector);
+  void SetFontStretch(V8CanvasFontStretch font_stretch,
+                      UniqueFontSelector* selector);
   V8CanvasFontStretch GetFontStretch() const { return font_stretch_; }
 
   void SetFontVariantCaps(FontDescription::FontVariantCaps font_kerning,
-                          FontSelector* selector);
+                          UniqueFontSelector* selector);
   FontDescription::FontVariantCaps GetFontVariantCaps() const {
     return font_variant_caps_;
   }
@@ -357,7 +363,7 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
   void UpdateFilterQuality() const;
   void UpdateFilterQuality(cc::PaintFlags::FilterQuality) const;
   void ShadowParameterChanged();
-  void SetFontInternal(const FontDescription&, FontSelector*);
+  void SetFontInternal(const FontDescription&, UniqueFontSelector* selector);
   sk_sp<cc::DrawLooper>& EmptyDrawLooper() const;
   sk_sp<cc::DrawLooper>& ShadowOnlyDrawLooper() const;
   sk_sp<cc::DrawLooper>& ShadowAndForegroundDrawLooper() const;
@@ -402,6 +408,7 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
   sk_sp<PaintFilter> resolved_filter_;
 
   // Text state.
+  String lang_ = "inherit";
   V8CanvasTextAlign text_align_{V8CanvasTextAlign::Enum::kStart};
   V8CanvasTextBaseline text_baseline_{V8CanvasTextBaseline::Enum::kAlphabetic};
   V8CanvasDirection direction_{V8CanvasDirection::Enum::kInherit};
@@ -427,6 +434,7 @@ class MODULES_EXPORT CanvasRenderingContext2DState final
   bool has_complex_clip_ : 1;
   bool letter_spacing_is_set_ : 1;
   bool word_spacing_is_set_ : 1;
+  bool lang_is_dirty_ : 1;
   mutable bool line_dash_dirty_ : 1;
 
   bool image_smoothing_enabled_;

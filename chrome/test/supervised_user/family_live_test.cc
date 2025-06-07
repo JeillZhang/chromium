@@ -13,7 +13,6 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/notreached.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -48,11 +47,6 @@ const char* kWaitForSyncInvalidationReadySwitch =
 // When enabled, the browser opens extra debugging tabs & the logging is more
 // detailed.
 const char* kDebugSwitch = "supervised-tests-debug-features";
-
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-constexpr signin_metrics::AccessPoint kTestAccessPoint =
-    signin_metrics::AccessPoint::kProfileMenuSignoutConfirmationPrompt;
-#endif
 
 bool IsSwitchEnabled(const char* flag) {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(flag);
@@ -252,9 +246,11 @@ void FamilyLiveTest::TearDownOnMainThread() {
     if (!user) {
       continue;
     }
-    user->browser().signin_view_controller()->SignoutOrReauthWithPrompt(
-        kTestAccessPoint,
-        signin_metrics::ProfileSignout::kUserClickedSignoutProfileMenu,
+    // Signs out the account, so the server is notified to no longer attempt to
+    // notify this client. Explicit sign-out is critical, otherwise server-side
+    // data structures can still think that the current client should receive
+    // sync updates.
+    user->browser().signin_view_controller()->ShowGaiaLogoutTab(
         signin_metrics::SourceForRefreshTokenOperation::
             kUserMenu_SignOutAllAccounts);
   }
@@ -330,8 +326,7 @@ InteractiveFamilyLiveTest::WaitForStateSeeding(
   return Steps(
       Log(base::StrCat({"WaitForState[", state.ToString(), "]: start"})),
       If([&]() { return !state.Check(browser_user.GetServices()); },
-         /*then_steps=*/
-         Steps(
+         Then(
              Do([&]() {
                state.Seed(rpc_issuer().identity_manager(),
                           rpc_issuer().url_loader_factory(),
@@ -346,8 +341,7 @@ InteractiveFamilyLiveTest::WaitForStateSeeding(
                  },
                  /*polling_interval=*/base::Seconds(2)),
              WaitForState(id, true), StopObservingState(id)),
-         /*else_steps=*/
-         Steps(Log(base::StrCat(
+         Else(Log(base::StrCat(
              {"WaitForState[", state.ToString(), "]: seeding skipped"})))),
       Log(base::StrCat({"WaitForState[", state.ToString(), "]: completed"})));
 }

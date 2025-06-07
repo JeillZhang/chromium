@@ -53,14 +53,15 @@ import org.chromium.components.payments.PaymentManifestDownloader;
 import org.chromium.components.payments.PaymentManifestParser;
 import org.chromium.components.payments.PaymentManifestWebDataService;
 import org.chromium.components.payments.WebAppManifestSection;
+import org.chromium.components.payments.intent.WebPaymentIntentHelper;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.test.NativeLibraryTestUtils;
 import org.chromium.payments.mojom.PaymentDetailsModifier;
 import org.chromium.payments.mojom.PaymentMethodData;
-import org.chromium.ui.InsetObserver;
 import org.chromium.ui.base.ActivityWindowAndroid;
 import org.chromium.ui.base.IntentRequestTracker;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.test.util.BlankUiTestActivity;
 import org.chromium.url.GURL;
 import org.chromium.url.Origin;
@@ -190,7 +191,7 @@ public class AndroidPaymentAppFinderUnitTest {
                         packageManagerDelegate,
                         mDelegate,
                         /* factory= */ null);
-        finder.bypassIsReadyToPayServiceInTest();
+        AndroidPaymentAppFinder.bypassIsReadyToPayServiceInTest();
         finder.findAndroidPaymentApps();
         return mDelegate;
     }
@@ -237,7 +238,7 @@ public class AndroidPaymentAppFinderUnitTest {
         Mockito.when(
                         mPackageManagerDelegate.getActivitiesThatCanRespondToIntentWithMetaData(
                                 ArgumentMatchers.argThat(sPayIntentArgumentMatcher)))
-                .thenReturn(new ArrayList<ResolveInfo>());
+                .thenReturn(new ArrayList<>());
 
         verifyNoAppsFound(
                 findApps(
@@ -543,14 +544,22 @@ public class AndroidPaymentAppFinderUnitTest {
                              ArgumentMatchers.eq(1)))
                 .thenReturn(new String[] {"https://bobpay.test", "basic-card"});
 
-        Mockito.when(mPackageManagerDelegate.getServicesThatCanRespondToIntent(
-                             ArgumentMatchers.argThat(new IntentArgumentMatcher(
-                                     new Intent(AndroidPaymentAppFinder.ACTION_IS_READY_TO_PAY)))))
+        Mockito.when(
+                        mPackageManagerDelegate.getServicesThatCanRespondToIntent(
+                                ArgumentMatchers.argThat(
+                                        new IntentArgumentMatcher(
+                                                new Intent(
+                                                        WebPaymentIntentHelper
+                                                                .ACTION_IS_READY_TO_PAY)))))
                 .thenReturn(createService("IsReadyToWebPay"));
 
-        Mockito.when(mPackageManagerDelegate.getServicesThatCanRespondToIntent(
-                             ArgumentMatchers.argThat(new IntentArgumentMatcher(new Intent(
-                                     AndroidPaymentAppFinder.ACTION_UPDATE_PAYMENT_DETAILS)))))
+        Mockito.when(
+                        mPackageManagerDelegate.getServicesThatCanRespondToIntent(
+                                ArgumentMatchers.argThat(
+                                        new IntentArgumentMatcher(
+                                                new Intent(
+                                                        WebPaymentIntentHelper
+                                                                .ACTION_UPDATE_PAYMENT_DETAILS)))))
                 .thenReturn(createService("PaymentDetailsUpdate"));
 
         PackageInfo bobPayPackageInfo = new PackageInfo();

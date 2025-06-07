@@ -21,8 +21,12 @@ import android.os.RemoteException;
 import androidx.annotation.IntDef;
 import androidx.annotation.VisibleForTesting;
 
+import org.chromium.base.BaseFeatureList;
+import org.chromium.base.BaseFeatureMap;
+import org.chromium.base.BaseFeatures;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ChildBindingState;
+import org.chromium.base.FeatureList;
 import org.chromium.base.Log;
 import org.chromium.base.MemoryPressureLevel;
 import org.chromium.base.MemoryPressureListener;
@@ -40,7 +44,6 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.Executor;
 
 import javax.annotation.concurrent.GuardedBy;
@@ -140,6 +143,8 @@ public class ChildProcessConnection {
 
     /** Run time check if not perceptible binding is supported. */
     public static boolean supportNotPerceptibleBinding() {
+        // Note that we need to keep this in sync with IsPerceptibleImportanceSupported() in
+        // content/browser/android/child_process_importance.cc
         return SUPPORT_NOT_PERCEPTIBLE_BINDING;
     }
 
@@ -152,6 +157,21 @@ public class ChildProcessConnection {
         return cl.toString() + cl.hashCode();
     }
 
+    private static boolean useBackgroundNotPerceptibleBinding() {
+        if (sUseBackgroundNotPerceptibleBinding == null) {
+            if (!FeatureList.isNativeInitialized()) {
+                // The pre-launched process before native is initialized ends up using obsolete
+                // binding. But there is no workaround.
+                return false;
+            }
+            sUseBackgroundNotPerceptibleBinding =
+                    ChildProcessConnection.supportNotPerceptibleBinding()
+                            && BaseFeatureMap.isEnabled(
+                                    BaseFeatures.BACKGROUND_NOT_PERCEPTIBLE_BINDING);
+        }
+        return sUseBackgroundNotPerceptibleBinding;
+    }
+
     // The last zygote PID for which the zygote startup metrics were recorded. Lives on the
     // launcher thread.
     private static int sLastRecordedZygotePid;
@@ -162,13 +182,18 @@ public class ChildProcessConnection {
     // launches directly fallback without timeout to minimize user impact.
     private static boolean sAlwaysFallback;
 
+    // Cache BackgroundNotPerceptibleBinding feature flag value.
+    private static @Nullable Boolean sUseBackgroundNotPerceptibleBinding;
+
+    private static @Nullable RebindServiceConnection sRebindServiceConnection;
     // Lock to protect all the fields that can be accessed outside launcher thread.
     private final Object mBindingStateLock = new Object();
 
     private final Handler mLauncherHandler;
     private final Executor mLauncherExecutor;
-    private ComponentName mServiceName;
+    private final ComponentName mServiceName;
     private final @Nullable ComponentName mFallbackServiceName;
+    private @Nullable Intent mBindIntent;
 
     // Parameters passed to the child process through the service binding intent.
     // If the service gets recreated by the framework the intent will be reused, so these parameters
@@ -180,15 +205,15 @@ public class ChildProcessConnection {
     private final boolean mBindToCaller;
 
     private static class ConnectionParams {
-        final Bundle mConnectionBundle;
+        final IChildProcessArgs mChildProcessArgs;
         final @Nullable List<IBinder> mClientInterfaces;
         final @Nullable IBinder mBinderBox;
 
         ConnectionParams(
-                Bundle connectionBundle,
+                IChildProcessArgs childProcessArgs,
                 @Nullable List<IBinder> clientInterfaces,
                 @Nullable IBinder binderBox) {
-            mConnectionBundle = connectionBundle;
+            mChildProcessArgs = childProcessArgs;
             mClientInterfaces = clientInterfaces;
             mBinderBox = binderBox;
         }
@@ -258,8 +283,8 @@ public class ChildProcessConnection {
     // inconvenient to log some histogram where this information is available.
     private final boolean mIsSandboxedForHistograms;
 
-    // Use Context.BIND_EXTERNAL_SERVICE flag for this service.
-    private final boolean mBindAsExternalService;
+    // The service binding flags for the default binding (i.e. visible binding).
+    private final int mDefaultBindFlags;
 
     // Strong binding will make the service priority equal to the priority of the activity.
     private ChildServiceConnection mStrongBinding;
@@ -366,7 +391,11 @@ public class ChildProcessConnection {
         mIsSandboxedForHistograms = isSandboxedForHistograms;
         // Incremental install does not work with isolatedProcess, and externalService requires
         // isolatedProcess, so both need to be turned off for incremental install.
-        mBindAsExternalService = bindAsExternalService && !BuildConfig.IS_INCREMENTAL_INSTALL;
+        mDefaultBindFlags =
+                Context.BIND_AUTO_CREATE
+                        | ((bindAsExternalService && !BuildConfig.IS_INCREMENTAL_INSTALL)
+                                ? Context.BIND_EXTERNAL_SERVICE
+                                : 0);
         if (connectionFactory == null) {
             mConnectionFactory =
                     new ChildServiceConnectionFactory() {
@@ -420,38 +449,35 @@ public class ChildProcessConnection {
     }
 
     private void createBindings(ComponentName serviceName) {
-        Intent intent = new Intent();
-        intent.setComponent(serviceName);
+        mBindIntent = new Intent();
+        mBindIntent.setComponent(serviceName);
         if (mServiceBundle != null) {
-            intent.putExtras(mServiceBundle);
+            mBindIntent.putExtras(mServiceBundle);
         }
-
-        int defaultFlags =
-                Context.BIND_AUTO_CREATE
-                        | (mBindAsExternalService ? Context.BIND_EXTERNAL_SERVICE : 0);
 
         mVisibleBinding =
                 mConnectionFactory.createConnection(
-                        intent, defaultFlags, mConnectionDelegate, mInstanceName);
+                        mBindIntent, mDefaultBindFlags, mConnectionDelegate, mInstanceName);
         if (supportNotPerceptibleBinding()) {
+            int flags = mDefaultBindFlags | Context.BIND_NOT_PERCEPTIBLE;
+            if (useBackgroundNotPerceptibleBinding()) {
+                flags |= Context.BIND_NOT_FOREGROUND;
+            }
             mNotPerceptibleBinding =
                     mConnectionFactory.createConnection(
-                            intent,
-                            defaultFlags | Context.BIND_NOT_PERCEPTIBLE,
-                            mConnectionDelegate,
-                            mInstanceName);
+                            mBindIntent, flags, mConnectionDelegate, mInstanceName);
         }
 
         mStrongBinding =
                 mConnectionFactory.createConnection(
-                        intent,
-                        defaultFlags | Context.BIND_IMPORTANT,
+                        mBindIntent,
+                        mDefaultBindFlags | Context.BIND_IMPORTANT,
                         mConnectionDelegate,
                         mInstanceName);
         mWaivedBinding =
                 mConnectionFactory.createConnection(
-                        intent,
-                        defaultFlags | Context.BIND_WAIVE_PRIORITY,
+                        mBindIntent,
+                        mDefaultBindFlags | Context.BIND_WAIVE_PRIORITY,
                         mConnectionDelegate,
                         mInstanceName);
     }
@@ -545,14 +571,26 @@ public class ChildProcessConnection {
         assert isRunningOnLauncherThread();
         if (!isConnected()) return;
         assert mWaivedBinding.isBound();
-        mWaivedBinding.bindServiceConnection();
+        if (BaseFeatureList.sUseSharedRebindServiceConnection.isEnabled()) {
+            if (sRebindServiceConnection == null) {
+                sRebindServiceConnection =
+                        new RebindServiceConnection(
+                                BaseFeatureList.sMaxDeferredSharedRebindServiceConnection
+                                        .getValue());
+            }
+            assert mBindIntent != null;
+            sRebindServiceConnection.rebind(
+                    mBindIntent, mDefaultBindFlags | Context.BIND_WAIVE_PRIORITY, mInstanceName);
+        } else {
+            mWaivedBinding.bindServiceConnection();
+        }
     }
 
     /**
      * Sets-up the connection after it was started with start().
      *
-     * @param connectionBundle a bundle passed to the service that can be used to pass various
-     *     parameters to the service
+     * @param childProcessArgs an aidl interface with all miscellaneous parameters for the child
+     *     process connection.
      * @param clientInterfaces optional client specified interfaces that the child can use to
      *     communicate with the parent process
      * @param binderBox optional binder box the child can use to unpack additional binders
@@ -561,7 +599,7 @@ public class ChildProcessConnection {
      * @param zygoteInfoCallback will be called exactly once after the connection is set up
      */
     public void setupConnection(
-            Bundle connectionBundle,
+            IChildProcessArgs childProcessArgs,
             @Nullable List<IBinder> clientInterfaces,
             @Nullable IBinder binderBox,
             ConnectionCallback connectionCallback,
@@ -576,7 +614,7 @@ public class ChildProcessConnection {
         try (TraceEvent te = TraceEvent.scoped("ChildProcessConnection.setupConnection")) {
             mConnectionCallback = connectionCallback;
             mZygoteInfoCallback = zygoteInfoCallback;
-            mConnectionParams = new ConnectionParams(connectionBundle, clientInterfaces, binderBox);
+            mConnectionParams = new ConnectionParams(childProcessArgs, clientInterfaces, binderBox);
             // Run the setup if the service is already connected. If not, doConnectionSetup() will
             // be called from onServiceConnected().
             if (mServiceConnectComplete) {
@@ -652,16 +690,16 @@ public class ChildProcessConnection {
             }
 
             // Validate that the child process is running the same code as the parent process.
-            boolean childMatches;
+            boolean childMatches = true;
             try {
-                ApplicationInfo child = mService.getAppInfo();
-                ApplicationInfo parent = BuildInfo.getInstance().getBrowserApplicationInfo();
-                // Don't compare splitSourceDirs as isolatedSplits/dynamic feature modules/etc make
-                // this potentially complicated.
-                childMatches =
-                        Objects.equals(parent.sourceDir, child.sourceDir)
-                                && Arrays.equals(
-                                        parent.sharedLibraryFiles, child.sharedLibraryFiles);
+                String[] childAppInfoStrings = mService.getAppInfoStrings();
+
+                ApplicationInfo parentAppInfo = BuildInfo.getInstance().getBrowserApplicationInfo();
+                String[] parentAppInfoStrings = ChildProcessService.convertToStrings(parentAppInfo);
+
+                // Don't compare splitSourceDirs as isolatedSplits/dynamic feature modules/etc
+                // make this potentially complicated.
+                childMatches = Arrays.equals(parentAppInfoStrings, childAppInfoStrings);
             } catch (RemoteException ex) {
                 // If the child can't handle getAppInfo then it is old and doesn't match.
                 childMatches = false;
@@ -858,7 +896,7 @@ public class ChildProcessConnection {
                     };
             try {
                 mService.setupConnection(
-                        mConnectionParams.mConnectionBundle,
+                        mConnectionParams.mChildProcessArgs,
                         parentProcess,
                         mConnectionParams.mClientInterfaces,
                         mConnectionParams.mBinderBox);
@@ -991,6 +1029,8 @@ public class ChildProcessConnection {
         if (mNotPerceptibleBinding != null) {
             mNotPerceptibleBinding.retire();
         }
+        // We must clear shared waived binding when we unbind a waived binding.
+        clearSharedWaivedBinding();
         mWaivedBinding.retire();
         createBindings(mFallbackServiceName);
     }
@@ -1002,6 +1042,8 @@ public class ChildProcessConnection {
         mConnectionParams = null;
         mUnbound = true;
         mStrongBinding.unbindServiceConnection();
+        // We must clear shared waived binding when we unbind a waived binding.
+        clearSharedWaivedBinding();
         mWaivedBinding.unbindServiceConnection();
         if (mNotPerceptibleBinding != null) {
             mNotPerceptibleBinding.unbindServiceConnection();
@@ -1022,16 +1064,22 @@ public class ChildProcessConnection {
         }
     }
 
-    public void updateGroupImportance(int group, int importanceInGroup) {
+    private void clearSharedWaivedBinding() {
+        assert isRunningOnLauncherThread();
+        if (sRebindServiceConnection != null) {
+            sRebindServiceConnection.unbind();
+        }
+    }
+
+    public boolean updateGroupImportance(int group, int importanceInGroup) {
         assert isRunningOnLauncherThread();
         assert group != 0 || importanceInGroup == 0;
         if (mGroup != group || mImportanceInGroup != importanceInGroup) {
             mGroup = group;
             mImportanceInGroup = importanceInGroup;
-            if (isConnected()) {
-                mWaivedBinding.updateGroupImportance(group, importanceInGroup);
-            }
+            return isConnected() && mWaivedBinding.updateGroupImportance(group, importanceInGroup);
         }
+        return false;
     }
 
     public int getGroup() {
@@ -1280,10 +1328,10 @@ public class ChildProcessConnection {
         assert isRunningOnLauncherThread();
         synchronized (mBindingStateLock) {
             // This will handle all processes with only a WAIVED binding, and
-            // the last visible tab, which covers all renderers (W or WV), but
+            // the last visible tab, which covers all renderers (W or WN), but
             // excludes the GPU process (WS).
             if (mBindingState != ChildBindingState.WAIVED
-                    && mBindingState != ChildBindingState.VISIBLE) return;
+                    && mBindingState != ChildBindingState.NOT_PERCEPTIBLE) return;
         }
         if (mService == null) return;
         try {

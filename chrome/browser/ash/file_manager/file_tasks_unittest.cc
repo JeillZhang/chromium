@@ -20,6 +20,7 @@
 #include "base/run_loop.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "base/test/metrics/user_action_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
@@ -413,10 +414,9 @@ class FileManagerFileTaskVirtualTaskPolicyDefaultHandlersTest
   FileManagerFileTaskVirtualTaskPolicyDefaultHandlersTest() {
     // These feature flags are required to make different virtual tasks
     // discoverable.
-    features_.InitWithFeatures(
-        {features::kIsolatedWebApps, features::kIsolatedWebAppUnmanagedInstall,
-         chromeos::features::kUploadOfficeToCloud},
-        {});
+    features_.InitWithFeatures({features::kIsolatedWebAppUnmanagedInstall,
+                                chromeos::features::kUploadOfficeToCloud},
+                               {});
   }
 
  private:

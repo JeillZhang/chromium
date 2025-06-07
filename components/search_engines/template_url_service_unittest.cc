@@ -141,7 +141,7 @@ TEST_F(
   sitesearch_turl_data.SetURL("https://www.sitesearch.com?q={searchTerms}");
   sitesearch_turl_data.policy_origin =
       TemplateURLData::PolicyOrigin::kSiteSearch;
-  sitesearch_turl_data.enforced_by_policy = false;
+  sitesearch_turl_data.enforced_by_policy = true;
   sitesearch_turl_data.featured_by_policy = false;
   sitesearch_turl_data.safe_for_autoreplace = false;
   template_url_service().Add(
@@ -154,7 +154,7 @@ TEST_F(
       "https://www.searchaggregator.com?q={searchTerms}");
   searchaggregator_turl_data.policy_origin =
       TemplateURLData::PolicyOrigin::kSearchAggregator;
-  searchaggregator_turl_data.enforced_by_policy = false;
+  searchaggregator_turl_data.enforced_by_policy = true;
   searchaggregator_turl_data.featured_by_policy = false;
   searchaggregator_turl_data.safe_for_autoreplace = false;
   template_url_service().Add(
@@ -173,7 +173,7 @@ TEST_F(
   sitesearch_turl_data.SetURL("https://www.sitesearch.com?q={searchTerms}");
   sitesearch_turl_data.policy_origin =
       TemplateURLData::PolicyOrigin::kSiteSearch;
-  sitesearch_turl_data.enforced_by_policy = false;
+  sitesearch_turl_data.enforced_by_policy = true;
   sitesearch_turl_data.featured_by_policy = true;
   sitesearch_turl_data.safe_for_autoreplace = false;
   template_url_service().Add(
@@ -186,7 +186,7 @@ TEST_F(
       "https://www.searchaggregator.com?q={searchTerms}");
   searchaggregator_turl_data.policy_origin =
       TemplateURLData::PolicyOrigin::kSearchAggregator;
-  searchaggregator_turl_data.enforced_by_policy = false;
+  searchaggregator_turl_data.enforced_by_policy = true;
   searchaggregator_turl_data.featured_by_policy = true;
   searchaggregator_turl_data.safe_for_autoreplace = false;
   template_url_service().Add(
@@ -212,6 +212,80 @@ TEST_F(
       "https://www.searchaggregator.com?q={searchTerms}");
 }
 
+TEST_F(TemplateURLServiceUnitTest, HiddenFromLists) {
+  auto create_template_url_data =
+      [](const std::u16string& keyword,
+         TemplateURLData::PolicyOrigin policy_origin,
+         bool featured_by_policy) -> TemplateURLData {
+    TemplateURLData data;
+    data.SetShortName(keyword);
+    data.SetKeyword(keyword);
+    data.SetURL("https://" + base::UTF16ToUTF8(keyword) + "/?q={searchTerms}");
+    data.policy_origin = policy_origin;
+    data.featured_by_policy = featured_by_policy;
+    return data;
+  };
+
+  // Engines with no conflicts. Should NOT be hidden.
+  {
+    TemplateURL* turl = template_url_service().Add(
+        std::make_unique<TemplateURL>(create_template_url_data(
+            u"work", TemplateURLData::PolicyOrigin::kNoPolicy,
+            /*featured_by_policy=*/false)));
+    TemplateURL* turl_default_search_provider = template_url_service().Add(
+        std::make_unique<TemplateURL>(create_template_url_data(
+            u"default_search_provider",
+            TemplateURLData::PolicyOrigin::kDefaultSearchProvider,
+            /*featured_by_policy=*/false)));
+    TemplateURL* turl_site_search = template_url_service().Add(
+        std::make_unique<TemplateURL>(create_template_url_data(
+            u"site_search", TemplateURLData::PolicyOrigin::kSiteSearch,
+            /*featured_by_policy=*/false)));
+    TemplateURL* turl_search_aggregator = template_url_service().Add(
+        std::make_unique<TemplateURL>(create_template_url_data(
+            u"search_aggregator",
+            TemplateURLData::PolicyOrigin::kSearchAggregator,
+            /*featured_by_policy=*/false)));
+    ASSERT_FALSE(template_url_service().HiddenFromLists(turl));
+    ASSERT_FALSE(
+        template_url_service().HiddenFromLists(turl_default_search_provider));
+    ASSERT_FALSE(template_url_service().HiddenFromLists(turl_site_search));
+    ASSERT_FALSE(
+        template_url_service().HiddenFromLists(turl_search_aggregator));
+  }
+  // User-defined engine and a nonfeatured policy engine exists with the same
+  // keyword. User-defined engine should be hidden. Policy engine should not be
+  // hidden.
+  {
+    TemplateURL* turl = template_url_service().Add(
+        std::make_unique<TemplateURL>(create_template_url_data(
+            u"conflict", TemplateURLData::PolicyOrigin::kNoPolicy,
+            /*featured_by_policy=*/false)));
+    TemplateURL* turl_policy = template_url_service().Add(
+        std::make_unique<TemplateURL>(create_template_url_data(
+            u"conflict", TemplateURLData::PolicyOrigin::kSiteSearch,
+            /*featured_by_policy=*/false)));
+    ASSERT_FALSE(template_url_service().HiddenFromLists(turl));
+    ASSERT_TRUE(template_url_service().HiddenFromLists(turl_policy));
+  }
+
+  // User-defined engine and a featured policy engine exists with the same
+  // keyword. User-defined engine should be hidden. Policy engine should not be
+  // hidden.
+  {
+    TemplateURL* turl = template_url_service().Add(
+        std::make_unique<TemplateURL>(create_template_url_data(
+            u"@conflict", TemplateURLData::PolicyOrigin::kNoPolicy,
+            /*featured_by_policy=*/false)));
+    TemplateURL* turl_featured_policy = template_url_service().Add(
+        std::make_unique<TemplateURL>(create_template_url_data(
+            u"@conflict", TemplateURLData::PolicyOrigin::kSiteSearch,
+            /*featured_by_policy=*/true)));
+    ASSERT_TRUE(template_url_service().HiddenFromLists(turl));
+    ASSERT_FALSE(template_url_service().HiddenFromLists(turl_featured_policy));
+  }
+}
+
 #if BUILDFLAG(IS_ANDROID)
 
 class TemplateURLServiceWithDatabaseUnitTest
@@ -235,7 +309,8 @@ class TemplateURLServiceWithDatabaseUnitTest
         std::make_unique<TemplateURL>(CreatePlayAPITemplateURLData(keyword)));
 
     CHECK(template_url);
-    CHECK(template_url->created_from_play_api());
+    CHECK(template_url->GetRegulatoryExtensionType() ==
+          RegulatoryExtensionType::kAndroidEEA);
     CHECK_EQ(template_url,
              template_url_service().GetTemplateURLForKeyword(keyword));
 
@@ -277,7 +352,8 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest, ResetPlayAPISearchEngine) {
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(kNewPlayEngineKeyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
   EXPECT_EQ(new_play_engine, template_url_service().GetDefaultSearchProvider());
 
   // We still have the same number of engines.
@@ -302,7 +378,8 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(kNewPlayEngineKeyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
   EXPECT_EQ(new_play_engine, template_url_service().GetDefaultSearchProvider());
 }
 
@@ -325,7 +402,8 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(overriden_keyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
   EXPECT_EQ(new_play_engine->prepopulate_id(), /* bing_id */ 3);
   EXPECT_EQ(new_play_engine, template_url_service().GetDefaultSearchProvider());
 
@@ -374,7 +452,8 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(kNewPlayEngineKeyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
   EXPECT_EQ(new_play_engine, template_url_service().GetDefaultSearchProvider());
 
   // The old prepopulated engine is still there and is exposed when looking up
@@ -405,7 +484,8 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(play_engine_keyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
   EXPECT_EQ(new_play_engine, template_url_service().GetDefaultSearchProvider());
 
   // This is the only known engine matching this keyword.
@@ -442,7 +522,8 @@ TEST_F(TemplateURLServiceWithDatabaseUnitTest,
   auto* new_play_engine =
       template_url_service().GetTemplateURLForKeyword(kNewPlayEngineKeyword);
   EXPECT_TRUE(new_play_engine);
-  EXPECT_TRUE(new_play_engine->created_from_play_api());
+  ASSERT_EQ(new_play_engine->GetRegulatoryExtensionType(),
+            RegulatoryExtensionType::kAndroidEEA);
 
   EXPECT_NE(new_play_engine, template_url_service().GetDefaultSearchProvider());
 

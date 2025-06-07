@@ -15,12 +15,10 @@
 #include "base/command_line.h"
 #include "base/format_macros.h"
 #include "base/functional/bind.h"
-#include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "chrome/browser/android/resource_mapper.h"
-#include "chrome/browser/autofill/android/autofill_image_fetcher_impl.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -29,11 +27,11 @@
 #include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/autofill_structured_address_constants.h"
-#include "components/autofill/core/browser/data_model/bank_account.h"
-#include "components/autofill/core/browser/data_model/ewallet.h"
-#include "components/autofill/core/browser/data_model/payment_instrument.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_structured_address_constants.h"
+#include "components/autofill/core/browser/data_model/payments/bank_account.h"
+#include "components/autofill/core/browser/data_model/payments/ewallet.h"
+#include "components/autofill/core/browser/data_model/payments/payment_instrument.h"
 #include "components/autofill/core/browser/data_quality/autofill_data_util.h"
 #include "components/autofill/core/browser/data_quality/validation.h"
 #include "components/autofill/core/browser/field_types.h"
@@ -41,6 +39,7 @@
 #include "components/autofill/core/browser/geo/autofill_country.h"
 #include "components/autofill/core/browser/geo/country_names.h"
 #include "components/autofill/core/browser/studies/autofill_experiments.h"
+#include "components/autofill/core/browser/suggestions/payments/payments_suggestion_generator.h"
 #include "components/autofill/core/browser/ui/autofill_resource_utils.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_constants.h"
@@ -239,13 +238,6 @@ std::string PersonalDataManagerAndroid::GetDefaultCountryCodeForNewAddress(
   return address_data_manager().GetDefaultCountryCodeForNewAddress().value();
 }
 
-bool PersonalDataManagerAndroid::IsCountryEligibleForAccountStorage(
-    JNIEnv* env,
-    std::string& country_code) const {
-  return address_data_manager().IsCountryEligibleForAccountStorage(
-      country_code);
-}
-
 std::string PersonalDataManagerAndroid::SetProfile(
     JNIEnv* env,
     const JavaParamRef<jobject>& jprofile,
@@ -344,7 +336,7 @@ PersonalDataManagerAndroid::GetCreditCardGUIDsForSettings(JNIEnv* env) {
 ScopedJavaLocalRef<jobjectArray>
 PersonalDataManagerAndroid::GetCreditCardGUIDsToSuggest(JNIEnv* env) {
   return GetCreditCardGUIDs(env,
-                            payments_data_manager().GetCreditCardsToSuggest());
+                            GetCreditCardsToSuggest(payments_data_manager()));
 }
 
 ScopedJavaLocalRef<jobject> PersonalDataManagerAndroid::GetCreditCardByGUID(
@@ -448,13 +440,6 @@ jboolean PersonalDataManagerAndroid::IsFidoAuthenticationAvailable(
   }
   // Show the toggle switch only if FIDO authentication is available.
   return IsCreditCardFidoAuthenticationEnabled();
-}
-
-ScopedJavaLocalRef<jobject>
-PersonalDataManagerAndroid::GetOrCreateJavaImageFetcher(JNIEnv* env) {
-  return static_cast<AutofillImageFetcherImpl*>(
-             payments_data_manager().GetImageFetcher())
-      ->GetOrCreateJavaImageFetcher();
 }
 
 // static
@@ -686,10 +671,8 @@ ScopedJavaLocalRef<jobjectArray> PersonalDataManagerAndroid::GetProfileLabels(
 
   FieldType excluded_field = include_name_in_label ? UNKNOWN_TYPE : NAME_FULL;
 
-  // TODO(crbug.com/40283168): Replace by `profiles`.
   std::vector<std::u16string> labels = AutofillProfile::CreateInferredLabels(
-      std::vector<raw_ptr<const AutofillProfile, VectorExperimental>>(
-          profiles.begin(), profiles.end()),
+      profiles,
       address_only ? std::make_optional(suggested_fields) : std::nullopt,
       /*triggering_field_type=*/std::nullopt, {excluded_field},
       minimal_fields_shown, g_browser_process->GetApplicationLocale());
@@ -831,10 +814,6 @@ PersonalDataManagerAndroid::GetMaskedBankAccounts(JNIEnv* env) {
                                                   type.obj());
 }
 
-jboolean PersonalDataManagerAndroid::IsAutofillManaged(JNIEnv* env) {
-  return prefs::IsAutofillManaged(prefs_);
-}
-
 jboolean PersonalDataManagerAndroid::IsAutofillProfileManaged(JNIEnv* env) {
   return prefs::IsAutofillProfileManaged(prefs_);
 }
@@ -858,7 +837,7 @@ static std::string JNI_PersonalDataManager_GetBasicCardIssuerNetwork(
       .basic_card_issuer_network;
 }
 
-// Returns an ISO 3166-1-alpha-2 country code for a |country_name| using
+// Returns an ISO 3166-1-alpha-2 country code for a `country_name` using
 // the application locale, or an empty string.
 static std::string JNI_PersonalDataManager_ToCountryCode(
     JNIEnv* env,

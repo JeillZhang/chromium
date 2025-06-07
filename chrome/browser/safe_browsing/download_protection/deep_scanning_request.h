@@ -22,9 +22,11 @@
 #include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/file_analysis_request.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/file_opening_job.h"
+#include "chrome/browser/safe_browsing/download_protection/deep_scanning_metadata.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/enterprise/obfuscation/core/download_obfuscator.h"
+#include "components/safe_browsing/core/common/proto/csd.pb.h"
 
 namespace download {
 class DownloadItem;
@@ -37,6 +39,7 @@ class DownloadRequestMaker;
 
 // This class encapsulates the process of uploading a file to Safe Browsing for
 // deep scanning and reporting the result.
+// Deep scanning is not supported on Android.
 class DeepScanningRequest : public download::DownloadItem::Observer,
                             public enterprise_connectors::ContentAnalysisInfo {
  public:
@@ -65,12 +68,12 @@ class DeepScanningRequest : public download::DownloadItem::Observer,
   // policy. Returns the settings to apply to this analysis if it should happen
   // or std::nullopt if no analysis should happen.
   static std::optional<enterprise_connectors::AnalysisSettings>
-  ShouldUploadBinary(download::DownloadItem* item);
+  ShouldUploadBinary(const DeepScanningMetadata& metadata);
 
-  // Scan the given `item`, with the given `trigger`. The result of the scanning
-  // will be provided through `callback`. Take a references to the owning
-  // `download_service`.
-  DeepScanningRequest(download::DownloadItem* item,
+  // Scan the given `metadata item`, with the given `trigger`. The result of the
+  // scanning will be provided through `callback`. Take a references to the
+  // owning `download_service`.
+  DeepScanningRequest(std::unique_ptr<DeepScanningMetadata> metadata,
                       DownloadItemWarningData::DeepScanTrigger trigger,
                       DownloadCheckResult pre_scan_download_check_result,
                       CheckDownloadRepeatingCallback callback,
@@ -78,14 +81,14 @@ class DeepScanningRequest : public download::DownloadItem::Observer,
                       enterprise_connectors::AnalysisSettings settings,
                       base::optional_ref<const std::string> password);
 
-  // Scan the given `item` that corresponds to a save package, with
+  // Scan the given `metadata item` that corresponds to a save package, with
   // `save_package_page` mapping every currently on-disk file part of that
   // package to their final target path. The result of the scanning is provided
   // through `callback` once every file has been scanned, and the given result
   // is the highest severity one. Takes a reference to the owning
   // `download_service`.
   DeepScanningRequest(
-      download::DownloadItem* item,
+      std::unique_ptr<DeepScanningMetadata> metadata,
       DownloadCheckResult pre_scan_download_check_result,
       CheckDownloadRepeatingCallback callback,
       DownloadProtectionService* download_service,
@@ -106,6 +109,7 @@ class DeepScanningRequest : public download::DownloadItem::Observer,
 
   // enterprise_connectors::ContentAnalysisInfo:
   const enterprise_connectors::AnalysisSettings& settings() const override;
+  signin::IdentityManager* identity_manager() const override;
   int user_action_requests_count() const override;
   std::string tab_title() const override;
   std::string user_action_id() const override;
@@ -113,6 +117,10 @@ class DeepScanningRequest : public download::DownloadItem::Observer,
   std::string url() const override;
   const GURL& tab_url() const override;
   enterprise_connectors::ContentAnalysisRequest::Reason reason() const override;
+  google::protobuf::RepeatedPtrField<::safe_browsing::ReferrerChainEntry>
+  referrer_chain() const override;
+  google::protobuf::RepeatedPtrField<std::string> frame_url_chain()
+      const override;
 
  private:
   // Starts the deep scanning request when there is a one-to-one mapping from
@@ -205,9 +213,15 @@ class DeepScanningRequest : public download::DownloadItem::Observer,
   // Provides scan result to `callback_` and clean up.
   void CallbackAndCleanup(DownloadCheckResult result);
 
-  // The download item to scan. This is unowned, and could become nullptr if the
-  // download is destroyed.
-  raw_ptr<download::DownloadItem> item_;
+  // Metadata for the item being scanned. This is owned by `DeepScanningRequest`
+  // and provides an abstraction layer over different types of scan sources
+  // (download items, file system access writes).
+  std::unique_ptr<DeepScanningMetadata> metadata_;
+
+  // ScopedObservation to manage `DownloadItem` observation lifetime. Must be
+  // cleared before `metadata_` is.
+  std::unique_ptr<DeepScanningMetadata::DownloadScopedObservation>
+      download_observation_;
 
   // The reason for deep scanning.
   DownloadItemWarningData::DeepScanTrigger trigger_;

@@ -1870,6 +1870,32 @@ void LogPresentingErrorPageFailedWithError(NSError* error) {
     return;
   }
 
+  // This error occurs following a file path lookup when restoring navigation
+  // to a private file path. Restore the file if it has been previously stored
+  // as a bookmark.
+  if ([error.domain isEqualToString:NSPOSIXErrorDomain] &&
+      navigationContext->GetUrl().SchemeIsFile() &&
+      item->GetSecurityScopedFileResource()) {
+    BOOL bookmarkDataIsStale = false;
+    GURL bookmarkURL = net::GURLWithNSURL([NSURL
+        URLByResolvingBookmarkData:item->GetSecurityScopedFileResource()
+                           options:NSURLBookmarkResolutionWithoutUI
+                     relativeToURL:nil
+               bookmarkDataIsStale:&bookmarkDataIsStale
+                             error:nil]);
+    if (bookmarkURL.is_valid() && !bookmarkDataIsStale) {
+      web::NavigationManager::WebLoadParams params(bookmarkURL);
+      params.transition_type = navigationContext->GetPageTransition();
+      params.virtual_url = item->GetVirtualURL();
+      params.is_renderer_initiated = navigationContext->IsRendererInitiated();
+      self.webStateImpl->GetNavigationManager()->LoadURLWithParams(params);
+      return;
+    }
+    // Clear the security scoped file resource if it is invalid or stale to
+    // short-circuit future invalid PDF page loads.
+    item->SetSecurityScopedFileResource(nil);
+  }
+
   WKNavigation* errorNavigation =
       [self displayErrorPageWithError:error
                             inWebView:webView
@@ -2020,7 +2046,8 @@ void LogPresentingErrorPageFailedWithError(NSError* error) {
 - (BOOL)shouldCancelLoadForCancelledError:(NSError*)error
                           provisionalLoad:(BOOL)provisionalLoad {
   DCHECK(error.code == NSURLErrorCancelled ||
-         error.code == web::kWebKitErrorFrameLoadInterruptedByPolicyChange);
+         error.code == web::kWebKitErrorFrameLoadInterruptedByPolicyChange)
+      << base::SysNSStringToUTF8(error.description);
   // Do not cancel the load if it is for an app specific URL, as such errors
   // are produced during the app specific URL load process.
   const GURL errorURL =

@@ -44,6 +44,7 @@
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
+#include "ui/gfx/geometry/rrect_f.h"
 
 namespace viz {
 class CopyOutputRequest;
@@ -375,9 +376,12 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   }
 
   // For layer tree mode only.
-  void SetBackdropFilterBounds(const gfx::RRectF& backdrop_filter_bounds);
+  void SetBackdropFilterBounds(const SkPath& backdrop_filter_bounds);
+  void SetBackdropFilterBounds(const gfx::RRectF& backdrop_filter_bounds) {
+    SetBackdropFilterBounds(SkPath::RRect(SkRRect(backdrop_filter_bounds)));
+  }
   void ClearBackdropFilterBounds();
-  std::optional<gfx::RRectF> backdrop_filter_bounds() const {
+  std::optional<SkPath> backdrop_filter_bounds() const {
     return layer_tree_inputs() ? layer_tree_inputs()->backdrop_filter_bounds
                                : std::nullopt;
   }
@@ -658,19 +662,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
   // This value indicates whether a clip node was created for |this| layer.
   void SetHasClipNode(bool val) { SetBitFlag(val, kHasClipNodeFlagMask); }
   bool has_clip_node() const { return GetBitFlag(kHasClipNodeFlagMask); }
-
-  // Sets that the content shown in this layer may be a video. This may be used
-  // by the system compositor to distinguish between animations updating the
-  // screen and video, which the user would be watching. This allows
-  // optimizations like turning off the display when video is not playing,
-  // without interfering with video playback.
-  void SetMayContainVideo(bool value) {
-    SetBitFlag(value, kMayContainVideoFlagMask, /*invalidate=*/false,
-               /*needs_push=*/true);
-  }
-  bool may_contain_video() const {
-    return GetBitFlag(kMayContainVideoFlagMask);
-  }
 
   // Stable identifier for clients. See comment in cc/paint/element_id.h.
   void SetElementId(ElementId id);
@@ -1109,7 +1100,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
 
     FilterOperations filters;
     FilterOperations backdrop_filters;
-    std::optional<gfx::RRectF> backdrop_filter_bounds;
+    std::optional<SkPath> backdrop_filter_bounds;
     float backdrop_filter_quality = 1.0f;
 
     int mirror_count = 0;
@@ -1187,7 +1178,6 @@ class CC_EXPORT Layer : public base::RefCounted<Layer>,
     kShouldCheckBackfaceVisibilityFlagMask = 1 << 1,
     kCacheRenderSurfaceFlagMask = 1 << 2,
     kForceRenderSurfaceForTestingFlagMask = 1 << 3,
-    kMayContainVideoFlagMask = 1 << 4,
     kHasTransformNodeFlagMask = 1 << 5,
     kHasClipNodeFlagMask = 1 << 6,
     kSubtreeHasCopyRequestFlagMask = 1 << 7

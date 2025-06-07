@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/url_pattern/url_pattern_canon.h"
 
 #include "third_party/blink/renderer/core/url_pattern/url_pattern_component.h"
@@ -59,12 +54,11 @@ String CanonicalizeProtocol(const String& input,
   url::Component component;
   if (stripped.Is8Bit()) {
     StringUTF8Adaptor utf8(stripped);
-    result = url::CanonicalizeScheme(
-        utf8.data(), url::Component(0, utf8.size()), &canon_output, &component);
+    result =
+        url::CanonicalizeScheme(utf8.AsStringView(), &canon_output, &component);
   } else {
-    result = url::CanonicalizeScheme(stripped.Characters16(),
-                                     url::Component(0, stripped.length()),
-                                     &canon_output, &component);
+    result =
+        url::CanonicalizeScheme(stripped.View16(), &canon_output, &component);
   }
 
   if (!result) {
@@ -98,8 +92,7 @@ void CanonicalizeUsernameAndPassword(const String& username,
     StringUTF8Adaptor username_utf8(username);
     StringUTF8Adaptor password_utf8(password);
     result = url::CanonicalizeUserInfo(
-        username_utf8.data(), url::Component(0, username_utf8.size()),
-        password_utf8.data(), url::Component(0, password_utf8.size()),
+        username_utf8.AsStringView(), password_utf8.AsStringView(),
         &canon_output, &username_component, &password_component);
 
   } else {
@@ -107,10 +100,9 @@ void CanonicalizeUsernameAndPassword(const String& username,
     String password16(password);
     username16.Ensure16Bit();
     password16.Ensure16Bit();
-    result = url::CanonicalizeUserInfo(
-        username16.Characters16(), url::Component(0, username16.length()),
-        password16.Characters16(), url::Component(0, password16.length()),
-        &canon_output, &username_component, &password_component);
+    result = url::CanonicalizeUserInfo(username16.View16(), password16.View16(),
+                                       &canon_output, &username_component,
+                                       &password_component);
   }
 
   if (!result) {
@@ -200,10 +192,9 @@ String CanonicalizePathname(const String& protocol,
     standard = true;
   } else if (protocol.Is8Bit()) {
     StringUTF8Adaptor utf8(protocol);
-    standard = url::IsStandard(utf8.data(), url::Component(0, utf8.size()));
+    standard = url::IsStandard(utf8.AsStringView());
   } else {
-    standard = url::IsStandard(protocol.Characters16(),
-                               url::Component(0, protocol.length()));
+    standard = url::IsStandard(protocol.View16());
   }
 
   // Do not enforce absolute pathnames here since we can't enforce it
@@ -217,21 +208,32 @@ String CanonicalizePathname(const String& protocol,
   url::RawCanonOutputT<char> canon_output;
   url::Component component;
 
-  const auto canonicalize_path = [&](const auto* data, int length) {
-    if (standard) {
-      return url::CanonicalizePartialPath(data, url::Component(0, length),
-                                          &canon_output, &component);
-    }
-    url::CanonicalizePathURLPath(data, url::Component(0, length), &canon_output,
-                                 &component);
-    return true;
-  };
+  const auto canonicalize_path =
+      [&]<typename CharType>(std::basic_string_view<CharType> data) {
+        if (standard) {
+          // TODO(crbug.com/351564777, crbug.com/420421613): Remove the
+          // UNSAFE_TODO after we finish transition in
+          // `url::CanonicalizePartialPath` to use
+          // `std::basic_string_view<CharType>`.
+          return UNSAFE_TODO(url::CanonicalizePartialPath(
+              data.data(), url::Component(0, data.size()), &canon_output,
+              &component));
+        }
+        // TODO(crbug.com/351564777, crbug.com/420421613): Remove the
+        // UNSAFE_TODO after we finish transition in
+        // `url::CanonicalizePathURLPath` to use
+        // `std::basic_string_view<CharType>`.
+        UNSAFE_TODO(url::CanonicalizePathURLPath(data.data(),
+                                                 url::Component(0, data.size()),
+                                                 &canon_output, &component));
+        return true;
+      };
 
   if (input.Is8Bit()) {
     StringUTF8Adaptor utf8(input);
-    result = canonicalize_path(utf8.data(), utf8.size());
+    result = canonicalize_path(utf8.AsStringView());
   } else {
-    result = canonicalize_path(input.Characters16(), input.length());
+    result = canonicalize_path(input.View16());
   }
 
   if (!result) {
@@ -259,11 +261,10 @@ String CanonicalizeSearch(const String& input,
   url::Component component;
   if (stripped.Is8Bit()) {
     StringUTF8Adaptor utf8(stripped);
-    url::CanonicalizeQuery(utf8.data(), url::Component(0, utf8.size()),
+    url::CanonicalizeQuery(utf8.AsStringView(),
                            /*converter=*/nullptr, &canon_output, &component);
   } else {
-    url::CanonicalizeQuery(stripped.Characters16(),
-                           url::Component(0, stripped.length()),
+    url::CanonicalizeQuery(stripped.View16(),
                            /*converter=*/nullptr, &canon_output, &component);
   }
 
@@ -287,12 +288,9 @@ String CanonicalizeHash(const String& input,
   url::Component component;
   if (stripped.Is8Bit()) {
     StringUTF8Adaptor utf8(stripped);
-    url::CanonicalizeRef(utf8.data(), url::Component(0, utf8.size()),
-                         &canon_output, &component);
+    url::CanonicalizeRef(utf8.AsStringView(), &canon_output, &component);
   } else {
-    url::CanonicalizeRef(stripped.Characters16(),
-                         url::Component(0, stripped.length()), &canon_output,
-                         &component);
+    url::CanonicalizeRef(stripped.View16(), &canon_output, &component);
   }
 
   return StringFromCanonOutput(canon_output, component);

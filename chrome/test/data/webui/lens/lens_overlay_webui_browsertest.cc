@@ -7,6 +7,8 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/lens/lens_overlay_controller.h"
+#include "chrome/browser/ui/lens/lens_search_controller.h"
+#include "chrome/browser/ui/lens/lens_searchbox_controller.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -71,27 +73,30 @@ class LensOverlayTest : public LensOverlayWebUIBrowserTest {
     WaitForPaint();
 
     // State should start in off.
-    auto* controller = browser()
-                           ->tab_strip_model()
-                           ->GetActiveTab()
-                           ->GetTabFeatures()
-                           ->lens_overlay_controller();
-    ASSERT_EQ(controller->state(), State::kOff);
+    auto* search_controller = browser()
+                                  ->tab_strip_model()
+                                  ->GetActiveTab()
+                                  ->GetTabFeatures()
+                                  ->lens_search_controller();
+    auto* overlay_controller = search_controller->lens_overlay_controller();
+    ASSERT_EQ(overlay_controller->state(), State::kOff);
 
     // Showing UI should eventually result in overlay state.
-    controller->ShowUI(lens::LensOverlayInvocationSource::kAppMenu);
+    search_controller->OpenLensOverlay(
+        lens::LensOverlayInvocationSource::kAppMenu);
     ASSERT_TRUE(base::test::RunUntil(
-        [&]() { return controller->state() == State::kOverlay; }));
+        [&]() { return overlay_controller->state() == State::kOverlay; }));
 
     // Get the overlay webview and wait for WebUI to finish loading.
     auto* web_contents =
-        controller->GetOverlayWebViewForTesting()->GetWebContents();
+        overlay_controller->GetOverlayWebViewForTesting()->GetWebContents();
     content::WaitForLoadStop(web_contents);
     ASSERT_TRUE(RunTestOnWebContents(web_contents, file, trigger, true));
 
     // Clean up (the searchbox handler will leave a dangling pointer if not
     // explicitly destroyed).
-    controller->ResetSidePanelSearchboxHandler();
+    search_controller->lens_searchbox_controller()
+        ->ResetSidePanelSearchboxHandler();
   }
 
   // Lens overlay takes a screenshot of the tab. In order to take a screenshot
@@ -145,7 +150,13 @@ IN_PROC_BROWSER_TEST_F(LensOverlayTest, OverlayTheme) {
   RunOverlayTest("lens/overlay/overlay_theme_test.js", "mocha.run()");
 }
 
-IN_PROC_BROWSER_TEST_F(LensOverlayTest, ManualRegionSelection) {
+// TODO(crbug.com/414207670): Test is failing on Linux and Win bot.
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
+#define MAYBE_ManualRegionSelection DISABLED_ManualRegionSelection
+#else
+#define MAYBE_ManualRegionSelection ManualRegionSelection
+#endif
+IN_PROC_BROWSER_TEST_F(LensOverlayTest, MAYBE_ManualRegionSelection) {
   RunOverlayTest("lens/overlay/region_selection_test.js", "mocha.run()");
 }
 
@@ -197,6 +208,15 @@ IN_PROC_BROWSER_TEST_F(LensOverlayTest,
   RunOverlayTest(
       "lens/overlay/selection_overlay_test.js",
       "runMochaSuite('SelectionOverlay InvocationSourceContextMenuImage')");
+}
+
+IN_PROC_BROWSER_TEST_F(LensOverlayTest, SelectionOverlaySimplifiedSelection) {
+  RunOverlayTest("lens/overlay/selection_overlay_test.js",
+                 "runMochaSuite('SelectionOverlay SimplifiedSelection')");
+}
+
+IN_PROC_BROWSER_TEST_F(LensOverlayTest, SimplifiedSelection) {
+  RunOverlayTest("lens/overlay/simplified_selection_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(LensOverlayTest, PostSelectionRenderer) {

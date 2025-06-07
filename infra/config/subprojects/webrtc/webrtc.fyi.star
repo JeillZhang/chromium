@@ -10,24 +10,69 @@ load("//lib/xcode.star", "xcode")
 
 luci.bucket(
     name = "webrtc.fyi",
-    acls = [
-        acl.entry(
-            roles = acl.BUILDBUCKET_READER,
+    constraints = luci.bucket_constraints(
+        pools = ["luci.chromium.webrtc.fyi"],
+        service_accounts = [
+            "chromium-ci-builder@chops-service-accounts.iam.gserviceaccount.com",
+            "webrtc-ci-builder@chops-service-accounts.iam.gserviceaccount.com",
+        ],
+    ),
+    bindings = [
+        luci.binding(
+            roles = "role/buildbucket.reader",
             groups = "all",
         ),
-        acl.entry(
-            roles = acl.BUILDBUCKET_TRIGGERER,
-            groups = "project-chromium-ci-schedulers",
+        luci.binding(
+            roles = "role/buildbucket.creator",
+            groups = "project-webrtc-led-users",
         ),
-        acl.entry(
-            roles = acl.BUILDBUCKET_OWNER,
+        luci.binding(
+            roles = "role/buildbucket.triggerer",
+            groups = [
+                "project-chromium-ci-schedulers",
+                "project-webrtc-admins",
+            ],
+        ),
+        luci.binding(
+            roles = "role/buildbucket.owner",
             groups = "project-chromium-admins",
         ),
-        acl.entry(
-            roles = acl.SCHEDULER_OWNER,
+        luci.binding(
+            roles = "role/scheduler.owner",
+            groups = "project-webrtc-admins",
+        ),
+        luci.binding(
+            roles = "role/swarming.poolUser",
+            groups = "project-webrtc-admins",
+        ),
+        luci.binding(
+            roles = "role/swarming.taskTriggerer",
             groups = "project-webrtc-admins",
         ),
     ],
+)
+
+# Define the shadow bucket of `webrtc.fyi`.
+luci.bucket(
+    name = "webrtc.fyi.shadow",
+    shadows = "webrtc.fyi",
+    # Only the builds with allowed pool and service account can be created
+    # in this bucket.
+    constraints = luci.bucket_constraints(
+        pools = ["luci.chromium.webrtc.fyi"],
+        service_accounts = [
+            "chromium-ci-builder@chops-service-accounts.iam.gserviceaccount.com",
+            "webrtc-ci-builder@chops-service-accounts.iam.gserviceaccount.com",
+        ],
+    ),
+    bindings = [
+        # for led permissions.
+        luci.binding(
+            roles = "role/buildbucket.creator",
+            groups = "project-webrtc-led-users",
+        ),
+    ],
+    dynamic = True,
 )
 
 luci.gitiles_poller(
@@ -48,6 +93,7 @@ defaults.set(
     cpu = cpu.X86_64,
     build_numbers = True,
     execution_timeout = 2 * time.hour,
+    reclient_enabled = False,
     service_account = "chromium-ci-builder@chops-service-accounts.iam.gserviceaccount.com",
     siso_enabled = True,
     siso_project = siso.project.DEFAULT_TRUSTED,
@@ -73,7 +119,7 @@ builder(
             apply_configs = ["android"],
         ),
         chromium_config = builder_config.chromium_config(
-            config = "chromium",
+            config = "base_config",
             apply_configs = [
                 "dcheck",
                 "mb",
@@ -90,6 +136,7 @@ builder(
     gn_args = gn_args.config(
         configs = [
             "android_builder",
+            "android_with_static_analysis",
             "release_builder",
             "remoteexec",
             "minimal_symbols",
@@ -115,7 +162,7 @@ builder(
             apply_configs = ["android"],
         ),
         chromium_config = builder_config.chromium_config(
-            config = "chromium",
+            config = "base_config",
             apply_configs = [
                 "dcheck",
                 "mb",
@@ -132,6 +179,7 @@ builder(
     gn_args = gn_args.config(
         configs = [
             "android_builder",
+            "android_with_static_analysis",
             "debug_static_builder",
             "remoteexec",
             "arm",
@@ -148,7 +196,7 @@ builder(
             apply_configs = ["android"],
         ),
         chromium_config = builder_config.chromium_config(
-            config = "chromium",
+            config = "base_config",
             apply_configs = [
                 "dcheck",
                 "mb",
@@ -165,6 +213,7 @@ builder(
     gn_args = gn_args.config(
         configs = [
             "android_builder",
+            "android_with_static_analysis",
             "debug_static_builder",
             "remoteexec",
             "arm64",
@@ -175,7 +224,7 @@ builder(
 
 builder(
     name = "WebRTC Chromium FYI Android Tests (dbg)",
-    triggered_by = ["WebRTC Chromium FYI Android Builder (dbg)"],
+    parent = "WebRTC Chromium FYI Android Builder (dbg)",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -183,7 +232,7 @@ builder(
             apply_configs = ["android"],
         ),
         chromium_config = builder_config.chromium_config(
-            config = "chromium",
+            config = "base_config",
             apply_configs = [
                 "dcheck",
                 "mb",
@@ -202,7 +251,7 @@ builder(
             "webrtc_chromium_simple_gtests",
         ],
         mixins = [
-            "walleye",
+            "chromium_pixel_2_pie",
         ],
         per_test_modifications = {
             "content_browsertests": targets.mixin(
@@ -219,7 +268,7 @@ builder(
 
 builder(
     name = "WebRTC Chromium FYI Android Tests ARM64 (dbg)",
-    triggered_by = ["WebRTC Chromium FYI Android Builder ARM64 (dbg)"],
+    parent = "WebRTC Chromium FYI Android Builder ARM64 (dbg)",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -227,7 +276,7 @@ builder(
             apply_configs = ["android"],
         ),
         chromium_config = builder_config.chromium_config(
-            config = "chromium",
+            config = "base_config",
             apply_configs = [
                 "dcheck",
                 "mb",
@@ -246,7 +295,7 @@ builder(
             "webrtc_chromium_simple_gtests",
         ],
         mixins = [
-            "walleye",
+            "chromium_pixel_2_pie",
         ],
         per_test_modifications = {
             "content_browsertests": targets.mixin(
@@ -328,7 +377,7 @@ builder(
 
 builder(
     name = "WebRTC Chromium FYI Linux Tester",
-    triggered_by = ["WebRTC Chromium FYI Linux Builder"],
+    parent = "WebRTC Chromium FYI Linux Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(config = "chromium_webrtc_tot"),
@@ -424,7 +473,7 @@ builder(
 
 builder(
     name = "WebRTC Chromium FYI Mac Tester",
-    triggered_by = ["WebRTC Chromium FYI Mac Builder"],
+    parent = "WebRTC Chromium FYI Mac Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(config = "chromium_webrtc_tot"),
@@ -524,7 +573,7 @@ builder(
 
 builder(
     name = "WebRTC Chromium FYI Win10 Tester",
-    triggered_by = ["WebRTC Chromium FYI Win Builder"],
+    parent = "WebRTC Chromium FYI Win Builder",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(config = "chromium_webrtc_tot"),

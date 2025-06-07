@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
@@ -15,8 +16,9 @@
 #include "base/observer_list.h"
 #include "base/supports_user_data.h"
 #include "base/uuid.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/entity_instance.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/autofill_ai/entity_instance.h"
+#include "components/autofill/core/browser/data_model/valuables/loyalty_card.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_backend.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/webdata/common/web_data_results.h"
@@ -134,6 +136,7 @@ class AutofillWebDataBackendImpl
   // Removes an Autofill profile from the web database.
   WebDatabase::State RemoveAutofillProfile(
       const std::string& guid,
+      AutofillProfileChange::Type change_type,
       base::OnceCallback<void(const AutofillProfileChange&)> on_success,
       WebDatabase* db);
 
@@ -157,6 +160,9 @@ class AutofillWebDataBackendImpl
       base::Time delete_end,
       WebDatabase* db);
   std::unique_ptr<WDTypedResult> GetEntityInstances(WebDatabase* db);
+
+  // Retrieves LoyaltyCards from the database.
+  std::unique_ptr<WDTypedResult> GetLoyaltyCards(WebDatabase* db);
 
   // Returns the number of values such that all for autofill entries with that
   // value, the interval between creation date and last usage is entirely
@@ -223,6 +229,9 @@ class AutofillWebDataBackendImpl
 
   // Method to clear all the local CVCs from the web database.
   WebDatabase::State ClearLocalCvcs(WebDatabase* db);
+
+  // Method to clean up for crbug.com/411681430.
+  WebDatabase::State CleanupForCrbug411681430(WebDatabase* db);
 
   // Returns the PaymentsCustomerData from the database.
   std::unique_ptr<WDTypedResult> GetPaymentsCustomerData(WebDatabase* db);

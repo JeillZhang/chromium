@@ -27,6 +27,7 @@
 #include "base/files/file_path.h"
 #include "base/files/memory_mapped_file.h"
 #include "base/lazy_instance.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
@@ -264,7 +265,6 @@ namespace {
 // Sets mandatory V8 flags.
 void SetFlags(IsolateHolder::ScriptMode mode,
               const std::string& js_command_line_flags) {
-  SetV8Flags("--js-explicit-resource-management");
 
   if (IsolateHolder::kStrictMode == mode) {
     SetV8Flags("--use_strict");
@@ -279,6 +279,21 @@ void SetFlags(IsolateHolder::ScriptMode mode,
       v8::V8::SetFlagsFromString(std::string(flag).c_str(), flag.size());
     }
   }
+}
+
+// Sets feature flags that are default to enabled.
+//
+// This function must be called *before* SetFeatureFlags is called, so that
+// default-enabled flags may be overridden and disabled.
+//
+// Usually V8 is the source of truth for the default state of feature flags.
+// However, some features must be shipped from the blink side because they add
+// new globals, which requires updating web tests that cannot be skipped (to
+// safeguard against accidentally breaking the web).
+void SetDefaultEnabledFeatureFlags() {
+  SetV8Flags("--js-float16array");
+  SetV8Flags("--js-explicit-resource-management");
+  SetV8Flags("--js-regexp-escape");
 }
 
 // Sets feature controlled V8 flags.
@@ -360,9 +375,6 @@ void SetFeatureFlags() {
   SetV8FlagsIfOverridden(features::kV8ExternalMemoryAccountedInGlobalLimit,
                          "--external-memory-accounted-in-global-limit",
                          "--no-external-memory-accounted-in-global-limit");
-  SetV8FlagsIfOverridden(features::kV8GCSpeedUsesCounters,
-                         "--gc-speed-uses-counters",
-                         "--no-gc-speed-uses-counters");
   SetV8FlagsIfOverridden(features::kV8TurboFastApiCalls,
                          "--turbo-fast-api-calls", "--no-turbo-fast-api-calls");
   SetV8FlagsIfOverridden(features::kV8MegaDomIC, "--mega-dom-ic",
@@ -375,6 +387,10 @@ void SetFeatureFlags() {
     SetV8FlagsFormatted("--memory-reducer-gc-count=%i",
                         features::kV8MemoryReducerGCCount.Get());
   }
+  if (base::FeatureList::IsEnabled(features::kV8PreconfigureOldGen)) {
+    SetV8FlagsFormatted("--preconfigured-old-space-size=%i",
+                        features::kV8PreconfigureOldGenSize.Get());
+  }
   SetV8FlagsIfOverridden(features::kV8IncrementalMarkingStartUserVisible,
                          "--incremental-marking-start-user-visible",
                          "--no-incremental-marking-start-user-visible");
@@ -386,8 +402,6 @@ void SetFeatureFlags() {
     SetV8FlagsFormatted("--scavenger-max-new-space-capacity-mb=%i",
                         features::kV8ScavengerMaxCapacity.Get());
   }
-  SetV8FlagsIfOverridden(features::kV8SeparateGCPhases, "--separate-gc-phases",
-                         "--no-separate-gc-phases");
   SetV8FlagsIfOverridden(features::kV8Sparkplug, "--sparkplug",
                          "--no-sparkplug");
   SetV8FlagsIfOverridden(features::kV8Turbofan, "--turbofan", "--no-turbofan");
@@ -492,10 +506,6 @@ void SetFeatureFlags() {
                          "--intel-jcc-erratum-mitigation",
                          "--no-intel-jcc-erratum-mitigation");
 
-  SetV8FlagsIfOverridden(features::kV8UpdateLimitAfterLoading,
-                         "--update-allocation-limits-after-loading",
-                         "--no-update-allocation-limits-after-loading");
-
   SetV8FlagsIfOverridden(features::kV8UseLibmTrigFunctions,
                          "--use-libm-trig-functions",
                          "--no-use-libm-trig-functions");
@@ -505,19 +515,11 @@ void SetFeatureFlags() {
                          "--no-use-original-message-for-stack-trace");
 
   // JavaScript language features.
-  SetV8FlagsIfOverridden(features::kJavaScriptIteratorHelpers,
-                         "--harmony-iterator-helpers",
-                         "--no-harmony-iterator-helpers");
-  SetV8FlagsIfOverridden(features::kJavaScriptPromiseWithResolvers,
-                         "--js-promise-withresolvers",
-                         "--no-js-promise-withresolvers");
   SetV8FlagsIfOverridden(features::kJavaScriptRegExpModifiers,
                          "--js-regexp-modifiers", "--no-js-regexp-modifiers");
   SetV8FlagsIfOverridden(features::kJavaScriptImportAttributes,
                          "--harmony-import-attributes",
                          "--no-harmony-import-attributes");
-  SetV8FlagsIfOverridden(features::kJavaScriptSetMethods,
-                         "--harmony-set-methods", "--no-harmony-set-methods");
   SetV8FlagsIfOverridden(features::kJavaScriptRegExpDuplicateNamedGroups,
                          "--js-regexp-duplicate-named-groups",
                          "--no-js-duplicate-named-groups");
@@ -531,14 +533,6 @@ void SetFeatureFlags() {
   SetV8FlagsIfOverridden(features::kWebAssemblyInliningCallIndirect,
                          "--wasm-inlining-call-indirect",
                          "--no-wasm-inlining-call-indirect");
-  SetV8FlagsIfOverridden(features::kWebAssemblyMultipleMemories,
-                         "--experimental-wasm-multi-memory",
-                         "--no-experimental-wasm-multi-memory");
-  SetV8FlagsIfOverridden(features::kWebAssemblyTurboshaft, "--turboshaft-wasm",
-                         "--no-turboshaft-wasm");
-  SetV8FlagsIfOverridden(features::kWebAssemblyTurboshaftInstructionSelection,
-                         "--turboshaft-wasm-instruction-selection-staged",
-                         "--no-turboshaft-wasm-instruction-selection-staged");
 }
 
 }  // namespace
@@ -556,6 +550,7 @@ void V8Initializer::Initialize(IsolateHolder::ScriptMode mode,
   // instrumentation initialization, see https://crbug.com/v8/11043. --js-flags
   // and other mandatory flags in `SetFlags` must be ordered after feature flag
   // overrides.
+  SetDefaultEnabledFeatureFlags();
   if (!disallow_v8_feature_flag_overrides) {
     SetFeatureFlags();
   }

@@ -10,9 +10,11 @@
 #include <tuple>
 #include <utility>
 
+#include "base/debug/crash_logging.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -209,6 +211,21 @@ void AddWindowClient(
   }
   DCHECK(!info->client_uuid.empty());
 
+  auto* rfh =
+      RenderFrameHostImpl::FromID(service_worker_client.GetRenderFrameHostId());
+  // Workaround to avoid referring the last committed origin before the render
+  // frame host initialize it. It is known to be updated when the last committed
+  // url is updated in DidNavigate(), we assume the invalid last committed URL
+  // means that the invalid last committed origin.
+  //
+  // See: crbug.com/396502398#comment19
+  if (rfh->GetLastCommittedURL().is_empty()) {
+    // TODO(crbug.com/396502398): Add a test for this.
+    // The test is not trivial because the case only happens in the timing
+    // between CommitNavigation() and DidNavigate(), though.
+    return;
+  }
+
   // TODO(crbug.com/385901567): Investigate/clarify the intention of this
   // check.
   // We can get info for a frame that was navigating and ended up with a
@@ -221,9 +238,11 @@ void AddWindowClient(
   // relationship between the origin of the service worker script and frames.
   const url::Origin controller_origin =
       url::Origin::Create(controller->script_url());
-  auto* rfh =
-      RenderFrameHostImpl::FromID(service_worker_client.GetRenderFrameHostId());
   if (!controller_origin.IsSameOriginWith(rfh->GetLastCommittedOrigin())) {
+    SCOPED_CRASH_KEY_STRING256("AddWindowClient", "ctrler_origin",
+                               controller_origin.GetURL().spec());
+    SCOPED_CRASH_KEY_STRING256("AddWindowClient", "rfh_origin",
+                               rfh->GetLastCommittedOrigin().GetURL().spec());
     DUMP_WILL_BE_NOTREACHED();
     return;
   }
@@ -264,6 +283,14 @@ void AddNonWindowClient(
       blink::mojom::ServiceWorkerClientLifecycleState::kActive,
       base::TimeTicks(), service_worker_client.create_time());
   out_clients->push_back(std::move(client_info));
+
+  if (service_worker_client.GetClientType() ==
+      blink::mojom::ServiceWorkerClientType::kSharedWorker) {
+    // This is recorded per the SharedWorker client.
+    base::UmaHistogramBoolean(
+        "ServiceWorker.AddNonWindowClient.SharedWorkerScript.IsBlob",
+        url.SchemeIsBlob());
+  }
 }
 
 struct ServiceWorkerClientInfoSort {
@@ -321,6 +348,11 @@ void GetNonWindowClients(
       AddNonWindowClient(*controllee.second, options->client_type, &clients);
     }
   }
+  if (controller->script_url().SchemeIs("chrome-extension")) {
+    base::UmaHistogramCounts1000(
+        "ServiceWorker.GetClients.ExtensionController.AllClients",
+        clients.size());
+  }
   DidGetClients(std::move(callback), std::move(clients));
 }
 
@@ -334,6 +366,11 @@ void DidGetWindowClients(
     GetNonWindowClients(controller, std::move(options), std::move(callback),
                         std::move(clients));
     return;
+  }
+  if (controller->script_url().SchemeIs("chrome-extension")) {
+    base::UmaHistogramCounts1000(
+        "ServiceWorker.GetClients.ExtensionController.WindowClients",
+        clients.size());
   }
   DidGetClients(std::move(callback), std::move(clients));
 }
@@ -412,8 +449,9 @@ void DidGetExecutionReadyClient(
 
 }  // namespace
 
-void FocusWindowClient(ServiceWorkerClient* service_worker_client,
-                       ClientCallback callback) {
+void FocusWindowClient(
+    ServiceWorkerClient* service_worker_client,
+    blink::mojom::ServiceWorkerHost::FocusClientCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(service_worker_client->IsContainerForWindowClient());
 
@@ -424,17 +462,16 @@ void FocusWindowClient(ServiceWorkerClient* service_worker_client,
       WebContents::FromRenderFrameHost(render_frame_host));
 
   if (!render_frame_host || !web_contents) {
-    std::move(callback).Run(nullptr);
+    auto result = blink::mojom::FocusResult::NewErrorCode(
+        blink::mojom::FocusError::CLIENT_NOT_FOUND);
+    std::move(callback).Run(std::move(result));
     return;
   }
 
-  // Avoid focusing on inactive pages.
-  // TODO(crbug.com/40193903): Running the callback with nullptr
-  // results in NotFoundError whereas TypeError should be invoked
-  // according to the specification.
-  // https://w3c.github.io/ServiceWorker/#client-focus
   if (!render_frame_host->IsActive()) {
-    std::move(callback).Run(nullptr);
+    auto result = blink::mojom::FocusResult::NewErrorCode(
+        blink::mojom::FocusError::CLIENT_INACTIVE);
+    std::move(callback).Run(std::move(result));
     return;
   }
 
@@ -454,7 +491,8 @@ void FocusWindowClient(ServiceWorkerClient* service_worker_client,
       GetWindowClientInfo(service_worker_client->creation_url(), rfh_id,
                           service_worker_client->create_time(),
                           service_worker_client->client_uuid());
-  std::move(callback).Run(std::move(info));
+  auto result = blink::mojom::FocusResult::NewClient(std::move(info));
+  std::move(callback).Run(std::move(result));
 }
 
 void OpenWindow(const GURL& url,
@@ -609,6 +647,12 @@ void GetClient(ServiceWorkerClient* service_worker_client,
         base::TimeTicks(), service_worker_client->create_time());
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), std::move(client_info)));
+    if (service_worker_client->GetClientType() ==
+        blink::mojom::ServiceWorkerClientType::kSharedWorker) {
+      base::UmaHistogramBoolean(
+          "ServiceWorker.GetClient.SharedWorkerScript.IsBlob",
+          url.SchemeIsBlob());
+    }
   }
 }
 

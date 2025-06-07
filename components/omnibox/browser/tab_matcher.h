@@ -80,7 +80,8 @@ class TabMatcher {
 
   // Returns tab wrappers for all open tabs for the current profile.
   virtual std::vector<TabWrapper> GetOpenTabs(
-      const AutocompleteInput* input) const;
+      const AutocompleteInput* input,
+      bool exclude_active_tab = true) const;
 };
 
 #endif  // COMPONENTS_OMNIBOX_BROWSER_TAB_MATCHER_H_

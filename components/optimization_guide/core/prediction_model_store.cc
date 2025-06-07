@@ -4,17 +4,20 @@
 
 #include "components/optimization_guide/core/prediction_model_store.h"
 
+#include "base/command_line.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/rand_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/thread_pool.h"
 #include "base/uuid.h"
 #include "components/optimization_guide/core/model_store_metadata_entry.h"
 #include "components/optimization_guide/core/model_util.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/core/optimization_guide_prefs.h"
+#include "components/optimization_guide/core/optimization_guide_switches.h"
 #include "components/prefs/pref_service.h"
 
 namespace optimization_guide {
@@ -177,10 +180,16 @@ void PredictionModelStore::Initialize(const base::FilePath& base_store_dir) {
   // sessions.
   CleanUpOldModelFiles();
 
-  background_task_runner_->PostTask(
-      FROM_HERE, base::BindOnce(&RemoveInvalidModelDirs, base_store_dir_,
-                                ModelStoreMetadataEntry::GetValidModelDirs(
-                                    GetLocalState())));
+  // crbug.com/404966596 - Removing invalid model dirs could race with unpacking
+  // model overrides. For now, we just skip it if any model overrides were
+  // specified.
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kModelOverride)) {
+    background_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&RemoveInvalidModelDirs, base_store_dir_,
+                                  ModelStoreMetadataEntry::GetValidModelDirs(
+                                      GetLocalState())));
+  }
   background_task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&RecordModelStorageMetrics, base_store_dir_));
 }

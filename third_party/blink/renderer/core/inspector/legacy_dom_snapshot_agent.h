@@ -22,12 +22,17 @@ class LayoutObject;
 class Node;
 class PaintLayer;
 
+struct OriginUrlMap {
+  WTF::HashMap<DOMNodeId, String> map;
+  base::WeakPtrFactory<OriginUrlMap> weak_ptr_factory{this};
+};
+
 class CORE_EXPORT LegacyDOMSnapshotAgent {
   STACK_ALLOCATED();
 
  public:
-  using OriginUrlMap = WTF::HashMap<DOMNodeId, String>;
-  LegacyDOMSnapshotAgent(InspectorDOMDebuggerAgent*, OriginUrlMap*);
+  LegacyDOMSnapshotAgent(InspectorDOMDebuggerAgent*,
+                         base::WeakPtr<OriginUrlMap>);
   LegacyDOMSnapshotAgent(const LegacyDOMSnapshotAgent&) = delete;
   LegacyDOMSnapshotAgent& operator=(const LegacyDOMSnapshotAgent&) = delete;
   ~LegacyDOMSnapshotAgent();
@@ -81,7 +86,7 @@ class CORE_EXPORT LegacyDOMSnapshotAgent {
   using ComputedStylesMap =
       WTF::HashMap<Vector<String>, int, VectorStringHashTraits>;
   using CSSPropertyFilter = Vector<std::pair<String, CSSPropertyID>>;
-  using PaintOrderMap = HeapHashMap<Member<PaintLayer>, int>;
+  using PaintOrderMap = GCedHeapHashMap<Member<PaintLayer>, int>;
 
   // State of current snapshot.
   std::unique_ptr<protocol::Array<protocol::DOMSnapshot::DOMNode>> dom_nodes_;
@@ -98,7 +103,7 @@ class CORE_EXPORT LegacyDOMSnapshotAgent {
   PaintOrderMap* paint_order_map_ = nullptr;
   // Maps a backend node id to the url of the script (if any) that generates
   // the corresponding node.
-  OriginUrlMap* origin_url_map_;
+  base::WeakPtr<OriginUrlMap> origin_url_map_;
   using DocumentOrderMap = HeapHashMap<Member<Document>, int>;
   InspectorDOMDebuggerAgent* dom_debugger_agent_;
 };

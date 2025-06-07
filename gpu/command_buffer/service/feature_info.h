@@ -11,7 +11,6 @@
 
 #include "base/memory/ref_counted.h"
 #include "gpu/command_buffer/common/context_creation_attribs.h"
-#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/gles2_cmd_validation.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
@@ -86,7 +85,7 @@ class GPU_GLES2_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
     bool map_buffer_range = false;
     bool ext_discard_framebuffer = false;
     bool angle_depth_texture = false;
-    bool is_swiftshader_for_webgl = false;
+    bool is_software_webgl = false;
     bool angle_texture_usage = false;
     bool ext_texture_storage = false;
     bool blend_equation_advanced = false;

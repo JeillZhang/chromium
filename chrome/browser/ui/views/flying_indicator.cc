@@ -12,6 +12,7 @@
 #include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/color/color_provider.h"
 #include "ui/gfx/geometry/cubic_bezier.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/bubble/bubble_frame_view.h"
@@ -51,7 +52,8 @@ FlyingIndicator::FlyingIndicator(const gfx::VectorIcon& icon,
 
   std::unique_ptr<views::BubbleDialogDelegateView> bubble_view =
       std::make_unique<views::BubbleDialogDelegateView>(
-          target, views::BubbleBorder::Arrow::FLOAT,
+          views::BubbleDialogDelegateView::CreatePassKey(), target,
+          views::BubbleBorder::Arrow::FLOAT,
           views::BubbleBorder::Shadow::STANDARD_SHADOW);
 
   const auto* color_provider = target_->GetColorProvider();
@@ -91,7 +93,7 @@ FlyingIndicator::FlyingIndicator(const gfx::VectorIcon& icon,
   views::BubbleFrameView* const frame_view =
       bubble_view_ptr->GetBubbleFrameView();
   frame_view->set_hit_test_transparent(true);
-  frame_view->SetCornerRadius(kBubbleCornerRadius);
+  frame_view->SetRoundedCorners(gfx::RoundedCornersF(kBubbleCornerRadius));
   widget_->SetZOrderLevel(ui::ZOrderLevel::kFloatingUIElement);
 
   // Set up the initial position and opacity, store the desired size, and start

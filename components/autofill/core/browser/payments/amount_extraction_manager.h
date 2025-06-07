@@ -10,6 +10,8 @@
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/common/dense_set.h"
 
 namespace autofill {
 class AutofillDriver;
@@ -34,11 +36,23 @@ namespace autofill::payments {
 // UI together. If not, it does nothing.
 class AmountExtractionManager {
  public:
+  // Enum for all features that require amount extraction.
+  enum class EligibleFeature {
+    // Buy now pay later uses the amount extracted by amount extraction to
+    // determine if the current purchase is eligible for buy now pay later.
+    kBnpl = 0,
+    kMaxValue = kBnpl,
+  };
+
   explicit AmountExtractionManager(BrowserAutofillManager* autofill_manager);
   AmountExtractionManager(const AmountExtractionManager& other) = delete;
   AmountExtractionManager& operator=(const AmountExtractionManager& other) =
       delete;
   virtual ~AmountExtractionManager();
+
+  // Timeout limit for the amount extraction in millisecond.
+  static constexpr base::TimeDelta kAmountExtractionWaitTime =
+      base::Milliseconds(150);
 
   // This function attempts to convert a string representation of a monetary
   // value in dollars into a uint64_t by parsing it as a double and multiplying
@@ -51,10 +65,20 @@ class AmountExtractionManager {
   static std::optional<uint64_t> MaybeParseAmountToMonetaryMicroUnits(
       const std::string& amount);
 
-  // Decide whether amount extraction should be triggered.
-  virtual bool ShouldTriggerAmountExtraction(const SuggestionsContext& context,
-                                             bool should_suppress_suggestions,
-                                             bool has_suggestions) const;
+  // Returns the set of all eligible features that depend on amount extraction
+  // result when:
+  //   Autofill is available in the given `SuggestionsContext`;
+  //   Autofill provides non-empty, non-suppressed suggestions;
+  //   The form being interacted with is a credit card form but not the CVC
+  //   field of the credit card form;
+  //   There is a feature that can use amount extraction on the current
+  //   checkout page;
+  //   Amount Extraction feature is enabled;
+  DenseSet<EligibleFeature> GetEligibleFeatures(
+      const SuggestionsContext& context,
+      bool should_suppress_suggestions,
+      bool has_suggestions,
+      FieldType field_type) const;
 
   // Trigger the search for the final checkout amount from the DOM of the
   // current page.
@@ -62,20 +86,30 @@ class AmountExtractionManager {
 
   void SetSearchRequestPendingForTesting(bool search_request_pending);
 
+  bool GetSearchRequestPendingForTesting();
+
  private:
-  // Check whether the host of the checkout webpage exists in the amount
-  // extraction allowlists.
-  bool IsUrlEligibleForAmountExtraction() const;
+  friend class AmountExtractionManagerTest;
 
   // Invoked after the amount extraction process completes.
   // `extracted_amount` provides the extracted amount upon success and an
   // empty string upon failure. `search_request_start_timestamp` is the time
   // when TriggerCheckoutAmountExtraction is called.
-  void OnCheckoutAmountReceived(base::TimeTicks search_request_start_timestamp,
-                                const std::string& extracted_amount);
+  virtual void OnCheckoutAmountReceived(
+      base::TimeTicks search_request_start_timestamp,
+      const std::string& extracted_amount);
 
-  // Get the driver associated with the main frame as the final checkout amount
-  // is on the main frame.
+  // Checks whether the current amount search has reached the timeout or not.
+  // If so, cancel the ongoing search.
+  virtual void OnTimeoutReached();
+
+  // Checks eligibility of features depending on amount extraction result, and
+  // returns the eligible features.
+  DenseSet<EligibleFeature>
+  CheckEligiblilityForFeaturesRequiringAmountExtraction() const;
+
+  // Gets the driver associated with the main frame as the final checkout
+  // amount is on the main frame.
   AutofillDriver* GetMainFrameDriver();
 
   // The owning BrowserAutofillManager.

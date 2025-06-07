@@ -15,11 +15,11 @@
 #include "base/time/time.h"
 #include "chrome/browser/ip_protection/ip_protection_core_host_factory.h"
 #include "components/ip_protection/common/ip_protection_data_types.h"
+#include "components/ip_protection/common/ip_protection_probabilistic_reveal_token_direct_fetcher.h"
 #include "components/ip_protection/common/ip_protection_proxy_config_direct_fetcher.h"
 #include "components/ip_protection/common/ip_protection_telemetry.h"
 #include "components/ip_protection/common/ip_protection_token_direct_fetcher.h"
 #include "components/ip_protection/mojom/core.mojom.h"
-#include "components/policy/core/common/management/management_service.h"
 #include "components/privacy_sandbox/tracking_protection_settings.h"
 #include "components/privacy_sandbox/tracking_protection_settings_observer.h"
 #include "components/signin/public/identity_manager/access_token_info.h"
@@ -57,7 +57,6 @@ class IpProtectionCoreHost
   IpProtectionCoreHost(
       signin::IdentityManager* identity_manager,
       privacy_sandbox::TrackingProtectionSettings* tracking_protection_settings,
-      policy::ManagementService* management_service,
       PrefService* pref_service,
       Profile* profile);
 
@@ -71,6 +70,8 @@ class IpProtectionCoreHost
                         ip_protection::ProxyLayer proxy_layer,
                         TryGetAuthTokensCallback callback) override;
   void GetProxyConfig(GetProxyConfigCallback callback) override;
+  void TryGetProbabilisticRevealTokens(
+      TryGetProbabilisticRevealTokensCallback callback) override;
 
   static bool CanIpProtectionBeEnabled();
   bool IsIpProtectionEnabled();
@@ -114,7 +115,7 @@ class IpProtectionCoreHost
 
   // Returns whether IP Protection should be disabled for managed users and/or
   // devices, for testing.
-  bool ShouldDisableIpProtectionForManagedForTesting();
+  bool ShouldDisableIpProtectionForEnterpriseForTesting();
 
  private:
   friend class IpProtectionCoreHostTest;
@@ -129,8 +130,9 @@ class IpProtectionCoreHost
       base::OnceCallback<void(GoogleServiceAuthError error,
                               signin::AccessTokenInfo access_token_info)>;
 
-  // Set up `ip_protection_proxy_config_fetcher_` and
-  // `ip_protection_token_fetcher_` if
+  // Set up `ip_protection_proxy_config_fetcher_`,
+  // `ip_protection_token_fetcher_` and
+  // `ip_protection_prt_fetcher_` if
   // not already initialized. This accomplishes lazy loading of these components
   // to break dependency loops in browser startup.
   void SetUp();
@@ -162,7 +164,7 @@ class IpProtectionCoreHost
 
   // Returns whether IP Protection should be disabled for managed users and/or
   // devices.
-  bool ShouldDisableIpProtectionForManaged();
+  bool ShouldDisableIpProtectionForEnterprise();
 
   // Instruct the `IpProtectionConfigCache()`(s) in the Network Service to
   // ignore any previously sent `try_again_after` times.
@@ -188,9 +190,6 @@ class IpProtectionCoreHost
   // is called, but will otherwise be non-null.
   raw_ptr<privacy_sandbox::TrackingProtectionSettings>
       tracking_protection_settings_;
-  // Used to check whether the browser is being managed. Will be set to nullptr
-  // after `Shutdown()`, but will otherwise be non-null.
-  raw_ptr<policy::ManagementService> management_service_;
   // Used to request the state of the IP Protection user setting. Will be set to
   // nullptr after `Shutdown()` is called.
   raw_ptr<PrefService> pref_service_;
@@ -200,6 +199,9 @@ class IpProtectionCoreHost
   // corresponding dependency (if needed) registered in the factory class.
   raw_ptr<Profile> profile_;
 
+  std::unique_ptr<
+      ip_protection::IpProtectionProbabilisticRevealTokenDirectFetcher>
+      ip_protection_prt_fetcher_;
   std::unique_ptr<ip_protection::IpProtectionProxyConfigDirectFetcher>
       ip_protection_proxy_config_fetcher_;
   std::unique_ptr<ip_protection::IpProtectionTokenDirectFetcher>

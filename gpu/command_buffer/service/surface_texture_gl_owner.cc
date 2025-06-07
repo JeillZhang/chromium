@@ -19,6 +19,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
+#include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
 #include "gpu/command_buffer/service/abstract_texture_android.h"
 #include "gpu/config/gpu_finch_features.h"
@@ -303,8 +304,7 @@ bool SurfaceTextureGLOwner::DecomposeTransform(float mtx[16],
 bool SurfaceTextureGLOwner::OnMemoryDump(
     const base::trace_event::MemoryDumpArgs& args,
     base::trace_event::ProcessMemoryDump* pmd) {
-  auto dump_name =
-      base::StringPrintf("gpu/media_texture_owner_%d", tracing_id());
+  auto dump_name = base::StringPrintf(kMemoryDumpPrefix, tracing_id());
 
   // We don't know the exact format of the image so we use NV12 as approximation
   // as the most popular format.

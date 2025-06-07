@@ -14,11 +14,13 @@
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/history_embeddings/history_embeddings_service_factory.h"
 #include "chrome/browser/history_embeddings/history_embeddings_utils.h"
+#include "chrome/browser/passage_embeddings/passage_embedder_model_observer_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/url_row.h"
@@ -127,7 +129,7 @@ void HistoryEmbeddingsTabHelper::OnUpdatedHistoryForNavigation(
   if (!navigation_handle->IsInPrimaryMainFrame() ||
       !history_embeddings::IsHistoryEmbeddingsEnabledForProfile(
           Profile::FromBrowserContext(web_contents()->GetBrowserContext())) ||
-      !GetHistoryEmbeddingsService()) {
+      !GetHistoryEmbeddingsService() || !GetPassageEmbedderModelObserver()) {
     return;
   }
 
@@ -332,6 +334,13 @@ history_embeddings::HistoryEmbeddingsService*
 HistoryEmbeddingsTabHelper::GetHistoryEmbeddingsService() {
   CHECK(web_contents());
   return HistoryEmbeddingsServiceFactory::GetForProfile(
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext()));
+}
+
+passage_embeddings::PassageEmbedderModelObserver*
+HistoryEmbeddingsTabHelper::GetPassageEmbedderModelObserver() {
+  CHECK(web_contents());
+  return passage_embeddings::PassageEmbedderModelObserverFactory::GetForProfile(
       Profile::FromBrowserContext(web_contents()->GetBrowserContext()));
 }
 

@@ -175,7 +175,7 @@ ExtensionsMenuSitePermissionsPageView::ExtensionsMenuSitePermissionsPageView(
   // This value must be the same as the `HoverButton` vertical margin.
   const int hover_button_vertical_spacing =
       chrome_layout_provider->GetDistanceMetric(
-          DISTANCE_CONTROL_LIST_VERTICAL) /
+          views::DISTANCE_CONTROL_LIST_VERTICAL) /
       2;
 
   // Views that need configuration after construction (e.g access size after a
@@ -211,7 +211,7 @@ ExtensionsMenuSitePermissionsPageView::ExtensionsMenuSitePermissionsPageView(
                 views::Builder<views::RadioButton>()
                     .SetText(GetSiteAccessRadioButtonText(site_access))
                     .SetLabelStyle(views::style::STYLE_BODY_3)
-                    .SetEnabledTextColorIds(kColorExtensionsMenuText)
+                    .SetEnabledTextColors(kColorExtensionsMenuText)
                     .SetGroup(kSiteAccessButtonsId)
                     // To align the radio button icon under the header back
                     // button we add the back button border to the
@@ -231,7 +231,7 @@ ExtensionsMenuSitePermissionsPageView::ExtensionsMenuSitePermissionsPageView(
                 views::Builder<views::Label>()
                     .SetText(GetSiteAccessRadioButtonDescription(site_access))
                     .SetTextStyle(views::style::STYLE_BODY_5)
-                    .SetEnabledColorId(kColorExtensionsMenuSecondaryText)
+                    .SetEnabledColor(kColorExtensionsMenuSecondaryText)
                     .SetHorizontalAlignment(gfx::ALIGN_LEFT)
                     .SetMultiLine(true)
                     .SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(
@@ -283,11 +283,14 @@ ExtensionsMenuSitePermissionsPageView::ExtensionsMenuSitePermissionsPageView(
                           views::Builder<views::Label>()
                               .CopyAddressTo(&extension_name_)
                               .SetTextStyle(views::style::STYLE_HEADLINE_4)
-                              .SetEnabledColorId(
+                              .SetEnabledColor(
                                   kColorExtensionsMenuSecondaryText)
                               .SetProperty(views::kMarginsKey,
                                            gfx::Insets::TLBR(
-                                               0, horizontal_spacing, 0, 0))),
+                                               0, horizontal_spacing, 0, 0))
+                              .SetElideBehavior(gfx::ELIDE_TAIL)
+                              .SetProperty(views::kFlexBehaviorKey,
+                                stretch_specification)),
                   // Close button.
                   views::Builder<views::Button>(
                       views::BubbleFrameView::CreateCloseButton(
@@ -309,7 +312,7 @@ ExtensionsMenuSitePermissionsPageView::ExtensionsMenuSitePermissionsPageView(
                       .SetText(l10n_util::GetStringUTF16(
                           IDS_EXTENSIONS_MENU_SITE_PERMISSIONS_PAGE_SITE_ACCESS_LABEL))
                       .SetTextStyle(views::style::STYLE_BODY_3_EMPHASIS)
-                      .SetEnabledColorId(kColorExtensionsMenuText)
+                      .SetEnabledColor(kColorExtensionsMenuText)
                       .SetHorizontalAlignment(gfx::ALIGN_LEFT),
                   create_radio_button_builder(
                       PermissionsManager::UserSiteAccess::kOnClick),
@@ -331,7 +334,7 @@ ExtensionsMenuSitePermissionsPageView::ExtensionsMenuSitePermissionsPageView(
                               .SetText(l10n_util::GetStringUTF16(
                                   IDS_EXTENSIONS_MENU_SITE_PERMISSIONS_PAGE_SHOW_REQUESTS_LABEL))
                               .SetTextStyle(views::style::STYLE_BODY_3_EMPHASIS)
-                              .SetEnabledColorId(kColorExtensionsMenuText)
+                              .SetEnabledColor(kColorExtensionsMenuText)
                               .SetProperty(views::kFlexBehaviorKey,
                                            stretch_specification)
                               .SetHorizontalAlignment(gfx::ALIGN_LEFT),
@@ -441,6 +444,11 @@ ExtensionsMenuSitePermissionsPageView::GetSiteAccessButtonForTesting(
   std::vector<views::RadioButton*> site_access_buttons =
       GetSiteAccessButtons(this);
   return site_access_buttons[GetSiteAccessButtonIndex(site_access)];
+}
+
+views::Label*
+ExtensionsMenuSitePermissionsPageView::GetExtensionNameForTesting() {
+  return extension_name_;
 }
 
 BEGIN_METADATA(ExtensionsMenuSitePermissionsPageView)

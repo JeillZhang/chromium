@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
 #include "ash/constants/ash_features.h"
 #include "ash/root_window_controller.h"
@@ -21,6 +22,7 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/time/time.h"
@@ -33,8 +35,6 @@
 #include "chrome/browser/ash/secure_channel/nearby_connector_factory.h"
 #include "chrome/browser/ash/secure_channel/secure_channel_client_provider.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser_list.h"
-#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/common/channel_info.h"
 #include "chromeos/ash/components/multidevice/logging/logging.h"
@@ -190,7 +190,7 @@ void EcheAppManagerFactory::ShowNotification(
 
   if (info->category() ==
       LaunchAppHelper::NotificationInfo::Category::kNative) {
-    if (absl::get<LaunchAppHelper::NotificationInfo::NotificationType>(
+    if (std::get<LaunchAppHelper::NotificationInfo::NotificationType>(
             info->type()) ==
         LaunchAppHelper::NotificationInfo::NotificationType::kScreenLock) {
       weak_ptr->notification_controller_->ShowScreenLockNotification(

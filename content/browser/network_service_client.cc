@@ -33,6 +33,7 @@
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "net/base/features.h"
 #include "net/base/network_change_notifier.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "services/network/public/mojom/network_change_manager.mojom-forward.h"
@@ -308,6 +309,11 @@ void NetworkServiceClient::OnPrivateNetworkAccessPermissionRequired(
   std::move(callback).Run(false);
 }
 
+void NetworkServiceClient::OnLocalNetworkAccessPermissionRequired(
+    OnLocalNetworkAccessPermissionRequiredCallback callback) {
+  std::move(callback).Run(false);
+}
+
 void NetworkServiceClient::OnClearSiteData(
     const GURL& url,
     const std::string& header_value,
@@ -341,6 +347,10 @@ void NetworkServiceClient::OnSharedStorageHeaderReceived(
     OnSharedStorageHeaderReceivedCallback callback) {
   std::move(callback).Run();
 }
+
+void NetworkServiceClient::OnAdAuctionEventRecordHeaderReceived(
+    network::AdAuctionEventRecord event_record,
+    const std::optional<url::Origin>& top_frame_origin) {}
 
 void NetworkServiceClient::Clone(
     mojo::PendingReceiver<network::mojom::URLLoaderNetworkServiceObserver>

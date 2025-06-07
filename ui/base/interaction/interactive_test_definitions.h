@@ -258,6 +258,39 @@ testing::Matcher<T> CreateMatcherFromValue(U value) {
   }
 }
 
+// Serves as a strongly-typed wrapper around a MultiStep that carries additional
+// semantic or syntactic information; for example the "Then" and "Else"
+// sequences of an `If()`.
+//
+// This object is move-constructible and move-assignable, but only to blocks of
+// the same type `T`. This prevents a user from writing `Else()` where a
+// `ThenBlock` is expected.
+//
+// Do not use directly. To create a block type for use in InteractiveTest
+// primitives, see `DeclareStepBlockFactory()`, which also creates an
+// appropriately-named factory method.
+template <typename T>
+class StepBlock {
+ public:
+  StepBlock();
+  explicit StepBlock(MultiStep steps) : steps_(std::move(steps)) {}
+  StepBlock(StepBlock<T>&& other) noexcept = default;
+  StepBlock& operator=(StepBlock<T>&& other) noexcept = default;
+  ~StepBlock() = default;
+
+  MultiStep& steps() { return steps_; }
+  const MultiStep& steps() const { return steps_; }
+
+ private:
+  MultiStep steps_;
+};
+
+// Explicitly exclude lvalue references when calling certain methods. These
+// methods would not compile anyway, but this concept is provided as a courtesy
+// to generate better compile errors.
+template <typename T>
+concept IsValueOrRvalue = !std::is_lvalue_reference_v<T>;
+
 }  // namespace ui::test::internal
 
 #endif  // UI_BASE_INTERACTION_INTERACTIVE_TEST_DEFINITIONS_H_

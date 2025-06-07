@@ -212,7 +212,7 @@ bool LayoutTable::HasBackgroundForPaint() const {
   if (StyleRef().HasBackground())
     return true;
   DCHECK_GT(PhysicalFragmentCount(), 0u);
-  const TableFragmentData::ColumnGeometries* column_geometries =
+  const GCedTableColumnGeometries* column_geometries =
       GetPhysicalFragment(0)->TableColumnGeometries();
   if (column_geometries) {
     for (const auto& column_geometry : *column_geometries) {
@@ -231,11 +231,12 @@ void LayoutTable::AddChild(LayoutObject* child, LayoutObject* before_child) {
   DCHECK(child->IsLayoutNGObject() ||
          (!child->IsTableCaption() && !child->IsLayoutTableCol() &&
           !child->IsTableSection()));
-  bool wrap_in_anonymous_section = !child->IsTableCaption() &&
-                                   !child->IsLayoutTableCol() &&
-                                   !child->IsTableSection();
 
-  if (!wrap_in_anonymous_section) {
+  const bool can_be_direct_child = child->IsTableCaption() ||
+                                   child->IsLayoutTableCol() ||
+                                   child->IsTableSection();
+
+  if (can_be_direct_child) {
     if (before_child && before_child->Parent() != this)
       before_child = SplitAnonymousBoxesAroundChild(before_child);
     LayoutBox::AddChild(child, before_child);

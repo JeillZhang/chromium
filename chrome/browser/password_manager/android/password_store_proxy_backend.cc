@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/barrier_callback.h"
@@ -43,7 +44,7 @@ void InvokeCallbackWithCombinedStatus(base::OnceCallback<void(bool)> completion,
 
 void RecordPasswordDeletionResult(PasswordChangesOrError result) {
   bool is_operation_successful = true;
-  if (absl::holds_alternative<PasswordStoreBackendError>(result)) {
+  if (std::holds_alternative<PasswordStoreBackendError>(result)) {
     is_operation_successful = false;
   }
   base::UmaHistogramBoolean(
@@ -53,7 +54,7 @@ void RecordPasswordDeletionResult(PasswordChangesOrError result) {
     return;
   }
 
-  PasswordChanges changes = absl::get<PasswordChanges>(std::move(result));
+  PasswordChanges changes = std::get<PasswordChanges>(std::move(result));
 
   if (changes.has_value()) {
     base::UmaHistogramCounts1000(
@@ -224,14 +225,6 @@ void PasswordStoreProxyBackend::OnSyncServiceInitialized(
     prefs_->SetInteger(prefs::kCurrentMigrationVersionToGoogleMobileServices,
                        0);
   }
-}
-
-void PasswordStoreProxyBackend::RecordAddLoginAsyncCalledFromTheStore() {
-  main_backend()->RecordAddLoginAsyncCalledFromTheStore();
-}
-
-void PasswordStoreProxyBackend::RecordUpdateLoginAsyncCalledFromTheStore() {
-  main_backend()->RecordUpdateLoginAsyncCalledFromTheStore();
 }
 
 base::WeakPtr<PasswordStoreBackend> PasswordStoreProxyBackend::AsWeakPtr() {

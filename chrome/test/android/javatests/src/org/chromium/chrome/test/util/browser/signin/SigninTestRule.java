@@ -7,15 +7,12 @@ package org.chromium.chrome.test.util.browser.signin;
 import static org.hamcrest.Matchers.is;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.chrome.browser.device_lock.DeviceLockActivityLauncherImpl;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
-import org.chromium.chrome.test.util.browser.sync.SyncTestUtil;
 import org.chromium.components.signin.Tribool;
 import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
@@ -23,13 +20,9 @@ import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.test.util.AccountCapabilitiesBuilder;
 import org.chromium.components.signin.test.util.FakeAccountManagerFacade;
 import org.chromium.components.signin.test.util.TestAccounts;
-import org.chromium.components.sync.SyncService;
 
 /**
  * This test rule mocks AccountManagerFacade and manages sign-in/sign-out.
- *
- * <p>TODO(crbug.com/40228092): Migrate usage of {@link AccountManagerTestRule} that need native to
- * this rule, then inline the methods that call native.
  *
  * <p>Calling the sign-in functions will invoke native code, therefore this should only be used in
  * on-device tests. In Robolectric tests, use the {@link AccountManagerTestRule} instead as a simple
@@ -93,6 +86,15 @@ public class SigninTestRule extends AccountManagerTestRule {
         mIsSignedIn = true;
     }
 
+    /** Adds and signs in with the provided account with consent level Sync. */
+    // TODO(crbug.com/40066949): Remove once Sync-the-feature is fully removed.
+    public void addAccountThenSigninWithConsentLevelSync(AccountInfo accountInfo) {
+        assert !mIsSignedIn : "An account is already signed in!";
+        addAccount(accountInfo);
+        SigninTestUtil.signinWithConsentLevelSync(accountInfo);
+        mIsSignedIn = true;
+    }
+
     /** Adds and signs in with the provided account and opts into history sync. */
     public void addAccountThenSigninAndEnableHistorySync(AccountInfo accountInfo) {
         assert !mIsSignedIn : "An account is already signed in!";
@@ -101,22 +103,12 @@ public class SigninTestRule extends AccountManagerTestRule {
         mIsSignedIn = true;
     }
 
-    /** Adds and signs in an account with the default name and enables sync. */
-    public CoreAccountInfo addTestAccountThenSigninAndEnableSync() {
-        return addTestAccountThenSigninAndEnableSync(
-                SyncTestUtil.getSyncServiceForLastUsedProfile());
-    }
-
-    /**
-     * Adds and signs in an account with the default name and enables sync.
-     *
-     * @param syncService SyncService object to set up sync, if null, sync won't start.
-     */
-    public CoreAccountInfo addTestAccountThenSigninAndEnableSync(
-            @Nullable SyncService syncService) {
+    /** Adds and signs in an account with the default name using consent level Sync. */
+    // TODO(crbug.com/40066949): Remove once Sync-the-feature is fully removed.
+    public CoreAccountInfo addTestAccountThenSigninWithConsentLevelSync() {
         assert !mIsSignedIn : "An account is already signed in!";
         CoreAccountInfo coreAccountInfo = addAccount(TEST_ACCOUNT_EMAIL);
-        SigninTestUtil.signinAndEnableSync(coreAccountInfo, syncService);
+        SigninTestUtil.signinWithConsentLevelSync(coreAccountInfo);
         mIsSignedIn = true;
         return coreAccountInfo;
     }
@@ -158,44 +150,6 @@ public class SigninTestRule extends AccountManagerTestRule {
         // after sign-in completes.
         waitForChildSettingPropagation(testChildAccount);
         return testChildAccount;
-    }
-
-    /**
-     * Adds a child account, waits for auto-signin to complete, and enables sync.
-     *
-     * @param syncService SyncService object to set up sync, if null, sync won't start.
-     */
-    public CoreAccountInfo addChildTestAccountThenEnableSync(@Nullable SyncService syncService) {
-        CoreAccountInfo coreAccountInfo = addChildTestAccountThenWaitForSignin();
-
-        // The auto sign-in should leave the user in signed-in, non-syncing state - check this and
-        // enable sync.
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    assert IdentityServicesProvider.get()
-                                            .getIdentityManager(
-                                                    ProfileManager.getLastUsedRegularProfile())
-                                            .getPrimaryAccountInfo(ConsentLevel.SYNC)
-                                    == null
-                            : "Sync should not be enabled";
-                });
-        SigninTestUtil.signinAndEnableSync(coreAccountInfo, syncService);
-
-        return coreAccountInfo;
-    }
-
-    /**
-     * Adds and signs in an account with the default name and enables sync.
-     *
-     * @param syncService SyncService object to set up sync, if null, sync won't
-     *         start.
-     * @param isChild Whether this is a supervised child account.
-     */
-    public CoreAccountInfo addTestAccountThenSigninAndEnableSync(
-            @Nullable SyncService syncService, boolean isChild) {
-        return isChild
-                ? addChildTestAccountThenEnableSync(syncService)
-                : addTestAccountThenSigninAndEnableSync(syncService);
     }
 
     /**

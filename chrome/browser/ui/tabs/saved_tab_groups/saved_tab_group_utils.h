@@ -7,14 +7,15 @@
 
 #include <unordered_set>
 
+#include "base/containers/span.h"
 #include "base/uuid.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_keyed_service.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_deletion_dialog_controller.h"
 #include "chrome/browser/ui/views/tabs/recent_activity_bubble_dialog_view.h"
 #include "components/data_sharing/public/group_data.h"
 #include "components/saved_tab_groups/public/saved_tab_group.h"
 #include "components/saved_tab_groups/public/types.h"
+#include "components/tabs/public/tab_group.h"
 #include "ui/base/interaction/element_tracker.h"
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
@@ -61,9 +62,9 @@ class SavedTabGroupUtils {
   static void RemoveGroupFromTabstrip(
       const Browser* browser,
       const tab_groups::TabGroupId& local_group);
-  static void UngroupSavedGroup(const Browser* browser,
+  static void UngroupSavedGroup(Browser* browser,
                                 const base::Uuid& saved_group_guid);
-  static void DeleteSavedGroup(const Browser* browser,
+  static void DeleteSavedGroup(Browser* browser,
                                const base::Uuid& saved_group_guid);
   static void LeaveSharedGroup(const Browser* browser,
                                const base::Uuid& saved_group_guid);
@@ -84,9 +85,9 @@ class SavedTabGroupUtils {
   // runs the callback if the dialog is not shown or it shows the dialog
   // and the callback is run asynchronously through the dialog.
   static void MaybeShowSavedTabGroupDeletionDialog(
-      const Browser* browser,
+      Browser* browser,
       GroupDeletionReason reason,
-      const std::vector<TabGroupId>& group_ids,
+      base::span<const TabGroupId> group_ids,
       base::OnceCallback<void(DeletionDialogController::DeletionDialogTiming)>
           callback);
 
@@ -132,13 +133,6 @@ class SavedTabGroupUtils {
       Profile* profile,
       const base::Uuid& saved_id);
 
-  // Moves an open saved tab group from `source_browser` to `target_browser`.
-  static void MoveGroupToExistingWindow(
-      Browser* source_browser,
-      Browser* target_browser,
-      const tab_groups::TabGroupId& local_group_id,
-      const base::Uuid& saved_group_id);
-
   // Activates the first tab in the saved group. If a tab in the group is
   // already activated, then we focus the window the group belongs to instead.
   static void FocusFirstTabOrWindowInOpenGroup(
@@ -174,9 +168,12 @@ class SavedTabGroupUtils {
       Profile* profile,
       LocalTabGroupID group_id);
 
-  // Returns the Recent Activity Log for this tab group.
+  // Returns the Recent Activity Log for this tab group. Optionally, filter for
+  // the given tab.
   static std::vector<collaboration::messaging::ActivityLogItem>
-  GetRecentActivity(Profile* profile, LocalTabGroupID group_id);
+  GetRecentActivity(Profile* profile,
+                    LocalTabGroupID group_id,
+                    std::optional<LocalTabID> tab_id = std::nullopt);
 
   // Returns the tab with this id if contained in this group. The group
   // must exist.

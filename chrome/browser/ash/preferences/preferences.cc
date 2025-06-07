@@ -9,6 +9,7 @@
 #include <optional>
 #include <vector>
 
+#include "ash/birch/coral_util.h"
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
@@ -16,6 +17,7 @@
 #include "ash/public/ash_interfaces.h"
 #include "ash/public/cpp/ash_prefs.h"
 #include "ash/public/cpp/ime_controller.h"
+#include "ash/public/cpp/lobster/lobster_enums.h"
 #include "ash/shell.h"
 #include "ash/system/geolocation/geolocation_controller.h"
 #include "ash/system/privacy_hub/privacy_hub_controller.h"
@@ -57,6 +59,7 @@
 #include "chromeos/ash/components/dbus/update_engine/update_engine.pb.h"
 #include "chromeos/ash/components/dbus/update_engine/update_engine_client.h"
 #include "chromeos/ash/components/editor_menu/public/cpp/editor_consent_status.h"
+#include "chromeos/ash/components/editor_menu/public/cpp/editor_enterprise_policy_enums.h"
 #include "chromeos/ash/components/geolocation/simple_geolocation_provider.h"
 #include "chromeos/ash/components/peripheral_notification/peripheral_notification_manager.h"
 #include "chromeos/ash/components/settings/cros_settings.h"
@@ -112,10 +115,6 @@ const char* const kCopyToKnownUserPrefs[] = {
     prefs::kLoginDisplayPasswordButtonEnabled,
     ::prefs::kUse24HourClock,
     prefs::kDarkModeEnabled};
-
-bool AreScrollSettingsAllowed() {
-  return base::FeatureList::IsEnabled(features::kAllowScrollSettings);
-}
 
 }  // namespace
 
@@ -283,10 +282,18 @@ void Preferences::RegisterProfilePrefs(
   registry->RegisterBooleanPref(prefs::kAssistPredictiveWritingEnabled, true);
   registry->RegisterBooleanPref(prefs::kEmojiSuggestionEnabled, true);
   registry->RegisterBooleanPref(prefs::kEmojiSuggestionEnterpriseAllowed, true);
+  registry->RegisterIntegerPref(
+      prefs::kHmwManagedSettings,
+      base::to_underlying(chromeos::editor_menu::EditorEnterprisePolicy::
+                              kAllowedWithModelImprovement));
   registry->RegisterBooleanPref(prefs::kOrcaEnabled, true);
   registry->RegisterBooleanPref(prefs::kOrcaFeedbackEnabled, true);
   registry->RegisterBooleanPref(prefs::kManagedOrcaEnabled, true);
   registry->RegisterBooleanPref(prefs::kLobsterEnabled, true);
+  registry->RegisterIntegerPref(
+      prefs::kLobsterEnterprisePolicySettings,
+      base::to_underlying(
+          ash::LobsterEnterprisePolicyValue::kAllowedWithModelImprovement));
   registry->RegisterBooleanPref(
       prefs::kManagedPhysicalKeyboardAutocorrectAllowed, true);
   registry->RegisterBooleanPref(
@@ -589,7 +596,6 @@ void Preferences::RegisterProfilePrefs(
   registry->RegisterBooleanPref(prefs::kMagicBoostEnabled, true);
 
   registry->RegisterBooleanPref(prefs::kHmrEnabled, true);
-  registry->RegisterBooleanPref(prefs::kHmrFeedbackAllowed, true);
   registry->RegisterIntegerPref(prefs::kHmrManagedSettings, 0);
 
   registry->RegisterIntegerPref(
@@ -599,6 +605,10 @@ void Preferences::RegisterProfilePrefs(
   registry->RegisterIntegerPref(prefs::kHMRConsentWindowDismissCount, 0);
 
   registry->RegisterIntegerPref(prefs::kGenAIPhotoEditingSettings, 0);
+
+  registry->RegisterIntegerPref(
+      prefs::kGenAISmartGroupingSettings,
+      base::to_underlying(coral_util::GenAISmartGroupingSettings::kAllowed));
 
   registry->RegisterBooleanPref(
       prefs::kLauncherResultEverLaunched, false,
@@ -669,6 +679,8 @@ void Preferences::RegisterProfilePrefs(
       ::prefs::kSkyVaultMigrationState,
       static_cast<int>(policy::local_user_files::State::kUninitialized));
   registry->RegisterIntegerPref(::prefs::kSkyVaultMigrationRetryCount, 0);
+  registry->RegisterTimePref(::prefs::kSkyVaultMigrationScheduledStartTime,
+                             base::Time());
   registry->RegisterTimePref(::prefs::kSkyVaultMigrationStartTime,
                              base::Time());
 }
@@ -981,12 +993,6 @@ void Preferences::ApplyPreferences(ApplyReason reason,
     const int sensitivity_int = mouse_sensitivity_.GetValue();
     if (user_is_active) {
       mouse_settings.SetSensitivity(sensitivity_int);
-
-      // With the flag off, also set scroll sensitivity (legacy fallback).
-      // TODO(https://crbug.com/836258): Remove check when flag is removed.
-      if (!AreScrollSettingsAllowed()) {
-        mouse_settings.SetScrollSensitivity(sensitivity_int);
-      }
     }
     ReportSensitivityPrefApplication(reason, "Mouse.PointerSensitivity.Changed",
                                      "Mouse.PointerSensitivity.Started",
@@ -994,11 +1000,7 @@ void Preferences::ApplyPreferences(ApplyReason reason,
   }
   if (reason != REASON_PREF_CHANGED ||
       pref_name == prefs::kMouseScrollSensitivity) {
-    // With the flag off, use to normal sensitivity (legacy fallback).
-    // TODO(https://crbug.com/836258): Remove check when flag is removed.
-    const int sensitivity_int = AreScrollSettingsAllowed()
-                                    ? mouse_scroll_sensitivity_.GetValue()
-                                    : mouse_sensitivity_.GetValue();
+    const int sensitivity_int = mouse_scroll_sensitivity_.GetValue();
     if (user_is_active) {
       mouse_settings.SetScrollSensitivity(sensitivity_int);
     }
@@ -1018,12 +1020,6 @@ void Preferences::ApplyPreferences(ApplyReason reason,
     const int sensitivity_int = touchpad_sensitivity_.GetValue();
     if (user_is_active) {
       touchpad_settings.SetSensitivity(sensitivity_int);
-
-      // With the flag off, also set scroll sensitivity (legacy fallback).
-      // TODO(https://crbug.com/836258): Remove check when flag is removed.
-      if (!AreScrollSettingsAllowed()) {
-        touchpad_settings.SetScrollSensitivity(sensitivity_int);
-      }
     }
     ReportSensitivityPrefApplication(
         reason, "Touchpad.PointerSensitivity.Changed",
@@ -1031,11 +1027,7 @@ void Preferences::ApplyPreferences(ApplyReason reason,
   }
   if (reason != REASON_PREF_CHANGED ||
       pref_name == prefs::kTouchpadScrollSensitivity) {
-    // With the flag off, use normal sensitivity (legacy fallback).
-    // TODO(https://crbug.com/836258): Remove check when flag is removed.
-    const int sensitivity_int = AreScrollSettingsAllowed()
-                                    ? touchpad_scroll_sensitivity_.GetValue()
-                                    : touchpad_sensitivity_.GetValue();
+    const int sensitivity_int = touchpad_scroll_sensitivity_.GetValue();
     if (user_is_active) {
       touchpad_settings.SetScrollSensitivity(sensitivity_int);
     }
@@ -1269,27 +1261,28 @@ void Preferences::ApplyPreferences(ApplyReason reason,
   if (reason == REASON_INITIALIZATION ||
       (pref_name == ash::prefs::kUserGeolocationAccessLevel &&
        reason == REASON_PREF_CHANGED)) {
-    const auto user_geolocation_access_level =
+    GeolocationAccessLevel geo_access_level =
         static_cast<GeolocationAccessLevel>(
-            prefs_->GetInteger(ash::prefs::kUserGeolocationAccessLevel));
+            prefs_->GetInteger(prefs::kUserGeolocationAccessLevel));
 
-    // Notify `SimpleGeolocationProvider` of the user geolocation permission
-    // change.
-    SimpleGeolocationProvider::GetInstance()->SetGeolocationAccessLevel(
-        user_geolocation_access_level);
+    // System Geolocation setting is controlled by the primary user only.
+    if (user_is_primary_) {
+      SimpleGeolocationProvider::GetInstance()->SetGeolocationAccessLevel(
+          geo_access_level);
+    }
 
     // Log-in screen follows the owner's geolocation setting.
     if (user_is_owner) {
-      GeolocationAccessLevel access_level;
+      GeolocationAccessLevel login_geo_access_level;
       if (SimpleGeolocationProvider::GetInstance()
               ->IsGeolocationUsageAllowedForSystem()) {
-        access_level = GeolocationAccessLevel::kAllowed;
+        login_geo_access_level = GeolocationAccessLevel::kAllowed;
       } else {
-        access_level = GeolocationAccessLevel::kDisallowed;
+        login_geo_access_level = GeolocationAccessLevel::kDisallowed;
       }
       g_browser_process->local_state()->SetInteger(
           ash::prefs::kDeviceGeolocationAllowed,
-          static_cast<int>(access_level));
+          static_cast<int>(login_geo_access_level));
     }
   }
 

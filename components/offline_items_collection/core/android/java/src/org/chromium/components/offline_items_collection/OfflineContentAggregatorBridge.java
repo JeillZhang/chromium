@@ -25,7 +25,7 @@ import java.util.ArrayList;
 @NullMarked
 public class OfflineContentAggregatorBridge implements OfflineContentProvider {
     private long mNativeOfflineContentAggregatorBridge;
-    private ObserverList<OfflineContentProvider.Observer> mObservers;
+    private final ObserverList<OfflineContentProvider.Observer> mObservers;
 
     /**
      * A private constructor meant to be called by the C++ OfflineContentAggregatorBridge.
@@ -89,6 +89,17 @@ public class OfflineContentAggregatorBridge implements OfflineContentProvider {
         if (mNativeOfflineContentAggregatorBridge == 0) return;
         OfflineContentAggregatorBridgeJni.get()
                 .resumeDownload(
+                        mNativeOfflineContentAggregatorBridge,
+                        OfflineContentAggregatorBridge.this,
+                        id.namespace,
+                        id.id);
+    }
+
+    @Override
+    public void validateDangerousDownload(ContentId id) {
+        if (mNativeOfflineContentAggregatorBridge == 0) return;
+        OfflineContentAggregatorBridgeJni.get()
+                .validateDangerousDownload(
                         mNativeOfflineContentAggregatorBridge,
                         OfflineContentAggregatorBridge.this,
                         id.namespace,
@@ -250,6 +261,12 @@ public class OfflineContentAggregatorBridge implements OfflineContentProvider {
                 @Nullable String id);
 
         void resumeDownload(
+                long nativeOfflineContentAggregatorBridge,
+                OfflineContentAggregatorBridge caller,
+                @Nullable String nameSpace,
+                @Nullable String id);
+
+        void validateDangerousDownload(
                 long nativeOfflineContentAggregatorBridge,
                 OfflineContentAggregatorBridge caller,
                 @Nullable String nameSpace,

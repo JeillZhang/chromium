@@ -74,8 +74,7 @@ _ALLOWLISTED_NON_BASE_SERVICES = {
     # Only on API level 33+ which is past the fix for b/169196314.
     'androidx.pdf.service.PdfDocumentServiceImpl',
     'androidx.pdf.service.PdfDocumentService',
-    # These need to be burned down.
-    'androidx.room.MultiInstanceInvalidationService',
+    # These need to be burned down - these have likely never fully worked.
     'com.google.apps.tiktok.concurrent.AndroidFuturesService',
     'com.google.apps.tiktok.concurrent.InternalForegroundService',
 }
@@ -279,8 +278,12 @@ def _RewriteLanguageAssetPath(src_path):
   if not src_path.startswith(_LOCALES_SUBDIR) or not src_path.endswith('.pak'):
     return [src_path]
 
+  # Note that |locale| may include a gender as well as a language.
   locale = src_path[len(_LOCALES_SUBDIR):-4]
   android_locale = resource_utils.ToAndroidLocaleName(locale)
+
+  # Trim _GENDER suffix so it doesn't end up in a directory name.
+  android_locale = android_locale.split('_')[0]
 
   # The locale format is <lang>-<region> or <lang> or BCP-47 (e.g b+sr+Latn).
   # Extract the language.

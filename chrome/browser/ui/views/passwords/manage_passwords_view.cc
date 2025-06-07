@@ -190,7 +190,11 @@ ManagePasswordsView::CreatePasswordDetailsView() {
                 l10n_util::GetStringUTF16(IDS_MANAGE_PASSWORDS_UPDATE));
             view->GetBubbleFrameView()->SetFootnoteView(
                 view->CreateFooterView());
-            view->PreferredSizeChanged();
+
+            // TODO(crbug.com/41493925): Remove this SizeToContents().
+            // This SizeToContent() is used for immediate layout to ensure that
+            // a subsequent RequestFocus() sets the correct focus.
+            view->SizeToContents();
           },
           base::Unretained(this)),
       base::BindRepeating(&ManagePasswordsView::ExtendAuthValidity,
@@ -272,7 +276,7 @@ ManagePasswordsView::CreateMovePasswordFooterView() {
       std::make_unique<views::ImageView>(ui::ImageModel::FromVectorIcon(
           vector_icons::kSaveCloudIcon, ui::kColorIcon,
           layout_provider->GetDistanceMetric(
-              DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE))));
+              views::DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE))));
   icon_view->SetVerticalAlignment(views::ImageView::Alignment::kLeading);
   icon_view->SetProperty(
       views::kMarginsKey,

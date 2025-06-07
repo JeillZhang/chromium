@@ -5,9 +5,11 @@
 #include "device/vr/android/cardboard/cardboard_render_loop.h"
 
 #include <time.h>
+
 #include <memory>
 
 #include "base/task/bind_post_task.h"
+#include "base/trace_event/trace_event.h"
 #include "device/vr/android/cardboard/cardboard_image_transport.h"
 #include "device/vr/android/cardboard/cardboard_sdk.h"
 #include "device/vr/public/mojom/isolated_xr_service.mojom.h"
@@ -126,12 +128,14 @@ void CardboardRenderLoop::CreateSession(
       gfx::Rect(texture_size_.width() / 2, 0, texture_size_.width() / 2,
                 texture_size_.height());
 
-  left_eye_->mojo_from_view = gfx::Transform();
-  left_eye_->field_of_view =
+  left_eye_->geometry = mojom::XRViewGeometry::New();
+  left_eye_->geometry->mojo_from_view = gfx::Transform();
+  left_eye_->geometry->field_of_view =
       cardboard_image_transport_->GetFOV(CardboardEye::kLeft);
 
-  right_eye_->mojo_from_view = gfx::Transform();
-  right_eye_->field_of_view =
+  right_eye_->geometry = mojom::XRViewGeometry::New();
+  right_eye_->geometry->mojo_from_view = gfx::Transform();
+  right_eye_->geometry->field_of_view =
       cardboard_image_transport_->GetFOV(CardboardEye::kRight);
 
   head_tracker_ = internal::ScopedCardboardObject<CardboardHeadTracker*>(
@@ -310,7 +314,8 @@ void CardboardRenderLoop::CleanUp() {
 void CardboardRenderLoop::GetFrameData(
     mojom::XRFrameDataRequestOptionsPtr options,
     mojom::XRFrameDataProvider::GetFrameDataCallback callback) {
-  TRACE_EVENT1("gpu", __func__, "frame", webxr_->PeekNextFrameIndex());
+  TRACE_EVENT1("gpu", "CardboardRenderLoop::GetFrameData", "frame",
+               webxr_->PeekNextFrameIndex());
   DCHECK(task_runner()->BelongsToCurrentThread());
   CHECK(!texture_size_.IsEmpty());
 
@@ -375,9 +380,9 @@ void CardboardRenderLoop::GetFrameData(
   frame_data->render_info->mojo_from_viewer = std::move(pose);
 
   // Get the view transform for each eye
-  left_eye_->mojo_from_view =
+  left_eye_->geometry->mojo_from_view =
       cardboard_image_transport_->GetMojoFromView(kLeft, mojo_from_viewer);
-  right_eye_->mojo_from_view =
+  right_eye_->geometry->mojo_from_view =
       cardboard_image_transport_->GetMojoFromView(kRight, mojo_from_viewer);
 
   frame_data->render_info->views.push_back(left_eye_.Clone());
@@ -431,7 +436,8 @@ bool CardboardRenderLoop::IsSubmitFrameExpected(int16_t frame_index) {
 
 void CardboardRenderLoop::SubmitFrameMissing(int16_t frame_index,
                                              const gpu::SyncToken& sync_token) {
-  TRACE_EVENT1("gpu", __func__, "frame", frame_index);
+  TRACE_EVENT1("gpu", "CardboardRenderLoop::SubmitFrameMissing", "frame",
+               frame_index);
   DVLOG(2) << __func__ << ": frame=" << frame_index;
 
   if (!IsSubmitFrameExpected(frame_index)) {
@@ -457,7 +463,8 @@ void CardboardRenderLoop::SubmitFrameDrawnIntoTexture(
     int16_t frame_index,
     const gpu::SyncToken& sync_token,
     base::TimeDelta time_waited) {
-  TRACE_EVENT1("gpu", __func__, "frame", frame_index);
+  TRACE_EVENT1("gpu", "CardboardRenderLoop::SubmitFrameDrawnIntoTexture",
+               "frame", frame_index);
   DVLOG(2) << __func__ << ": frame=" << frame_index;
 
   if (!IsSubmitFrameExpected(frame_index)) {
@@ -517,7 +524,7 @@ void CardboardRenderLoop::RenderFrame(const gfx::Transform& uv_transform) {
   DVLOG(2) << __func__;
   CHECK(webxr_->HaveProcessingFrame());
   int16_t frame_index = webxr_->GetProcessingFrame()->index;
-  TRACE_EVENT1("gpu", __func__, "frame", frame_index);
+  TRACE_EVENT1("gpu", "CardboardRenderLoop::RenderFrame", "frame", frame_index);
 
   TransitionProcessingFrameToRendering();
 
@@ -551,7 +558,8 @@ void CardboardRenderLoop::FinishRenderingFrame(WebXrFrame* frame) {
 }
 
 void CardboardRenderLoop::ClearRenderingFrame(WebXrFrame* frame) {
-  TRACE_EVENT1("gpu", __func__, "frame", frame->index);
+  TRACE_EVENT1("gpu", "CardboardRenderLoop::ClearRenderingFrame", "frame",
+               frame->index);
   DVLOG(3) << __func__ << ": frame=" << frame->index;
 
   // Ensure that we're totally finished with the rendering frame, then collect
@@ -564,7 +572,7 @@ void CardboardRenderLoop::ClearRenderingFrame(WebXrFrame* frame) {
 }
 
 void CardboardRenderLoop::FinishFrame(int16_t frame_index) {
-  TRACE_EVENT1("gpu", __func__, "frame", frame_index);
+  TRACE_EVENT1("gpu", "CardboardRenderLoop::FinishFrame", "frame", frame_index);
   DVLOG(3) << __func__;
 
   surface_->SwapBuffers(base::DoNothing(), gfx::FrameData());

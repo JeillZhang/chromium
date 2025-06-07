@@ -73,10 +73,12 @@
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/page_hidden_state.h"
+#include "third_party/blink/renderer/core/paint/timing/container_timing.h"
 #include "third_party/blink/renderer/core/performance_entry_names.h"
 #include "third_party/blink/renderer/core/timing/animation_frame_timing_info.h"
 #include "third_party/blink/renderer/core/timing/largest_contentful_paint.h"
 #include "third_party/blink/renderer/core/timing/layout_shift.h"
+#include "third_party/blink/renderer/core/timing/performance_container_timing.h"
 #include "third_party/blink/renderer/core/timing/performance_element_timing.h"
 #include "third_party/blink/renderer/core/timing/performance_entry.h"
 #include "third_party/blink/renderer/core/timing/performance_event_timing.h"
@@ -782,17 +784,28 @@ void WindowPerformance::OnPresentationPromiseResolved(
     return;
   }
 
-  uint64_t actual_frame_source_id = presentation_details.frame_id.source_id;
-
   // We assume the presentation is for the expected source unless it's proven to
   // be wrong.
+  uint64_t actual_frame_source_id = presentation_details.frame_id.source_id;
   bool is_presentation_for_expected_source =
       !expected_frame_source_id || !actual_frame_source_id ||
       expected_frame_source_id == actual_frame_source_id;
 
   for (auto entry : event_timing_entries_) {
-    if (entry->GetEventTimingReportingInfo()->presentation_index ==
-        presentation_index) {
+    auto* timing = entry->GetEventTimingReportingInfo();
+    if (timing->presentation_index == presentation_index) {
+      timing->presentation_time =
+          presentation_details.presentation_feedback.timestamp;
+
+      if (!is_presentation_for_expected_source) {
+        if (base::FeatureList::IsEnabled(
+                features::
+                    kEventTimingIgnorePresentationTimeFromUnexpectedFrameSource)) {
+          CHECK(!timing->commit_finish_time.is_null());
+          entry->UpdateFallbackTime(timing->commit_finish_time);
+        }
+      }
+
       // If page visibility was changed, add a fallback_time to the entry's
       // processingEnd. Because we already flush events in
       // `ReportAllPendingEventTimingsOnPageHidden`, this should only happen if
@@ -804,27 +817,19 @@ void WindowPerformance::OnPresentationPromiseResolved(
       // event timing registration time.  If the page is currently hidden (or
       // was made hidden after the event was created/enqueued), then just skip
       // asking for presentation time.
-      bool was_page_visibility_changed =
-          last_hidden_timestamp_ >
-              entry->GetEventTimingReportingInfo()->creation_time &&
-          last_hidden_timestamp_ <
-              entry->GetEventTimingReportingInfo()->presentation_time;
-
-      if ((base::FeatureList::IsEnabled(
-               features::
-                   kEventTimingIgnorePresentationTimeFromUnexpectedFrameSource) &&
-           !is_presentation_for_expected_source) ||
-          was_page_visibility_changed) {
-        entry->UpdateFallbackTime(
-            entry->GetEventTimingReportingInfo()->processing_end_time);
-      } else {
-        entry->GetEventTimingReportingInfo()->presentation_time =
-            presentation_details.presentation_feedback.timestamp;
+      if (last_hidden_timestamp_ > timing->creation_time &&
+          last_hidden_timestamp_ < timing->presentation_time) {
+        if (!timing->commit_finish_time.is_null() &&
+            last_hidden_timestamp_ > timing->commit_finish_time) {
+          entry->UpdateFallbackTime(timing->commit_finish_time);
+        } else {
+          entry->UpdateFallbackTime(timing->processing_end_time);
+        }
       }
 
-      // A javascript synchronous modal dialog might show before the event frame
-      // got presented.  If so, we use a fallback time to the dialog showing
-      // time.
+      // A javascript synchronous modal dialog might show before the event
+      // frame got presented.  If so, we use a fallback time to the dialog
+      // showing time.
       // TODO(crbug.com/378647854): Simplify the way we measure dialogs:
       // - Replace the list of dialogs with a single timestamp
       // - When we see the first dialog per animation frame, resolve all
@@ -834,13 +839,11 @@ void WindowPerformance::OnPresentationPromiseResolved(
       // - We also don't need to fallback to dialog time after Paint is
       //    committed, since paint will show at that point.
       while (!show_modal_dialog_timestamps_.empty() &&
-             show_modal_dialog_timestamps_.front() <
-                 entry->GetEventTimingReportingInfo()->creation_time) {
+             show_modal_dialog_timestamps_.front() < timing->creation_time) {
         show_modal_dialog_timestamps_.pop_front();
       }
       if (!show_modal_dialog_timestamps_.empty() &&
-          show_modal_dialog_timestamps_.front() <
-              entry->GetEventTimingReportingInfo()->presentation_time) {
+          show_modal_dialog_timestamps_.front() < timing->presentation_time) {
         entry->UpdateFallbackTime(show_modal_dialog_timestamps_.front());
       }
     }
@@ -911,8 +914,7 @@ void WindowPerformance::ReportEventTimings() {
   InteractiveDetector* interactive_detector =
       InteractiveDetector::From(*(DomWindow()->document()));
 
-  bool tracing_enabled;
-  TRACE_EVENT_CATEGORY_GROUP_ENABLED("devtools.timeline", &tracing_enabled);
+  bool tracing_enabled = TRACE_EVENT_CATEGORY_ENABLED("latency");
 
   while (!event_timing_entries_.empty()) {
     // Find the range [first, last) of events with the same presentation_index
@@ -959,10 +961,10 @@ void WindowPerformance::ReportEventTimings() {
       auto scope = perfetto::Track::ThreadScoped(this);
       auto flowid = perfetto::Flow::ProcessScoped(presentation_index);
 
-      TRACE_EVENT_BEGIN("devtools.timeline", "EventsInAnimationFrame", scope,
+      TRACE_EVENT_BEGIN("latency", "EventsInAnimationFrame", scope,
                         first_event_processing_start, flowid);
 
-      TRACE_EVENT_INSTANT("devtools.timeline", "EventCreation", scope,
+      TRACE_EVENT_INSTANT("latency", "EventCreation", scope,
                           first_event_creation_time, flowid);
     }
 
@@ -987,10 +989,10 @@ void WindowPerformance::ReportEventTimings() {
       auto scope = perfetto::Track::ThreadScoped(this);
       auto flowid = perfetto::Flow::ProcessScoped(presentation_index);
 
-      TRACE_EVENT_END("devtools.timeline", scope, frame_end_time);
+      TRACE_EVENT_END("latency", scope, frame_end_time);
 
       if (!last_event_presentation_time.is_null()) {
-        TRACE_EVENT_INSTANT("devtools.timeline", "EventPresentation", scope,
+        TRACE_EVENT_INSTANT("latency", "EventPresentation", scope,
                             last_event_presentation_time, flowid);
       }
 
@@ -1001,7 +1003,7 @@ void WindowPerformance::ReportEventTimings() {
                                          ->fallback_time.is_null();
                            });
           first_entry_with_fallback != last) {
-        TRACE_EVENT_INSTANT("devtools.timeline", "EventFallbackTime", scope,
+        TRACE_EVENT_INSTANT("latency", "EventFallbackTime", scope,
                             first_entry_with_fallback->Get()
                                 ->GetEventTimingReportingInfo()
                                 ->fallback_time,
@@ -1113,6 +1115,8 @@ void WindowPerformance::ReportEvent(
   CHECK(!processing_start.is_null());
   CHECK(!processing_end.is_null());
   CHECK(!event_end_time.is_null());
+  CHECK(timings->fallback_time.is_null() ||
+        timings->fallback_time == event_end_time);
 
   // Round to 8ms.
   int rounded_duration =
@@ -1197,10 +1201,11 @@ void WindowPerformance::NotifyAndAddEventTimingBuffer(
     AddToEventTimingBuffer(*entry);
   }
 
-  bool tracing_enabled;
-  TRACE_EVENT_CATEGORY_GROUP_ENABLED("devtools.timeline", &tracing_enabled);
+  bool latency_tracing_enabled = TRACE_EVENT_CATEGORY_ENABLED("latency");
+  bool devtools_tracing_enabled =
+      TRACE_EVENT_CATEGORY_ENABLED("devtools.timeline");
 
-  if (tracing_enabled) {
+  if (latency_tracing_enabled || devtools_tracing_enabled) {
     base::TimeTicks unsafe_start_time =
         entry->GetEventTimingReportingInfo()->creation_time;
     base::TimeTicks unsafe_end_time = entry->GetEndTime();
@@ -1208,16 +1213,18 @@ void WindowPerformance::NotifyAndAddEventTimingBuffer(
     WTF::AddFloatToHash(hash, entry->startTime());
     auto track_id = perfetto::Track::ThreadScoped(this);
     auto flow_id = perfetto::Flow::FromPointer(entry);
-    TRACE_EVENT_INSTANT("devtools.timeline", "EventCreation", track_id,
+    TRACE_EVENT_INSTANT("latency", "EventCreation", track_id,
                         entry->GetEventTimingReportingInfo()->creation_time,
                         flow_id);
-    TRACE_EVENT_INSTANT(
-        "devtools.timeline", "EventEnqueuedToMainThread", track_id,
-        entry->GetEventTimingReportingInfo()->enqueued_to_main_thread_time,
-        flow_id);
+    auto enqueued_to_main_thread_time =
+        entry->GetEventTimingReportingInfo()->enqueued_to_main_thread_time;
+    if (!enqueued_to_main_thread_time.is_null()) {
+      TRACE_EVENT_INSTANT("latency", "EventEnqueuedToMainThread", track_id,
+                          enqueued_to_main_thread_time, flow_id);
+    }
 
     TRACE_EVENT_BEGIN(
-        "devtools.timeline", "EventProcessing", track_id,
+        "latency", "EventProcessing", track_id,
         entry->GetEventTimingReportingInfo()->processing_start_time, flow_id,
         [&](perfetto::EventContext ctx) {
           auto* event = ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>();
@@ -1225,9 +1232,8 @@ void WindowPerformance::NotifyAndAddEventTimingBuffer(
           entry->SetPerfettoData(DomWindow()->GetFrame(), data,
                                  GetTimeOriginInternal());
         });
-    TRACE_EVENT_END("devtools.timeline", track_id,
+    TRACE_EVENT_END("latency", track_id,
                     entry->GetEventTimingReportingInfo()->processing_end_time);
-
     // TODO(sullivan): Remove these events when DevTools migrates to the above
     // perfetto events.
     TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
@@ -1237,6 +1243,32 @@ void WindowPerformance::NotifyAndAddEventTimingBuffer(
     TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
         "devtools.timeline", "EventTiming", hash, unsafe_end_time);
   }
+}
+
+void WindowPerformance::SetHasContainerTimingChanges() {
+  DCHECK(RuntimeEnabledFeatures::ContainerTimingEnabled());
+
+  has_container_timing_changes_ = true;
+  NotifyObserversOfContainerTiming();
+}
+
+void WindowPerformance::PopulateContainerTimingEntries() {
+  if (!has_container_timing_changes_) {
+    return;
+  }
+
+  DCHECK(RuntimeEnabledFeatures::ContainerTimingEnabled());
+
+  LocalDOMWindow* window = DomWindow();
+  if (!window) {
+    return;
+  }
+
+  ContainerTiming& container_timing = ContainerTiming::From(*window);
+
+  container_timing.EmitPerformanceEntries();
+
+  has_container_timing_changes_ = false;
 }
 
 bool WindowPerformance::SetInteractionIdAndRecordLatency(
@@ -1324,6 +1356,33 @@ void WindowPerformance::AddElementTiming(
   }
   if (!IsElementTimingBufferFull()) {
     AddToElementTimingBuffer(*entry);
+  }
+}
+
+void WindowPerformance::AddContainerTiming(
+    const DOMPaintTimingInfo& paint_timing_info,
+    const gfx::Rect& rect,
+    uint64_t size,
+    const AtomicString& identifier,
+    Element* last_painted_element,
+    const DOMPaintTimingInfo& first_paint_timing_info) {
+  DCHECK(RuntimeEnabledFeatures::ContainerTimingEnabled());
+  if (!DomWindow()) {
+    return;
+  }
+
+  PerformanceContainerTiming* entry = PerformanceContainerTiming::Create(
+      AtomicString("container-paints"), paint_timing_info.presentation_time,
+      rect, size, identifier, last_painted_element,
+      first_paint_timing_info.presentation_time, DomWindow());
+  TRACE_EVENT2("loading", "PerformanceContainerTiming", "data",
+               entry->ToTracedValue(), "frame",
+               GetFrameIdForTracing(DomWindow()->GetFrame()));
+  if (HasObserverFor(PerformanceEntry::kContainer)) {
+    NotifyObserversOfContainerEntry(*entry);
+  }
+  if (!IsContainerTimingBufferFull()) {
+    AddToContainerTimingBuffer(*entry);
   }
 }
 

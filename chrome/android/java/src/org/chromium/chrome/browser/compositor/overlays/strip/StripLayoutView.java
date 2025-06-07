@@ -4,11 +4,18 @@
 
 package org.chromium.chrome.browser.compositor.overlays.strip;
 
+import android.content.Context;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.FloatProperty;
+import android.view.MotionEvent;
+
+import androidx.annotation.ColorInt;
 
 import org.chromium.base.MathUtils;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.layouts.components.VirtualView;
+import org.chromium.components.browser_ui.styles.ChromeColors;
 
 import java.util.List;
 
@@ -17,6 +24,7 @@ import java.util.List;
  * a particular item on the tab strip (e.g. tab, group indicator, etc.) so it can draw itself onto
  * the GL canvas.
  */
+@NullMarked
 public abstract class StripLayoutView implements VirtualView {
 
     /** Handler for click actions on VirtualViews. */
@@ -26,8 +34,22 @@ public abstract class StripLayoutView implements VirtualView {
          *
          * @param time The time of the click action.
          * @param view View that received the click.
+         * @param motionEventButtonState {@link MotionEvent#getButtonState()} at the moment of the
+         *     click if the click is detected via motion events; otherwise, this parameter is {@link
+         *     org.chromium.ui.util.MotionEventUtils#MOTION_EVENT_BUTTON_NONE}.
          */
-        void onClick(long time, StripLayoutView view);
+        void onClick(long time, StripLayoutView view, int motionEventButtonState);
+    }
+
+    /** Handler for keyboard focus on VirtualViews. */
+    public interface StripLayoutViewOnKeyboardFocusHandler {
+        /**
+         * Handles keyboard focus change on this {@param view}.
+         *
+         * @param isFocused Whether {@param view} is now focused.
+         * @param view The {@link StripLayoutView} in question.
+         */
+        void onKeyboardFocus(boolean isFocused, StripLayoutView view);
     }
 
     /** A property for animations to use for changing the drawX of the view. */
@@ -58,6 +80,23 @@ public abstract class StripLayoutView implements VirtualView {
                 }
             };
 
+    /** A property for animations to use for changing the trailingMargin of the view. */
+    public static final FloatProperty<StripLayoutView> TRAILING_MARGIN =
+            new FloatProperty<>("trailingMargin") {
+                @Override
+                public void setValue(StripLayoutView object, float value) {
+                    object.setTrailingMargin(value);
+                }
+
+                @Override
+                public Float get(StripLayoutView object) {
+                    return object.getTrailingMargin();
+                }
+            };
+
+    // The view's context.
+    protected Context mContext;
+
     // Position variables.
     protected final RectF mDrawBounds = new RectF();
     private float mIdealX;
@@ -73,24 +112,41 @@ public abstract class StripLayoutView implements VirtualView {
 
     // State variables.
     private boolean mVisible = true;
+    private boolean mKeyboardFocused;
     private boolean mCollapsed;
     private boolean mIsIncognito;
     private boolean mIsForegrounded;
     private boolean mIsDraggedOffStrip;
+    private boolean mWillClose;
 
     // A11y variables.
     private String mAccessibilityDescription = "";
 
     // Event handlers.
     private final StripLayoutViewOnClickHandler mOnClickHandler;
+    private final StripLayoutViewOnKeyboardFocusHandler mOnKeyboardFocusHandler;
+
+    // Tab group share properties.
+    private boolean mShowNotificationBubble;
+
+    // Trailing margin applied when the view is hovered over.
+    private float mTrailingMargin;
 
     /**
      * @param incognito The incognito state of the view.
      * @param clickHandler StripLayoutViewOnClickHandler for this view.
+     * @param keyboardFocusHandler Handles keyboard focus gain/loss for this view.
+     * @param context The context for the view.
      */
-    protected StripLayoutView(boolean incognito, StripLayoutViewOnClickHandler clickHandler) {
+    protected StripLayoutView(
+            boolean incognito,
+            StripLayoutViewOnClickHandler clickHandler,
+            StripLayoutViewOnKeyboardFocusHandler keyboardFocusHandler,
+            Context context) {
         mIsIncognito = incognito;
         mOnClickHandler = clickHandler;
+        mOnKeyboardFocusHandler = keyboardFocusHandler;
+        mContext = context;
     }
 
     /**
@@ -133,6 +189,25 @@ public abstract class StripLayoutView implements VirtualView {
         mDrawBounds.top = y;
         // Update touch target bounds
         updateTouchTargetBounds(mTouchTargetBounds);
+    }
+
+    /**
+     * This is used to help calculate the view's position and is not used for rendering.
+     *
+     * @param trailingMargin The trailing margin of the view (used for margins when reordering,
+     *     etc.).
+     */
+    public void setTrailingMargin(float trailingMargin) {
+        mTrailingMargin = trailingMargin;
+    }
+
+    /**
+     * This is used to help calculate the view's position and is not used for rendering.
+     *
+     * @return The trailing margin of the view.
+     */
+    public float getTrailingMargin() {
+        return mTrailingMargin;
     }
 
     /**
@@ -216,6 +291,26 @@ public abstract class StripLayoutView implements VirtualView {
     }
 
     /**
+     * Sets whether the notification bubble is shown on the view. When set to true, a notification
+     * dot will appear on the view to indicate that this group has been updated by other members in
+     * the shared group.
+     *
+     * @param showBubble Whether to show the bubble.
+     */
+    public void setNotificationBubbleShown(boolean showBubble) {
+        mShowNotificationBubble = showBubble;
+    }
+
+    /**
+     * Checks whether the notification bubble is shown.
+     *
+     * @return Whether the notification bubble is shown.
+     */
+    public boolean getNotificationBubbleShown() {
+        return mShowNotificationBubble;
+    }
+
+    /**
      * Called if the visibility state has changed.
      *
      * @param newVisibility Whether or not this {@link StripLayoutView} should be drawn.
@@ -257,9 +352,19 @@ public abstract class StripLayoutView implements VirtualView {
         mIsDraggedOffStrip = isDraggedOffStrip;
     }
 
-    /** Returns whether or not the tab is dragged off the strip and should be hidden. */
+    /** Returns whether or not the view is dragged off the strip and should be hidden. */
     public boolean isDraggedOffStrip() {
         return mIsDraggedOffStrip;
+    }
+
+    /** Marks that the view will be closed due to an incoming TabModel update. */
+    public void setWillClose() {
+        mWillClose = true;
+    }
+
+    /** Returns whether or not the view will be closed due to an incoming TabModel update. */
+    public boolean willClose() {
+        return mWillClose;
     }
 
     /**
@@ -293,8 +398,8 @@ public abstract class StripLayoutView implements VirtualView {
     }
 
     @Override
-    public void handleClick(long time) {
-        mOnClickHandler.onClick(time, this);
+    public void handleClick(long time, int motionEventButtonState) {
+        mOnClickHandler.onClick(time, this, motionEventButtonState);
     }
 
     /** Returns cached touch target bounds. */
@@ -318,6 +423,24 @@ public abstract class StripLayoutView implements VirtualView {
         updateTouchTargetBounds(mTouchTargetBounds);
     }
 
+    protected float getDpToPx() {
+        return mContext.getResources().getDisplayMetrics().density;
+    }
+
+    /**
+     * Populates {@code out} with a {@link Rect} where a context menu should be located.
+     *
+     * @param out The output {@link Rect}.
+     */
+    public void getAnchorRect(Rect out) {
+        float dpToPx = getDpToPx();
+        out.set(
+                Math.round(getDrawX() * dpToPx),
+                Math.round(getDrawY() * dpToPx),
+                Math.round((getDrawX() + getWidth()) * dpToPx),
+                Math.round((getDrawY() + getHeight()) * dpToPx));
+    }
+
     private void updateTouchTargetBounds(RectF outTarget) {
         outTarget.set(mDrawBounds);
         // Get the whole touchable region.
@@ -325,5 +448,21 @@ public abstract class StripLayoutView implements VirtualView {
         outTarget.right -= mTouchTargetInsetRight;
         outTarget.top += mTouchTargetInsetTop;
         outTarget.bottom -= mTouchTargetInsetBottom;
+    }
+
+    @Override
+    public void setKeyboardFocused(boolean keyboardFocused) {
+        mKeyboardFocused = keyboardFocused;
+        mOnKeyboardFocusHandler.onKeyboardFocus(keyboardFocused, this);
+    }
+
+    @Override
+    public boolean isKeyboardFocused() {
+        return mKeyboardFocused;
+    }
+
+    /** {@return The {@link ColorInt} of the keyboard focus ring color} */
+    public @ColorInt int getKeyboardFocusRingColor() {
+        return ChromeColors.getKeyboardFocusRingColor(mContext, isIncognito());
     }
 }

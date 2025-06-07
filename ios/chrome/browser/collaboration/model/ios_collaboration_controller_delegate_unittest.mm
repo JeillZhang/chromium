@@ -15,8 +15,12 @@
 #import "components/saved_tab_groups/test_support/saved_tab_group_test_utils.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/test/test_sync_service.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 #import "ios/chrome/browser/collaboration/model/collaboration_service_factory.h"
 #import "ios/chrome/browser/data_sharing/model/data_sharing_service_factory.h"
+#import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
+#import "ios/chrome/browser/favicon/model/test_favicon_loader.h"
+#import "ios/chrome/browser/saved_tab_groups/model/tab_group_service_factory.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/share_kit/model/fake_share_kit_flow_view_controller.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_service_factory.h"
@@ -47,6 +51,7 @@
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/gtest_support.h"
 
+using testing::_;
 using testing::Return;
 
 namespace collaboration {
@@ -54,12 +59,14 @@ namespace collaboration {
 namespace {
 std::unique_ptr<KeyedService> BuildTestShareKitService(
     web::BrowserState* context) {
-  ProfileIOS* profile = static_cast<ProfileIOS*>(context);
+  ProfileIOS* profile = ProfileIOS::FromBrowserState(context);
   data_sharing::DataSharingService* data_sharing_service =
       data_sharing::DataSharingServiceFactory::GetForProfile(profile);
+  TabGroupService* tab_group_service =
+      TabGroupServiceFactory::GetForProfile(profile);
 
   return std::make_unique<TestShareKitService>(data_sharing_service, nullptr,
-                                               nullptr);
+                                               nullptr, tab_group_service);
 }
 
 std::unique_ptr<KeyedService> BuildFakeTabGroupSyncService(
@@ -73,7 +80,19 @@ std::unique_ptr<KeyedService> BuildTestSyncService(web::BrowserState* context) {
 
 std::unique_ptr<KeyedService> BuildMockCollaborationService(
     web::BrowserState* context) {
-  return std::make_unique<MockCollaborationService>();
+  ServiceStatus collaboration_status;
+  collaboration_status.collaboration_status =
+      CollaborationStatus::kEnabledCreateAndJoin;
+  std::unique_ptr<MockCollaborationService> mock_collaboration_service =
+      std::make_unique<MockCollaborationService>();
+  ON_CALL(*mock_collaboration_service.get(), GetServiceStatus())
+      .WillByDefault(Return(collaboration_status));
+  return std::move(mock_collaboration_service);
+}
+
+std::unique_ptr<KeyedService> BuildTestFaviconLoader(
+    web::BrowserState* context) {
+  return std::make_unique<TestFaviconLoader>();
 }
 
 }  // namespace
@@ -86,31 +105,33 @@ class IOSCollaborationControllerDelegateTest : public PlatformTest {
         /*enabled_features=*/
         {
             kTabGroupSync,
-            kTabGroupsIPad,
-            kModernTabStrip,
             data_sharing::features::kDataSharingFeature,
         },
         /*disable_features=*/{});
 
     // Init the delegate parameters.
-    TestProfileIOS::Builder test_cbs_builder;
-    test_cbs_builder.AddTestingFactory(
+    TestProfileIOS::Builder test_profile_builder;
+    test_profile_builder.AddTestingFactory(
         AuthenticationServiceFactory::GetInstance(),
         AuthenticationServiceFactory::GetFactoryWithDelegate(
             std::make_unique<FakeAuthenticationServiceDelegate>()));
-    test_cbs_builder.AddTestingFactory(
+    test_profile_builder.AddTestingFactory(
         SyncServiceFactory::GetInstance(),
         base::BindRepeating(&BuildTestSyncService));
-    test_cbs_builder.AddTestingFactory(
+    test_profile_builder.AddTestingFactory(
         CollaborationServiceFactory::GetInstance(),
         base::BindRepeating(&BuildMockCollaborationService));
-    test_cbs_builder.AddTestingFactory(
+    test_profile_builder.AddTestingFactory(
         tab_groups::TabGroupSyncServiceFactory::GetInstance(),
         base::BindRepeating(&BuildFakeTabGroupSyncService));
-    test_cbs_builder.AddTestingFactory(
+    test_profile_builder.AddTestingFactory(
         ShareKitServiceFactory::GetInstance(),
         base::BindRepeating(&BuildTestShareKitService));
-    profile_ = std::move(test_cbs_builder).Build();
+    test_profile_builder.AddTestingFactory(
+        IOSChromeFaviconLoaderFactory::GetInstance(),
+        base::BindRepeating(&BuildTestFaviconLoader));
+
+    profile_ = std::move(test_profile_builder).Build();
     browser_ = std::make_unique<TestBrowser>(profile_.get());
 
     web_state_list_ = browser_->GetWebStateList();
@@ -137,6 +158,7 @@ class IOSCollaborationControllerDelegateTest : public PlatformTest {
     [command_dispatcher
         startDispatchingToTarget:application_commands_mock_
                      forProtocol:@protocol(ApplicationCommands)];
+    signin_coordinator_mock_ = OCMStrictClassMock([SigninCoordinator class]);
     share_kit_service_ = ShareKitServiceFactory::GetForProfile(profile_.get());
     base_view_controller_ = [[FakeUIViewController alloc] init];
 
@@ -146,10 +168,11 @@ class IOSCollaborationControllerDelegateTest : public PlatformTest {
     collaboration_status_.sync_status = SyncStatus::kSyncWithoutTabGroup;
   }
 
-  // Init the delegate for a flow.
-  void InitDelegate() {
+  // Init the delegate for a `flow_type` flow.
+  void InitDelegate(FlowType flow_type) {
     delegate_ = std::make_unique<IOSCollaborationControllerDelegate>(
-        browser_.get(), base_view_controller_);
+        browser_.get(), CreateControllerDelegateParamsFromProfile(
+                            profile_.get(), base_view_controller_, flow_type));
   }
 
   // Sign in in the authentication service with a fake identity.
@@ -197,6 +220,7 @@ class IOSCollaborationControllerDelegateTest : public PlatformTest {
 
   void TearDown() override {
     EXPECT_OCMOCK_VERIFY(application_commands_mock_);
+    EXPECT_OCMOCK_VERIFY(signin_coordinator_mock_);
     PlatformTest::TearDown();
   }
 
@@ -227,6 +251,7 @@ class IOSCollaborationControllerDelegateTest : public PlatformTest {
   raw_ptr<MockCollaborationService> mock_collaboration_service_;
   std::unique_ptr<IOSCollaborationControllerDelegate> delegate_;
   raw_ptr<WebStateList> web_state_list_;
+  id signin_coordinator_mock_;
   id application_commands_mock_;
   std::unique_ptr<Browser> browser_;
   std::unique_ptr<TestProfileIOS> profile_;
@@ -238,7 +263,7 @@ class IOSCollaborationControllerDelegateTest : public PlatformTest {
 
 // Tests `ShowShareDialog` with a valid tabGroup.
 TEST_F(IOSCollaborationControllerDelegateTest, ShowShareDialogValid) {
-  InitDelegate();
+  InitDelegate(FlowType::kShareOrManage);
   base::MockCallback<
       CollaborationControllerDelegate::ResultWithGroupTokenCallback>
       mock_callback;
@@ -257,7 +282,7 @@ TEST_F(IOSCollaborationControllerDelegateTest, ShowShareDialogValid) {
 
 // Tests `ShowShareDialog` with an invalid tabGroup.
 TEST_F(IOSCollaborationControllerDelegateTest, ShowShareDialogInvalid) {
-  InitDelegate();
+  InitDelegate(FlowType::kShareOrManage);
 
   tab_groups::TabGroupId tab_group_id = tab_group_->tab_group_id();
 
@@ -276,7 +301,7 @@ TEST_F(IOSCollaborationControllerDelegateTest, ShowShareDialogInvalid) {
 
 // Tests `ShowJoinDialog` and accept.
 TEST_F(IOSCollaborationControllerDelegateTest, ShowJoinDialogAccept) {
-  InitDelegate();
+  InitDelegate(FlowType::kJoin);
   base::MockCallback<CollaborationControllerDelegate::ResultCallback>
       mock_callback;
   EXPECT_CALL(mock_callback,
@@ -295,7 +320,7 @@ TEST_F(IOSCollaborationControllerDelegateTest, ShowJoinDialogAccept) {
 
 // Tests `ShowJoinDialog` and cancel.
 TEST_F(IOSCollaborationControllerDelegateTest, ShowJoinDialogCancel) {
-  InitDelegate();
+  InitDelegate(FlowType::kShareOrManage);
   base::MockCallback<CollaborationControllerDelegate::ResultCallback>
       mock_callback;
   EXPECT_CALL(mock_callback,
@@ -314,7 +339,7 @@ TEST_F(IOSCollaborationControllerDelegateTest, ShowJoinDialogCancel) {
 
 // Tests `ShowManageDialog` and accept.
 TEST_F(IOSCollaborationControllerDelegateTest, ShowManageDialogAccept) {
-  InitDelegate();
+  InitDelegate(FlowType::kShareOrManage);
   base::MockCallback<CollaborationControllerDelegate::ResultCallback>
       mock_callback;
   EXPECT_CALL(mock_callback,
@@ -333,7 +358,7 @@ TEST_F(IOSCollaborationControllerDelegateTest, ShowManageDialogAccept) {
 
 // Tests `ShowManageDialog` and cancel.
 TEST_F(IOSCollaborationControllerDelegateTest, ShowManageDialogCancel) {
-  InitDelegate();
+  InitDelegate(FlowType::kShareOrManage);
   base::MockCallback<CollaborationControllerDelegate::ResultCallback>
       mock_callback;
   EXPECT_CALL(mock_callback,
@@ -353,101 +378,101 @@ TEST_F(IOSCollaborationControllerDelegateTest, ShowManageDialogCancel) {
 // Tests `ShowAuthenticationUi` when the user chooses to cancel the sign in.
 TEST_F(IOSCollaborationControllerDelegateTest,
        ShowAuthenticationUiSignInCanceled) {
-  InitDelegate();
+  InitDelegate(FlowType::kJoin);
   base::MockCallback<CollaborationControllerDelegate::ResultCallback>
       mock_callback;
 
   EXPECT_CALL(mock_callback,
-              Run(CollaborationControllerDelegate::Outcome::kFailure));
+              Run(CollaborationControllerDelegate::Outcome::kCancel));
 
-  OCMExpect([application_commands_mock_
-              showSignin:[OCMArg checkWithBlock:^BOOL(
-                                     ShowSigninCommand* command) {
-                command.completion(SigninCoordinatorResultCanceledByUser, nil);
-                return command.operation ==
-                       AuthenticationOperation::kSheetSigninAndHistorySync;
-              }]
-      baseViewController:base_view_controller_]);
+  OCMExpect([signin_coordinator_mock_
+      signinCoordinatorWithCommand:[OCMArg checkWithBlock:^BOOL(
+                                               ShowSigninCommand* command) {
+        command.completion(SigninCoordinatorResultCanceledByUser, nil);
+        return command.operation ==
+               AuthenticationOperation::kSheetSigninAndHistorySync;
+      }]
+                           browser:browser_.get()
+                baseViewController:base_view_controller_]);
 
-  delegate_->ShowAuthenticationUi(mock_callback.Get());
+  delegate_->ShowAuthenticationUi(FlowType::kJoin, mock_callback.Get());
 }
 
 // Tests `ShowAuthenticationUi` when the user sign in and accept the sync opt
 // in.
 TEST_F(IOSCollaborationControllerDelegateTest,
        ShowAuthenticationUiSyncAccepted) {
-  InitDelegate();
+  InitDelegate(FlowType::kJoin);
   base::MockCallback<CollaborationControllerDelegate::ResultCallback>
       mock_callback;
 
   EXPECT_CALL(mock_callback,
               Run(CollaborationControllerDelegate::Outcome::kSuccess));
 
-  OCMExpect([application_commands_mock_
-              showSignin:[OCMArg checkWithBlock:^BOOL(
-                                     ShowSigninCommand* command) {
-                AcceptSyncOptIn();
-                command.completion(SigninCoordinatorResultSuccess,
-                                   [FakeSystemIdentity fakeIdentity1]);
-                return command.operation ==
-                       AuthenticationOperation::kSheetSigninAndHistorySync;
-              }]
-      baseViewController:base_view_controller_]);
+  OCMExpect([signin_coordinator_mock_
+      signinCoordinatorWithCommand:[OCMArg checkWithBlock:^BOOL(
+                                               ShowSigninCommand* command) {
+        AcceptSyncOptIn();
+        command.completion(SigninCoordinatorResultSuccess,
+                           [FakeSystemIdentity fakeIdentity1]);
+        return command.operation ==
+               AuthenticationOperation::kSheetSigninAndHistorySync;
+      }]
+                           browser:browser_.get()
+                baseViewController:base_view_controller_]);
 
-  delegate_->ShowAuthenticationUi(mock_callback.Get());
+  delegate_->ShowAuthenticationUi(FlowType::kJoin, mock_callback.Get());
 }
 
 // Tests `ShowAuthenticationUi` when the user sign in but don't sync.
 TEST_F(IOSCollaborationControllerDelegateTest, ShowAuthenticationUiSyncDenied) {
-  InitDelegate();
+  InitDelegate(FlowType::kJoin);
   base::MockCallback<CollaborationControllerDelegate::ResultCallback>
       mock_callback;
 
   EXPECT_CALL(mock_callback,
               Run(CollaborationControllerDelegate::Outcome::kFailure));
-
-  OCMExpect([application_commands_mock_
-              showSignin:[OCMArg checkWithBlock:^BOOL(
-                                     ShowSigninCommand* command) {
-                DenySyncOptIn();
-                command.completion(SigninCoordinatorResultSuccess,
-                                   [FakeSystemIdentity fakeIdentity1]);
-                return command.operation ==
-                       AuthenticationOperation::kSheetSigninAndHistorySync;
-              }]
-      baseViewController:base_view_controller_]);
-
-  delegate_->ShowAuthenticationUi(mock_callback.Get());
+  OCMExpect([signin_coordinator_mock_
+      signinCoordinatorWithCommand:[OCMArg checkWithBlock:^BOOL(
+                                               ShowSigninCommand* command) {
+        DenySyncOptIn();
+        command.completion(SigninCoordinatorResultSuccess,
+                           [FakeSystemIdentity fakeIdentity1]);
+        return command.operation ==
+               AuthenticationOperation::kSheetSigninAndHistorySync;
+      }]
+                           browser:browser_.get()
+                baseViewController:base_view_controller_]);
+  delegate_->ShowAuthenticationUi(FlowType::kJoin, mock_callback.Get());
 }
 
-// Tests `ShowAuthenticationUi` when the user is SignedIn but not syncing.
+// Tests `ShowAuthenticationUi` when the user is signed-in.
 TEST_F(IOSCollaborationControllerDelegateTest, ShowAuthenticationUiWithSignIn) {
   SignIn();
-  InitDelegate();
+  InitDelegate(FlowType::kJoin);
   base::MockCallback<CollaborationControllerDelegate::ResultCallback>
       mock_callback;
 
   EXPECT_CALL(mock_callback,
               Run(CollaborationControllerDelegate::Outcome::kSuccess));
 
-  OCMExpect([application_commands_mock_
-              showSignin:[OCMArg checkWithBlock:^BOOL(
-                                     ShowSigninCommand* command) {
-                AcceptSyncOptIn();
-                command.completion(SigninCoordinatorResultSuccess,
-                                   [FakeSystemIdentity fakeIdentity1]);
-                return command.operation ==
-                       AuthenticationOperation::kHistorySync;
-              }]
-      baseViewController:base_view_controller_]);
-
-  delegate_->ShowAuthenticationUi(mock_callback.Get());
+  OCMExpect([signin_coordinator_mock_
+      signinCoordinatorWithCommand:[OCMArg checkWithBlock:^BOOL(
+                                               ShowSigninCommand* command) {
+        AcceptSyncOptIn();
+        command.completion(SigninCoordinatorResultSuccess,
+                           [FakeSystemIdentity fakeIdentity1]);
+        return command.operation == AuthenticationOperation::kHistorySync;
+      }]
+                           browser:browser_.get()
+                baseViewController:base_view_controller_]);
+  delegate_->ShowAuthenticationUi(FlowType::kJoin, mock_callback.Get());
 }
 
 // Tests `NotifySignInAndSyncStatusChange`.
 TEST_F(IOSCollaborationControllerDelegateTest,
        NotifySignInAndSyncStatusChange) {
-  InitDelegate();
+  InitDelegate(FlowType::kShareOrManage);
   delegate_->NotifySignInAndSyncStatusChange();
 }
 

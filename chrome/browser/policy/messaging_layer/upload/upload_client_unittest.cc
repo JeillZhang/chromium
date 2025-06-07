@@ -12,6 +12,7 @@
 #include "base/functional/bind.h"
 #include "base/json/json_writer.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/protobuf_matchers.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/values.h"
@@ -35,12 +36,14 @@
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "components/user_manager/test_helper.h"
 #include "google_apis/gaia/core_account_id.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace reporting {
 namespace {
 
+using base::test::EqualsProto;
 using ::policy::MockCloudPolicyClient;
 using ::testing::_;
 using ::testing::AllOf;
@@ -57,15 +60,6 @@ using ::testing::Property;
 using testing::SizeIs;
 using ::testing::StrictMock;
 using ::testing::WithArgs;
-
-MATCHER_P(EqualsProto,
-          message,
-          "Match a proto Message equal to the matcher's argument.") {
-  std::string expected_serialized, actual_serialized;
-  message.SerializeToString(&expected_serialized);
-  arg.SerializeToString(&actual_serialized);
-  return expected_serialized == actual_serialized;
-}
 
 class UploadClientTest : public ::testing::TestWithParam<
                              ::testing::tuple</*need_encryption_key*/ bool,
@@ -85,11 +79,9 @@ class UploadClientTest : public ::testing::TestWithParam<
         base::FilePath(FILE_PATH_LITERAL("/home/chronos/u-0123456789abcdef")));
     const AccountId account_id(AccountId::FromUserEmailGaiaId(
         profile_->GetProfileUserName(), GaiaId("12345")));
-    const user_manager::User* user =
-        fake_user_manager->AddPublicAccountUser(account_id);
-    fake_user_manager->UserLoggedIn(account_id, user->username_hash(),
-                                    /*browser_restart=*/false,
-                                    /*is_child=*/false);
+    fake_user_manager->AddPublicAccountUser(account_id);
+    fake_user_manager->UserLoggedIn(
+        account_id, user_manager::TestHelper::GetFakeUsernameHash(account_id));
     user_manager_ = std::make_unique<user_manager::ScopedUserManager>(
         std::move(fake_user_manager));
 #endif  // BUILDFLAG(IS_CHROMEOS)

@@ -30,7 +30,6 @@ import org.chromium.chrome.browser.partnercustomizations.PartnerBrowserCustomiza
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.search_engines.SearchEnginePromoType;
-import org.chromium.chrome.browser.signin.AppRestrictionSupplier;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.services.SigninPreferencesManager;
 import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncHelper;
@@ -96,12 +95,11 @@ public abstract class FirstRunFlowSequencer {
                 OneshotSupplier<ProfileProvider> profileSupplier);
     }
 
-
     /**
      * The delegate to be used by the Sequencer. By default, it's an instance of
      * {@link FirstRunFlowSequencerDelegate}, unless it's overridden by {@code sDelegateForTesting}.
      */
-    private FirstRunFlowSequencerDelegate mDelegate;
+    private final FirstRunFlowSequencerDelegate mDelegate;
 
     /** If not null, creates {@code mDelegate} for this object during tests. */
     private static DelegateFactoryForTesting sDelegateFactoryForTesting;
@@ -111,12 +109,12 @@ public abstract class FirstRunFlowSequencer {
     private Boolean mIsChild;
 
     /**
-     * Callback that is called once the flow is determined.
-     * If the properties is null, the First Run experience needs to finish and
-     * restart the original intent if necessary.
-     * @param freProperties Properties to be used in the First Run activity, or null.
+     * Callback that is called once the flow is determined. If the properties is null, the First Run
+     * experience needs to finish and restart the original intent if necessary.
+     *
+     * @param isChild A boolean value indicating child status.
      */
-    public abstract void onFlowIsKnown(Bundle freProperties);
+    public abstract void onFlowIsKnown(boolean isChild);
 
     public FirstRunFlowSequencer(
             OneshotSupplier<ProfileProvider> profileSupplier,
@@ -138,12 +136,12 @@ public abstract class FirstRunFlowSequencer {
      */
     void start() {
         AccountManagerFacadeProvider.getInstance()
-                .getCoreAccountInfos()
+                .getAccounts()
                 .then(
-                        coreAccountInfos -> {
+                        accounts -> {
                             RecordHistogram.recordCount1MHistogram(
                                     "Signin.AndroidDeviceAccountsNumberWhenEnteringFRE",
-                                    Math.min(coreAccountInfos.size(), 2));
+                                    Math.min(accounts.size(), 2));
 
                             assert !mAccountsAvailable;
                             mAccountsAvailable = true;
@@ -172,11 +170,7 @@ public abstract class FirstRunFlowSequencer {
 
         if (mIsFlowKnown) return;
         mIsFlowKnown = true;
-
-        Bundle freProperties = new Bundle();
-        freProperties.putBoolean(SyncConsentFirstRunFragment.IS_CHILD_ACCOUNT, mIsChild);
-
-        onFlowIsKnown(freProperties);
+        onFlowIsKnown(mIsChild);
     }
 
     /**
@@ -302,9 +296,6 @@ public abstract class FirstRunFlowSequencer {
 
         Log.d(TAG, "Redirecting user through FRE.");
         CrashKeys.getInstance().set(CrashKeyIndex.FIRST_RUN, "yes");
-
-        // Launch the async restriction checking as soon as we know we'll be running FRE.
-        AppRestrictionSupplier.startInitializationHint();
 
         if (inSameTask) {
             FreIntentCreator intentCreator = new FreIntentCreator();

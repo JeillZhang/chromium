@@ -32,7 +32,7 @@ namespace {
 constexpr char kKeyId[] = "id";
 constexpr char kKeyName[] = "name";
 constexpr char kKeyDescription[] = "description";
-constexpr char kKeyAction[] = "extension_action_type";
+constexpr char kKeyExtensionAction[] = "extension_action_type";
 constexpr char kKeyVersion[] = "extension_version";
 constexpr char kKeySource[] = "extension_source";
 
@@ -44,6 +44,7 @@ constexpr char kUninstallAction[] = "UNINSTALL";
 // Extension sources
 constexpr char kChromeWebstoreSource[] = "CHROME_WEBSTORE";
 constexpr char kExternalSource[] = "EXTERNAL";
+constexpr char kComponentSource[] = "COMPONENT";
 
 }  // namespace
 
@@ -110,10 +111,20 @@ void ExtensionInstallEventRouter::ReportExtensionInstallEvent(
   event.Set(kKeyId, extension->id());
   event.Set(kKeyName, extension->name());
   event.Set(kKeyDescription, extension->description());
-  event.Set(kKeyAction, extension_action);
+  event.Set(kKeyExtensionAction, extension_action);
   event.Set(kKeyVersion, extension->GetVersionForDisplay());
-  event.Set(kKeySource, extension->from_webstore() ? kChromeWebstoreSource
-                                                   : kExternalSource);
+
+  // Set the source from which an extension was loaded from.
+  // TODO(crbug.com/410552409): Add other sources and refactor into helper
+  // function.
+  if (extension->location() ==
+      extensions::mojom::ManifestLocation::kComponent) {
+    event.Set(kKeySource, kComponentSource);
+  } else if (extension->from_webstore()) {
+    event.Set(kKeySource, kChromeWebstoreSource);
+  } else {
+    event.Set(kKeySource, kExternalSource);
+  }
 
   reporting_client_->ReportRealtimeEvent(
       kExtensionInstallEvent, std::move(settings.value()), std::move(event));

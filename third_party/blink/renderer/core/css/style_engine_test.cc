@@ -1337,36 +1337,6 @@ TEST_F(StyleEngineTest, StyleSheetsForStyleSheetList_ShadowRoot) {
   EXPECT_TRUE(GetStyleEngine().NeedsActiveStyleUpdate());
 }
 
-TEST_F(StyleEngineTest, ViewportDescription) {
-  ScopedTestingPlatformSupport<TestingPlatformSupport> platform;
-  frame_test_helpers::WebViewHelper web_view_helper;
-  WebViewImpl* web_view_impl = web_view_helper.Initialize();
-  web_view_impl->MainFrameWidget()->SetDeviceScaleFactorForTesting(1.f);
-  web_view_impl->MainFrameWidget()->UpdateAllLifecyclePhases(
-      DocumentUpdateReason::kTest);
-
-  Document* document =
-      To<LocalFrame>(web_view_impl->GetPage()->MainFrame())->GetDocument();
-
-  auto desc = document->GetViewportData().GetViewportDescription();
-  float min_width = desc.min_width.GetFloatValue();
-  float max_width = desc.max_width.GetFloatValue();
-  float min_height = desc.min_height.GetFloatValue();
-  float max_height = desc.max_height.GetFloatValue();
-
-  const float device_scale = 3.5f;
-  web_view_impl->MainFrameWidget()->SetDeviceScaleFactorForTesting(
-      device_scale);
-  web_view_impl->MainFrameWidget()->UpdateAllLifecyclePhases(
-      DocumentUpdateReason::kTest);
-
-  desc = document->GetViewportData().GetViewportDescription();
-  EXPECT_FLOAT_EQ(device_scale * min_width, desc.min_width.GetFloatValue());
-  EXPECT_FLOAT_EQ(device_scale * max_width, desc.max_width.GetFloatValue());
-  EXPECT_FLOAT_EQ(device_scale * min_height, desc.min_height.GetFloatValue());
-  EXPECT_FLOAT_EQ(device_scale * max_height, desc.max_height.GetFloatValue());
-}
-
 TEST_F(StyleEngineTest, MediaQueryAffectingValueChanged_StyleElementNoMedia) {
   GetDocument().body()->setInnerHTML("<style>div{color:pink}</style>");
   UpdateAllLifecyclePhases();
@@ -3705,6 +3675,60 @@ TEST_F(StyleEngineTest, FunctionalMediaInvalidationDataClearedOnFullRecalc) {
   EXPECT_EQ(0u, FunctionalMediaQueryResultsSize());
 }
 
+TEST_F(StyleEngineTest, CustomFunctionInUserOrigin) {
+  // @function in the user origin:
+  InjectSheet("user1", WebCssOrigin::kUser, R"CSS(
+    @function --f() {
+      result: 10px;
+    }
+    body {
+      width: --f();
+    }
+  )CSS");
+  UpdateAllLifecyclePhases();
+  ASSERT_TRUE(ComputedValue(GetDocument().body(), "width"));
+  EXPECT_EQ("10px", ComputedValue(GetDocument().body(), "width")->CssText());
+
+  // @function in the author origin (should win over user origin):
+  InjectSheet("author1", WebCssOrigin::kAuthor, R"CSS(
+    @function --f() {
+      result: 20px;
+    }
+    body {
+      width: --f();
+    }
+  )CSS");
+  UpdateAllLifecyclePhases();
+  ASSERT_TRUE(ComputedValue(GetDocument().body(), "width"));
+  EXPECT_EQ("20px", ComputedValue(GetDocument().body(), "width")->CssText());
+
+  // Add a second user origin sheet:
+  InjectSheet("user2", WebCssOrigin::kUser, R"CSS(
+    @function --f() {
+      result: 30px;
+    }
+    body {
+      width: --f();
+    }
+  )CSS");
+  UpdateAllLifecyclePhases();
+  ASSERT_TRUE(ComputedValue(GetDocument().body(), "width"));
+  // Author sheet still wins:
+  EXPECT_EQ("20px", ComputedValue(GetDocument().body(), "width")->CssText());
+
+  GetStyleEngine().RemoveInjectedSheet(AtomicString("author1"),
+                                       WebCssOrigin::kAuthor);
+  UpdateAllLifecyclePhases();
+  ASSERT_TRUE(ComputedValue(GetDocument().body(), "width"));
+  EXPECT_EQ("30px", ComputedValue(GetDocument().body(), "width")->CssText());
+
+  GetStyleEngine().RemoveInjectedSheet(AtomicString("user2"),
+                                       WebCssOrigin::kUser);
+  UpdateAllLifecyclePhases();
+  ASSERT_TRUE(ComputedValue(GetDocument().body(), "width"));
+  EXPECT_EQ("10px", ComputedValue(GetDocument().body(), "width")->CssText());
+}
+
 TEST_F(StyleEngineTest, RevertUseCount) {
   GetDocument().body()->setInnerHTML(
       "<style>div { display: unset; }</style><div></div>");
@@ -4211,37 +4235,6 @@ TEST_F(StyleEngineTest, DynamicViewportUnitsInMediaQuery) {
   }
 }
 
-TEST_F(StyleEngineTest, ViewportUnitVariantsUseCounter) {
-  EXPECT_FALSE(IsWebDXFeatureCounted(WebDXFeature::kViewportUnitVariants));
-
-  GetDocument().body()->setInnerHTML("<style> body { top: 10vh; } </style>");
-  UpdateAllLifecyclePhases();
-  EXPECT_FALSE(IsWebDXFeatureCounted(WebDXFeature::kViewportUnitVariants));
-
-  GetDocument().body()->setInnerHTML("<style> body { top: 10vi; } </style>");
-  UpdateAllLifecyclePhases();
-  EXPECT_FALSE(IsWebDXFeatureCounted(WebDXFeature::kViewportUnitVariants));
-
-  GetDocument().body()->setInnerHTML("<style> body { top: 10vmax; } </style>");
-  UpdateAllLifecyclePhases();
-  EXPECT_FALSE(IsWebDXFeatureCounted(WebDXFeature::kViewportUnitVariants));
-
-  GetDocument().body()->setInnerHTML("<style> body { top: 10svh; } </style>");
-  UpdateAllLifecyclePhases();
-  EXPECT_TRUE(IsWebDXFeatureCounted(WebDXFeature::kViewportUnitVariants));
-  ClearWebDXFeatureCounter(WebDXFeature::kViewportUnitVariants);
-
-  GetDocument().body()->setInnerHTML("<style> body { top: 10lvi; } </style>");
-  UpdateAllLifecyclePhases();
-  EXPECT_TRUE(IsWebDXFeatureCounted(WebDXFeature::kViewportUnitVariants));
-  ClearWebDXFeatureCounter(WebDXFeature::kViewportUnitVariants);
-
-  GetDocument().body()->setInnerHTML("<style> body { top: 10dvmax; } </style>");
-  UpdateAllLifecyclePhases();
-  EXPECT_TRUE(IsWebDXFeatureCounted(WebDXFeature::kViewportUnitVariants));
-  ClearWebDXFeatureCounter(WebDXFeature::kViewportUnitVariants);
-}
-
 TEST_F(StyleEngineTest, MediaQueriesChangeDisplayState) {
   ScopedDesktopPWAsAdditionalWindowingControlsForTest scoped_feature(true);
   GetDocument().body()->setInnerHTML(R"HTML(
@@ -4547,7 +4540,8 @@ TEST_F(StyleEngineSimTest, IFramePreferredColorScheme) {
             frame_document->GetStyleEngine().GetPreferredColorScheme());
 }
 
-TEST_F(StyleEngineContainerQueryTest, UpdateStyleAndLayoutTreeForContainer) {
+TEST_F(StyleEngineContainerQueryTest,
+       UpdateStyleAndLayoutTreeForSizeContainer) {
   GetDocument().body()->setInnerHTML(R"HTML(
     <style>
       .container {
@@ -4594,14 +4588,14 @@ TEST_F(StyleEngineContainerQueryTest, UpdateStyleAndLayoutTreeForContainer) {
   ASSERT_TRUE(container2);
 
   unsigned start_count = GetStyleEngine().StyleForElementCount();
-  GetStyleEngine().UpdateStyleAndLayoutTreeForContainer(
+  GetStyleEngine().UpdateStyleAndLayoutTreeForSizeContainer(
       *container1, LogicalSize(200, 100), kLogicalAxesBoth);
 
   // The first span.affected child and #container2
   EXPECT_EQ(2u, GetStyleEngine().StyleForElementCount() - start_count);
 
   start_count = GetStyleEngine().StyleForElementCount();
-  GetStyleEngine().UpdateStyleAndLayoutTreeForContainer(
+  GetStyleEngine().UpdateStyleAndLayoutTreeForSizeContainer(
       *container2, LogicalSize(200, 100), kLogicalAxesBoth);
 
   // Three direct span.affected children, and the two display:none elements.
@@ -4658,7 +4652,7 @@ TEST_F(StyleEngineContainerQueryTest, ContainerQueriesContainmentNotApplying) {
 
   unsigned start_count = GetStyleEngine().StyleForElementCount();
 
-  GetStyleEngine().UpdateStyleAndLayoutTreeForContainer(
+  GetStyleEngine().UpdateStyleAndLayoutTreeForSizeContainer(
       *container, LogicalSize(200, 100), kLogicalAxesBoth);
 
   // Even though none of the inner containers are eligible for containment,
@@ -4694,7 +4688,7 @@ TEST_F(StyleEngineContainerQueryTest, PseudoElementContainerQueryRecalc) {
   ASSERT_TRUE(span);
 
   unsigned start_count = GetStyleEngine().StyleForElementCount();
-  GetStyleEngine().UpdateStyleAndLayoutTreeForContainer(
+  GetStyleEngine().UpdateStyleAndLayoutTreeForSizeContainer(
       *container, LogicalSize(200, 100), kLogicalAxesBoth);
 
   // The two ::before elements + #span.
@@ -4731,12 +4725,12 @@ TEST_F(StyleEngineContainerQueryTest, MarkStyleDirtyFromContainerRecalc) {
   EXPECT_TRUE(old_inner_style);
 
   unsigned start_count = GetStyleEngine().StyleForElementCount();
-  GetStyleEngine().UpdateStyleAndLayoutTreeForContainer(
+  GetStyleEngine().UpdateStyleAndLayoutTreeForSizeContainer(
       *container, LogicalSize(200, 100), kLogicalAxesBoth);
 
   // Input elements mark their InnerEditorElement() style-dirty when they are
-  // recalculated. That means the UpdateStyleAndLayoutTreeForContainer() call
-  // above will involve marking ChildNeedsStyleRecalc all the way up to the
+  // recalculated. That means the UpdateStyleAndLayoutTreeForSizeContainer()
+  // call above will involve marking ChildNeedsStyleRecalc all the way up to the
   // documentElement. Check that we don't leave anything dirty.
   EXPECT_FALSE(GetDocument().NeedsLayoutTreeUpdate());
   EXPECT_FALSE(GetDocument().documentElement()->ChildNeedsStyleRecalc());
@@ -7281,6 +7275,7 @@ TEST_F(StyleEngineTest, CreateUnconnectedRuleSet) {
 
   RuleSet* rule_set = GetStyleEngine().CreateUnconnectedRuleSet(*sheet);
   ASSERT_TRUE(rule_set);
+  rule_set->AssertCompacted();
   EXPECT_EQ(2u, rule_set->ClassRules(AtomicString("a")).size());
 
   // As the above RuleSet is unconnected, it should not have affected
@@ -7438,6 +7433,122 @@ TEST_F(StyleEngineTest, ScrollStateUseCounter) {
   EXPECT_TRUE(
       IsWebDXFeatureCounted(WebDXFeature::kContainerScrollStateQueries));
   ClearWebDXFeatureCounter(WebDXFeature::kContainerScrollStateQueries);
+}
+
+TEST_F(StyleEngineTest, CSSVarFallbackCycleCounter) {
+  ScopedCSSShortCircuitVarAttrForTest scoped_feature(false);
+
+  // No fallback.
+  ClearUseCounter(WebFeature::kCSSVarFallbackCycle);
+  GetDocument().body()->setInnerHTML(R"HTML(
+    <style>
+      div {
+        --x: var(--invalid);
+      }
+    </style>
+    <div></div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(IsUseCounted(WebFeature::kCSSVarFallbackCycle));
+
+  // Invalid var() in a fallback that's used.
+  ClearUseCounter(WebFeature::kCSSVarFallbackCycle);
+  GetDocument().body()->setInnerHTML(R"HTML(
+    <style>
+      div {
+        --x: var(--invalid, var(--invalid2));
+      }
+    </style>
+    <div></div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(IsUseCounted(WebFeature::kCSSVarFallbackCycle));
+
+  // Cycle in used fallback.
+  ClearUseCounter(WebFeature::kCSSVarFallbackCycle);
+  GetDocument().body()->setInnerHTML(R"HTML(
+    <style>
+      div {
+        --x: var(--invalid, var(--x));
+      }
+    </style>
+    <div></div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(IsUseCounted(WebFeature::kCSSVarFallbackCycle));
+
+  // Cycle in unused fallback.
+  ClearUseCounter(WebFeature::kCSSVarFallbackCycle);
+  GetDocument().body()->setInnerHTML(R"HTML(
+    <style>
+      div {
+        --x: var(--y, var(--x));
+        --y: 10px;
+      }
+    </style>
+    <div></div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_TRUE(IsUseCounted(WebFeature::kCSSVarFallbackCycle));
+}
+
+TEST_F(StyleEngineTest, CSSAttrFallbackCycleCounter) {
+  ScopedCSSShortCircuitVarAttrForTest scoped_feature(false);
+
+  // No fallback.
+  ClearUseCounter(WebFeature::kCSSAttrFallbackCycle);
+  GetDocument().body()->setInnerHTML(R"HTML(
+    <style>
+      div {
+        --x: attr(data-foo type(*));
+      }
+    </style>
+    <div data-foo="attr(data-invalid type(*))"></div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(IsUseCounted(WebFeature::kCSSAttrFallbackCycle));
+
+  // Invalid var() in a fallback that's used.
+  ClearUseCounter(WebFeature::kCSSAttrFallbackCycle);
+  GetDocument().body()->setInnerHTML(R"HTML(
+    <style>
+      div {
+        --x: attr(data-foo type(*));
+      }
+    </style>
+    <div
+      data-foo="attr(data-invalid type(*), attr(data-invalid2 type(*)))"></div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(IsUseCounted(WebFeature::kCSSAttrFallbackCycle));
+
+  // Cycle in used fallback.
+  ClearUseCounter(WebFeature::kCSSAttrFallbackCycle);
+  GetDocument().body()->setInnerHTML(R"HTML(
+    <style>
+      div {
+        --x: attr(data-foo type(*));
+      }
+    </style>
+    <div data-foo="attr(data-invalid type(*), attr(data-foo type(*)))"></div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_FALSE(IsUseCounted(WebFeature::kCSSAttrFallbackCycle));
+
+  // Cycle in unused fallback.
+  ClearUseCounter(WebFeature::kCSSAttrFallbackCycle);
+  GetDocument().body()->setInnerHTML(R"HTML(
+    <style>
+      div {
+        --x: attr(data-foo type(*));
+      }
+    </style>
+    <div
+      data-foo="attr(data-bar type(*), attr(data-foo type(*)))"
+      data-bar="10px"></div>
+  )HTML");
+  UpdateAllLifecyclePhasesForTest();
+  EXPECT_TRUE(IsUseCounted(WebFeature::kCSSAttrFallbackCycle));
 }
 
 }  // namespace blink

@@ -112,9 +112,6 @@ const char kDisableBackForwardCache[] = "disable-back-forward-cache";
 // features.
 const char kDisableBlinkFeatures[]          = "disable-blink-features";
 
-// Disables HTML5 DB support.
-const char kDisableDatabases[]              = "disable-databases";
-
 // Disable the per-domain blocking for 3D APIs after GPU reset.
 // This switch is intended only for tests.
 const char kDisableDomainBlockingFor3DAPIs[] =
@@ -207,6 +204,12 @@ const char kDisableNotifications[]          = "disable-notifications";
 
 // Disable Pepper3D.
 const char kDisablePepper3d[]               = "disable-pepper-3d";
+
+// Disables the activation of browser and web accessibility via interactions
+// with the platform's accessibility integration (i.e., a screenreader will not
+// be able to function with the browser).
+const char kDisablePlatformAccessibilityIntegration[] =
+    "disable-platform-accessibility-integration";
 
 // Disables the Presentation API.
 const char kDisablePresentationAPI[]        = "disable-presentation-api";
@@ -602,9 +605,13 @@ const char kProtectedAudiencesConsentedDebugToken[] =
 // Defaults to disabled.
 const char kPullToRefresh[] = "pull-to-refresh";
 
-// Reduce the accept-language http header, and only send one language in the
-// request header: https://github.com/Tanych/accept-language.
+// Reduce the accept-language for HTTP header and JS navigator.languages, and
+// only most preferred language: https://github.com/Tanych/accept-language.
 const char kReduceAcceptLanguage[] = "reduce-accept-language";
+
+// Reduce the accept-language for HTTP header, and only send most preferred
+// language in the request header: https://github.com/Tanych/accept-language.
+const char kReduceAcceptLanguageHTTP[] = "reduce-accept-language-http";
 
 // Reduce the minor version number in the User-Agent string. This flag
 // implements phase 4 of User-Agent reduction:
@@ -784,9 +791,6 @@ const char kVideoImageTextureTarget[] = "video-image-texture-target";
 const char kUseContextSnapshotSwitch[] = "use-context-snapshot";
 #endif
 
-// Set when Chromium should use a mobile user agent.
-const char kUseMobileUserAgent[] = "use-mobile-user-agent";
-
 // Use the MockCertVerifier. This only works in test code.
 const char kUseMockCertVerifierForTesting[] =
     "use-mock-cert-verifier-for-testing";
@@ -802,8 +806,8 @@ const char kUtilityProcess[]                = "utility";
 const char kUtilityStartupDialog[] = "utility-startup-dialog";
 
 // This switch indicates the type of a utility process. It does not affect the
-// services offered by the process, but is added to the command line for
-// debugging and profiling purposes.
+// services offered by the process, but is added to the command line to make
+// it easier to identify the purpose of the utility process.
 const char kUtilitySubType[] = "utility-sub-type";
 
 // Causes tests to attempt to verify pixel output.

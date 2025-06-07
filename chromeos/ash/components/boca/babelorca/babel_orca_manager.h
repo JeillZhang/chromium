@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "chromeos/ash/components/boca/babelorca/babel_orca_caption_translator.h"
 #include "chromeos/ash/components/boca/babelorca/babel_orca_speech_recognizer.h"
@@ -67,19 +68,25 @@ class BabelOrcaManager : public BocaSessionManager::Observer,
       std::unique_ptr<::captions::CaptionBubbleContext> caption_bubble_context,
       std::unique_ptr<babelorca::BabelOrcaSpeechRecognizer> speech_recognizer,
       std::unique_ptr<babelorca::BabelOrcaCaptionTranslator> translator,
+      base::RepeatingClosure on_local_caption_closed_cb,
       PrefService* pref_service,
-      const std::string& application_locale);
+      const std::string& application_locale,
+      const std::string& caption_language);
 
   static std::unique_ptr<BabelOrcaManager> CreateAsConsumer(
       signin::IdentityManager* identity_manager,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       std::unique_ptr<::captions::CaptionBubbleContext> caption_bubble_context,
       const GaiaId& gaia_id,
+      std::string school_tools_url_base,
       std::unique_ptr<babelorca::BabelOrcaCaptionTranslator> translator,
+      base::RepeatingClosure on_local_caption_closed_cb,
       PrefService* pref_service,
-      const std::string& application_locale);
+      const std::string& application_locale,
+      const std::string& caption_language);
 
   BabelOrcaManager(
+      PrefService* pref_service,
       signin::IdentityManager* identity_manager,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       ControllerFactory controller_factory);
@@ -99,6 +106,8 @@ class BabelOrcaManager : public BocaSessionManager::Observer,
       const std::string& tachyon_group_id) override;
   void OnLocalCaptionConfigUpdated(
       const ::boca::CaptionsConfig& config) override;
+  void OnLocalCaptionClosed() override;
+  void OnSessionCaptionClosed(bool is_error) override;
 
   bool IsCaptioningAvailable();
 
@@ -111,7 +120,7 @@ class BabelOrcaManager : public BocaSessionManager::Observer,
   std::optional<std::string> sender_email() const override;
 
  private:
-  const std::string client_uuid_;
+  raw_ptr<PrefService> pref_service_;
   babelorca::TokenManagerImpl token_manager_;
   babelorca::TachyonAuthedClientImpl authed_client_;
   babelorca::TachyonRegistrar registrar_;

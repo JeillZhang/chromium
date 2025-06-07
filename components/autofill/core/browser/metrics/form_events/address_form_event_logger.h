@@ -11,7 +11,7 @@
 
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/autofill_trigger_source.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics_utils.h"
@@ -32,7 +32,9 @@ enum class CategoryResolvedKeyMetricBucket {
   kAccountChrome = 2,
   kAccountNonChrome = 3,
   kMixed = 4,
-  kMaxValue = kMixed
+  kAccountHome = 5,
+  kAccountWork = 6,
+  kMaxValue = kAccountWork
 };
 
 class AddressFormEventLogger : public FormEventLoggerBase {

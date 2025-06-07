@@ -12,9 +12,9 @@
 #import "ios/chrome/browser/omnibox/eg_tests/omnibox_app_interface.h"
 #import "ios/chrome/browser/omnibox/eg_tests/omnibox_earl_grey.h"
 #import "ios/chrome/browser/omnibox/eg_tests/omnibox_test_util.h"
+#import "ios/chrome/browser/omnibox/public/omnibox_constants.h"
+#import "ios/chrome/browser/omnibox/public/omnibox_popup_accessibility_identifier_constants.h"
 #import "ios/chrome/browser/omnibox/public/omnibox_ui_features.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/omnibox_constants.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/popup/omnibox_popup_accessibility_identifier_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
@@ -71,7 +71,6 @@ id<GREYMatcher> highlightedReviewsButtonMatcher() {
   AppLaunchConfiguration config = [super appConfigurationForTestCase];
 
   config.features_disabled = {};
-  config.features_enabled.push_back(kOmniboxActionsInSuggest);
   // HW keyboard simulation can mess up the SW keyboard simulator state.
   // Relaunching resets the state.
   config.relaunch_policy = ForceRelaunchByCleanShutdown;

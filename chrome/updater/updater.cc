@@ -37,9 +37,9 @@
 #include "chrome/updater/crash_client.h"
 #include "chrome/updater/crash_reporter.h"
 #include "chrome/updater/ipc/ipc_support.h"
-#include "chrome/updater/update_usage_stats_task.h"
 #include "chrome/updater/updater_scope.h"
 #include "chrome/updater/updater_version.h"
+#include "chrome/updater/usage_stats_permissions.h"
 #include "chrome/updater/util/util.h"
 #include "components/crash/core/common/crash_key.h"
 #include "components/crash/core/common/crash_keys.h"
@@ -83,9 +83,6 @@ void InitializeCrashReporting(UpdaterScope updater_scope) {
   if (!CrashClient::GetInstance()->InitializeCrashReporting(updater_scope)) {
     VLOG(1) << "Crash reporting is not available.";
     return;
-  }
-  if (AreRawUsageStatsEnabled(updater_scope)) {
-    CrashClient::GetInstance()->SetUploadsEnabled(true);
   }
   crash_reporter::InitializeCrashKeys();
   crash_keys::SetSwitchesFromCommandLine(
@@ -159,6 +156,15 @@ int HandleUpdaterCommands(UpdaterScope updater_scope,
 
   // Only tasks and timers are supported on the main sequence.
   base::SingleThreadTaskExecutor main_task_executor;
+
+  if (command_line->HasSwitch(kForceInstallSwitch)) {
+    const int recover_result = MakeAppRecover()->Run();
+    return recover_result == kErrorOk &&
+                   (command_line->HasSwitch(kInstallSwitch) ||
+                    command_line->HasSwitch(kHandoffSwitch))
+               ? MakeAppInstall(command_line->HasSwitch(kSilentSwitch))->Run()
+               : recover_result;
+  }
 
   if (command_line->HasSwitch(kInstallSwitch) ||
       command_line->HasSwitch(kHandoffSwitch)) {

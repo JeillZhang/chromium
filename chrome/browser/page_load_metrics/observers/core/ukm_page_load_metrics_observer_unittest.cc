@@ -9,6 +9,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/metrics_hashes.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/test_trace_processor.h"
@@ -916,7 +917,7 @@ TEST_F(UkmPageLoadMetricsObserverTest, LargestContentfulPaint_Trace) {
   perfetto::internal::TrackRegistry::InitializeInstance();
 
   using trace_analyzer::Query;
-  trace_analyzer::Start("*");
+  trace_analyzer::Start("loading");
   {
     page_load_metrics::mojom::PageLoadTiming timing;
     page_load_metrics::InitPageLoadTimingForTest(&timing);

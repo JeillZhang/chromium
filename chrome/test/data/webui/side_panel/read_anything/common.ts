@@ -2,15 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 import type {CrActionMenuElement} from '//resources/cr_elements/cr_action_menu/cr_action_menu.js';
-import type {CrLazyRenderElement} from '//resources/cr_elements/cr_lazy_render/cr_lazy_render.js';
-import {flush} from '//resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+import type {CrLazyRenderLitElement} from '//resources/cr_elements/cr_lazy_render/cr_lazy_render_lit.js';
 import type {AppElement} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
-import {MetricsBrowserProxyImpl, playFromSelectionTimeout, spinnerDebounceTimeout} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
+import {MetricsBrowserProxyImpl, NodeStore, playFromSelectionTimeout, ReadAnythingLogger, ToolbarEvent, VoiceLanguageController} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 import {MockTimer} from 'chrome-untrusted://webui-test/mock_timer.js';
 import {microtasksFinished} from 'chrome-untrusted://webui-test/test_util.js';
 
-import type {FakeSpeechSynthesis} from './fake_speech_synthesis.js';
 import {TestMetricsBrowserProxy} from './test_metrics_browser_proxy.js';
+import type {TestSpeechBrowserProxy} from './test_speech_browser_proxy.js';
 
 export async function createApp(): Promise<AppElement> {
   const app = document.createElement('read-anything-app');
@@ -22,21 +21,12 @@ export async function createApp(): Promise<AppElement> {
 export function mockMetrics(): TestMetricsBrowserProxy {
   const metrics = new TestMetricsBrowserProxy();
   MetricsBrowserProxyImpl.setInstance(metrics);
+  ReadAnythingLogger.setInstance(new ReadAnythingLogger());
   return metrics;
 }
 
-export function emitEvent(
-    app: AppElement, name: string, options?: any): Promise<void> {
+export function emitEvent(app: AppElement, name: string, options?: any): void {
   app.$.toolbar.dispatchEvent(new CustomEvent(name, options));
-  return microtasksFinished();
-}
-
-// TODO(crbug.com/40927698): Remove this function and use the above one once
-// we've fully migrated away from polymer to Lit.
-export function emitEventForPolymer(
-    target: HTMLElement, name: string, options?: any): void {
-  target.dispatchEvent(new CustomEvent(name, options));
-  flush();
 }
 
 // Runs the requestAnimationFrame callback immediately
@@ -50,41 +40,50 @@ export function stubAnimationFrame() {
 export function playFromSelectionWithMockTimer(app: AppElement): void {
   const mockTimer = new MockTimer();
   mockTimer.install();
-  app.playSpeech();
+  emitEvent(app, ToolbarEvent.PLAY_PAUSE);
   mockTimer.tick(playFromSelectionTimeout);
   mockTimer.uninstall();
 }
 
-export async function waitForSpinnerTimeout(): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, spinnerDebounceTimeout));
-}
-
 // Returns the list of items in the given dropdown menu
 export function getItemsInMenu(
-    lazyMenu: CrLazyRenderElement<CrActionMenuElement>): HTMLButtonElement[] {
+    lazyMenu: CrLazyRenderLitElement<CrActionMenuElement>):
+    HTMLButtonElement[] {
   // We need to call menu.get here to ensure the menu has rendered before we
   // query the dropdown item elements.
   const menu = lazyMenu.get();
-  flush();
   return Array.from(menu.querySelectorAll<HTMLButtonElement>('.dropdown-item'));
 }
 
-// Creates SpeechSynthesisVoices and sets them on the given FakeSpeechSynthesis.
+export function createSpeechErrorEvent(
+    utterance: SpeechSynthesisUtterance,
+    errorCode: SpeechSynthesisErrorCode): SpeechSynthesisErrorEvent {
+  return new SpeechSynthesisErrorEvent(
+      'type', {utterance: utterance, error: errorCode});
+}
+
+export function setupBasicSpeech(speech: TestSpeechBrowserProxy) {
+  VoiceLanguageController.getInstance().enableLang('en');
+  createAndSetVoices(
+      speech, [{lang: 'en', name: 'Google Basic', default: true}]);
+}
+
+// Creates SpeechSynthesisVoices and sets them on the given
+// TestSpeechBrowserProxy.
 export function createAndSetVoices(
-    app: AppElement, speechSynthesis: FakeSpeechSynthesis,
+    speech: TestSpeechBrowserProxy,
     overrides: Array<Partial<SpeechSynthesisVoice>>) {
   const voices: SpeechSynthesisVoice[] = [];
   overrides.forEach(partialVoice => {
     voices.push(createSpeechSynthesisVoice(partialVoice));
   });
-  setVoices(app, speechSynthesis, voices);
+  setVoices(speech, voices);
 }
 
 export function setVoices(
-    app: AppElement, speechSynthesis: FakeSpeechSynthesis,
-    voices: SpeechSynthesisVoice[]) {
-  speechSynthesis.setVoices(voices);
-  app.onVoicesChanged();
+    speech: TestSpeechBrowserProxy, voices: SpeechSynthesisVoice[]) {
+  speech.setVoices(voices);
+  VoiceLanguageController.getInstance().onVoicesChanged();
 }
 
 export function createSpeechSynthesisVoice(
@@ -115,4 +114,19 @@ export function setSimpleAxTreeWithText(text: string) {
     ],
   };
   chrome.readingMode.setContentForTesting(axTree, [2]);
+}
+
+export function setSimpleNodeStoreWithText(text: string) {
+  const id = 2;
+  chrome.readingMode.getCurrentText = () => [id];
+  chrome.readingMode.getTextContent = () => text;
+  chrome.readingMode.getCurrentTextStartIndex = () => 0;
+  chrome.readingMode.getCurrentTextEndIndex = () => text.length;
+  NodeStore.getInstance().setDomNode(document.createTextNode(text), id);
+}
+
+// Sets up the simple AX tree and node store with the given text.
+export function setSimpleTreeWithText(text: string) {
+  setSimpleAxTreeWithText(text);
+  setSimpleNodeStoreWithText(text);
 }

@@ -11,7 +11,9 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_HEAP_COLLECTION_SUPPORT_HEAP_VECTOR_BACKING_H_
 
 #include <type_traits>
+
 #include "base/check_op.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/utils.h"
 #include "third_party/blink/renderer/platform/heap/custom_spaces.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
@@ -122,6 +124,14 @@ struct ThreadingTrait<HeapVectorBacking<T, Traits>> {
   static constexpr ThreadAffinity kAffinity = ThreadingTrait<T>::kAffinity;
 };
 
+namespace internal {
+template <typename T>
+struct CompactionTraits<blink::HeapVectorBacking<T>> {
+  static constexpr bool SupportsCompaction() {
+    return blink::HeapVectorBacking<T>::TraitsType::kCanMoveWithMemcpy;
+  }
+};
+}  // namespace internal
 }  // namespace blink
 
 namespace WTF {
@@ -189,9 +199,9 @@ namespace cppgc {
 // The space trait rewires allocations for HeapVector with `kCanMoveWithMemcpy`
 // into a space supporting compaction.
 template <typename T>
-struct SpaceTrait<blink::HeapVectorBacking<T>,
-                  std::enable_if_t<blink::HeapVectorBacking<
-                      T>::TraitsType::kCanMoveWithMemcpy>> {
+  requires(blink::internal::CompactionTraits<
+           blink::HeapVectorBacking<T>>::SupportsCompaction())
+struct SpaceTrait<blink::HeapVectorBacking<T>> {
   using Space = blink::CompactableHeapVectorBackingSpace;
 };
 

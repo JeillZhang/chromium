@@ -29,7 +29,6 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_content_client.h"
@@ -355,21 +354,8 @@ std::unique_ptr<base::Unwinder> CreateV8Unwinder(v8::Isolate* isolate) {
   return std::make_unique<V8Unwinder>(isolate);
 }
 
-// Web Share is conditionally enabled here in chrome/, to avoid it being
-// made available in other clients of content/ that do not have a Web Share
-// Mojo implementation (e.g. WebView).
-void MaybeEnableWebShare() {
-#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
-  if (base::FeatureList::IsEnabled(features::kWebShare))
-#endif
-#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || \
-    BUILDFLAG(IS_ANDROID)
-    blink::WebRuntimeFeatures::EnableWebShare(true);
-#endif
-}
-
 #if BUILDFLAG(ENABLE_NACL) && BUILDFLAG(ENABLE_EXTENSIONS) && \
-    BUILDFLAG(IS_CHROMEOS_ASH)
+    BUILDFLAG(IS_CHROMEOS)
 bool IsTerminalSystemWebAppNaClPage(GURL url) {
   GURL::Replacements replacements;
   replacements.ClearQuery();
@@ -422,11 +408,6 @@ void ChromeContentRendererClient::RenderThreadStarted() {
                           base::Unretained(v8::Isolate::GetCurrent())));
 
   const bool is_extension = IsStandaloneContentExtensionProcess();
-
-  thread->SetRendererProcessType(
-      is_extension
-          ? blink::scheduler::WebRendererProcessType::kExtensionRenderer
-          : blink::scheduler::WebRendererProcessType::kRenderer);
 
   if (is_extension) {
     // The process name was set to "Renderer" in RendererMain(). Update it to
@@ -484,18 +465,22 @@ void ChromeContentRendererClient::RenderThreadStarted() {
     thread->AddObserver(fingerprinting_protection_ruleset_dealer_.get());
   }
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   phishing_model_setter_ =
       std::make_unique<safe_browsing::PhishingModelSetterImpl>();
+#endif
 
   thread->AddObserver(chrome_observer_.get());
   thread->AddObserver(subresource_filter_ruleset_dealer_.get());
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   thread->AddObserver(phishing_model_setter_.get());
+#endif
 
   blink::WebScriptController::RegisterExtension(
       extensions_v8::LoadTimesExtension::Get());
 
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(variations::switches::kEnableBenchmarking)) {
+  if (command_line->HasSwitch(variations::switches::kEnableBenchmarkingApi)) {
     blink::WebScriptController::RegisterExtension(
         extensions_v8::BenchmarkingExtension::Get());
   }
@@ -1076,7 +1061,7 @@ WebPlugin* ChromeContentRendererClient::CreatePlugin(
             if (extension) {
               is_module_allowed =
                   IsNativeNaClAllowed(app_url, is_nacl_unrestricted, extension);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
               // Allow Terminal System App to load the SSH extension NaCl
               // module.
             } else if (IsTerminalSystemWebAppNaClPage(app_url)) {
@@ -1108,7 +1093,7 @@ WebPlugin* ChromeContentRendererClient::CreatePlugin(
                 blink::mojom::ConsoleMessageLevel::kError, error_message));
             placeholder = create_blocked_plugin(
                 IDR_BLOCKED_PLUGIN_HTML,
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
                 l10n_util::GetStringUTF16(IDS_NACL_PLUGIN_BLOCKED));
 #else
                 l10n_util::GetStringFUTF16(IDS_PLUGIN_BLOCKED, group_name));
@@ -1703,7 +1688,12 @@ void ChromeContentRendererClient::
   // embedder only.
   blink::WebRuntimeFeatures::EnablePerformanceManagerInstrumentation(true);
 
-  MaybeEnableWebShare();
+// Web Share is conditionally enabled here in chrome/, to avoid it
+// being made available in WebView or Linux.
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN) || \
+    BUILDFLAG(IS_MAC)
+  blink::WebRuntimeFeatures::EnableWebShare(true);
+#endif
 
   if (base::FeatureList::IsEnabled(
           autofill::features::kAutofillSharedAutofill)) {
@@ -1713,15 +1703,24 @@ void ChromeContentRendererClient::
   if (base::FeatureList::IsEnabled(subresource_filter::kAdTagging))
     blink::WebRuntimeFeatures::EnableAdTagging(true);
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  // WebHID and WebUSB on service workers is only available in extensions.
   if (IsStandaloneContentExtensionProcess()) {
+    // These Web API features are exposed in extensions.
     blink::WebRuntimeFeatures::EnableWebUSBOnServiceWorkers(true);
 #if !BUILDFLAG(IS_ANDROID)
     blink::WebRuntimeFeatures::EnableWebHIDOnServiceWorkers(true);
 #endif  // !BUILDFLAG(IS_ANDROID)
+    if (blink::WebRuntimeFeatures::IsAIPromptAPIForExtensionEnabled() &&
+        base::FeatureList::IsEnabled(
+            blink::features::kAIPromptAPIForExtension)) {
+      blink::WebRuntimeFeatures::EnableAIPromptAPI(true);
+    }
+    blink::WebRuntimeFeatures::EnableAIPromptAPIForWorkers(true);
+    blink::WebRuntimeFeatures::EnableAIRewriterAPIForWorkers(true);
+    blink::WebRuntimeFeatures::EnableAISummarizationAPIForWorkers(true);
+    blink::WebRuntimeFeatures::EnableAIWriterAPIForWorkers(true);
+    blink::WebRuntimeFeatures::EnableLanguageDetectionAPIForWorkers(true);
+    blink::WebRuntimeFeatures::EnableTranslationAPIForWorkers(true);
   }
-#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 }
 
 bool ChromeContentRendererClient::AllowScriptExtensionForServiceWorker(

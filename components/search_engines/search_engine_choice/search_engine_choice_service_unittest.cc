@@ -18,6 +18,7 @@
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/time/time.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "components/country_codes/country_codes.h"
@@ -34,11 +35,13 @@
 #include "components/search_engines/choice_made_location.h"
 #include "components/search_engines/default_search_manager.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_metrics_service_accessor.h"
+#include "components/search_engines/search_engine_choice/search_engine_choice_service_test_base.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
 #include "components/search_engines/search_engine_type.h"
 #include "components/search_engines/search_engines_pref_names.h"
 #include "components/search_engines/search_engines_switches.h"
 #include "components/search_engines/search_engines_test_environment.h"
+#include "components/search_engines/search_engines_test_util.h"
 #include "components/search_engines/template_url_data.h"
 #include "components/search_engines/template_url_data_util.h"
 #include "components/search_engines/template_url_prepopulate_data.h"
@@ -50,259 +53,36 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/search_engines_data/resources/definitions/prepopulated_engines.h"
 
-using search_engines::RepromptResult;
-using search_engines::WipeSearchEngineChoiceReason;
+using ::country_codes::CountryId;
+using ::search_engines::RepromptResult;
+using ::search_engines::SearchEngineChoiceWipeReason;
 using ::testing::NiceMock;
 
 namespace search_engines {
 namespace {
 
-const int kBelgiumCountryId = country_codes::CountryCharsToCountryID('B', 'E');
-const int kUsaCountryId = country_codes::CountryCharsToCountryID('U', 'S');
+const CountryId kBelgiumCountryId = CountryId("BE");
+const CountryId kUsaCountryId = CountryId("US");
 
-// For SearchEngineChoiceServiceTest::InitService();
-struct InitServiceArgs {
-  int variation_country_id = country_codes::kCountryIDUnknown;
-  int client_country_id = country_codes::kCountryIDUnknown;
-  bool force_reset = false;
-  bool is_profile_eligible_for_dse_guest_propagation = false;
-};
+TemplateURL::OwnedTemplateURLVector
+OwnedTemplateURLVectorFromPrepopulatedEngines(
+    const std::vector<const TemplateURLPrepopulateData::PrepopulatedEngine*>&
+        engines) {
+  TemplateURL::OwnedTemplateURLVector result;
+  for (const TemplateURLPrepopulateData::PrepopulatedEngine* engine : engines) {
+    result.push_back(std::make_unique<TemplateURL>(
+        *TemplateURLDataFromPrepopulatedEngine(*engine)));
+  }
+  return result;
+}
 
 }  // namespace
 
-class SearchEngineChoiceServiceTest : public ::testing::Test {
- public:
-  SearchEngineChoiceServiceTest() {
-    TemplateURLService::RegisterProfilePrefs(pref_service_.registry());
-    DefaultSearchManager::RegisterProfilePrefs(pref_service_.registry());
-    TemplateURLPrepopulateData::RegisterProfilePrefs(pref_service_.registry());
-    local_state_.registry()->RegisterBooleanPref(
-        metrics::prefs::kMetricsReportingEnabled, true);
-    local_state_.registry()->RegisterInt64Pref(
-        prefs::kDefaultSearchProviderGuestModePrepopulatedId, 0);
-
-    // Override the country checks to simulate being in Belgium.
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kSearchEngineChoiceCountry, "BE");
-
-    // Metrics reporting is disabled for non-branded builds.
-    SearchEngineChoiceMetricsServiceAccessor::
-        SetForceIsMetricsReportingEnabledPrefLookup(true);
-
-    InitMockPolicyService();
-    CheckPoliciesInitialState();
-  }
-
-  ~SearchEngineChoiceServiceTest() override = default;
-
-  void InitService(InitServiceArgs args = {}) {
-    GetOrInitEnvironment(args);
-
-    // Call it to ensure it gets created.
-    search_engine_choice_service();
-  }
-
-  policy::MockPolicyService& policy_service() { return policy_service_; }
-  policy::PolicyMap& policy_map() { return policy_map_; }
-  sync_preferences::TestingPrefServiceSyncable* pref_service() {
-    return &GetOrInitEnvironment().pref_service();
-  }
-  TemplateURLService& template_url_service() {
-    return CHECK_DEREF(GetOrInitEnvironment().template_url_service());
-  }
-  search_engines::SearchEngineChoiceService& search_engine_choice_service() {
-    return GetOrInitEnvironment().search_engine_choice_service();
-  }
-  TestingPrefServiceSimple& local_state() {
-    return GetOrInitEnvironment().local_state();
-  }
-  TemplateURLPrepopulateData::Resolver& prepopulate_data_resolver() {
-    return GetOrInitEnvironment().prepopulate_data_resolver();
-  }
-
-  base::HistogramTester histogram_tester_;
-
- private:
-  SearchEnginesTestEnvironment& GetOrInitEnvironment(
-      InitServiceArgs args = {}) {
-    if (args.force_reset) {
-      search_engines_test_environment_.reset();
-    }
-
-    if (!search_engines_test_environment_) {
-      SearchEnginesTestEnvironment::ServiceFactories lazy_factories;
-      lazy_factories.regional_capabilities_service_factory =
-          base::BindLambdaForTesting(
-              [args](SearchEnginesTestEnvironment& environment) {
-                return regional_capabilities::CreateServiceWithFakeClient(
-                    environment.pref_service(), args.client_country_id);
-              });
-      lazy_factories.search_engine_choice_service_factory =
-          base::BindLambdaForTesting(
-              [args](SearchEnginesTestEnvironment& environment) {
-                return std::make_unique<SearchEngineChoiceService>(
-                    environment.pref_service(), &environment.local_state(),
-                    environment.regional_capabilities_service(),
-                    args.is_profile_eligible_for_dse_guest_propagation,
-                    args.variation_country_id);
-              });
-
-      search_engines_test_environment_ =
-          std::make_unique<SearchEnginesTestEnvironment>(
-              SearchEnginesTestEnvironment::Deps{.pref_service = &pref_service_,
-                                                 .local_state = &local_state_},
-              lazy_factories);
-    }
-    return *search_engines_test_environment_.get();
-  }
-
-  void InitMockPolicyService() {
-    ON_CALL(policy_service_, GetPolicies(::testing::Eq(policy::PolicyNamespace(
-                                 policy::POLICY_DOMAIN_CHROME, std::string()))))
-        .WillByDefault(::testing::ReturnRef(policy_map_));
-  }
-
-  // Test that the `DefaultSearchProviderEnabled` and
-  // `DefaultSearchProviderSearchURL` policies are not initially set.
-  void CheckPoliciesInitialState() {
-    const auto& policies = policy_service().GetPolicies(
-        policy::PolicyNamespace(policy::POLICY_DOMAIN_CHROME, std::string()));
-
-    const auto* default_search_provider_enabled = policies.GetValue(
-        policy::key::kDefaultSearchProviderEnabled, base::Value::Type::BOOLEAN);
-    const auto* default_search_provider_search_url =
-        policies.GetValue(policy::key::kDefaultSearchProviderSearchURL,
-                          base::Value::Type::STRING);
-
-    ASSERT_FALSE(default_search_provider_enabled);
-    ASSERT_FALSE(default_search_provider_search_url);
-  }
-
-  sync_preferences::TestingPrefServiceSyncable pref_service_;
-  TestingPrefServiceSimple local_state_;
-  NiceMock<policy::MockPolicyService> policy_service_;
-  policy::PolicyMap policy_map_;
-  std::unique_ptr<SearchEnginesTestEnvironment>
-      search_engines_test_environment_;
+class SearchEngineChoiceServiceTest : public SearchEngineChoiceServiceTestBase {
 };
-
-// Test that the choice screen doesn't get displayed if the profile is not
-// regular.
-TEST_F(SearchEngineChoiceServiceTest,
-       DoNotShowChoiceScreenWithNotRegularProfile) {
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/false,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType);
-}
-
-// Test that the choice screen gets displayed if the
-// `DefaultSearchProviderEnabled` policy is not set.
-TEST_F(SearchEngineChoiceServiceTest, ShowChoiceScreenIfPoliciesAreNotSet) {
-  SearchEngineChoiceScreenConditions expected_choice_screen_condition =
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-      SearchEngineChoiceScreenConditions::kUnsupportedBrowserType;
-#else
-      SearchEngineChoiceScreenConditions::kEligible;
-#endif
-
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            expected_choice_screen_condition);
-  EXPECT_EQ(search_engine_choice_service().GetDynamicChoiceScreenConditions(
-                template_url_service()),
-            expected_choice_screen_condition);
-}
-
-// Test that the choice screen does not get displayed if the provider list is
-// overridden in the intial_preferences file.
-TEST_F(SearchEngineChoiceServiceTest,
-       DoNotShowChoiceScreenWithProviderListOverride) {
-  base::Value::List override_list;
-  pref_service()->SetList(prefs::kSearchProviderOverrides,
-                          override_list.Clone());
-
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType
-#else
-            SearchEngineChoiceScreenConditions::kSearchProviderOverride
-#endif
-  );
-}
-
-// Test that the choice screen doesn't get displayed if the
-// 'DefaultSearchProviderEnabled' policy is set to false.
-TEST_F(SearchEngineChoiceServiceTest, DoNotShowChoiceScreenIfPolicySetToFalse) {
-  policy_map().Set(policy::key::kDefaultSearchProviderEnabled,
-                   policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
-                   policy::POLICY_SOURCE_CLOUD, base::Value(false), nullptr);
-
-  base::Value::Dict dict;
-  dict.Set(DefaultSearchManager::kDisabledByPolicy, true);
-  pref_service()->SetManagedPref(
-      DefaultSearchManager::kDefaultSearchProviderDataPrefName,
-      std::move(dict));
-
-  // Based on these policies, no DSE should be available.
-  ASSERT_FALSE(template_url_service().GetDefaultSearchProvider());
-
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType
-#else
-            SearchEngineChoiceScreenConditions::kControlledByPolicy
-#endif
-  );
-  EXPECT_EQ(search_engine_choice_service().GetDynamicChoiceScreenConditions(
-                template_url_service()),
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType
-#else
-            SearchEngineChoiceScreenConditions::kControlledByPolicy
-#endif
-  );
-}
-
-// Test that the choice screen gets displayed if the
-// 'DefaultSearchProviderEnabled' policy is set to true but the
-// 'DefaultSearchProviderSearchURL' policy is not set.
-TEST_F(SearchEngineChoiceServiceTest,
-       ShowChoiceScreenIfPolicySetToTrueWithoutUrlSet) {
-  policy_map().Set(policy::key::kDefaultSearchProviderEnabled,
-                   policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
-                   policy::POLICY_SOURCE_CLOUD, base::Value(true), nullptr);
-
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType);
-#else
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kEligible);
-  EXPECT_EQ(search_engine_choice_service().GetDynamicChoiceScreenConditions(
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kEligible);
-#endif
-}
 
 #if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
 TEST_F(SearchEngineChoiceServiceTest, GuestSessionDsePropagation) {
-  base::test::ScopedFeatureList scoped_feature_list{
-      switches::kSearchEngineChoiceGuestExperience};
   InitService({.force_reset = true,
                .is_profile_eligible_for_dse_guest_propagation = true});
 
@@ -339,8 +119,6 @@ TEST_F(SearchEngineChoiceServiceTest, GuestSessionDsePropagation) {
 
 TEST_F(SearchEngineChoiceServiceTest,
        UpdatesDefaultSearchEngineManagerForGuestMode) {
-  base::test::ScopedFeatureList scoped_feature_list{
-      switches::kSearchEngineChoiceGuestExperience};
   InitService({.force_reset = true,
                .is_profile_eligible_for_dse_guest_propagation = true});
 
@@ -358,248 +136,6 @@ TEST_F(SearchEngineChoiceServiceTest,
   EXPECT_EQ(source, DefaultSearchManager::Source::FROM_FALLBACK);
 }
 #endif
-// Test that the choice screen doesn't get displayed if the
-// 'DefaultSearchProviderEnabled' policy is set to true and the
-// DefaultSearchProviderSearchURL' is set.
-TEST_F(SearchEngineChoiceServiceTest,
-       DoNotShowChoiceScreenIfPolicySetToTrueWithUrlSet) {
-  policy_map().Set(policy::key::kDefaultSearchProviderEnabled,
-                   policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
-                   policy::POLICY_SOURCE_CLOUD, base::Value(true), nullptr);
-  policy_map().Set(policy::key::kDefaultSearchProviderSearchURL,
-                   policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
-                   policy::POLICY_SOURCE_CLOUD, base::Value("test"), nullptr);
-
-  TemplateURLData data_from_policies;
-  data_from_policies.SetURL("test");
-  base::Value::Dict dict = TemplateURLDataToDictionary(data_from_policies);
-  dict.Set(
-      DefaultSearchManager::kPolicyOrigin,
-      static_cast<int>(TemplateURLData::PolicyOrigin::kDefaultSearchProvider));
-  pref_service()->SetManagedPref(
-      DefaultSearchManager::kDefaultSearchProviderDataPrefName,
-      std::move(dict));
-
-  ASSERT_TRUE(template_url_service().GetDefaultSearchProvider());
-  ASSERT_EQ("test", template_url_service().GetDefaultSearchProvider()->url());
-
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType
-#else
-            SearchEngineChoiceScreenConditions::kControlledByPolicy
-#endif
-  );
-  EXPECT_EQ(search_engine_choice_service().GetDynamicChoiceScreenConditions(
-                template_url_service()),
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType
-#else
-            SearchEngineChoiceScreenConditions::kControlledByPolicy
-#endif
-  );
-}
-
-// Test that the choice screen gets displayed if and only if the
-// `kDefaultSearchProviderChoiceScreenTimestamp` pref is not set. Setting this
-// pref means that the user has made a search engine choice in the choice
-// screen.
-TEST_F(SearchEngineChoiceServiceTest,
-       ShowChoiceScreenIfTheTimestampPrefIsNotSet) {
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType);
-#else
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kEligible);
-  EXPECT_EQ(search_engine_choice_service().GetDynamicChoiceScreenConditions(
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kEligible);
-#endif
-
-  search_engine_choice_service().RecordChoiceMade(
-      search_engines::ChoiceMadeLocation::kChoiceScreen,
-      &template_url_service());
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType);
-#else
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kAlreadyCompleted);
-  EXPECT_EQ(search_engine_choice_service().GetDynamicChoiceScreenConditions(
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kAlreadyCompleted);
-#endif
-}
-
-// Test that there is a regional condition controlling eligibility.
-TEST_F(SearchEngineChoiceServiceTest,
-       DoNotShowChoiceScreenIfCountryOutOfScope) {
-  base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-      switches::kSearchEngineChoiceCountry, "US");
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType
-#else
-            SearchEngineChoiceScreenConditions::kNotInRegionalScope
-#endif
-  );
-}
-
-// Test that the choice screen does get displayed even if completed if the
-// command line argument for forcing it is set.
-TEST_F(SearchEngineChoiceServiceTest,
-       ShowChoiceScreenWithForceCommandLineFlag) {
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kForceSearchEngineChoiceScreen);
-  search_engines::MarkSearchEngineChoiceCompletedForTesting(*pref_service());
-
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType);
-#else
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kEligible);
-  EXPECT_EQ(search_engine_choice_service().GetDynamicChoiceScreenConditions(
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kEligible);
-#endif
-}
-TEST_F(SearchEngineChoiceServiceTest,
-       ShowChoiceScreenWithForceCommandLineFlag_Counterfactual) {
-  search_engines::MarkSearchEngineChoiceCompletedForTesting(*pref_service());
-
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType);
-#else
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kAlreadyCompleted);
-  EXPECT_EQ(search_engine_choice_service().GetDynamicChoiceScreenConditions(
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kAlreadyCompleted);
-#endif
-}
-
-// Test that the choice screen does not get displayed if the command line
-// argument for disabling it is set.
-TEST_F(SearchEngineChoiceServiceTest,
-       DoNotShowChoiceScreenWithDisableCommandLineFlag) {
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kDisableSearchEngineChoiceScreen);
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(),
-                /*is_regular_profile=*/true, template_url_service()),
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType
-#else
-
-            SearchEngineChoiceScreenConditions::kFeatureSuppressed
-#endif
-  );
-}
-
-TEST_F(SearchEngineChoiceServiceTest, ChoiceScreenConditions_SkipFor3p) {
-  // First, check the state with Google as the default search engine
-  ASSERT_TRUE(
-      template_url_service().GetDefaultSearchProvider()->prepopulate_id() ==
-      TemplateURLPrepopulateData::google.id);
-
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType);
-#else
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kEligible);
-  EXPECT_EQ(search_engine_choice_service().GetDynamicChoiceScreenConditions(
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kEligible);
-#endif
-
-  // Second, check the state after changing the default search engine.
-  std::unique_ptr<TemplateURLData> template_url_data =
-      TemplateURLDataFromPrepopulatedEngine(TemplateURLPrepopulateData::bing);
-  template_url_service().SetUserSelectedDefaultSearchProvider(
-      template_url_service().Add(
-          std::make_unique<TemplateURL>(*template_url_data.get())));
-
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType);
-#else
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kEligible);
-  EXPECT_EQ(search_engine_choice_service().GetDynamicChoiceScreenConditions(
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kHasNonGoogleSearchEngine);
-#endif
-}
-
-TEST_F(SearchEngineChoiceServiceTest,
-       DoNotShowChoiceScreenIfUserHasCustomSearchEngineSetAsDefault) {
-  // A custom search engine will have a `prepopulate_id` of 0.
-  const int kCustomSearchEnginePrepopulateId = 0;
-  TemplateURLData template_url_data;
-  template_url_data.prepopulate_id = kCustomSearchEnginePrepopulateId;
-  template_url_data.SetURL("https://www.example.com/?q={searchTerms}");
-  template_url_service().SetUserSelectedDefaultSearchProvider(
-      template_url_service().Add(
-          std::make_unique<TemplateURL>(template_url_data)));
-
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_FUCHSIA) || \
-    BUILDFLAG(CHROME_FOR_TESTING)
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kUnsupportedBrowserType);
-#else
-  EXPECT_EQ(search_engine_choice_service().GetStaticChoiceScreenConditions(
-                policy_service(), /*is_regular_profile=*/true,
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kEligible);
-  EXPECT_EQ(search_engine_choice_service().GetDynamicChoiceScreenConditions(
-                template_url_service()),
-            SearchEngineChoiceScreenConditions::kHasNonGoogleSearchEngine);
-#endif
-}
 
 TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade) {
   base::CommandLine::ForCurrentProcess()->RemoveSwitch(
@@ -633,8 +169,7 @@ TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade) {
   base::CommandLine::ForCurrentProcess()->RemoveSwitch(
       switches::kSearchEngineChoiceCountry);
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-      switches::kSearchEngineChoiceCountry,
-      country_codes::CountryIDToCountryString(kBelgiumCountryId));
+      switches::kSearchEngineChoiceCountry, kBelgiumCountryId.CountryCode());
 
   // Test that the choice is recorded if it wasn't previously done.
   search_engine_choice_service().RecordChoiceMade(
@@ -684,8 +219,7 @@ TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade_ByLocation) {
   base::CommandLine::ForCurrentProcess()->RemoveSwitch(
       switches::kSearchEngineChoiceCountry);
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-      switches::kSearchEngineChoiceCountry,
-      country_codes::CountryIDToCountryString(kBelgiumCountryId));
+      switches::kSearchEngineChoiceCountry, kBelgiumCountryId.CountryCode());
   EXPECT_EQ(template_url_service().GetDefaultSearchProvider()->prepopulate_id(),
             TemplateURLPrepopulateData::google.id);
 
@@ -724,7 +258,7 @@ TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade_ByLocation) {
             kSearchEngineChoiceScreenDefaultSearchEngineType2Histogram,
         SearchEngineType::SEARCH_ENGINE_GOOGLE, expected_v2_records);
     WipeSearchEngineChoicePrefs(*pref_service(),
-                                WipeSearchEngineChoiceReason::kCommandLineFlag);
+                                SearchEngineChoiceWipeReason::kCommandLineFlag);
   }
 }
 
@@ -743,8 +277,7 @@ TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade_DistributionCustom) {
   base::CommandLine::ForCurrentProcess()->RemoveSwitch(
       switches::kSearchEngineChoiceCountry);
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-      switches::kSearchEngineChoiceCountry,
-      country_codes::CountryIDToCountryString(kBelgiumCountryId));
+      switches::kSearchEngineChoiceCountry, kBelgiumCountryId.CountryCode());
 
   // Test that the choice is recorded if it wasn't previously done.
   search_engine_choice_service().RecordChoiceMade(
@@ -782,8 +315,7 @@ TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade_RemovedPrepopulated) {
   base::CommandLine::ForCurrentProcess()->RemoveSwitch(
       switches::kSearchEngineChoiceCountry);
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-      switches::kSearchEngineChoiceCountry,
-      country_codes::CountryIDToCountryString(kBelgiumCountryId));
+      switches::kSearchEngineChoiceCountry, kBelgiumCountryId.CountryCode());
 
   // Test that the choice is recorded if it wasn't previously done.
   search_engine_choice_service().RecordChoiceMade(
@@ -804,18 +336,6 @@ TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade_RemovedPrepopulated) {
   EXPECT_EQ(pref_service()->GetString(
                 prefs::kDefaultSearchProviderChoiceScreenCompletionVersion),
             version_info::GetVersionNumber());
-}
-
-TemplateURL::OwnedTemplateURLVector
-OwnedTemplateURLVectorFromPrepopulatedEngines(
-    const std::vector<const TemplateURLPrepopulateData::PrepopulatedEngine*>&
-        engines) {
-  TemplateURL::OwnedTemplateURLVector result;
-  for (const TemplateURLPrepopulateData::PrepopulatedEngine* engine : engines) {
-    result.push_back(std::make_unique<TemplateURL>(
-        *TemplateURLDataFromPrepopulatedEngine(*engine)));
-  }
-  return result;
 }
 
 TEST_F(SearchEngineChoiceServiceTest, MaybeRecordChoiceScreenDisplayState) {
@@ -922,11 +442,10 @@ TEST_F(SearchEngineChoiceServiceTest,
 
   {
     // Unknown country.
-    InitService({.variation_country_id = country_codes::kCountryIDUnknown,
-                 .force_reset = true});
+    InitService({.force_reset = true});
     ChoiceScreenData choice_screen_data(
-        OwnedTemplateURLVectorFromPrepopulatedEngines(engines),
-        country_codes::kCountryIDUnknown, SearchTermsData());
+        OwnedTemplateURLVectorFromPrepopulatedEngines(engines), CountryId(),
+        SearchTermsData());
     ChoiceScreenDisplayState display_state = choice_screen_data.display_state();
     display_state.selected_engine_index = 0;
 
@@ -975,9 +494,8 @@ TEST_F(SearchEngineChoiceServiceTest,
   base::HistogramTester histogram_tester;
 
   // Mismatch between the variations and choice screen data country.
-  InitService(
-      {.variation_country_id = country_codes::CountryStringToCountryID("DE"),
-       .force_reset = true});
+  InitService({.variation_country_id = country_codes::CountryId("DE"),
+               .force_reset = true});
   ChoiceScreenData choice_screen_data(
       OwnedTemplateURLVectorFromPrepopulatedEngines(engines), kBelgiumCountryId,
       SearchTermsData());
@@ -1075,8 +593,7 @@ TEST_F(SearchEngineChoiceServiceTest,
   search_engines::MarkSearchEngineChoiceCompletedForTesting(*pref_service());
 
   base::HistogramTester histogram_tester;
-  InitService({.variation_country_id = country_codes::kCountryIDUnknown,
-               .force_reset = true});
+  InitService({.force_reset = true});
 
   histogram_tester.ExpectTotalCount(
       base::StringPrintf(
@@ -1115,8 +632,7 @@ TEST_F(SearchEngineChoiceServiceTest,
       display_state.ToDict());
 
   base::HistogramTester histogram_tester;
-  InitService({.variation_country_id = country_codes::kCountryIDUnknown,
-               .force_reset = true});
+  InitService({.force_reset = true});
 
   histogram_tester.ExpectTotalCount(
       kSearchEngineChoiceScreenShowedEngineAtCountryMismatchHistogram, 0);
@@ -1167,6 +683,36 @@ TEST_F(SearchEngineChoiceServiceTest,
       kSearchEngineChoiceScreenShowedEngineAtCountryMismatchHistogram, 0);
 }
 
+// Tests if choice screen completion date is not recorded if last choice date is
+// unknown.
+TEST_F(SearchEngineChoiceServiceTest, IgnoresChoiceScreenCompletionDateRecord) {
+  base::HistogramTester histogram_tester;
+  search_engine_choice_service();
+  histogram_tester.ExpectTotalCount(
+      kSearchEngineChoiceCompletedOnMonthHistogram, 0);
+}
+
+// Tests if choice screen completion date is recorded.
+TEST_F(SearchEngineChoiceServiceTest,
+       RecordsChoiceScreenCompletionDateHistogram) {
+  base::HistogramTester histogram_tester;
+
+  // April 18, 2025, 13:30 Europe/Warsaw. What is specific about this timestamp
+  // (in windows epoch seconds) is that in every known timezone,
+  // this was April 2025.
+  int64_t windows_epoch_timestamp = 13388103000;
+
+  pref_service()->SetString(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionVersion, "1.0.0.0");
+  pref_service()->SetInt64(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp,
+      windows_epoch_timestamp);
+
+  search_engine_choice_service();
+  histogram_tester.ExpectUniqueSample(
+      kSearchEngineChoiceCompletedOnMonthHistogram, 202504, 1);
+}
+
 // Test that the user is not reprompted if the reprompt parameter is not a valid
 // JSON string.
 TEST_F(SearchEngineChoiceServiceTest, NoRepromptForSyntaxError) {
@@ -1182,6 +728,8 @@ TEST_F(SearchEngineChoiceServiceTest, NoRepromptForSyntaxError) {
   pref_service()->SetInt64(
       prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp,
       kPreviousTimestamp);
+  pref_service()->SetString(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionVersion, "1.0.0.0");
 
   // Trigger the creation of the service, which should check for the reprompt.
   search_engine_choice_service();
@@ -1201,6 +749,28 @@ TEST_F(SearchEngineChoiceServiceTest, NoRepromptForSyntaxError) {
       RepromptResult::kInvalidDictionary, 1);
 }
 
+// Test that the user is not reprompted when no persisted metadata indicates any
+// choice-related activity took place.
+TEST_F(SearchEngineChoiceServiceTest, NoOpWhenNoChoiceMetadataPresent) {
+  ASSERT_EQ(switches::kSearchEngineChoiceNoRepromptString,
+            switches::kSearchEngineChoiceTriggerRepromptParams.Get());
+
+  // Trigger the creation of the service, which should check for the reprompt.
+  search_engine_choice_service();
+
+  // The user should not be reprompted, no associated histogram recorded.
+  histogram_tester_.ExpectTotalCount(
+      search_engines::kSearchEngineChoiceWipeReasonHistogram, 0);
+  histogram_tester_.ExpectTotalCount(
+      search_engines::kSearchEngineChoiceRepromptSpecificCountryHistogram, 0);
+  histogram_tester_.ExpectTotalCount(
+      search_engines::kSearchEngineChoiceRepromptWildcardHistogram, 0);
+  histogram_tester_.ExpectTotalCount(
+      search_engines::kSearchEngineChoiceRepromptHistogram, 0);
+  histogram_tester_.ExpectTotalCount(
+      search_engines::kSearchEngineChoiceRepromptHistogram, 0);
+}
+
 // Test that the user is not reprompted by default.
 TEST_F(SearchEngineChoiceServiceTest, NoRepromptByDefault) {
   ASSERT_EQ(switches::kSearchEngineChoiceNoRepromptString,
@@ -1211,6 +781,8 @@ TEST_F(SearchEngineChoiceServiceTest, NoRepromptByDefault) {
   pref_service()->SetInt64(
       prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp,
       kPreviousTimestamp);
+  pref_service()->SetString(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionVersion, "1.0.0.0");
 
   // Trigger the creation of the service, which should check for the reprompt.
   search_engine_choice_service();
@@ -1257,7 +829,7 @@ TEST_F(SearchEngineChoiceServiceTest, RepromptForMissingChoiceVersion) {
       prefs::kDefaultSearchProviderChoiceScreenCompletionVersion));
   histogram_tester_.ExpectUniqueSample(
       search_engines::kSearchEngineChoiceWipeReasonHistogram,
-      WipeSearchEngineChoiceReason::kMissingChoiceVersion, 1);
+      SearchEngineChoiceWipeReason::kMissingMetadataVersion, 1);
   histogram_tester_.ExpectTotalCount(
       search_engines::kSearchEngineChoiceRepromptSpecificCountryHistogram, 0);
   histogram_tester_.ExpectTotalCount(
@@ -1266,9 +838,153 @@ TEST_F(SearchEngineChoiceServiceTest, RepromptForMissingChoiceVersion) {
       search_engines::kSearchEngineChoiceRepromptHistogram, 0);
 }
 
+// The user is reprompted if the timestamp preference is missing.
+TEST_F(SearchEngineChoiceServiceTest, RepromptForMissingTimestamp) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      switches::kSearchEngineChoiceTrigger,
+      {{switches::kSearchEngineChoiceTriggerRepromptParams.name, "{}"}});
+  ASSERT_EQ("{}", switches::kSearchEngineChoiceTriggerRepromptParams.Get());
+
+  // Initialize the version, but not the timestamp.
+  pref_service()->SetString(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionVersion, "1.0.0.0");
+
+  // Trigger the creation of the service, which should check for the reprompt.
+  search_engine_choice_service();
+
+  // The user should be reprompted.
+  EXPECT_FALSE(pref_service()->HasPrefPath(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp));
+  EXPECT_FALSE(pref_service()->HasPrefPath(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionVersion));
+  histogram_tester_.ExpectUniqueSample(
+      search_engines::kSearchEngineChoiceWipeReasonHistogram,
+      SearchEngineChoiceWipeReason::kInvalidMetadata, 1);
+  histogram_tester_.ExpectTotalCount(
+      search_engines::kSearchEngineChoiceRepromptSpecificCountryHistogram, 0);
+  histogram_tester_.ExpectTotalCount(
+      search_engines::kSearchEngineChoiceRepromptWildcardHistogram, 0);
+  histogram_tester_.ExpectTotalCount(
+      search_engines::kSearchEngineChoiceRepromptHistogram, 0);
+}
+
+struct DeviceRestoreTestParam {
+  std::string test_suffix;
+  bool restore_detected_in_current_session;
+  bool choice_predates_restore;
+  bool is_feature_enabled;
+  bool is_invalidation_retroactive;
+  bool expect_choice_info_wipe;
+};
+
+class SearchEngineChoiceServiceDeviceRestoreTest
+    : public SearchEngineChoiceServiceTest,
+      public testing::WithParamInterface<DeviceRestoreTestParam> {
+ public:
+  SearchEngineChoiceServiceDeviceRestoreTest() {
+    if (GetParam().is_feature_enabled) {
+      scoped_feature_list_.InitAndEnableFeatureWithParameters(
+          switches::kInvalidateSearchEngineChoiceOnDeviceRestoreDetection,
+          {{switches::kInvalidateChoiceOnRestoreIsRetroactive.name,
+            GetParam().is_invalidation_retroactive ? "true" : "false"}});
+    } else {
+      scoped_feature_list_.InitAndDisableFeature(
+          switches::kInvalidateSearchEngineChoiceOnDeviceRestoreDetection);
+    }
+  }
+
+  static std::string GetTestSuffix(
+      const testing::TestParamInfo<DeviceRestoreTestParam>& info) {
+    return info.param.test_suffix;
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    SearchEngineChoiceServiceDeviceRestoreTest,
+    ::testing::ValuesIn({
+        DeviceRestoreTestParam{.test_suffix = "WipeForPreexistingChoice",
+                               .restore_detected_in_current_session = true,
+                               .choice_predates_restore = true,
+                               .is_feature_enabled = true,
+                               .is_invalidation_retroactive = false,
+                               .expect_choice_info_wipe = true},
+        DeviceRestoreTestParam{.test_suffix = "WipeForRetroactiveDetection",
+                               .restore_detected_in_current_session = false,
+                               .choice_predates_restore = true,
+                               .is_feature_enabled = true,
+                               .is_invalidation_retroactive = true,
+                               .expect_choice_info_wipe = true},
+        DeviceRestoreTestParam{.test_suffix = "NoWipeForLateDetection",
+                               .restore_detected_in_current_session = false,
+                               .choice_predates_restore = true,
+                               .is_feature_enabled = true,
+                               .is_invalidation_retroactive = false,
+                               .expect_choice_info_wipe = false},
+        DeviceRestoreTestParam{.test_suffix = "NoWipeForNewChoice",
+                               .restore_detected_in_current_session = true,
+                               .choice_predates_restore = false,
+                               .is_feature_enabled = true,
+                               .is_invalidation_retroactive = false,
+                               .expect_choice_info_wipe = false},
+        DeviceRestoreTestParam{.test_suffix = "NoWipeForFeatureDisabled",
+                               .restore_detected_in_current_session = true,
+                               .choice_predates_restore = true,
+                               .is_feature_enabled = false,
+                               .is_invalidation_retroactive = false,
+                               .expect_choice_info_wipe = false},
+    }),
+    &SearchEngineChoiceServiceDeviceRestoreTest::GetTestSuffix);
+
+TEST_P(SearchEngineChoiceServiceDeviceRestoreTest, RepromptOnRestoreDetection) {
+  ASSERT_EQ(switches::kSearchEngineChoiceNoRepromptString,
+            switches::kSearchEngineChoiceTriggerRepromptParams.Get());
+
+  SetChoiceCompletionMetadata(*pref_service(),
+                              {base::Time::Now(), base::Version("1.0.0.0")});
+
+  // Trigger the creation of the service, which should check for the reprompt.
+  InitService({
+      .force_reset = true,
+      .restore_detected_in_current_session =
+          GetParam().restore_detected_in_current_session,
+      .choice_predates_restore = GetParam().choice_predates_restore,
+  });
+
+  if (GetParam().expect_choice_info_wipe) {
+    EXPECT_FALSE(pref_service()->HasPrefPath(
+        prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp));
+    histogram_tester_.ExpectUniqueSample(
+        search_engines::kSearchEngineChoiceWipeReasonHistogram,
+        SearchEngineChoiceWipeReason::kDeviceRestored, 1);
+    histogram_tester_.ExpectTotalCount(
+        search_engines::kSearchEngineChoiceRepromptHistogram, 0);
+  } else {
+    EXPECT_TRUE(pref_service()->HasPrefPath(
+        prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp));
+    histogram_tester_.ExpectTotalCount(
+        search_engines::kSearchEngineChoiceWipeReasonHistogram, 0);
+    histogram_tester_.ExpectBucketCount(
+        search_engines::kSearchEngineChoiceRepromptHistogram,
+        RepromptResult::kNoReprompt, 1);
+  }
+
+  histogram_tester_.ExpectTotalCount(
+      search_engines::kSearchEngineChoiceRepromptSpecificCountryHistogram, 0);
+  histogram_tester_.ExpectTotalCount(
+      search_engines::kSearchEngineChoiceRepromptWildcardHistogram, 0);
+  histogram_tester_.ExpectBucketCount(
+      search_engines::kSearchEngineChoiceRepromptHistogram,
+      RepromptResult::kInvalidDictionary, 0);
+}
+
 struct RepromptTestParam {
   // Whether the user should be reprompted or not.
-  std::optional<WipeSearchEngineChoiceReason> wipe_reason;
+  std::optional<SearchEngineChoiceWipeReason> wipe_reason;
   // Internal results of the reprompt computation.
   std::optional<RepromptResult> wildcard_result;
   std::optional<RepromptResult> country_result;
@@ -1375,37 +1091,41 @@ TEST_P(SearchEngineChoiceUtilsParamTest, Reprompt) {
 
 constexpr RepromptTestParam kRepromptTestParams[] = {
     // Reprompt all countries with the wildcard.
-    {WipeSearchEngineChoiceReason::kReprompt, RepromptResult::kReprompt,
-     RepromptResult::kNoDictionaryKey, "1.0.0.0", R"( {"*":"1.0.0.1"} )"},
+    {SearchEngineChoiceWipeReason::kFinchBasedReprompt,
+     RepromptResult::kReprompt, RepromptResult::kNoDictionaryKey, "1.0.0.0",
+     R"( {"*":"1.0.0.1"} )"},
     // Reprompt works with all version components.
-    {WipeSearchEngineChoiceReason::kReprompt, RepromptResult::kReprompt,
-     RepromptResult::kNoDictionaryKey, "1.0.0.100", R"( {"*":"1.0.1.0"} )"},
-    {WipeSearchEngineChoiceReason::kReprompt, RepromptResult::kReprompt,
-     RepromptResult::kNoDictionaryKey, "1.0.200.0", R"( {"*":"1.1.0.0"} )"},
-    {WipeSearchEngineChoiceReason::kReprompt, RepromptResult::kReprompt,
-     RepromptResult::kNoDictionaryKey, "1.300.0.0", R"( {"*":"2.0.0.0"} )"},
-    {WipeSearchEngineChoiceReason::kReprompt, RepromptResult::kReprompt,
-     RepromptResult::kNoDictionaryKey, "10.10.1.1",
+    {SearchEngineChoiceWipeReason::kFinchBasedReprompt,
+     RepromptResult::kReprompt, RepromptResult::kNoDictionaryKey, "1.0.0.100",
+     R"( {"*":"1.0.1.0"} )"},
+    {SearchEngineChoiceWipeReason::kFinchBasedReprompt,
+     RepromptResult::kReprompt, RepromptResult::kNoDictionaryKey, "1.0.200.0",
+     R"( {"*":"1.1.0.0"} )"},
+    {SearchEngineChoiceWipeReason::kFinchBasedReprompt,
+     RepromptResult::kReprompt, RepromptResult::kNoDictionaryKey, "1.300.0.0",
+     R"( {"*":"2.0.0.0"} )"},
+    {SearchEngineChoiceWipeReason::kFinchBasedReprompt,
+     RepromptResult::kReprompt, RepromptResult::kNoDictionaryKey, "10.10.1.1",
      R"( {"*":"30.45.678.9100"} )"},
     // Reprompt a specific country.
-    {WipeSearchEngineChoiceReason::kReprompt, std::nullopt,
+    {SearchEngineChoiceWipeReason::kFinchBasedReprompt, std::nullopt,
      RepromptResult::kReprompt, "1.0.0.0", R"( {"BE":"1.0.0.1"} )"},
     // Reprompt for params inclusive of current version
-    {WipeSearchEngineChoiceReason::kReprompt, std::nullopt,
+    {SearchEngineChoiceWipeReason::kFinchBasedReprompt, std::nullopt,
      RepromptResult::kReprompt, "1.0.0.0", R"( {"BE":"CURRENT_VERSION"} )"},
     // Reprompt when the choice version is malformed.
-    {WipeSearchEngineChoiceReason::kInvalidChoiceVersion, std::nullopt,
+    {SearchEngineChoiceWipeReason::kInvalidMetadataVersion, std::nullopt,
      std::nullopt, "Blah", ""},
     // Reprompt when both the country and the wild card are specified, as long
     // as one of them qualifies.
-    {WipeSearchEngineChoiceReason::kReprompt, std::nullopt,
+    {SearchEngineChoiceWipeReason::kFinchBasedReprompt, std::nullopt,
      RepromptResult::kReprompt, "1.0.0.0",
      R"( {"*":"1.0.0.1","BE":"1.0.0.1"} )"},
-    {WipeSearchEngineChoiceReason::kReprompt, std::nullopt,
+    {SearchEngineChoiceWipeReason::kFinchBasedReprompt, std::nullopt,
      RepromptResult::kReprompt, "1.0.0.0",
      R"( {"*":"FUTURE_VERSION","BE":"1.0.0.1"} )"},
     // Still works with irrelevant parameters for other countries.
-    {WipeSearchEngineChoiceReason::kReprompt, std::nullopt,
+    {SearchEngineChoiceWipeReason::kFinchBasedReprompt, std::nullopt,
      RepromptResult::kReprompt, "1.0.0.0",
      R"(
        {
@@ -1467,42 +1187,5 @@ constexpr RepromptTestParam kRepromptTestParams[] = {
 INSTANTIATE_TEST_SUITE_P(,
                          SearchEngineChoiceUtilsParamTest,
                          ::testing::ValuesIn(kRepromptTestParams));
-
-#if !BUILDFLAG(IS_ANDROID)
-
-class SearchEngineChoiceUtilsResourceIdsTest : public ::testing::Test {
- public:
-  PrefService* pref_service() {
-    return &search_engine_test_environment_.pref_service();
-  }
-  search_engines::SearchEngineChoiceService& search_engine_choice_service() {
-    return search_engine_test_environment_.search_engine_choice_service();
-  }
-
- private:
-  SearchEnginesTestEnvironment search_engine_test_environment_;
-};
-
-// Verifies that all prepopulated search engines associated with EEA countries
-// have an icon.
-TEST_F(SearchEngineChoiceUtilsResourceIdsTest, GetIconResourceId) {
-  // Make sure the country is not forced.
-  ASSERT_FALSE(base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kSearchEngineChoiceCountry));
-
-  for (int country_id : regional_capabilities::kEeaChoiceCountriesIds) {
-    pref_service()->SetInteger(country_codes::kCountryIDAtInstall, country_id);
-    std::vector<std::unique_ptr<TemplateURLData>> urls =
-        TemplateURLPrepopulateData::GetPrepopulatedEngines(
-            pref_service(), &search_engine_choice_service());
-    for (const std::unique_ptr<TemplateURLData>& url : urls) {
-      EXPECT_GE(search_engines::GetIconResourceId(url->keyword()), 0)
-          << "Missing icon for " << url->keyword() << ". Try re-running "
-          << "`tools/search_engine_choice/generate_search_engine_icons.py`.";
-    }
-  }
-}
-
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace search_engines

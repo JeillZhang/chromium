@@ -11,14 +11,13 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import static org.chromium.base.test.transit.ViewSpec.viewSpec;
+import android.view.View;
 
 import org.chromium.base.test.transit.Condition;
-import org.chromium.base.test.transit.Elements;
 import org.chromium.base.test.transit.Facility;
 import org.chromium.base.test.transit.Station;
 import org.chromium.base.test.transit.Transition;
-import org.chromium.base.test.transit.ViewSpec;
+import org.chromium.base.test.transit.ViewElement;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
@@ -30,40 +29,37 @@ import org.chromium.chrome.test.transit.tabmodel.TabModelChangedCondition;
 
 /** The action menu opened when long pressing the tab switcher button in a {@link PageStation}. */
 public class TabSwitcherActionMenuFacility extends Facility<PageStation> {
-    public static final ViewSpec APP_MENU_LIST = viewSpec(withId(R.id.app_menu_list));
-
-    // withId() cannot differentiate items because android:id is id/menu_item_text for all items.
-    public static final ViewSpec CLOSE_TAB_MENU_ITEM =
-            APP_MENU_LIST.descendant(withText(R.string.close_tab));
-
-    public static final ViewSpec NEW_TAB_MENU_ITEM =
-            APP_MENU_LIST.descendant(withText(R.string.menu_new_tab));
-
-    public static final ViewSpec NEW_INCOGNITO_TAB_MENU_ITEM =
-            APP_MENU_LIST.descendant(withText(R.string.menu_new_incognito_tab));
-
-    public static final ViewSpec SWITCH_TO_INCOGNITO_MENU_ITEM =
-            APP_MENU_LIST.descendant(withText(R.string.menu_switch_to_incognito));
-
-    public static final ViewSpec SWITCH_OUT_OF_INCOGNITO_MENU_ITEM =
-            APP_MENU_LIST.descendant(withText(R.string.menu_switch_out_of_incognito));
+    public ViewElement<View> appMenuListElement;
+    public ViewElement<View> closeTabMenuItemElement;
+    public ViewElement<View> newTabMenuItemElement;
+    public ViewElement<View> newIncognitoTabMenuItemElement;
+    public ViewElement<View> switchOutOfIncognitoMenuItemElement;
+    public ViewElement<View> switchToIncognitoMenuItemElement;
 
     @Override
-    public void declareElements(Elements.Builder elements) {
-        elements.declareView(APP_MENU_LIST);
-        elements.declareView(CLOSE_TAB_MENU_ITEM);
-        elements.declareView(NEW_TAB_MENU_ITEM);
-        elements.declareView(NEW_INCOGNITO_TAB_MENU_ITEM);
+    public void declareExtraElements() {
+        appMenuListElement = declareView(withId(R.id.app_menu_list));
+        closeTabMenuItemElement =
+                declareView(appMenuListElement.descendant(withText(R.string.close_tab)));
+        newTabMenuItemElement =
+                declareView(appMenuListElement.descendant(withText(R.string.menu_new_tab)));
+        newIncognitoTabMenuItemElement =
+                declareView(
+                        appMenuListElement.descendant(withText(R.string.menu_new_incognito_tab)));
 
         if (ChromeFeatureList.sTabStripIncognitoMigration.isEnabled()) {
             if (mHostStation.isIncognito()
-                    && mHostStation.getActivity().getTabModelSelector().getModel(false).getCount()
-                            > 0) {
-                elements.declareView(SWITCH_OUT_OF_INCOGNITO_MENU_ITEM);
+                    && mHostStation.getTabModelSelector().getModel(false).getCount() > 0) {
+                switchOutOfIncognitoMenuItemElement =
+                        declareView(
+                                appMenuListElement.descendant(
+                                        withText(R.string.menu_switch_out_of_incognito)));
             } else if (!mHostStation.isIncognito()
-                    && mHostStation.getActivity().getTabModelSelector().getModel(true).getCount()
-                            > 0) {
-                elements.declareView(SWITCH_TO_INCOGNITO_MENU_ITEM);
+                    && mHostStation.getTabModelSelector().getModel(true).getCount() > 0) {
+                switchToIncognitoMenuItemElement =
+                        declareView(
+                                appMenuListElement.descendant(
+                                        withText(R.string.menu_switch_to_incognito)));
             }
         }
     }
@@ -75,7 +71,7 @@ public class TabSwitcherActionMenuFacility extends Facility<PageStation> {
      * <p>This happens when the last regular tab is closed or when the last incognito is closed.
      */
     public RegularTabSwitcherStation selectCloseTabAndDisplayTabSwitcher() {
-        TabModelSelector tabModelSelector = mHostStation.getActivity().getTabModelSelector();
+        TabModelSelector tabModelSelector = mHostStation.getTabModelSelector();
         int incognitoTabCount = tabModelSelector.getModel(/* incognito= */ true).getCount();
         int regularTabCount = tabModelSelector.getModel(/* incognito= */ false).getCount();
         if (mHostStation.isIncognito()) {
@@ -133,7 +129,7 @@ public class TabSwitcherActionMenuFacility extends Facility<PageStation> {
                 destination,
                 Transition.conditionOption(
                         createTabCountChangedCondition(mHostStation.isIncognito(), -1)),
-                CLOSE_TAB_MENU_ITEM::click);
+                closeTabMenuItemElement.getClickTrigger());
     }
 
     /** Select the "New tab" menu option to open a new Tab. */
@@ -147,7 +143,7 @@ public class TabSwitcherActionMenuFacility extends Facility<PageStation> {
                 destination,
                 Transition.conditionOption(
                         createTabCountChangedCondition(/* incognito= */ false, +1)),
-                NEW_TAB_MENU_ITEM::click);
+                newTabMenuItemElement.getClickTrigger());
     }
 
     /** Select the "New Incognito tab" menu option to open a new incognito Tab. */
@@ -161,7 +157,7 @@ public class TabSwitcherActionMenuFacility extends Facility<PageStation> {
                 destination,
                 Transition.conditionOption(
                         createTabCountChangedCondition(/* incognito= */ true, +1)),
-                NEW_INCOGNITO_TAB_MENU_ITEM::click);
+                newIncognitoTabMenuItemElement.getClickTrigger());
     }
 
     /** Switches out of incognito tab model to regular tab model */
@@ -172,7 +168,7 @@ public class TabSwitcherActionMenuFacility extends Facility<PageStation> {
         return mHostStation.travelToSync(
                 destination,
                 Transition.conditionOption(createTabModelChangedCondition()),
-                SWITCH_OUT_OF_INCOGNITO_MENU_ITEM::click);
+                switchOutOfIncognitoMenuItemElement.getClickTrigger());
     }
 
     /** Switches to incognito tab model from regular tab model */
@@ -183,15 +179,15 @@ public class TabSwitcherActionMenuFacility extends Facility<PageStation> {
         return mHostStation.travelToSync(
                 destination,
                 Transition.conditionOption(createTabModelChangedCondition()),
-                SWITCH_TO_INCOGNITO_MENU_ITEM::click);
+                switchToIncognitoMenuItemElement.getClickTrigger());
     }
 
     private Condition createTabCountChangedCondition(boolean incognito, int change) {
         return new TabCountChangedCondition(
-                mHostStation.getActivity().getTabModelSelector().getModel(incognito), change);
+                mHostStation.getTabModelSelector().getModel(incognito), change);
     }
 
     private Condition createTabModelChangedCondition() {
-        return new TabModelChangedCondition(mHostStation.getActivity().getTabModelSelector());
+        return new TabModelChangedCondition(mHostStation.getTabModelSelector());
     }
 }

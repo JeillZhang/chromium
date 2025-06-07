@@ -42,6 +42,7 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
@@ -53,6 +54,7 @@ import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.hub.HubLayout;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.omnibox.OmniboxFocusReason;
+import org.chromium.chrome.browser.tabwindow.TabWindowManager;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiTestHelper;
 import org.chromium.chrome.browser.theme.ThemeUtils;
 import org.chromium.chrome.browser.toolbar.ToolbarFeatures;
@@ -72,17 +74,19 @@ import org.chromium.components.browser_ui.bottomsheet.TestBottomSheetContent;
 import org.chromium.components.browser_ui.desktop_windowing.AppHeaderState;
 import org.chromium.content_public.browser.test.util.DOMUtils;
 import org.chromium.content_public.browser.test.util.JavaScriptUtils;
-import org.chromium.ui.InsetObserver;
-import org.chromium.ui.InsetsRectProvider;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.ViewUtils;
+import org.chromium.ui.insets.CaptionBarInsetsRectProvider;
+import org.chromium.ui.insets.InsetObserver;
+import org.chromium.ui.test.util.DeviceRestriction;
 
 import java.util.concurrent.TimeoutException;
 
 /** Browser test for {@link AppHeaderCoordinator} */
 @RequiresApi(Build.VERSION_CODES.R)
-@Restriction(DeviceFormFactor.TABLET)
+@Restriction({DeviceFormFactor.TABLET_OR_DESKTOP, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
 @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
+@Features.DisableFeatures(ChromeFeatureList.EDGE_TO_EDGE_EVERYWHERE)
 @Batch(Batch.PER_CLASS)
 @RunWith(ChromeJUnit4ClassRunner.class)
 public class AppHeaderCoordinatorBrowserTest {
@@ -103,7 +107,7 @@ public class AppHeaderCoordinatorBrowserTest {
 
     @Rule public MockitoRule mockitoRule = MockitoJUnit.rule();
 
-    @Mock private InsetsRectProvider mInsetsRectProvider;
+    @Mock private CaptionBarInsetsRectProvider mInsetsRectProvider;
 
     private final Rect mWidestUnoccludedRect = new Rect();
     private final Rect mWindowRect = new Rect();
@@ -320,7 +324,7 @@ public class AppHeaderCoordinatorBrowserTest {
         Intent intent =
                 MultiWindowUtils.createNewWindowIntent(
                         firstActivity.getApplicationContext(),
-                        MultiWindowUtils.INVALID_INSTANCE_ID,
+                        TabWindowManager.INVALID_WINDOW_ID,
                         true,
                         false,
                         true);
@@ -369,6 +373,7 @@ public class AppHeaderCoordinatorBrowserTest {
 
     @Test
     @MediumTest
+    @Restriction(DeviceFormFactor.PHONE) // https://crbug.com/393388366
     public void testKeyboardInDesktopWindow_RootViewPadded() throws TimeoutException {
         ChromeTabbedActivity activity = mActivityTestRule.getActivity();
         triggerDesktopWindowingModeChange(activity, true);
@@ -566,14 +571,13 @@ public class AppHeaderCoordinatorBrowserTest {
                                     activity.getToolbarManager().getToolbarLayoutForTesting();
                     Criteria.checkThat(
                             "Home button tint is incorrect",
-                            toolbarTablet.getHomeButton().getImageTintList().getDefaultColor(),
+                            ((ImageButton) toolbarTablet.findViewById(R.id.home_button))
+                                    .getImageTintList()
+                                    .getDefaultColor(),
                             Matchers.is(nonOmniboxIconTint));
                     Criteria.checkThat(
                             "Tab switcher icon tint is incorrect.",
-                            ((ImageButton)
-                                            activity.getToolbarManager()
-                                                    .getTabSwitcherButtonCoordinatorForTesting()
-                                                    .getContainerView())
+                            ((ImageButton) toolbarTablet.findViewById(R.id.tab_switcher_button))
                                     .getImageTintList()
                                     .getDefaultColor(),
                             Matchers.is(nonOmniboxIconTint));
@@ -585,8 +589,7 @@ public class AppHeaderCoordinatorBrowserTest {
                             Matchers.is(nonOmniboxIconTint));
                     Criteria.checkThat(
                             "Bookmark button tint is incorrect.",
-                            toolbarTablet
-                                    .getBookmarkButtonForTesting()
+                            ((ImageButton) toolbarTablet.findViewById(R.id.bookmark_button))
                                     .getImageTintList()
                                     .getDefaultColor(),
                             Matchers.is(omniboxIconTint));

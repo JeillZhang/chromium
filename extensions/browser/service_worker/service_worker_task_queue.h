@@ -10,11 +10,10 @@
 #include <string>
 #include <vector>
 
-#include "base/auto_reset.h"
 #include "base/containers/flat_map.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string_util.h"
+#include "base/scoped_multi_source_observation.h"
 #include "base/unguessable_token.h"
 #include "base/version.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -22,6 +21,8 @@
 #include "content/public/browser/service_worker_context_observer.h"
 #include "extensions/browser/lazy_context_id.h"
 #include "extensions/browser/lazy_context_task_queue.h"
+#include "extensions/browser/service_worker/sequenced_context_id.h"
+#include "extensions/browser/service_worker/service_worker_state.h"
 #include "extensions/browser/service_worker/worker_id.h"
 #include "extensions/common/extension_id.h"
 #include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
@@ -35,7 +36,6 @@ struct ServiceWorkerRunningInfo;
 
 namespace extensions {
 class Extension;
-class ProcessManager;
 
 // A service worker implementation of `LazyContextTaskQueue`. For an overview of
 // service workers on the web see https://web.dev/learn/pwa/service-workers.
@@ -131,11 +131,10 @@ class ProcessManager;
 // activation/deactivation and how the class uses it.
 //
 // TODO(lazyboy): Clean up queue when extension is unloaded/uninstalled.
-class ServiceWorkerTaskQueue
-    : public KeyedService,
-      public LazyContextTaskQueue,
-      public content::ServiceWorkerContextObserver,
-      public content::ServiceWorkerContextObserverSynchronous {
+class ServiceWorkerTaskQueue : public KeyedService,
+                               public LazyContextTaskQueue,
+                               public content::ServiceWorkerContextObserver,
+                               public ServiceWorkerState::Observer {
  public:
   explicit ServiceWorkerTaskQueue(content::BrowserContext* browser_context);
 
@@ -144,74 +143,8 @@ class ServiceWorkerTaskQueue
 
   ~ServiceWorkerTaskQueue() override;
 
-  struct SequencedContextId {
-    ExtensionId extension_id;
-    std::string browser_context_id;
-    base::UnguessableToken token;
-
-    auto operator<=>(const SequencedContextId& rhs) const = default;
-  };
-
-  // Browser process worker state of an activated extension.
-  enum class BrowserState {
-    // Initial state, not started.
-    kInitial,
-    // Worker has completed starting at least once (i.e. has seen
-    // DidStartWorkerForScope).
-    kStarted,
-    // Worker has completed starting at least once and has run all pending
-    // tasks (i.e. has seen DidStartWorkerForScope and
-    // DidStartServiceWorkerContext).
-    kReady,
-  };
-
-  // Render process worker state of an activated extension.
-  enum class RendererState {
-    // Initial state, neither started nor stopped.
-    kInitial,
-    // Worker thread has started.
-    kStarted,
-    // Worker thread has not started or has been stopped.
-    kStopped,
-  };
-
-  // The current worker related state of an activated extension.
-  class WorkerState {
-   public:
-    WorkerState();
-    ~WorkerState();
-
-    WorkerState(const WorkerState&) = delete;
-    WorkerState& operator=(const WorkerState&) = delete;
-
-    void SetWorkerId(const WorkerId& worker_id,
-                     ProcessManager* process_manager);
-    void ResetWorkerId() { worker_id_.reset(); }
-    void SetBrowserState(BrowserState browser_state) {
-      browser_state_ = browser_state;
-    }
-    void SetRendererState(RendererState renderer_state) {
-      renderer_state_ = renderer_state;
-    }
-
-    bool ready() const;
-
-    BrowserState browser_state() const { return browser_state_; }
-    RendererState renderer_state() const { return renderer_state_; }
-
-    const std::optional<WorkerId>& worker_id() const { return worker_id_; }
-
-   private:
-    BrowserState browser_state_ = BrowserState::kInitial;
-    RendererState renderer_state_ = RendererState::kInitial;
-
-    // Contains the worker's WorkerId associated with this WorkerState, once we
-    // have discovered info about the worker.
-    std::optional<WorkerId> worker_id_;
-  };
-
   // Convenience method to return the ServiceWorkerTaskQueue for a given
-  // |context|.
+  // `context`.
   static ServiceWorkerTaskQueue* Get(content::BrowserContext* context);
 
   // Always returns true since we currently request a worker to start for every
@@ -227,11 +160,11 @@ class ServiceWorkerTaskQueue
   void AddPendingTask(const LazyContextId& context_id,
                       PendingTask task) override;
 
-  // Performs Service Worker related tasks upon |extension| activation,
-  // e.g. registering |extension|'s worker, executing any pending tasks.
+  // Performs Service Worker related tasks upon `extension` activation,
+  // e.g. registering `extension`'s worker, executing any pending tasks.
   void ActivateExtension(const Extension* extension);
-  // Performs Service Worker related tasks upon |extension| deactivation,
-  // e.g. unregistering |extension|'s worker.
+  // Performs Service Worker related tasks upon `extension` deactivation,
+  // e.g. unregistering `extension`'s worker.
   void DeactivateExtension(const Extension* extension);
 
   // Called once an extension Service Worker context was initialized but not
@@ -260,6 +193,9 @@ class ServiceWorkerTaskQueue
       const GURL& service_worker_scope,
       int64_t service_worker_version_id,
       int thread_id);
+  // Called when the extension renderer process that was running an extension
+  // Service Worker has exited.
+  void RenderProcessForWorkerExited(const WorkerId& worker_id);
 
   // Returns the current activation token for an extension, if the extension
   // is currently activated. Returns std::nullopt if the extension isn't
@@ -267,7 +203,7 @@ class ServiceWorkerTaskQueue
   std::optional<base::UnguessableToken> GetCurrentActivationToken(
       const ExtensionId& extension_id) const;
 
-  // Activates incognito split mode extensions that are activated in |other|
+  // Activates incognito split mode extensions that are activated in `other`
   // task queue.
   void ActivateIncognitoSplitModeExtensions(ServiceWorkerTaskQueue* other);
 
@@ -278,24 +214,22 @@ class ServiceWorkerTaskQueue
   base::Version RetrieveRegisteredServiceWorkerVersion(
       const ExtensionId& extension_id);
 
+  // ServiceWorkerState::Observer:
+  void OnWorkerStop(
+      int64_t version_id,
+      const content::ServiceWorkerRunningInfo& worker_info) override;
+
   // TODO(crbug.com/334940006): Convert these completely to
   // ServiceWorkerContextObserverSynchronous.
   // content::ServiceWorkerContextObserver:
   void OnRegistrationStored(int64_t registration_id,
-                            const GURL& scope) override;
+                            const GURL& scope,
+                            const content::ServiceWorkerRegistrationInformation&
+                                service_worker_info) override;
   void OnReportConsoleMessage(int64_t version_id,
                               const GURL& scope,
                               const content::ConsoleMessage& message) override;
   void OnDestruct(content::ServiceWorkerContext* context) override;
-
-  // content::ServiceWorkerContextObserverSynchronous:
-  // Listens to worker stopping and removes tracking of worker state if found.
-  void OnStopping(
-      int64_t version_id,
-      const content::ServiceWorkerRunningInfo& worker_info) override;
-  // Listens to worker stops and removes tracking of this worker if found.
-  void OnStopped(int64_t version_id,
-                 const content::ServiceWorkerRunningInfo& worker_info) override;
 
   // Worker unregistrations can fail in expected and unexpected ways, this
   // determines if the unregistration can be accepted as successful from the
@@ -319,8 +253,8 @@ class ServiceWorkerTaskQueue
 
     virtual ~TestObserver();
 
-    // Called when an extension with id |extension_id| is going to be activated.
-    // |will_register_service_worker| is true if a Service Worker will be
+    // Called when an extension with id `extension_id` is going to be activated.
+    // `will_register_service_worker` is true if a Service Worker will be
     // registered.
     virtual void OnActivateExtension(const ExtensionId& extension_id,
                                      bool will_register_service_worker) {}
@@ -328,6 +262,10 @@ class ServiceWorkerTaskQueue
     // Called immediately after we send a request to start the worker (whether
     // it ultimately succeeds or fails).
     virtual void RequestedWorkerStart(const ExtensionId& extension_id) {}
+
+    virtual void OnWorkerRegistrationFailed(
+        const ExtensionId& extension_id,
+        blink::ServiceWorkerStatusCode status_code) {}
 
     virtual void DidStartWorkerFail(
         const ExtensionId& extension_id,
@@ -354,6 +292,13 @@ class ServiceWorkerTaskQueue
     // is preparing to terminate.
     virtual void DidStopServiceWorkerContext(const ExtensionId& extension_id) {}
 
+    // Called when UntrackServiceWorkerState() is invoked for a worker
+    // associated with `scope` (because it's stopping or has stopped).
+    // This notification occurs even if the worker is a sub-scope worker and
+    // does not result in altering the ServiceWorkerTaskQueue's tracking state
+    // for the primary extension service worker.
+    virtual void UntrackServiceWorkerState(const GURL& scope) {}
+
     // Called when a service worker registered for the extension with the
     // `extension_id` has been unregistered in the //content layer.
     virtual void WorkerUnregistered(const ExtensionId& extension_id) {}
@@ -364,18 +309,14 @@ class ServiceWorkerTaskQueue
     virtual void OnWorkerRegistered(const ExtensionId& extension_id) {}
   };
 
-  void StopObservingContextForTest(
-      content::ServiceWorkerContext* service_worker_context);
-
   static void SetObserverForTest(TestObserver* observer);
 
   size_t GetNumPendingTasksForTest(const LazyContextId& lazy_context_id);
 
-  WorkerState* GetWorkerStateForTesting(const SequencedContextId& context_id) {
+  ServiceWorkerState* GetWorkerStateForTesting(
+      const SequencedContextId& context_id) {
     return GetWorkerState(context_id);
   }
-
-  static base::AutoReset<bool> AllowMultipleWorkersPerExtensionForTesting();
 
  private:
   enum class RegistrationReason {
@@ -436,33 +377,34 @@ class ServiceWorkerTaskQueue
   bool IsStartWorkerFailureUnexpected(
       blink::ServiceWorkerStatusCode status_code);
 
-  // Records that the extension with |extension_id| and |version| successfully
+  // Records that the extension with `extension_id` and `version` successfully
   // registered a Service Worker.
   void SetRegisteredServiceWorkerInfo(const ExtensionId& extension_id,
                                       const base::Version& version);
 
   // Clears any record of registered Service Worker for the given extension with
-  // |extension_id|.
+  // `extension_id`.
   void RemoveRegisteredServiceWorkerInfo(const ExtensionId& extension_id);
 
-  // If the worker with |context_id| has seen worker start
+  // If the worker with `context_id` has seen worker start
   // (DidStartWorkerForScope) and load (DidStartServiceWorkerContext) then runs
   // all pending tasks for that worker.
   void RunPendingTasksIfWorkerReady(const SequencedContextId& context_id);
 
-  // Returns true if |activation_token| is the current activation for
-  // |extension_id|.
+  // Returns true if `activation_token` is the current activation for
+  // `extension_id`.
   bool IsCurrentActivation(
       const ExtensionId& extension_id,
       const base::UnguessableToken& activation_token) const;
 
-  const WorkerState* GetWorkerState(const SequencedContextId& context_id) const;
-  WorkerState* GetWorkerState(const SequencedContextId& context_id);
+  const ServiceWorkerState* GetWorkerState(
+      const SequencedContextId& context_id) const;
+  ServiceWorkerState* GetWorkerState(const SequencedContextId& context_id);
 
   content::ServiceWorkerContext* GetServiceWorkerContext(
       const ExtensionId& extension_id);
 
-  // Starts and stops observing |service_worker_context|.
+  // Starts and stops observing `service_worker_context`.
   //
   // The methods ensure that many:1 relationship of SWContext:SWContextObserver
   // is preserved correctly.
@@ -470,7 +412,7 @@ class ServiceWorkerTaskQueue
   void StopObserving(content::ServiceWorkerContext* service_worker_context);
 
   // Asynchronously verifies whether an expected SW registration (denoted by
-  // |scope|) is there.
+  // `scope`) is there.
   void VerifyRegistration(content::ServiceWorkerContext* service_worker_context,
                           const SequencedContextId& context_id,
                           const GURL& scope);
@@ -511,7 +453,14 @@ class ServiceWorkerTaskQueue
   std::map<content::ServiceWorkerContext*, int> observing_worker_contexts_;
 
   // The state of worker of each activated extension.
-  std::map<SequencedContextId, WorkerState> worker_state_map_;
+  base::flat_map<SequencedContextId, std::unique_ptr<ServiceWorkerState>>
+      worker_state_map_;
+
+  // NOTE: this needs to come after `worker_state_map_` to ensure the observers
+  // are removed before the `ServiceWorkerState`s are cleaned up.
+  base::ScopedMultiSourceObservation<ServiceWorkerState,
+                                     ServiceWorkerState::Observer>
+      worker_state_observations_{this};
 
   // TODO(crbug.com/40276609): Do we need to track this by `SequencedContextId`
   // or could we use `ExtensionId` instead?
@@ -535,13 +484,13 @@ class ServiceWorkerTaskQueue
   // for an activation token.
   std::map<base::UnguessableToken, int> worker_reregistration_attempts_;
 
-  // A set of pending service worker registrations. These are registrations that
-  // succeeded in the first step (triggering `DidRegisterServiceWorker`), but
-  // have not yet been stored. They are cleared out (and the registration state
-  // is stored) in response to `OnRegistrationStored`.
-  // The key is the extension's ID and the value is the activation token
-  // expected for that registration.
-  std::map<ExtensionId, base::UnguessableToken> pending_registrations_;
+  // A set of service worker registrations that are pending storage.
+  // These are registrations that succeeded in the first step (triggering
+  // `DidRegisterServiceWorker`), but have not yet been stored.
+  // They are cleared out (and the registration state is stored) in response to
+  // `OnRegistrationStored`. The key is the extension's ID and the value is the
+  // activation token expected for that registration.
+  std::map<ExtensionId, base::UnguessableToken> pending_storage_registrations_;
 
   // TODO(crbug.com/40276609): Do we need to track this by `SequencedContextId`
   // or could we used `ExtensionId` instead?

@@ -9,8 +9,8 @@
 #include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_metrics.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
@@ -21,12 +21,12 @@
 #include "chrome/browser/ui/views/tabs/recent_activity_bubble_dialog_view.h"
 #include "chrome/browser/ui/views/tabs/tab_group_header.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
+#include "chrome/browser/ui/views/test/tab_strip_interactive_test_mixin.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "components/collaboration/public/messaging/activity_log.h"
 #include "components/data_sharing/public/data_sharing_service.h"
 #include "components/data_sharing/public/features.h"
 #include "components/data_sharing/public/group_data.h"
-#include "components/saved_tab_groups/internal/tab_group_sync_service_impl.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/signin/public/base/consent_level.h"
@@ -34,6 +34,7 @@
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_id.h"
+#include "components/tabs/public/tab_group.h"
 #include "content/public/test/browser_test.h"
 #include "google_apis/gaia/core_account_id.h"
 #include "google_apis/gaia/gaia_id.h"
@@ -52,26 +53,18 @@ constexpr char kSkipPixelTestsReason[] = "Should only run in pixel_tests.";
 constexpr char kRecallHistogram[] = "TabGroups.Shared.Recall.Desktop";
 constexpr char kManageHistogram[] = "TabGroups.Shared.Manage.Desktop";
 
-class SharedTabGroupInteractiveUiTest : public InteractiveBrowserTest {
+class SharedTabGroupInteractiveUiTest
+    : public TabStripInteractiveTestMixin<InteractiveBrowserTest> {
  public:
   SharedTabGroupInteractiveUiTest() = default;
   ~SharedTabGroupInteractiveUiTest() override = default;
 
   void SetUp() override {
     scoped_feature_list_.InitWithFeatures(
-        {tab_groups::kTabGroupsSaveV2,
-         tab_groups::kTabGroupSyncServiceDesktopMigration,
+        {tab_groups::kTabGroupSyncServiceDesktopMigration,
          data_sharing::features::kDataSharingFeature},
-        {});
+        {tabs::kTabGroupShortcuts});
     InProcessBrowserTest::SetUp();
-  }
-
-  MultiStep FinishTabstripAnimations() {
-    return Steps(
-        WaitForShow(kTabStripElementId),
-        std::move(WithView(kTabStripElementId, [](TabStrip* tab_strip) {
-                    tab_strip->StopAnimating(true);
-                  }).SetDescription("FinishTabstripAnimation")));
   }
 
   MultiStep ShowBookmarksBar() {
@@ -79,20 +72,6 @@ class SharedTabGroupInteractiveUiTest : public InteractiveBrowserTest {
                  SelectMenuItem(AppMenuModel::kBookmarksMenuItem),
                  SelectMenuItem(BookmarkSubMenuModel::kShowBookmarkBarMenuItem),
                  WaitForShow(kBookmarkBarElementId));
-  }
-
-  MultiStep HoverTabAt(int index) {
-    const char kTabToHover[] = "Tab to hover";
-    return Steps(NameDescendantViewByType<Tab>(kBrowserViewElementId,
-                                               kTabToHover, index),
-                 MoveMouseTo(kTabToHover));
-  }
-
-  MultiStep HoverTabGroupHeader(TabGroupId group_id) {
-    const char kTabGroupHeaderToHover[] = "Tab group header to hover";
-    return Steps(FinishTabstripAnimations(),
-                 NameTabGroupHeaderView(group_id, kTabGroupHeaderToHover),
-                 MoveMouseTo(kTabGroupHeaderToHover));
   }
 
   MultiStep NameTabGroupHeaderView(TabGroupId group_id, std::string name) {
@@ -117,11 +96,11 @@ class SharedTabGroupInteractiveUiTest : public InteractiveBrowserTest {
   }
 
   void ShareTabGroup(TabGroupId group_id,
-                     std::string collaboration_id,
+                     syncer::CollaborationId collaboration_id,
                      data_sharing::MemberRole member_role,
                      bool should_sign_in) {
-    TabGroupSyncServiceImpl* service = static_cast<TabGroupSyncServiceImpl*>(
-        TabGroupSyncServiceFactory::GetForProfile(browser()->profile()));
+    TabGroupSyncService* service =
+        TabGroupSyncServiceFactory::GetForProfile(browser()->profile());
     service->MakeTabGroupSharedForTesting(group_id, collaboration_id);
 
     // Additional Properties.
@@ -151,8 +130,8 @@ class SharedTabGroupInteractiveUiTest : public InteractiveBrowserTest {
         data_sharing::GroupMember(gaia_id_to_use, display_name, email,
                                   member_role, avatar_url, given_name);
     data_sharing::GroupData group_data =
-        data_sharing::GroupData(data_sharing::GroupId(collaboration_id),
-                                display_name, {group_member}, access_token);
+        data_sharing::GroupData(data_sharing::GroupId(collaboration_id.value()),
+                                display_name, {group_member}, {}, access_token);
 
     data_sharing_service()->AddGroupDataForTesting(std::move(group_data));
   }
@@ -207,7 +186,7 @@ class SharedTabGroupInteractiveUiTest : public InteractiveBrowserTest {
 // tab group in the current browser.
 IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest, FeedbackButtonVisible) {
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kOwner, /*should_sign_in=*/false);
 
   // Manually activate an inactive tab since the test version of
@@ -231,7 +210,7 @@ IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest, FeedbackButtonVisible) {
 IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
                        SharedTabGroupInAppMenu) {
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kOwner, /*should_sign_in=*/false);
 
   RunTestSequence(WaitForShow(kTabGroupHeaderElementId),
@@ -253,7 +232,7 @@ IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
 IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
                        SharedTabGroupInEverythingMenu) {
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kOwner, /*should_sign_in=*/false);
 
   RunTestSequence(
@@ -274,14 +253,15 @@ IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
   const char kTabGroupHeaderToScreenshot[] = "Tab group header to hover";
 
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kOwner, /*should_sign_in=*/false);
 
   // TODO(crbug.com/380088920): Manually trigger a layout until we have a way to
   // know when the entity tracker is initialized.
   TabGroup* tab_group =
       browser()->tab_strip_model()->group_model()->GetTabGroup(group_id);
-  tab_group->SetVisualData(*tab_group->visual_data());
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(
+      group_id, *tab_group->visual_data());
 
   RunTestSequence(WaitForShow(kTabGroupHeaderElementId),
                   FinishTabstripAnimations(),
@@ -299,7 +279,7 @@ IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
   base::HistogramTester histogram_tester;
 
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kOwner, /*should_sign_in=*/false);
 
   RunTestSequence(WaitForShow(kTabGroupHeaderElementId),
@@ -322,7 +302,7 @@ IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
   ::base::HistogramTester histogram_tester;
 
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kOwner, /*should_sign_in=*/false);
 
   // Close the tab group.
@@ -347,7 +327,7 @@ IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
   ::base::HistogramTester histogram_tester;
 
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kOwner, /*should_sign_in=*/false);
 
   // Close the tab group.
@@ -374,7 +354,7 @@ IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
   ::base::HistogramTester histogram_tester;
 
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kOwner, /*should_sign_in=*/false);
 
   // Close the tab group.
@@ -428,7 +408,7 @@ IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
   ::base::HistogramTester histogram_tester;
 
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kOwner, /*should_sign_in=*/false);
 
   RunTestSequence(
@@ -453,7 +433,7 @@ IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
   ::base::HistogramTester histogram_tester;
 
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kOwner, /*should_sign_in=*/false);
 
   RunTestSequence(
@@ -461,9 +441,10 @@ IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
       HoverTabGroupHeader(group_id), ClickMouse(ui_controls::RIGHT),
       WaitForShow(kTabGroupEditorBubbleId),
       PressButton(kTabGroupEditorBubbleDeleteGroupButtonId),
-      WaitForShow(kDeletionDialogCancelButtonId),
-      PressButton(kDeletionDialogCancelButtonId),
-      WaitForHide(kDeletionDialogCancelButtonId), FinishTabstripAnimations());
+      WaitForShow(kDataSharingSigninPromptDialogCancelButtonElementId),
+      PressButton(kDataSharingSigninPromptDialogCancelButtonElementId),
+      WaitForHide(kDataSharingSigninPromptDialogCancelButtonElementId),
+      FinishTabstripAnimations());
 
   histogram_tester.ExpectUniqueSample(
       kManageHistogram,
@@ -472,54 +453,76 @@ IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
 }
 
 // Verify members see the leave group button instead of the delete button and
-// that pressing the leave group buttons deletes the group.
-IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest, LeaveGroupPressed) {
+// that pressing the leave group buttons displays a dialog.
+
+// Disable flaky test under Windows ASAN.  http://crbug.com/421907007
+#if defined(ADDRESS_SANITIZER) && BUILDFLAG(IS_WIN)
+#define MAYBE_LeaveGroupPressed DISABLED_LeaveGroupPressed
+#else
+#define MAYBE_LeaveGroupPressed LeaveGroupPressed
+#endif
+IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
+                       MAYBE_LeaveGroupPressed) {
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kMember, /*should_sign_in=*/true);
 
-  RunTestSequence(
-      WaitForShow(kTabGroupHeaderElementId), FinishTabstripAnimations(),
-      HoverTabGroupHeader(group_id), ClickMouse(ui_controls::RIGHT),
-      WaitForShow(kTabGroupEditorBubbleId),
-      PressButton(kTabGroupEditorBubbleLeaveGroupButtonId),
-      WaitForHide(kTabGroupEditorBubbleLeaveGroupButtonId),
-      WaitForShow(kDeletionDialogOkButtonId),
-      PressButton(kDeletionDialogOkButtonId),
-      WaitForHide(kTabGroupHeaderElementId), FinishTabstripAnimations());
+  RunTestSequence(WaitForShow(kTabGroupHeaderElementId),
+                  FinishTabstripAnimations(), HoverTabGroupHeader(group_id),
+                  ClickMouse(ui_controls::RIGHT),
+                  WaitForShow(kTabGroupEditorBubbleId),
+                  EnsurePresent(kTabGroupEditorBubbleLeaveGroupButtonId),
+                  FinishTabstripAnimations());
 }
 
 // Verify members see the leave group button instead of the delete button in the
-// context menu of a tab group. Pressing the button should delete the group.
+// context menu of a tab group. Pressing the button displays a dialog.
 IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest,
                        LeaveGroupPressedFromContextMenu) {
   TabGroupId group_id = CreateNewTabGroup();
-  ShareTabGroup(group_id, "fake_collaboration_id",
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
                 data_sharing::MemberRole::kMember, /*should_sign_in=*/true);
+
+  RunTestSequence(WaitForShow(kTabGroupHeaderElementId),
+                  FinishTabstripAnimations(),
+                  PressButton(kToolbarAppMenuButtonElementId),
+                  WaitForShow(AppMenuModel::kTabGroupsMenuItem),
+                  SelectMenuItem(AppMenuModel::kTabGroupsMenuItem),
+                  SelectMenuItem(STGEverythingMenu::kTabGroup),
+                  EnsurePresent(STGTabsMenuModel::kLeaveGroupMenuItem),
+                  FinishTabstripAnimations());
+}
+
+// Verify remove last tab will display the close last tab dialog.
+IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest, GroupCloseLastTab) {
+  TabGroupId group_id = CreateNewTabGroup();
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"),
+                data_sharing::MemberRole::kMember, /*should_sign_in=*/false);
 
   RunTestSequence(
       WaitForShow(kTabGroupHeaderElementId), FinishTabstripAnimations(),
-      PressButton(kToolbarAppMenuButtonElementId),
-      WaitForShow(AppMenuModel::kTabGroupsMenuItem),
-      SelectMenuItem(AppMenuModel::kTabGroupsMenuItem),
-      SelectMenuItem(STGEverythingMenu::kTabGroup),
-      EnsurePresent(STGTabsMenuModel::kLeaveGroupMenuItem),
-      SelectMenuItem(STGTabsMenuModel::kLeaveGroupMenuItem),
-      WaitForShow(kDeletionDialogOkButtonId),
-      PressButton(kDeletionDialogOkButtonId), FinishTabstripAnimations(),
-      WaitForHide(kTabGroupHeaderElementId));
+      Do([&]() {
+        BrowserView* browser_view =
+            static_cast<BrowserView*>(browser()->window());
+        browser_view->tabstrip()->CloseTab(browser_view->tabstrip()->tab_at(0),
+                                           CloseTabSource::kFromMouse);
+      }),
+      WaitForShow(kDataSharingSigninPromptDialogCancelButtonElementId),
+      PressButton(kDataSharingSigninPromptDialogCancelButtonElementId),
+      WaitForHide(kDataSharingSigninPromptDialogCancelButtonElementId),
+      FinishTabstripAnimations());
 }
 
 // Verify members see the recent activity button when activity exists.
 IN_PROC_BROWSER_TEST_F(SharedTabGroupInteractiveUiTest, RecentActivity) {
-  std::string collaboration_id = "fake_collaboration_id";
+  syncer::CollaborationId collaboration_id("fake_collaboration_id");
   TabGroupId group_id = CreateNewTabGroup();
   ShareTabGroup(group_id, collaboration_id, data_sharing::MemberRole::kMember,
                 /*should_sign_in=*/false);
 
-  auto log = CreateActivityLog(collaboration_id);
+  auto log = CreateActivityLog(collaboration_id.value());
   messaging_service()->AddActivityLogForTesting(
-      data_sharing::GroupId(collaboration_id), log);
+      data_sharing::GroupId(collaboration_id.value()), log);
 
   RunTestSequence(
       WaitForShow(kTabGroupHeaderElementId), FinishTabstripAnimations(),

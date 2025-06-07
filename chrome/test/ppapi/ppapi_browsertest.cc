@@ -16,7 +16,6 @@
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
@@ -930,7 +929,9 @@ PPAPI_SOCKET_TEST(UDPSocket_SetOption)
 PPAPI_SOCKET_TEST(UDPSocket_SetOption_1_0)
 PPAPI_SOCKET_TEST(UDPSocket_SetOption_1_1)
 
-// Fails on MacOS 11, crbug.com/1211138.
+// Tested on an old version of macOS and found to fail
+// (https://crbug.com/40182772), but not worth fixing as PPAPI is going to be
+// removed soon.
 #if !BUILDFLAG(IS_MAC)
 PPAPI_SOCKET_TEST(UDPSocket_Broadcast)
 #endif
@@ -942,7 +943,9 @@ PPAPI_SOCKET_TEST(UDPSocket_Multicast)
 TEST_PPAPI_OUT_OF_PROCESS_VIA_HTTP(UDPSocketPrivate_Connect)
 TEST_PPAPI_OUT_OF_PROCESS_VIA_HTTP(UDPSocketPrivate_ConnectFailure)
 
-// Fails on MacOS 11, crbug.com/1211138.
+// Tested on an old version of macOS and found to fail
+// (https://crbug.com/40182772), but not worth fixing as PPAPI is going to be
+// removed soon.
 #if !BUILDFLAG(IS_MAC)
 TEST_PPAPI_OUT_OF_PROCESS_VIA_HTTP(UDPSocketPrivate_Broadcast)
 #endif
@@ -951,7 +954,9 @@ TEST_PPAPI_OUT_OF_PROCESS_VIA_HTTP(UDPSocketPrivate_SetSocketFeatureErrors)
 TEST_PPAPI_NACL(UDPSocketPrivate_Connect)
 TEST_PPAPI_NACL(UDPSocketPrivate_ConnectFailure)
 
-// Fails on MacOS 11, crbug.com/1211138.
+// Tested on an old version of macOS and found to fail
+// (https://crbug.com/40182772), but not worth fixing as PPAPI is going to be
+// removed soon.
 #if !BUILDFLAG(IS_MAC)
 TEST_PPAPI_NACL(UDPSocketPrivate_Broadcast)
 #endif
@@ -1913,7 +1918,7 @@ TEST_PPAPI_NACL(MouseCursor)
 TEST_PPAPI_NACL(NetworkProxy)
 
 // TODO(crbug.com/41248785), TODO(crbug.com/41248786) Flaky on CrOS.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_VideoDecoder DISABLED_VideoDecoder
 #else
 #define MAYBE_VideoDecoder VideoDecoder

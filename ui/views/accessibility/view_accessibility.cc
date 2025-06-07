@@ -14,6 +14,7 @@
 #include "build/buildflag.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/ax_role_properties.h"
 #include "ui/accessibility/platform/ax_platform.h"
 #include "ui/accessibility/platform/ax_platform_node.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
@@ -21,13 +22,21 @@
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/views/accessibility/atomic_view_ax_tree_manager.h"
-#include "ui/views/accessibility/ax_event_manager.h"
+#include "ui/views/accessibility/ax_update_notifier.h"
 #include "ui/views/accessibility/ax_virtual_view.h"
 #include "ui/views/accessibility/widget_ax_tree_id_map.h"
 #include "ui/views/view.h"
 #include "ui/views/view_utils.h"
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/widget.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "ui/views/accessibility/view_ax_platform_node_delegate_win.h"
+#elif BUILDFLAG(IS_MAC)
+#include "ui/views/accessibility/view_ax_platform_node_delegate_mac.h"
+#elif BUILDFLAG(IS_LINUX)
+#include "ui/views/accessibility/view_ax_platform_node_delegate_auralinux.h"
+#endif
 
 namespace views {
 
@@ -74,13 +83,28 @@ bool IsValidRoleForViews(ax::mojom::Role role) {
          "initialization of the accessibility cache. Instead, set the "  \
          "attributes directly on `AXNodeData` parameter.";
 
-#if !BUILDFLAG(HAS_NATIVE_ACCESSIBILITY)
 // static
 std::unique_ptr<ViewAccessibility> ViewAccessibility::Create(View* view) {
+  // With the feature enabled, the accessibility tree for Views is built using
+  // the `BrowserAccessibilityManager` owned by the `BrowserViewsAXManager`.
+  // ViewAccessibility is only used to managed the current accessibility state
+  // for a view.
+  if (::features::IsAccessibilityTreeForViewsEnabled()) {
+    // Cannot use std::make_unique because constructor is protected.
+    return base::WrapUnique(new ViewAccessibility(view));
+  }
+
+#if !BUILDFLAG(HAS_NATIVE_ACCESSIBILITY)
   // Cannot use std::make_unique because constructor is protected.
   return base::WrapUnique(new ViewAccessibility(view));
-}
+#elif BUILDFLAG(IS_WIN)
+  return ViewAXPlatformNodeDelegateWin::CreatePlatformSpecific(view);
+#elif BUILDFLAG(IS_MAC)
+  return ViewAXPlatformNodeDelegateMac::CreatePlatformSpecific(view);
+#elif BUILDFLAG(IS_LINUX)
+  return ViewAXPlatformNodeDelegateAuraLinux::CreatePlatformSpecific(view);
 #endif
+}
 
 ViewAccessibility::ViewAccessibility(View* view)
     : view_(view), focused_virtual_child_(nullptr) {
@@ -217,7 +241,7 @@ void ViewAccessibility::NotifyEvent(ax::mojom::Event event_type,
     return;
   }
 
-  AXEventManager::Get()->NotifyViewEvent(view_, event_type);
+  AXUpdateNotifier::Get()->NotifyViewEvent(view_, event_type);
 
   if (send_native_event && widget) {
     FireNativeEvent(event_type);
@@ -302,6 +326,8 @@ void ViewAccessibility::SetReadOnly(bool read_only) {
   } else {
     data_.RemoveIntAttribute(ax::mojom::IntAttribute::kRestriction);
   }
+
+  NotifyDataChanged();
 }
 
 bool ViewAccessibility::GetIsPruned() const {
@@ -315,6 +341,7 @@ void ViewAccessibility::SetCharacterOffsets(
 
   OnIntListAttributeChanged(ax::mojom::IntListAttribute::kCharacterOffsets,
                             offsets);
+  NotifyDataChanged();
 }
 
 const std::vector<int32_t>& ViewAccessibility::GetCharacterOffsets() const {
@@ -326,6 +353,7 @@ void ViewAccessibility::SetWordStarts(const std::vector<int32_t>& offsets) {
   data_.AddIntListAttribute(ax::mojom::IntListAttribute::kWordStarts, offsets);
 
   OnIntListAttributeChanged(ax::mojom::IntListAttribute::kWordStarts, offsets);
+  NotifyDataChanged();
 }
 
 const std::vector<int32_t>& ViewAccessibility::GetWordStarts() const {
@@ -336,6 +364,7 @@ void ViewAccessibility::SetWordEnds(const std::vector<int32_t>& offsets) {
   data_.AddIntListAttribute(ax::mojom::IntListAttribute::kWordEnds, offsets);
 
   OnIntListAttributeChanged(ax::mojom::IntListAttribute::kWordEnds, offsets);
+  NotifyDataChanged();
 }
 
 const std::vector<int32_t>& ViewAccessibility::GetWordEnds() const {
@@ -353,14 +382,17 @@ void ViewAccessibility::ClearTextOffsets() {
                             std::nullopt);
   OnIntListAttributeChanged(ax::mojom::IntListAttribute::kWordEnds,
                             std::nullopt);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetControlIds(const std::vector<int32_t>& ids) {
   data_.AddIntListAttribute(ax::mojom::IntListAttribute::kControlsIds, ids);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::RemoveControlIds() {
   data_.RemoveIntListAttribute(ax::mojom::IntListAttribute::kControlsIds);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetClipsChildren(bool clips_children) {
@@ -369,16 +401,19 @@ void ViewAccessibility::SetClipsChildren(bool clips_children) {
 
   OnBoolAttributeChanged(ax::mojom::BoolAttribute::kClipsChildren,
                          clips_children);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetClassName(const std::string& class_name) {
   data_.AddStringAttribute(ax::mojom::StringAttribute::kClassName, class_name);
 
   OnStringAttributeChanged(ax::mojom::StringAttribute::kClassName, class_name);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetHasPopup(const ax::mojom::HasPopup has_popup) {
   data_.SetHasPopup(has_popup);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetRole(const ax::mojom::Role role) {
@@ -406,6 +441,8 @@ void ViewAccessibility::SetRole(const ax::mojom::Role role) {
   UpdateInvisibleState();
 
   OnRoleChanged(role);
+
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetRole(const ax::mojom::Role role,
@@ -467,6 +504,7 @@ void ViewAccessibility::SetName(std::u16string name,
                            base::UTF16ToUTF8(name));
 
   NotifyEvent(ax::mojom::Event::kTextChanged, true);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetName(std::string_view name,
@@ -491,6 +529,7 @@ void ViewAccessibility::SetName(View& naming_view) {
 
   data_.AddIntListAttribute(ax::mojom::IntListAttribute::kLabelledbyIds,
                             {naming_view.GetViewAccessibility().GetUniqueId()});
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::RemoveName() {
@@ -498,6 +537,7 @@ void ViewAccessibility::RemoveName() {
   data_.RemoveIntAttribute(ax::mojom::IntAttribute::kNameFrom);
 
   OnStringAttributeChanged(ax::mojom::StringAttribute::kName, std::nullopt);
+  NotifyDataChanged();
 }
 
 std::u16string ViewAccessibility::GetCachedName() const {
@@ -529,6 +569,7 @@ void ViewAccessibility::SetRoleDescription(
 
   OnStringAttributeChanged(ax::mojom::StringAttribute::kRoleDescription,
                            base::UTF16ToUTF8(role_description));
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetRoleDescription(
@@ -546,6 +587,7 @@ void ViewAccessibility::RemoveRoleDescription() {
 
   OnStringAttributeChanged(ax::mojom::StringAttribute::kRoleDescription,
                            std::nullopt);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetIsEditable(bool editable) {
@@ -558,72 +600,84 @@ void ViewAccessibility::SetBounds(const gfx::RectF& bounds) {
   }
   data_.relative_bounds.bounds = bounds;
   NotifyEvent(ax::mojom::Event::kLocationChanged, false);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetPosInSet(int pos_in_set) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kPosInSet, pos_in_set);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kPosInSet, pos_in_set);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetSetSize(int set_size) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kSetSize, set_size);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kSetSize, set_size);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::ClearPosInSet() {
   data_.RemoveIntAttribute(ax::mojom::IntAttribute::kPosInSet);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kPosInSet, 0);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::ClearSetSize() {
   data_.RemoveIntAttribute(ax::mojom::IntAttribute::kSetSize);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kSetSize, 0);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetScrollX(int scroll_x) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kScrollX, scroll_x);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kScrollX, scroll_x);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetScrollXMin(int scroll_x_min) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kScrollXMin, scroll_x_min);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kScrollXMin, scroll_x_min);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetScrollXMax(int scroll_x_max) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kScrollXMax, scroll_x_max);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kScrollXMax, scroll_x_max);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetScrollY(int scroll_y) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kScrollY, scroll_y);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kScrollY, scroll_y);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetScrollYMin(int scroll_y_min) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kScrollYMin, scroll_y_min);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kScrollYMin, scroll_y_min);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetScrollYMax(int scroll_y_max) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kScrollYMax, scroll_y_max);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kScrollYMax, scroll_y_max);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetIsScrollable(bool is_scrollable) {
   data_.AddBoolAttribute(ax::mojom::BoolAttribute::kScrollable, is_scrollable);
 
   OnBoolAttributeChanged(ax::mojom::BoolAttribute::kScrollable, is_scrollable);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetActiveDescendant(views::View& view) {
@@ -640,6 +694,7 @@ void ViewAccessibility::SetActiveDescendant(ui::AXPlatformNodeId id) {
   OnIntAttributeChanged(ax::mojom::IntAttribute::kActivedescendantId, id);
 
   NotifyEvent(ax::mojom::Event::kActiveDescendantChanged, true);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::ClearActiveDescendant() {
@@ -652,6 +707,7 @@ void ViewAccessibility::ClearActiveDescendant() {
                         std::nullopt);
 
   NotifyEvent(ax::mojom::Event::kActiveDescendantChanged, true);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetIsInvisible(bool is_invisible) {
@@ -707,6 +763,7 @@ void ViewAccessibility::SetIsEnabled(bool is_enabled) {
   // this. Some platforms have specific state-changed events and this generic
   // event does not suggest what changed.
   NotifyEvent(ax::mojom::Event::kStateChanged, true);
+  NotifyDataChanged();
 }
 
 bool ViewAccessibility::GetIsEnabled() const {
@@ -717,6 +774,7 @@ void ViewAccessibility::SetTableRowCount(int row_count) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kTableRowCount, row_count);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kTableRowCount, row_count);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetTableColumnCount(int column_count) {
@@ -725,12 +783,14 @@ void ViewAccessibility::SetTableColumnCount(int column_count) {
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kTableColumnCount,
                         column_count);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetAriaTableRowCount(int row_count) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kAriaRowCount, row_count);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kAriaRowCount, row_count);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetAriaTableColumnCount(int column_count) {
@@ -739,12 +799,14 @@ void ViewAccessibility::SetAriaTableColumnCount(int column_count) {
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kAriaColumnCount,
                         column_count);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::ClearTableRowCount() {
   data_.RemoveIntAttribute(ax::mojom::IntAttribute::kTableRowCount);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kTableRowCount, std::nullopt);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::ClearTableColumnCount() {
@@ -752,12 +814,14 @@ void ViewAccessibility::ClearTableColumnCount() {
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kTableColumnCount,
                         std::nullopt);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::ClearAriaTableRowCount() {
   data_.RemoveIntAttribute(ax::mojom::IntAttribute::kAriaRowCount);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kAriaRowCount, std::nullopt);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::ClearAriaTableColumnCount() {
@@ -765,12 +829,14 @@ void ViewAccessibility::ClearAriaTableColumnCount() {
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kAriaColumnCount,
                         std::nullopt);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetTableRowIndex(int cell_index) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kTableRowIndex, cell_index);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kTableRowIndex, cell_index);
+  NotifyDataChanged();
 }
 
 int ViewAccessibility::GetTableRowIndex() const {
@@ -783,18 +849,21 @@ void ViewAccessibility::SetTableCellColumnIndex(int cell_index) {
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kTableCellColumnIndex,
                         cell_index);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetTableCellRowIndex(int row_index) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kTableCellRowIndex, row_index);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kTableCellRowIndex, row_index);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetTableCellRowSpan(int row_span) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kTableCellRowSpan, row_span);
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kTableCellRowSpan, row_span);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetTableCellColumnSpan(int column_span) {
@@ -803,6 +872,7 @@ void ViewAccessibility::SetTableCellColumnSpan(int column_span) {
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kTableCellColumnSpan,
                         column_span);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetSortDirection(
@@ -812,6 +882,7 @@ void ViewAccessibility::SetSortDirection(
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kSortDirection,
                         static_cast<int>(sort_direction));
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::ClearDescriptionAndDescriptionFrom() {
@@ -819,6 +890,7 @@ void ViewAccessibility::ClearDescriptionAndDescriptionFrom() {
 
   OnStringAttributeChanged(ax::mojom::StringAttribute::kDescription,
                            std::nullopt);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::RemoveDescription() {
@@ -829,6 +901,7 @@ void ViewAccessibility::RemoveDescription() {
                            std::nullopt);
   OnIntAttributeChanged(ax::mojom::IntAttribute::kDescriptionFrom,
                         std::nullopt);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetDescription(
@@ -849,6 +922,7 @@ void ViewAccessibility::SetDescription(
                            description);
   OnIntAttributeChanged(ax::mojom::IntAttribute::kDescriptionFrom,
                         static_cast<int>(description_from));
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetDescription(
@@ -872,6 +946,7 @@ void ViewAccessibility::SetDescription(View& describing_view) {
   data_.AddIntListAttribute(ax::mojom::IntListAttribute::kDescribedbyIds, ids);
 
   OnIntListAttributeChanged(ax::mojom::IntListAttribute::kDescribedbyIds, ids);
+  NotifyDataChanged();
 }
 
 std::u16string ViewAccessibility::GetCachedDescription() const {
@@ -921,6 +996,7 @@ void ViewAccessibility::OnViewAddedToWidget() {
 void ViewAccessibility::SetPlaceholder(const std::string& placeholder) {
   data_.AddStringAttribute(ax::mojom::StringAttribute::kPlaceholder,
                            placeholder);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::AddAction(ax::mojom::Action action) {
@@ -929,6 +1005,7 @@ void ViewAccessibility::AddAction(ax::mojom::Action action) {
   }
 
   data_.AddAction(action);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetCheckedState(ax::mojom::CheckedState checked_state) {
@@ -941,6 +1018,7 @@ void ViewAccessibility::SetCheckedState(ax::mojom::CheckedState checked_state) {
                         static_cast<int>(checked_state));
 
   NotifyEvent(ax::mojom::Event::kCheckedStateChanged, true);
+  NotifyDataChanged();
 }
 
 ax::mojom::CheckedState ViewAccessibility::GetCheckedState() const {
@@ -952,33 +1030,40 @@ void ViewAccessibility::RemoveCheckedState() {
     data_.RemoveIntAttribute(ax::mojom::IntAttribute::kCheckedState);
 
     OnIntAttributeChanged(ax::mojom::IntAttribute::kCheckedState, std::nullopt);
+    NotifyDataChanged();
   }
 }
 
 void ViewAccessibility::SetKeyShortcuts(const std::string& key_shortcuts) {
   data_.AddStringAttribute(ax::mojom::StringAttribute::kKeyShortcuts,
                            key_shortcuts);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::RemoveKeyShortcuts() {
   data_.RemoveStringAttribute(ax::mojom::StringAttribute::kKeyShortcuts);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetAccessKey(const std::string& access_key) {
   data_.AddStringAttribute(ax::mojom::StringAttribute::kAccessKey, access_key);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::RemoveAccessKey() {
   data_.RemoveStringAttribute(ax::mojom::StringAttribute::kAccessKey);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetChildTreeNodeAppId(const std::string& app_id) {
   data_.AddStringAttribute(ax::mojom::StringAttribute::kChildTreeNodeAppId,
                            app_id);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::RemoveChildTreeNodeAppId() {
   data_.RemoveStringAttribute(ax::mojom::StringAttribute::kChildTreeNodeAppId);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetIsSelected(bool selected) {
@@ -997,19 +1082,24 @@ void ViewAccessibility::SetIsSelected(bool selected) {
   if (selected) {
     NotifyEvent(ax::mojom::Event::kSelection, true);
   }
+
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetIsMultiselectable(bool multiselectable) {
   SetState(ax::mojom::State::kMultiselectable, multiselectable);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetIsModal(bool modal) {
   data_.AddBoolAttribute(ax::mojom::BoolAttribute::kModal, modal);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::AddHTMLAttributes(
     std::pair<std::string, std::string> attribute) {
   data_.html_attributes.push_back(attribute);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetIsIgnored(bool is_ignored) {
@@ -1070,11 +1160,14 @@ void ViewAccessibility::SetShowContextMenu(bool show_context_menu) {
   for (auto& virtual_child : virtual_children()) {
     virtual_child->SetShowContextMenuRecursive(show_context_menu);
   }
+
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetContainerLiveStatus(const std::string& status) {
   data_.AddStringAttribute(ax::mojom::StringAttribute::kContainerLiveStatus,
                            status);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::RemoveContainerLiveStatus() {
@@ -1083,6 +1176,7 @@ void ViewAccessibility::RemoveContainerLiveStatus() {
     return;
   }
   data_.RemoveStringAttribute(ax::mojom::StringAttribute::kContainerLiveStatus);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetValue(const std::string& value) {
@@ -1094,7 +1188,15 @@ void ViewAccessibility::SetValue(const std::string& value) {
   if (ready_to_notify_events_) {
     OnStringAttributeChanged(ax::mojom::StringAttribute::kValue, value);
     NotifyEvent(ax::mojom::Event::kValueChanged, true);
+
+    // Only fire a text changed event on text fields and select elements to
+    // mimic what is done in the web content.
+    if (data_.IsTextField() || ui::IsSelectElement(data_.role)) {
+      NotifyEvent(ax::mojom::Event::kTextChanged, true);
+    }
   }
+
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetValue(std::u16string_view value) {
@@ -1110,6 +1212,7 @@ void ViewAccessibility::RemoveValue() {
   OnStringAttributeChanged(ax::mojom::StringAttribute::kValue, std::nullopt);
 
   NotifyEvent(ax::mojom::Event::kValueChanged, true);
+  NotifyDataChanged();
 }
 
 std::u16string ViewAccessibility::GetValue() const {
@@ -1131,11 +1234,13 @@ void ViewAccessibility::RemoveDefaultActionVerb() {
 
   OnIntAttributeChanged(ax::mojom::IntAttribute::kDefaultActionVerb,
                         std::nullopt);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetAutoComplete(const std::string& autocomplete) {
   data_.AddStringAttribute(ax::mojom::StringAttribute::kAutoComplete,
                            autocomplete);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetHasFocusableAncestor(bool ancestor_focusable) {
@@ -1268,6 +1373,7 @@ void ViewAccessibility::SetRootViewURL(const std::string& url) {
       << "This method should only be called on the RootView.";
   data_.AddStringAttribute(ax::mojom::StringAttribute::kUrl, url);
   OnStringAttributeChanged(ax::mojom::StringAttribute::kUrl, url);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetRootViewIsReadyToNotifyEvents() {
@@ -1308,6 +1414,7 @@ void ViewAccessibility::SetChildTreeID(ui::AXTreeID tree_id) {
 
     OnStringAttributeChanged(ax::mojom::StringAttribute::kChildTreeId,
                              tree_id.ToString());
+    NotifyDataChanged();
   }
 }
 
@@ -1321,17 +1428,19 @@ void ViewAccessibility::RemoveChildTreeID() {
 
   OnStringAttributeChanged(ax::mojom::StringAttribute::kChildTreeId,
                            std::string());
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetChildTreeScaleFactor(float scale_factor) {
   if (data_.HasChildTreeID()) {
     data_.AddFloatAttribute(ax::mojom::FloatAttribute::kChildTreeScale,
                             scale_factor);
+    NotifyDataChanged();
   }
 }
 
 gfx::NativeViewAccessible ViewAccessibility::GetNativeObject() const {
-  return nullptr;
+  return gfx::NativeViewAccessible();
 }
 
 void ViewAccessibility::AnnounceAlert(std::u16string_view text) {
@@ -1429,6 +1538,34 @@ void ViewAccessibility::CompleteCacheInitializationRecursive() {
   }
 }
 
+void ViewAccessibility::OnWidgetUpdatedRecursive(Widget* widget,
+                                                 Widget* old_widget) {
+  CHECK(widget);
+
+  // If we have already marked `is_widget_closed_` as true, then there's a
+  // chance that the view was reparented to a non-closed widget. If so, we must
+  // update `is_widget_closed_` in case the new widget is not closed.
+  is_widget_closed_ = widget->IsClosed();
+
+  // Initialize the AtomicViewAXTreeManager if necessary when the view gets
+  // added to the widget. We must wait for the widget to become available to
+  // get valid data our of GetData().
+  if (needs_ax_tree_manager()) {
+    EnsureAtomicViewAXTreeManager();
+  }
+
+  if (view_) {
+    internal::ScopedChildrenLock lock(view_);
+    for (auto& child : view_->children()) {
+      child->GetViewAccessibility().OnWidgetUpdatedRecursive(widget,
+                                                             old_widget);
+    }
+  }
+  for (auto& child : virtual_children()) {
+    child->OnWidgetUpdatedRecursive(widget, old_widget);
+  }
+}
+
 void ViewAccessibility::OnWidgetClosing(Widget* widget) {
   // The RootView's ViewAccessibility should be the only registered
   // WidgetObserver.
@@ -1458,10 +1595,7 @@ void ViewAccessibility::OnWidgetUpdated(Widget* widget, Widget* old_widget) {
     old_widget->RemoveObserver(this);
   }
 
-  // If we have already marked `is_widget_closed_` as true, then there's a
-  // chance that the view was reparented to a non-closed widget. If so, we must
-  // update `is_widget_closed_` in case the new widget is not closed.
-  SetWidgetClosedRecursive(widget, widget->IsClosed());
+  OnWidgetUpdatedRecursive(widget, old_widget);
 }
 
 void ViewAccessibility::CompleteCacheInitialization() {
@@ -1682,6 +1816,7 @@ void ViewAccessibility::SetState(ax::mojom::State state, bool is_enabled) {
   }
 
   OnStateChanged(state, is_enabled);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetBlockNotifyEvents(bool block) {
@@ -1713,6 +1848,7 @@ bool ViewAccessibility::GetIsHovered() const {
 
 void ViewAccessibility::SetPopupForId(ui::AXPlatformNodeId popup_for_id) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kPopupForId, popup_for_id);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetTextDirection(int text_direction) {
@@ -1722,6 +1858,7 @@ void ViewAccessibility::SetTextDirection(int text_direction) {
            static_cast<int32_t>(ax::mojom::WritingDirection::kMaxValue));
   data_.AddIntAttribute(ax::mojom::IntAttribute::kTextDirection,
                         text_direction);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetIsProtected(bool is_protected) {
@@ -1794,39 +1931,47 @@ void ViewAccessibility::SetIsVertical(bool vertical) {
 
 void ViewAccessibility::SetTextSelStart(int32_t text_sel_start) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kTextSelStart, text_sel_start);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetTextSelEnd(int32_t text_sel_end) {
   data_.AddIntAttribute(ax::mojom::IntAttribute::kTextSelEnd, text_sel_end);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetLiveAtomic(bool live_atomic) {
   data_.AddBoolAttribute(ax::mojom::BoolAttribute::kLiveAtomic, live_atomic);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetLiveStatus(const std::string& live_status) {
   data_.AddStringAttribute(ax::mojom::StringAttribute::kLiveStatus,
                            live_status);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetLiveRelevant(const std::string& live_relevant) {
   data_.AddStringAttribute(ax::mojom::StringAttribute::kLiveRelevant,
                            live_relevant);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::RemoveLiveRelevant() {
   data_.RemoveStringAttribute(ax::mojom::StringAttribute::kLiveRelevant);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::SetContainerLiveRelevant(
     const std::string& live_relevant) {
   data_.AddStringAttribute(ax::mojom::StringAttribute::kContainerLiveRelevant,
                            live_relevant);
+  NotifyDataChanged();
 }
 
 void ViewAccessibility::RemoveContainerLiveRelevant() {
   data_.RemoveStringAttribute(
       ax::mojom::StringAttribute::kContainerLiveRelevant);
+  NotifyDataChanged();
 }
 
 ui::AXAttributeChangedCallbacks*
@@ -1837,6 +1982,11 @@ ViewAccessibility::GetOrCreateAXAttributeChangedCallbacks() {
   }
 
   return attribute_changed_callbacks_.get();
+}
+
+void ViewAccessibility::NotifyDataChanged() {
+  CHECK(view_);
+  AXUpdateNotifier::Get()->NotifyViewDataChanged(view_);
 }
 
 }  // namespace views

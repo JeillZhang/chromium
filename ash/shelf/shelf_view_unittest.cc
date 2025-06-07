@@ -54,6 +54,7 @@
 #include "ash/wm/desks/desks_test_util.h"
 #include "ash/wm/overview/overview_test_util.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller_test_api.h"
+#include "ash/wm/window_pin_util.h"
 #include "ash/wm/window_state.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/ptr_util.h"
@@ -68,6 +69,7 @@
 #include "base/test/metrics/user_action_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_mock_time_message_loop_task_runner.h"
+#include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/prefs/pref_service.h"
@@ -481,16 +483,13 @@ class ShelfViewTest : public AshTestBase {
                        ->GetStatusAreaWidget()
                        ->GetContentsView();
 
-    // If the desk button is enabled there will be less space for buttons.
-    if (!features::IsDeskButtonEnabled()) {
-      // The bounds should be big enough for 4 buttons.
-      ASSERT_GE(GetPrimaryShelf()
-                    ->shelf_widget()
-                    ->hotseat_widget()
-                    ->GetWindowBoundsInScreen()
-                    .width(),
-                500);
-    }
+    // The bounds should be big enough for 4 buttons.
+    ASSERT_GE(GetPrimaryShelf()
+                  ->shelf_widget()
+                  ->hotseat_widget()
+                  ->GetWindowBoundsInScreen()
+                  .width(),
+              500);
 
     test_api_ = std::make_unique<ShelfViewTestAPI>(shelf_view_);
     test_api_->SetAnimationDuration(base::Milliseconds(1));
@@ -2287,7 +2286,7 @@ TEST_P(LtrRtlShelfViewTest, DragAppAfterContextMenuIsShownInAutoHideShelf) {
   EXPECT_EQ(SHELF_AUTO_HIDE, shelf->GetVisibilityState());
   EXPECT_EQ(SHELF_AUTO_HIDE_HIDDEN, shelf->GetAutoHideState());
 
-  shelf->shelf_widget()->GetFocusCycler()->RotateFocus(FocusCycler::FORWARD);
+  Shell::Get()->focus_cycler()->RotateFocus(FocusCycler::FORWARD);
   EXPECT_EQ(SHELF_AUTO_HIDE_SHOWN, shelf->GetAutoHideState());
 
   ShelfAppButton* button = GetButtonByID(first_app_id);
@@ -2780,6 +2779,38 @@ TEST_F(ShelfViewTest, SwipeOnItemDuringFadeOut) {
   test_api_->RunMessageLoopUntilAnimationsDone();
   VerifyShelfItemBoundsAreValid();
 }
+
+class LockedFullscreenShelfViewTest : public ShelfViewTest,
+                                      public testing::WithParamInterface<bool> {
+ protected:
+  bool IsLocked() const { return GetParam(); }
+};
+
+TEST_P(LockedFullscreenShelfViewTest, ContextMenuVisibilityWithPinnedWindow) {
+  // Create an item on the shelf and a test window for testing purposes.
+  const ShelfAppButton* const shelf_button = GetButtonByID(AddApp());
+  const std::unique_ptr<aura::Window> window = CreateTestWindow();
+
+  // Open context menu before pinning the window.
+  base::test::TestFuture<void> context_menu_future;
+  test_api_->SetShelfContextMenuCallback(
+      context_menu_future.GetRepeatingCallback());
+  GetEventGenerator()->MoveMouseTo(
+      shelf_button->GetBoundsInScreen().CenterPoint());
+  GetEventGenerator()->PressRightButton();
+  ASSERT_TRUE(context_menu_future.Wait());
+  ASSERT_TRUE(shelf_view_->IsShowingMenu());
+
+  // Pin the window and verify context menu visibility.
+  PinWindow(window.get(), IsLocked());
+  // Context menus dismiss when the window moves. Pinning the window
+  // moves the window, so the context menu should always be dismissed.
+  EXPECT_FALSE(shelf_view_->IsShowingMenu());
+}
+
+INSTANTIATE_TEST_SUITE_P(LockedFullscreenShelfViewTests,
+                         LockedFullscreenShelfViewTest,
+                         testing::Bool());
 
 class GhostImageShelfViewTest : public ShelfViewTest {
  public:
@@ -3947,9 +3978,7 @@ TEST_F(ShelfViewGestureTapTest, MouseClickInterruptionBeforeGestureLongPress) {
 // Test class to test the desk button.
 class ShelfViewDeskButtonTest : public ShelfViewTest {
  public:
-  ShelfViewDeskButtonTest() {
-    scoped_feature_list_.InitAndEnableFeature(features::kDeskButton);
-  }
+  ShelfViewDeskButtonTest() = default;
 
   ShelfViewDeskButtonTest(const ShelfViewDeskButtonTest&) = delete;
   ShelfViewDeskButtonTest& operator=(const ShelfViewDeskButtonTest&) = delete;
@@ -3975,9 +4004,6 @@ class ShelfViewDeskButtonTest : public ShelfViewTest {
   }
 
   raw_ptr<PrefService, DanglingUntriaged> prefs_;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Verify that the desk button is visible outside of overview, and not visible

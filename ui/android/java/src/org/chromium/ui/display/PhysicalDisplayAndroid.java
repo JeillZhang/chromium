@@ -18,14 +18,15 @@ import android.os.Build;
 import android.os.Build.VERSION_CODES;
 import android.util.DisplayMetrics;
 import android.view.Display;
-import android.view.WindowInsets;
 import android.view.WindowManager;
 
 import androidx.annotation.RequiresApi;
+import androidx.core.os.BuildCompat;
+import androidx.core.view.WindowInsetsCompat;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.Log;
 import org.chromium.base.StrictModeContext;
 import org.chromium.base.ThreadUtils;
@@ -45,6 +46,10 @@ import java.util.function.Consumer;
 
     // The behavior of observing window configuration changes using ComponentCallbacks is new in S.
     private static final boolean USE_CONFIGURATION = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S;
+
+    // Insets that define the area where content can't be displayed.
+    protected static final int WINDOW_INSETS_TYPE =
+            WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout();
 
     // When this object exists, a positive value means that the forced DIP scale is set and
     // the zero means it is not. The non existing object (i.e. null reference) means that
@@ -152,6 +157,7 @@ import java.util.function.Consumer;
     }
 
     private final @Nullable Context mWindowContext;
+    private final @Nullable WindowManager mWindowManager;
     private final @Nullable ComponentCallbacks mComponentCallbacks;
     private final Display mDisplay;
     private @Nullable Consumer<Display> mHdrSdrRatioCallback;
@@ -161,7 +167,9 @@ import java.util.function.Consumer;
         if (USE_CONFIGURATION) {
             Context appContext = ContextUtils.getApplicationContext();
             // `createWindowContext` on some devices writes to disk. See crbug.com/1408587.
-            try (StrictModeContext ignored = StrictModeContext.allowAllThreadPolicies()) {
+            try (@SuppressWarnings("unused")
+                    StrictModeContext strictModeContext =
+                            StrictModeContext.allowAllThreadPolicies()) {
                 mWindowContext =
                         appContext.createWindowContext(
                                 display, WindowManager.LayoutParams.TYPE_APPLICATION, null);
@@ -178,10 +186,12 @@ import java.util.function.Consumer;
                         }
                     };
             mWindowContext.registerComponentCallbacks(mComponentCallbacks);
+            mWindowManager = mWindowContext.getSystemService(WindowManager.class);
             mDisplay = mWindowContext.getDisplay();
             updateFromConfiguration();
         } else {
             mWindowContext = null;
+            mWindowManager = null;
             mComponentCallbacks = null;
             mDisplay = display;
         }
@@ -206,20 +216,24 @@ import java.util.function.Consumer;
     }
 
     @RequiresApi(VERSION_CODES.R)
+    private Insets getWindowInsets() {
+        return assumeNonNull(mWindowManager)
+                .getCurrentWindowMetrics()
+                .getWindowInsets()
+                .getInsetsIgnoringVisibility(WINDOW_INSETS_TYPE);
+    }
+
+    @RequiresApi(VERSION_CODES.R)
     private void updateFromConfiguration() {
         assumeNonNull(mWindowContext);
-        WindowManager windowManager = mWindowContext.getSystemService(WindowManager.class);
-        Rect bounds = windowManager.getMaximumWindowMetrics().getBounds();
-        int windowInsetsType = WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout();
-        Insets insets =
-                windowManager
-                        .getCurrentWindowMetrics()
-                        .getWindowInsets()
-                        .getInsetsIgnoringVisibility(windowInsetsType);
+        assumeNonNull(mWindowManager);
+
+        Rect bounds = mWindowManager.getMaximumWindowMetrics().getBounds();
+        Insets insets = getWindowInsets();
 
         DisplayMetrics displayMetrics = mWindowContext.getResources().getDisplayMetrics();
 
-        if (BuildInfo.getInstance().isAutomotive
+        if (DeviceInfo.isAutomotive()
                 && CommandLine.getInstance()
                         .hasSwitch(DisplaySwitches.AUTOMOTIVE_WEB_UI_SCALE_UP_ENABLED)) {
             mDisplay.getRealMetrics(displayMetrics);
@@ -240,8 +254,7 @@ import java.util.function.Consumer;
                 mWindowContext.getDisplay());
     }
 
-    /* package */
-    void onDisplayRemoved() {
+    /* package */ void onDisplayRemoved() {
         if (USE_CONFIGURATION) {
             assumeNonNull(mWindowContext);
             assumeNonNull(mComponentCallbacks);
@@ -262,12 +275,13 @@ import java.util.function.Consumer;
             updateFromConfiguration();
             return;
         }
+
         Point size = new Point();
         DisplayMetrics displayMetrics = new DisplayMetrics();
         display.getRealSize(size);
         display.getRealMetrics(displayMetrics);
 
-        if (BuildInfo.getInstance().isAutomotive
+        if (DeviceInfo.isAutomotive()
                 && CommandLine.getInstance()
                         .hasSwitch(DisplaySwitches.AUTOMOTIVE_WEB_UI_SCALE_UP_ENABLED)) {
             DisplayUtil.scaleUpDisplayMetricsForAutomotive(
@@ -307,7 +321,8 @@ import java.util.function.Consumer;
                 /* supportedModes= */ null,
                 isHdr(mDisplay),
                 getHdrSdrRatio(mDisplay),
-                /* isInternal= */ null);
+                /* isInternal= */ null,
+                /* arrInfo= */ null);
     }
 
     private void updateCommon(
@@ -346,6 +361,17 @@ import java.util.function.Consumer;
             }
         }
 
+        AdaptiveRefreshRateInfo arrInfo = null;
+        if (BuildCompat.isAtLeastB()) {
+            boolean hasArrSupport = display.hasArrSupport();
+            float suggestedFrameRateHigh = 0.0f;
+            if (hasArrSupport) {
+                suggestedFrameRateHigh =
+                        display.getSuggestedFrameRate(Display.FRAME_RATE_CATEGORY_HIGH);
+            }
+            arrInfo = new AdaptiveRefreshRateInfo(hasArrSupport, suggestedFrameRateHigh);
+        }
+
         super.update(
                 display.getName(),
                 bounds,
@@ -363,6 +389,7 @@ import java.util.function.Consumer;
                 supportedModes,
                 isHdr(display),
                 getHdrSdrRatio(display),
-                isInternal);
+                isInternal,
+                arrInfo);
     }
 }

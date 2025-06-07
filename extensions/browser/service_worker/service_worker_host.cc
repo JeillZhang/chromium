@@ -241,7 +241,6 @@ void ServiceWorkerHost::DidStopServiceWorkerContext(
   }
   CHECK(service_worker_scope.SchemeIs(kExtensionScheme) &&
         extension_id == service_worker_scope.host_piece());
-  CHECK(!extension_id.empty());
   CHECK_NE(blink::mojom::kInvalidServiceWorkerVersionId,
            service_worker_version_id);
   ServiceWorkerTaskQueue::Get(browser_context)
@@ -254,7 +253,7 @@ void ServiceWorkerHost::RequestWorker(mojom::RequestParamsPtr params,
                                       RequestWorkerCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (!GetBrowserContext()) {
-    std::move(callback).Run(ExtensionFunction::FAILED, base::Value::List(),
+    std::move(callback).Run(/*kFailed=*/true, base::Value::List(),
                             "No browser context", nullptr);
     return;
   }

@@ -34,6 +34,7 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/url_identity.h"
 #include "chrome/browser/ui/webui/favicon_source.h"
+#include "chrome/browser/ui/webui/top_chrome/top_chrome_web_ui_controller.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -231,7 +232,7 @@ history::mojom::HistoryEntryPtr HistoryEntryToMojom(
   result_mojom->domain = base::UTF16ToUTF8(domain);
 
   result_mojom->fallback_favicon_text =
-      base::UTF16ToASCII(favicon::GetFallbackIconText(entry.url));
+      base::UTF16ToUTF8(favicon::GetFallbackIconText(entry.url));
 
   result_mojom->time = entry.time.InMillisecondsFSinceUnixEpoch();
 
@@ -311,7 +312,7 @@ history::mojom::HistoryEntryPtr HistoryEntryToMojom(
     debug_mojom->is_url_in_local_database = IsUrlInLocalDatabase(entry);
     debug_mojom->visit_count = entry.visit_count;
     debug_mojom->typed_count = entry.typed_count;
-    result_mojom->debug_info = std::move(debug_mojom);
+    result_mojom->debug = std::move(debug_mojom);
   }
 
   return result_mojom;
@@ -331,6 +332,11 @@ BrowsingHistoryHandler::BrowsingHistoryHandler(
 
 BrowsingHistoryHandler::~BrowsingHistoryHandler() = default;
 
+void BrowsingHistoryHandler::SetSidePanelUIEmbedder(
+    base::WeakPtr<TopChromeWebUIController::Embedder> side_panel_embedder) {
+  side_panel_embedder_ = side_panel_embedder;
+}
+
 void BrowsingHistoryHandler::SetPage(
     mojo::PendingRemote<history::mojom::Page> pending_page) {
   page_.Bind(std::move(pending_page));
@@ -339,6 +345,12 @@ void BrowsingHistoryHandler::SetPage(
     std::move(deferred_callback).Run();
   }
   deferred_callbacks_.clear();
+}
+
+void BrowsingHistoryHandler::ShowSidePanelUI() {
+  if (side_panel_embedder_) {
+    side_panel_embedder_->ShowUI();
+  }
 }
 
 void BrowsingHistoryHandler::StartQueryHistory() {
@@ -369,7 +381,7 @@ void BrowsingHistoryHandler::QueryHistory(const std::string& query,
 
   // Cancel the previous query if it is still in flight.
   if (query_history_callback_) {
-    std::move(query_history_callback_).Run({});
+    std::move(query_history_callback_).Run(history::mojom::QueryResult::New());
   }
 
   query_history_callback_ = std::move(callback);
@@ -405,12 +417,13 @@ void BrowsingHistoryHandler::QueryHistoryContinuation(
     QueryHistoryContinuationCallback callback) {
   // Cancel the previous query if it is still in flight.
   if (query_history_callback_) {
-    std::move(query_history_callback_).Run({});
+    std::move(query_history_callback_).Run(history::mojom::QueryResult::New());
   }
   query_history_callback_ = std::move(callback);
 
-  DCHECK(query_history_continuation_);
-  std::move(query_history_continuation_).Run();
+  if (!query_history_continuation_.is_null()) {
+    std::move(query_history_continuation_).Run();
+  }
 }
 
 void BrowsingHistoryHandler::RemoveVisits(

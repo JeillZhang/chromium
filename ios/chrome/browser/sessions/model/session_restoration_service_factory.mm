@@ -29,7 +29,7 @@ namespace {
 using RequestedStorageFormat = SessionRestorationServiceFactory::StorageFormat;
 
 // Threshold before retrying to migration the session storage.
-constexpr base::TimeDelta kRetryMigrationThreshold = base::Days(1);
+constexpr base::TimeDelta kRetryMigrationThreshold = base::Hours(4);
 
 // Value taken from Desktop Chrome.
 constexpr base::TimeDelta kSaveDelay = base::Seconds(2.5);
@@ -376,14 +376,12 @@ SessionRestorationServiceFactory::BuildServiceInstanceFor(
                                           taskRunner:task_runner];
 
     return std::make_unique<LegacySessionRestorationService>(
-        IsPinnedTabsEnabled(), IsTabGroupInGridEnabled(), storage_path,
-        session_service_ios,
+        IsPinnedTabsEnabled(), storage_path, session_service_ios,
         WebSessionStateCacheFactory::GetForProfile(profile));
   }
 
   return std::make_unique<SessionRestorationServiceImpl>(
-      kSaveDelay, IsPinnedTabsEnabled(), IsTabGroupInGridEnabled(),
-      storage_path, task_runner);
+      kSaveDelay, IsPinnedTabsEnabled(), storage_path, task_runner);
 }
 
 void SessionRestorationServiceFactory::RegisterBrowserStatePrefs(

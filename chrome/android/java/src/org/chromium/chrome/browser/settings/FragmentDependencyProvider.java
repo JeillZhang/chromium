@@ -59,6 +59,7 @@ import org.chromium.components.browser_ui.settings.SettingsCustomTabLauncher;
 import org.chromium.components.browser_ui.site_settings.BaseSiteSettingsFragment;
 import org.chromium.components.browser_ui.site_settings.SiteSettingsCategory;
 import org.chromium.components.privacy_sandbox.FingerprintingProtectionSettingsFragment;
+import org.chromium.components.privacy_sandbox.IncognitoTrackingProtectionsFragment;
 import org.chromium.components.privacy_sandbox.IpProtectionSettingsFragment;
 import org.chromium.components.privacy_sandbox.TrackingProtectionSettings;
 import org.chromium.components.user_prefs.UserPrefs;
@@ -133,7 +134,7 @@ public class FragmentDependencyProvider extends FragmentManager.FragmentLifecycl
                     UserPrefs.get(mProfile),
                     new PasswordStoreBridge(mProfile),
                     PasswordManagerHelper.getForProfile(mProfile),
-                    LaunchIntentDispatcher::createCustomTabActivityIntent);
+                    new SettingsCustomTabLauncherImpl());
         }
         if (fragment instanceof PasswordCheckFragmentView) {
             PasswordCheckComponentUiFactory.create(
@@ -219,6 +220,10 @@ public class FragmentDependencyProvider extends FragmentManager.FragmentLifecycl
             fpProtectionSettingsFragment.setTrackingProtectionDelegate(
                     new ChromeTrackingProtectionDelegate(mProfile));
         }
+        if (fragment instanceof IncognitoTrackingProtectionsFragment itpFragment) {
+            itpFragment.setTrackingProtectionDelegate(
+                    new ChromeTrackingProtectionDelegate(mProfile));
+        }
         if (fragment instanceof AutofillLocalIbanEditor) {
             ((AutofillLocalIbanEditor) fragment)
                     .setModalDialogManagerSupplier(mModalDialogManagerSupplier);
@@ -228,7 +233,8 @@ public class FragmentDependencyProvider extends FragmentManager.FragmentLifecycl
                     new SafetyHubModuleDelegateImpl(
                             mProfile,
                             mModalDialogManagerSupplier,
-                            SigninAndHistorySyncActivityLauncherImpl.get()));
+                            SigninAndHistorySyncActivityLauncherImpl.get(),
+                            new SettingsCustomTabLauncherImpl()));
         }
         if (fragment instanceof AccountManagementFragment) {
             ((AccountManagementFragment) fragment)

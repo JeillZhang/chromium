@@ -60,7 +60,7 @@ public class OverlayPanelManager {
      * If a panel was being shown and another panel with higher priority was requested to show,
      * the lower priority one is stored here.
      */
-    private Queue<OverlayPanel> mSuppressedPanels;
+    private final Queue<OverlayPanel> mSuppressedPanels;
 
     /** When a panel is suppressed, this is the panel waiting for the close animation to finish. */
     private OverlayPanel mPendingPanel;
@@ -79,7 +79,7 @@ public class OverlayPanelManager {
         mSuppressedPanels =
                 new PriorityQueue<>(
                         INITIAL_QUEUE_CAPACITY,
-                        new Comparator<OverlayPanel>() {
+                        new Comparator<>() {
                             @Override
                             public int compare(OverlayPanel p1, OverlayPanel p2) {
                                 // The head of the queue is the smallest element, so subtract p1's

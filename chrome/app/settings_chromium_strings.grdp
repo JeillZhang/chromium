@@ -85,17 +85,14 @@
   </message>
 
   <!-- Autofill with AI Page-->
-  <message name="IDS_SETTINGS_AUTOFILL_PREDICTION_IMPROVEMENTS_WHEN_ON_SAVED_INFO" desc="One of the items describing what happens when improved autofill predictions are enabled.">
-    Chromium will ask if you want to save form information, such as your birthday, age, and passport number
-  </message>
-  <message name="IDS_SETTINGS_AUTOFILL_PREDICTION_IMPROVEMENTS_WHEN_ON_USE_TO_FILL"  desc="One of the items describing what happens when improved autofill predictions are enabled.">
-    Later, Chromium will ask if you want to use saved info to automatically fill forms
-  </message>
-  <message name="IDS_SETTINGS_AUTOFILL_PREDICTION_IMPROVEMENTS_DESCRIPTION" desc="The description of the Autofill AI feature.">
+  <message name="IDS_SETTINGS_AUTOFILL_AI_DESCRIPTION" desc="The description of the autofill AI button on chrome://settings/autofill.">
     Chromium understands forms better and can autofill them faster for you
   </message>
-  <message name="IDS_SETTINGS_AUTOFILL_PREDICTION_IMPROVEMENTS_TOGGLE_SUB_LABEL" desc="The description of the main toggle that enables/disables improved autofill predictions.">
-    Chromium understands forms better and can autofill them faster for you. Learn more about <ph name="BEGIN_LINK">&lt;a target="_blank" href="$1"&gt;</ph>Chrome Autofill<ph name="END_LINK">&lt;/a&gt;<ex>&lt;/a&gt;</ex></ph>
+  <message name="IDS_SETTINGS_AUTOFILL_AI_TOGGLE_SUB_LABEL" desc="The description of the setting. By 'understand forms better', we mean that when a user submits a form on a website, and if they're using Autofill with AI, this feature can offer to save the user's submitted info. When Chromium saves that info, we save the submitted values and consider the page context.">
+    Chromium understands forms better and can autofill them faster for you
+  </message>
+  <message name="IDS_SETTINGS_AUTOFILL_AI_WHEN_ON_USE_TO_FILL"  desc="Bullet 2 of 2 that appears beneath the “When on” title. “Later”: this is a two-step feature. 1) data is saved, 2) it becomes valuable to the user later when they want to fill in a form with similar data. “Chromium can ask”: the user has a choice, every time, whether their data is saved and also whether they want to autofill their saved info into forms.">
+    Later, Chromium can ask if you want to use saved info to autofill forms for you
   </message>
 
   <!-- Default Browser Page -->
@@ -122,6 +119,14 @@
       </else>
     </if>
   </if>
+
+  <!-- Delete Browsing Data -->
+  <message name="IDS_SETTINGS_MANAGE_OTHER_GOOGLE_DATA_SUB_LABEL" desc="Sub-label for the 'Manage other Google Data' option in the 'Delete Browsing Data' dialog, explaining to the user that search history and passwords can only be deleted outside of Chromium." translateable="false">
+    Search history and passwords can only be deleted outside Chromium.
+  </message>
+   <message name="IDS_SETTINGS_OTHER_DATA_DESCRIPTION" desc="Description text at the top of the 'Other data' subpage." translateable="false">
+    This data is managed outside Chromium. To delete it, go to its management settings.
+  </message>
 
   <!-- Preloading Page-->
   <message name="IDS_SETTINGS_PRELOAD_PAGES_STANDARD_PRELOADING_WHEN_ON_BULLET_TWO" desc="Bullet point in the standard preloading and when on column. Informs the user about what the standard preloading setting does.">
@@ -396,14 +401,6 @@
   <!-- Reset Page -->
   <message name="IDS_SETTINGS_RESET_PROFILE_FEEDBACK" desc="Feedback label in the Reset Profile Settings dialog">
     Help make Chromium better by reporting the <ph name="BEGIN_LINK">&lt;a is="action-link" target="_blank"&gt;</ph>current settings<ph name="END_LINK">&lt;/a&gt;</ph>
-  </message>
-
-  <!-- Chrome Root Store -->
-  <message name="IDS_SETTINGS_CHROME_CERTIFICATES" desc="Text for manage certificates button in Privacy options">
-    Certificates managed by Chromium
-  </message>
-  <message name="IDS_SETTINGS_CHROME_CERTIFICATES_DESCRIPTION" desc="Secondary, continued explanation of how to manage SSL certificates and settings in Privacy options">
-    Information about how Chromium manages its root certificates
   </message>
 
   <!-- Safety Hub -->

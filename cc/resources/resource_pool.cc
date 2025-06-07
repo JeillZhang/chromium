@@ -17,7 +17,6 @@
 #include "base/containers/contains.h"
 #include "base/format_macros.h"
 #include "base/functional/bind.h"
-#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
@@ -38,7 +37,11 @@ using base::trace_event::MemoryDumpLevelOfDetail;
 
 namespace cc {
 
-ResourcePool::Backing::Backing() = default;
+ResourcePool::Backing::Backing(const gfx::Size& size,
+                               viz::SharedImageFormat format,
+                               const gfx::ColorSpace& color_space)
+    : size_(size), format_(format), color_space_(color_space) {}
+
 ResourcePool::Backing::~Backing() {
   if (!shared_image_) {
     return;
@@ -50,13 +53,83 @@ ResourcePool::Backing::~Backing() {
   }
 
   shared_image_.reset();
+}
 
-  // DestroySharedImage is a DeferredRequest, so it doesn't trigger IPC
-  // itself. We need a flush here to trigger IPC. Without the flush, there
-  // will be memory regressions in tiles.
-  if (shared_image_interface) {
-    shared_image_interface->Flush();
+void ResourcePool::Backing::CreateSharedImage(
+    gpu::SharedImageInterface* sii,
+    const gpu::SharedImageUsageSet& usage,
+    std::string_view debug_label) {
+  shared_image_ = sii->CreateSharedImage(
+      {format(), size(), color_space(), usage, debug_label},
+      gpu::kNullSurfaceHandle);
+  CHECK(shared_image());
+}
+
+void ResourcePool::Backing::CreateSharedImageForTesting() {
+  CreateSharedImageForTesting(GL_TEXTURE_2D);  // IN-TEST
+}
+
+void ResourcePool::Backing::CreateSharedImageForTesting(
+    uint32_t texture_target) {
+  gpu::SharedImageMetadata metadata;
+  metadata.format = format();
+  metadata.size = size();
+  metadata.color_space = color_space();
+  metadata.surface_origin = kTopLeft_GrSurfaceOrigin;
+  metadata.alpha_type = kOpaque_SkAlphaType;
+  metadata.usage = gpu::SHARED_IMAGE_USAGE_SCANOUT;
+  shared_image_ =
+      gpu::ClientSharedImage::CreateForTesting(metadata, texture_target);
+}
+
+void ResourcePool::Backing::CreateSharedImageForSoftwareCompositor(
+    gpu::SharedImageInterface* sii,
+    std::string_view debug_label) {
+  shared_image_ = sii->CreateSharedImageForSoftwareCompositor(
+      {format(), size(), color_space(), gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY,
+       debug_label});
+  CHECK(shared_image());
+}
+
+bool ResourcePool::Backing::CreateSharedImage(
+    gpu::SharedImageInterface* sii,
+    const gpu::SharedImageUsageSet& usage,
+    std::string_view debug_label,
+    gfx::BufferUsage buffer_usage) {
+  shared_image_ = sii->CreateSharedImage(
+      {format(), size(), color_space(), usage, debug_label},
+      gpu::kNullSurfaceHandle, buffer_usage);
+  return !!shared_image();
+}
+
+void ResourcePool::InUsePoolResource::InstallGpuBacking(
+    gpu::SharedImageInterface* sii,
+    bool is_overlay_candidate,
+    bool use_gpu_rasterization,
+    std::string_view debug_label) const {
+  auto backing =
+      std::make_unique<ResourcePool::Backing>(size(), format(), color_space());
+
+  gpu::SharedImageUsageSet flags = gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
+                                   gpu::SHARED_IMAGE_USAGE_RASTER_WRITE;
+  if (use_gpu_rasterization) {
+    flags |= gpu::SHARED_IMAGE_USAGE_OOP_RASTERIZATION;
   }
+  if (is_overlay_candidate) {
+    flags |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
+  }
+  backing->CreateSharedImage(sii, flags, debug_label);
+  set_backing(std::move(backing));
+}
+
+void ResourcePool::InUsePoolResource::InstallSoftwareBacking(
+    scoped_refptr<gpu::SharedImageInterface> sii,
+    std::string_view debug_label) const {
+  CHECK(!backing());
+  auto backing =
+      std::make_unique<ResourcePool::Backing>(size(), format(), color_space());
+  backing->CreateSharedImageForSoftwareCompositor(sii.get(), debug_label);
+  set_backing(std::move(backing));
 }
 
 namespace {
@@ -314,7 +387,7 @@ void ResourcePool::OnResourceReleased(size_t unique_id,
   // If the resource isn't busy then we made it available for reuse already
   // somehow, even though it was exported to the ResourceProvider, or we evicted
   // a resource that was still in use by the display compositor.
-  CHECK(busy_it != busy_resources_.end(), base::NotFatalUntil::M130);
+  CHECK(busy_it != busy_resources_.end());
 
   PoolResource* resource = busy_it->get();
   resource->set_state(PoolResource::kUnused);
@@ -347,18 +420,12 @@ bool ResourcePool::PrepareForExport(
     return false;
   }
 
-  viz::TransferableResource::MetadataOverride overrides;
-  overrides.size = resource->size();
-  overrides.format = resource->format();
-  overrides.is_overlay_candidate = backing->overlay_candidate;
-  transferable =
-      viz::TransferableResource::Make(backing->shared_image(), resource_source,
-                                      backing->mailbox_sync_token, overrides);
+  transferable = viz::TransferableResource::Make(
+      backing->shared_image(), resource_source, backing->mailbox_sync_token);
   if (backing->wait_on_fence_required) {
     transferable.synchronization_type =
         viz::TransferableResource::SynchronizationType::kGpuCommandsCompleted;
   }
-  transferable.color_space = resource->color_space();
   resource->set_resource_id(resource_provider_->ImportResource(
       std::move(transferable),
       base::BindOnce(&ResourcePool::OnResourceReleased,
@@ -663,7 +730,8 @@ void ResourcePool::PoolResource::OnMemoryDump(
   // the root ownership.
   const int kImportance =
       static_cast<int>(gpu::TracingImportance::kClientOwner);
-  if (backing_ && backing_->shared_image()) {
+  if (backing_ && backing_->can_access_shared_image_on_compositor_thread &&
+      backing_->shared_image()) {
     backing_->shared_image()->OnMemoryDump(pmd, dump->guid(), kImportance);
   }
 

@@ -37,11 +37,6 @@ namespace blink {
 namespace {
 
 #if BUILDFLAG(IS_WIN)
-// Enables AV1 encode acceleration for Windows.
-BASE_FEATURE(kMediaFoundationAV1Encoding,
-             "MediaFoundationAV1Encoding",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 // Enables H.264 CBP encode acceleration for Windows.
 BASE_FEATURE(kMediaFoundationH264CbpEncoding,
              "MediaFoundationH264CbpEncoding",
@@ -155,9 +150,9 @@ std::optional<webrtc::SdpVideoFormat> VEAToWebRTCFormat(
 
     webrtc::SdpVideoFormat format("H264");
     format.parameters = {
-        {cricket::kH264FmtpProfileLevelId, *h264_profile_level_string},
-        {cricket::kH264FmtpLevelAsymmetryAllowed, "1"},
-        {cricket::kH264FmtpPacketizationMode, "1"}};
+        {webrtc::kH264FmtpProfileLevelId, *h264_profile_level_string},
+        {webrtc::kH264FmtpLevelAsymmetryAllowed, "1"},
+        {webrtc::kH264FmtpPacketizationMode, "1"}};
     FillScalabilityModes(format, profile);
     return format;
   }
@@ -220,13 +215,13 @@ std::optional<webrtc::SdpVideoFormat> VEAToWebRTCFormat(
         h265_level.value_or(webrtc::H265Level::kLevel1));
     webrtc::SdpVideoFormat format("H265");
     format.parameters = {
-        {cricket::kH265FmtpProfileId,
+        {webrtc::kH265FmtpProfileId,
          webrtc::H265ProfileToString(profile_tier_level.profile)},
-        {cricket::kH265FmtpTierFlag,
+        {webrtc::kH265FmtpTierFlag,
          webrtc::H265TierToString(profile_tier_level.tier)},
-        {cricket::kH265FmtpLevelId,
+        {webrtc::kH265FmtpLevelId,
          webrtc::H265LevelToString(profile_tier_level.level)},
-        {cricket::kH265FmtpTxMode, "SRST"}};
+        {webrtc::kH265FmtpTxMode, "SRST"}};
     FillScalabilityModes(format, profile);
     return format;
 #else
@@ -317,7 +312,7 @@ SupportedFormats GetSupportedFormatsInternal(
       }
       // Supported H.265 formats must be added to the end of supported codecs.
 #if BUILDFLAG(RTC_USE_H265)
-      if (format->name == cricket::kH265CodecName) {
+      if (format->name == webrtc::kH265CodecName) {
         // Avoid having duplicated formats reported via GetSupportedFormats().
         // Also ensure only the highest level format is reported for the same
         // H.265 profile.
@@ -340,7 +335,7 @@ SupportedFormats GetSupportedFormatsInternal(
 #endif
       if (kShouldAddH264Cbp) {
         supported_formats.profiles.push_back(profile.profile);
-        cricket::AddH264ConstrainedBaselineProfileToSupportedFormats(
+        webrtc::AddH264ConstrainedBaselineProfileToSupportedFormats(
             &supported_formats.sdp_formats);
       }
 #endif
@@ -363,7 +358,7 @@ SupportedFormats GetSupportedFormatsInternal(
 bool IsConstrainedH264(const webrtc::SdpVideoFormat& format) {
   bool is_constrained_h264 = false;
 
-  if (format.name == cricket::kH264CodecName) {
+  if (format.name == webrtc::kH264CodecName) {
     const std::optional<webrtc::H264ProfileLevelId> profile_level_id =
         webrtc::ParseSdpForH264ProfileLevelId(format.parameters);
     if (profile_level_id &&
@@ -398,13 +393,11 @@ RTCVideoEncoderFactory::RTCVideoEncoderFactory(
       encoder_metrics_provider_factory_(
           std::move(encoder_metrics_provider_factory)),
       gpu_codec_support_waiter_(gpu_factories) {
-#if BUILDFLAG(IS_WIN)
-  if (!base::FeatureList::IsEnabled(kMediaFoundationAV1Encoding)) {
+  if (!base::FeatureList::IsEnabled(::features::kWebRtcAV1HWEncode)) {
     disabled_profiles_.emplace_back(media::AV1PROFILE_PROFILE_MAIN);
     disabled_profiles_.emplace_back(media::AV1PROFILE_PROFILE_HIGH);
     disabled_profiles_.emplace_back(media::AV1PROFILE_PROFILE_PRO);
   }
-#endif  // BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(RTC_USE_H265)
   // We may not need to add check for media::kPlatformHEVCEncoderSupport here
@@ -499,7 +492,7 @@ RTCVideoEncoderFactory::QueryCodecSupport(
 #if BUILDFLAG(RTC_USE_H265)
       // For H.265 we further check that the level-id supported is no smaller
       // than that being queried.
-      if (format.name == cricket::kH265CodecName) {
+      if (format.name == webrtc::kH265CodecName) {
         const std::optional<webrtc::H265ProfileTierLevel> profile_tier_level =
             webrtc::ParseSdpForH265ProfileTierLevel(format.parameters);
         if (profile_tier_level) {

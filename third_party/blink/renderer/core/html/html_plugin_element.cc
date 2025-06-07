@@ -25,6 +25,7 @@
 #include <algorithm>
 
 #include "base/feature_list.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
@@ -66,6 +67,7 @@
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/blink/renderer/platform/scheduler/public/frame_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/scheduling_policy.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -293,7 +295,8 @@ bool HTMLPlugInElement::ShouldAccelerate() const {
   return plugin && plugin->CcLayer();
 }
 
-ParsedPermissionsPolicy HTMLPlugInElement::ConstructContainerPolicy() const {
+network::ParsedPermissionsPolicy HTMLPlugInElement::ConstructContainerPolicy()
+    const {
   return GetLegacyFramePolicies();
 }
 
@@ -865,10 +868,9 @@ bool HTMLPlugInElement::AllowedToLoadPlugin(const KURL& url) {
         MakeGarbageCollected<ConsoleMessage>(
             mojom::blink::ConsoleMessageSource::kSecurity,
             mojom::blink::ConsoleMessageLevel::kError,
-            "Failed to load '" + url.ElidedString() +
-                "' as a plugin, because the "
-                "frame into which the plugin "
-                "is loading is sandboxed."));
+            WTF::StrCat({"Failed to load '", url.ElidedString(),
+                         "' as a plugin, because the frame into which the "
+                         "plugin is loading is sandboxed."})));
     return false;
   }
   return true;

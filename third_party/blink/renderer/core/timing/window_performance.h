@@ -34,6 +34,7 @@
 #include <optional>
 
 #include "base/time/time.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "third_party/blink/public/mojom/timing/resource_timing.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/events/pointer_event.h"
@@ -84,6 +85,9 @@ class CORE_EXPORT WindowPerformance final : public Performance,
   EventCounts* eventCounts() override;
   uint64_t interactionCount() const override;
 
+  void PopulateContainerTimingEntries() override;
+  void SetHasContainerTimingChanges();
+
   bool FirstInputDetected() const { return !!first_input_timing_; }
 
   void WillShowModalDialog();
@@ -125,6 +129,13 @@ class CORE_EXPORT WindowPerformance final : public Performance,
                         const gfx::Size& intrinsic_size,
                         const AtomicString& id,
                         Element*);
+
+  void AddContainerTiming(const DOMPaintTimingInfo& paint_timing_info,
+                          const gfx::Rect& rect,
+                          uint64_t size,
+                          const AtomicString& identifier,
+                          Element* last_painted_element,
+                          const DOMPaintTimingInfo& first_paint_timing_info);
 
   void OnBodyLoadFinished(int64_t encoded_body_size, int64_t decoded_body_size);
   void QueueLongAnimationFrameTiming(
@@ -263,6 +274,8 @@ class CORE_EXPORT WindowPerformance final : public Performance,
   // accessibility use case. We don't want any pages to fail INP because of
   // these interactions.
   bool autoscroll_active_ = false;
+
+  bool has_container_timing_changes_ = false;
 
   // Calculate responsiveness metrics and record UKM for them.
   Member<ResponsivenessMetrics> responsiveness_metrics_;

@@ -28,11 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/platform/text/character.h"
 
 #include <unicode/uchar.h>
@@ -43,7 +38,6 @@
 #include <algorithm>
 
 #include "base/synchronization/lock.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/character_property_data.h"
 #include "third_party/blink/renderer/platform/text/icu_error.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
@@ -66,7 +60,7 @@ UCPTrie* CreateTrie() {
 
 unsigned GetProperty(UChar32 c, CharacterProperty property) {
   static const UCPTrie* trie = CreateTrie();
-  return UCPTRIE_FAST_GET(trie, UCPTRIE_16, c) &
+  return UNSAFE_TODO(UCPTRIE_FAST_GET(trie, UCPTRIE_16, c)) &
          static_cast<CharacterPropertyType>(property);
 }
 
@@ -113,10 +107,18 @@ bool Character::IsHangulSlow(UChar32 character) {
   return GetProperty(character, CharacterProperty::kIsHangul);
 }
 
+// static
 HanKerningCharType Character::GetHanKerningCharType(UChar32 character) {
   return static_cast<HanKerningCharType>(
       GetProperty(character, CharacterProperty::kHanKerningShiftedMask) >>
       static_cast<unsigned>(CharacterProperty::kHanKerningShift));
+}
+
+// static
+EastAsianSpacingType Character::GetEastAsianSpacingType(UChar32 character) {
+  return static_cast<EastAsianSpacingType>(
+      GetProperty(character, CharacterProperty::kEastAsianSpacingShiftedMask) >>
+      static_cast<unsigned>(CharacterProperty::kEastAsianSpacingShift));
 }
 
 bool Character::MaybeHanKerningOpenSlow(UChar32 ch) {
@@ -258,9 +260,6 @@ bool Character::CanReceiveTextEmphasis(UChar32 c) {
       c == kTibetanMarkDelimiterTshegBstarCharacter)
     return false;
 
-  if (!RuntimeEnabledFeatures::TextEmphasisNoPunctuationEnabled()) {
-    return true;
-  }
   // Punctuation
   if (category &
       (WTF::unicode::kPunctuation_Dash | WTF::unicode::kPunctuation_Open |
@@ -341,10 +340,11 @@ static const UChar stretchy_operator_with_inline_axis[]{
 bool Character::IsVerticalMathCharacter(UChar32 text_content) {
   return text_content != kArabicMathematicalOperatorMeemWithHahWithTatweel &&
          text_content != kArabicMathematicalOperatorHahWithDal &&
-         !std::binary_search(stretchy_operator_with_inline_axis,
-                             stretchy_operator_with_inline_axis +
-                                 std::size(stretchy_operator_with_inline_axis),
-                             text_content);
+         !std::binary_search(
+             stretchy_operator_with_inline_axis,
+             UNSAFE_TODO(stretchy_operator_with_inline_axis +
+                         std::size(stretchy_operator_with_inline_axis)),
+             text_content);
 }
 
 }  // namespace blink

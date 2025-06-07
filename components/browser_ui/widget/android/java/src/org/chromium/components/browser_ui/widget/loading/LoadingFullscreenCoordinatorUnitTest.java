@@ -4,10 +4,12 @@
 
 package org.chromium.components.browser_ui.widget.loading;
 
+import static org.junit.Assert.assertNotNull;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
 import android.app.Activity;
+import android.widget.RelativeLayout;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -23,8 +25,8 @@ import org.robolectric.Robolectric;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.R;
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
-import org.chromium.components.browser_ui.widget.scrim.ScrimProperties;
 import org.chromium.ui.modelutil.PropertyModel;
+import org.chromium.ui.widget.ButtonCompat;
 
 /** Unit tests for {@link LoadingFullscreenCoordinator}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -42,26 +44,30 @@ public class LoadingFullscreenCoordinatorUnitTest {
         Activity activity = Robolectric.buildActivity(Activity.class).setup().get();
         mActivity = activity;
         mActivity.setTheme(R.style.Theme_BrowserUI_DayNight);
-        mActivity.getLayoutInflater().inflate(R.layout.loading_fullscreen, null);
     }
 
     @Test
     public void testShowLoading() {
-        LoadingFullscreenCoordinator loadingCoordinator =
-                new LoadingFullscreenCoordinator(
-                        mActivity,
-                        mScrimManager,
-                        mActivity.findViewById(R.id.loading_fullscreen_container));
+        RelativeLayout layout =
+                (RelativeLayout)
+                        mActivity.getLayoutInflater().inflate(R.layout.loading_fullscreen, null);
+        ButtonCompat cancelButton = layout.findViewById(R.id.loading_cancel_button);
+        assertNotNull(cancelButton);
 
+        LoadingFullscreenCoordinator loadingCoordinator =
+                new LoadingFullscreenCoordinator(mActivity, mScrimManager, layout);
+
+        boolean animate = false;
         loadingCoordinator.startLoading(
                 () -> {
                     loadingCoordinator.closeLoadingScreen();
-                });
-        verify(mScrimManager).showScrim(mPropertyModelArgumentCaptor.capture());
-        PropertyModel propertyModel = mPropertyModelArgumentCaptor.getValue();
-        Runnable closeScrimRunnable = propertyModel.get(ScrimProperties.CLICK_DELEGATE);
+                },
+                animate);
+        verify(mScrimManager).showScrim(mPropertyModelArgumentCaptor.capture(), eq(animate));
 
-        closeScrimRunnable.run();
+        PropertyModel propertyModel = mPropertyModelArgumentCaptor.getValue();
+        cancelButton.performClick();
+
         verify(mScrimManager).hideScrim(eq(propertyModel), eq(true));
     }
 }

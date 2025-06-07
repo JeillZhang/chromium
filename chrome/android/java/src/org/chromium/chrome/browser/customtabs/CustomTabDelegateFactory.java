@@ -14,7 +14,6 @@ import android.text.TextUtils;
 
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
-import androidx.browser.trusted.TrustedWebActivityDisplayMode.ImmersiveMode;
 
 import org.chromium.base.CallbackUtils;
 import org.chromium.base.metrics.RecordHistogram;
@@ -179,6 +178,7 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
         private final @Nullable BrowserServicesIntentDataProvider mIntentDataProvider;
         private final @DisplayMode.EnumType int mDisplayMode;
         private final boolean mShouldEnableEmbeddedMediaExperience;
+        private final Supplier<Boolean> mHeaderControlsVisibilitySupplier;
 
         /** See {@link TabWebContentsDelegateAndroid}. */
         public CustomTabWebContentsDelegate(
@@ -196,7 +196,8 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
                 TabCreatorManager tabCreatorManager,
                 Supplier<TabModelSelector> tabModelSelectorSupplier,
                 Supplier<CompositorViewHolder> compositorViewHolderSupplier,
-                Supplier<ModalDialogManager> modalDialogManagerSupplier) {
+                Supplier<ModalDialogManager> modalDialogManagerSupplier,
+                Supplier<Boolean> headerControlsVisibilitySupplier) {
             super(
                     tab,
                     activity,
@@ -214,6 +215,7 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
             mIntentDataProvider = intentDataProvider;
             mDisplayMode = displayMode;
             mShouldEnableEmbeddedMediaExperience = shouldEnableEmbeddedMediaExperience;
+            mHeaderControlsVisibilitySupplier = headerControlsVisibilitySupplier;
         }
 
         @Override
@@ -249,6 +251,15 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
 
         @Override
         public @DisplayMode.EnumType int getDisplayMode() {
+            // Depending on the customizable caption bar area, minimal UI controls may not
+            // be supported even if the resolved display mode is `minimal-ui`. If the controls
+            // are not visible it is inaccurate for the display mode to be `minimal-ui` so
+            // we need to use `standalone`.
+            if (mDisplayMode == DisplayMode.MINIMAL_UI
+                    && !mHeaderControlsVisibilitySupplier.get()) {
+                return DisplayMode.STANDALONE;
+            }
+
             return mDisplayMode;
         }
 
@@ -299,6 +310,7 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
     private final Supplier<BottomSheetController> mBottomSheetController;
     private final AuthTabVerifier mAuthTabVerifier;
     private final boolean mContextMenuEnabled;
+    private final Supplier<Boolean> mHeaderControlsVisibilitySupplier;
 
     private TabWebContentsDelegateAndroid mWebContentsDelegateAndroid;
     private ExternalNavigationDelegateImpl mNavigationDelegate;
@@ -348,13 +360,14 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
             @ActivityType int activityType,
             Supplier<BottomSheetController> bottomSheetController,
             AuthTabVerifier authTabVerifier,
-            BrowserControlsManager browserControlsManager) {
+            BrowserControlsManager browserControlsManager,
+            Supplier<Boolean> headerControlsVisibilitySupplier) {
         mIntentDataProvider = intentDataProvider;
         if (mIntentDataProvider != null) {
             mShouldHideBrowserControls = mIntentDataProvider.shouldEnableUrlBarHiding();
             mIsOpenedByChrome = mIntentDataProvider.isOpenedByChrome();
             mWebApkScopeUrl = getWebApkScopeUrl(mIntentDataProvider);
-            mDisplayMode = getDisplayMode(mIntentDataProvider);
+            mDisplayMode = mIntentDataProvider.getResolvedDisplayMode();
             mShouldEnableEmbeddedMediaExperience =
                     mIntentDataProvider.shouldEnableEmbeddedMediaExperience();
             mContextMenuEnabled = !mIntentDataProvider.isAuthTab();
@@ -383,6 +396,7 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
         mBottomSheetController = bottomSheetController;
         mAuthTabVerifier = authTabVerifier;
         mBrowserControlsManager = browserControlsManager;
+        mHeaderControlsVisibilitySupplier = headerControlsVisibilitySupplier;
     }
 
     /**
@@ -407,7 +421,8 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
                 ActivityType.CUSTOM_TAB,
                 null,
                 null,
-                null);
+                null,
+                () -> false);
     }
 
     @Override
@@ -452,7 +467,8 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
                         mTabCreatorManager,
                         mTabModelSelectorSupplier,
                         mCompositorViewHolderSupplier,
-                        mModalDialogManagerSupplier);
+                        mModalDialogManagerSupplier,
+                        mHeaderControlsVisibilitySupplier);
         return mWebContentsDelegateAndroid;
     }
 
@@ -486,7 +502,7 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
         if (!mContextMenuEnabled) return null;
 
         @ChromeContextMenuPopulator.ContextMenuMode
-        int contextMenuMode = getContextMenuMode(mActivityType);
+        int contextMenuMode = getContextMenuMode(mIntentDataProvider, mActivityType);
         return new ChromeContextMenuPopulatorFactory(
                 createTabContextMenuItemDelegate(tab), mShareDelegateSupplier, contextMenuMode);
     }
@@ -538,27 +554,15 @@ public class CustomTabDelegateFactory implements TabDelegateFactory {
         return (webappExtras != null) ? webappExtras.scopeUrl : null;
     }
 
-    /** Returns the DisplayMode for the passed-in {@link BrowserServicesIntentDataProvider}. */
-    public static @DisplayMode.EnumType int getDisplayMode(
-            BrowserServicesIntentDataProvider intentDataProvider) {
-        if (intentDataProvider.getTwaDisplayMode() instanceof ImmersiveMode) {
-            return DisplayMode.FULLSCREEN;
-        }
-        WebappExtras webappExtras = intentDataProvider.getWebappExtras();
-        if (webappExtras != null) {
-            return webappExtras.displayMode;
-        }
-        return intentDataProvider.isTrustedWebActivity()
-                ? DisplayMode.STANDALONE
-                : DisplayMode.BROWSER;
-    }
-
     private static boolean isWebappOrWebApk(@ActivityType int activityType) {
         return activityType == ActivityType.WEBAPP || activityType == ActivityType.WEB_APK;
     }
 
     private static @ChromeContextMenuPopulator.ContextMenuMode int getContextMenuMode(
-            @ActivityType int activityType) {
+            BrowserServicesIntentDataProvider intentDataProvider, @ActivityType int activityType) {
+        if (intentDataProvider.hasTargetNetwork()) {
+            return ChromeContextMenuPopulator.ContextMenuMode.NETWORK_BOUND_TAB;
+        }
         return isWebappOrWebApk(activityType)
                 ? ChromeContextMenuPopulator.ContextMenuMode.WEB_APP
                 : ChromeContextMenuPopulator.ContextMenuMode.CUSTOM_TAB;

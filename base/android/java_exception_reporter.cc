@@ -15,7 +15,6 @@
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "base/base_minimal_jni/JavaExceptionReporter_jni.h"
 
-using jni_zero::JavaParamRef;
 using jni_zero::JavaRef;
 
 namespace base {
@@ -47,6 +46,9 @@ void InitJavaExceptionReporter() {
 }
 
 void InitJavaExceptionReporterForChildProcess() {
+  if (!base::android::IsJavaAvailable()) {
+    return;
+  }
   JNIEnv* env = jni_zero::AttachCurrentThread();
   constexpr bool crash_after_report = true;
   SetJavaExceptionFilter(
@@ -78,7 +80,7 @@ void SetJavaException(const char* exception) {
 void JNI_JavaExceptionReporter_ReportJavaException(
     JNIEnv* env,
     jboolean crash_after_report,
-    const JavaParamRef<jthrowable>& e) {
+    const JavaRef<jthrowable>& e) {
   std::string exception_info = base::android::GetJavaExceptionInfo(env, e);
   bool should_report_exception = g_java_exception_filter.Get().Run(e);
   if (should_report_exception) {
@@ -103,3 +105,5 @@ void JNI_JavaExceptionReporter_ReportJavaStackTrace(JNIEnv* env,
 
 }  // namespace android
 }  // namespace base
+
+DEFINE_JNI_FOR_JavaExceptionReporter()

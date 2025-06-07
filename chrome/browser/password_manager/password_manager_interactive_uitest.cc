@@ -12,7 +12,6 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/run_until.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/password_manager/password_manager_interactive_test_base.h"
 #include "chrome/browser/password_manager/passwords_navigation_observer.h"
@@ -102,7 +101,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest, UsernameChanged) {
       "document.getElementById('input_submit_button').click();";
   ASSERT_TRUE(content::ExecJs(WebContents(), submit));
   ASSERT_TRUE(navigation_observer.Wait());
-  EXPECT_TRUE(prompt_observer.IsSavePromptShownAutomatically());
+  prompt_observer.WaitForAutomaticSavePrompt();
   prompt_observer.AcceptSavePrompt();
 
   // Spin the message loop to make sure the password store had a chance to save
@@ -212,7 +211,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   PasswordsNavigationObserver observer(WebContents());
   ASSERT_TRUE(content::ExecJs(WebContents(), "send_xhr()"));
   ASSERT_TRUE(observer.Wait());
-  EXPECT_TRUE(BubbleObserver(WebContents()).IsSavePromptShownAutomatically());
+  BubbleObserver(WebContents()).WaitForAutomaticSavePrompt();
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
@@ -229,7 +228,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   PasswordsNavigationObserver observer(WebContents());
   ASSERT_TRUE(content::ExecJs(WebContents(), "send_xhr()"));
   ASSERT_TRUE(observer.Wait());
-  EXPECT_TRUE(BubbleObserver(WebContents()).IsSavePromptShownAutomatically());
+  BubbleObserver(WebContents()).WaitForAutomaticSavePrompt();
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
@@ -244,7 +243,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   PasswordsNavigationObserver observer(WebContents());
   ASSERT_TRUE(content::ExecJs(WebContents(), "send_fetch()"));
   ASSERT_TRUE(observer.Wait());
-  EXPECT_TRUE(BubbleObserver(WebContents()).IsSavePromptShownAutomatically());
+  BubbleObserver(WebContents()).WaitForAutomaticSavePrompt();
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
@@ -261,7 +260,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   PasswordsNavigationObserver observer(WebContents());
   ASSERT_TRUE(content::ExecJs(WebContents(), "send_fetch()"));
   ASSERT_TRUE(observer.Wait());
-  EXPECT_TRUE(BubbleObserver(WebContents()).IsSavePromptShownAutomatically());
+  BubbleObserver(WebContents()).WaitForAutomaticSavePrompt();
 }
 
 IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
@@ -359,9 +358,13 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   // Instruct Chrome to show the password dropdown.
   autofill::FormData form;
   driver->ShowPasswordSuggestions(autofill::PasswordSuggestionRequest(
-      kElementId, form,
-      autofill::AutofillSuggestionTriggerSource::kFormControlElementClicked, 0,
-      0, base::i18n::LEFT_TO_RIGHT, std::u16string(), false, element_bounds));
+      autofill::TriggeringField(
+          kElementId,
+          autofill::AutofillSuggestionTriggerSource::kFormControlElementClicked,
+          base::i18n::LEFT_TO_RIGHT, std::u16string(),
+          /*show_webauthn_credentials=*/false,
+          /*show_identity_credentials=*/false, element_bounds),
+      form, 0, 0));
   autofill::AutofillSuggestionController* controller = nullptr;
   // Showing the Autofill Popup is an asynchronous task.
   EXPECT_TRUE(base::test::RunUntil([&]() {
@@ -386,9 +389,13 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   WaitForPasswordStore();
   // Reshow the dropdown.
   driver->ShowPasswordSuggestions(autofill::PasswordSuggestionRequest(
-      kElementId, form,
-      autofill::AutofillSuggestionTriggerSource::kFormControlElementClicked, 0,
-      0, base::i18n::LEFT_TO_RIGHT, std::u16string(), false, element_bounds));
+      autofill::TriggeringField(
+          kElementId,
+          autofill::AutofillSuggestionTriggerSource::kFormControlElementClicked,
+          base::i18n::LEFT_TO_RIGHT, std::u16string(),
+          /*show_webauthn_credentials=*/false,
+          /*show_identity_credentials=*/false, element_bounds),
+      form, 0, 0));
   // Showing the Autofill Popup is an asynchronous task.
   EXPECT_TRUE(base::test::RunUntil([&]() {
     return controller =
@@ -410,9 +417,13 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
   WaitForPasswordStore();
   // Reshow the dropdown won't work because there is nothing to suggest.
   driver->ShowPasswordSuggestions(autofill::PasswordSuggestionRequest(
-      kElementId, form,
-      autofill::AutofillSuggestionTriggerSource::kFormControlElementClicked, 0,
-      0, base::i18n::LEFT_TO_RIGHT, std::u16string(), false, element_bounds));
+      autofill::TriggeringField(
+          kElementId,
+          autofill::AutofillSuggestionTriggerSource::kFormControlElementClicked,
+          base::i18n::LEFT_TO_RIGHT, std::u16string(),
+          /*show_webauthn_credentials=*/false,
+          /*show_identity_credentials=*/false, element_bounds),
+      form, 0, 0));
   // Showing the Autofill Popup is an asynchronous task.
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(autofill_client->suggestion_controller_for_testing());
@@ -447,7 +458,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest, ChangePwdFormCleared) {
   std::string submit = "document.getElementById('chg_clear_button').click();";
   ASSERT_TRUE(content::ExecJs(WebContents(), submit));
 
-  EXPECT_TRUE(prompt_observer->IsUpdatePromptShownAutomatically());
+  prompt_observer->WaitForAutomaticUpdatePrompt();
 
   // We emulate that the user clicks "Update" button.
   prompt_observer->AcceptUpdatePrompt();
@@ -499,7 +510,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
     ASSERT_TRUE(content::ExecJs(WebContents(), submit));
 
     if (all_fields_cleared) {
-      EXPECT_TRUE(prompt_observer->IsUpdatePromptShownAutomatically());
+      prompt_observer->WaitForAutomaticUpdatePrompt();
     } else {
       EXPECT_FALSE(prompt_observer->IsUpdatePromptShownAutomatically());
     }
@@ -612,7 +623,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTest,
       "document.getElementById('input_submit_button').click();";
   ASSERT_TRUE(content::ExecJs(WebContents(), submit));
   ASSERT_TRUE(navigation_observer.Wait());
-  EXPECT_TRUE(prompt_observer.IsSavePromptShownAutomatically());
+  prompt_observer.WaitForAutomaticSavePrompt();
   prompt_observer.AcceptSavePrompt();
 
   WaitForPasswordStore();
@@ -702,7 +713,7 @@ IN_PROC_BROWSER_TEST_F(PasswordManagerInteractiveTestWithSigninInterception,
   // "pwnew", so update prompt is expected.
   BubbleObserver prompt_observer(WebContents());
   ASSERT_TRUE(navigation_observer.Wait());
-  EXPECT_TRUE(prompt_observer.IsUpdatePromptShownAutomatically());
+  prompt_observer.WaitForAutomaticUpdatePrompt();
 }
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 

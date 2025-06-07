@@ -74,6 +74,10 @@ config("xnnpack_config") {
     "-Wno-deprecated-comma-subscript",
   ]
 
+  if (is_android && current_cpu == "arm64") {
+    asmflags = [ "-mmark-bti-property" ]
+  }
+
   defines = [
     "CHROMIUM",
     "XNN_ENABLE_ASSEMBLY=1",
@@ -226,11 +230,16 @@ class _Platform:
             return f'current_cpu == "{self.gn_cpu}"'
 
 
+# N.B. that XNNPACK's Bazel doesn't know about these platforms yet, they're
+# purely for the dummy toolchain in bazelroot/ to pull the file list out.
 _PLATFORMS = [
     _Platform(gn_cpu='x64', bazel_cpu='k8', bazel_platform='//:linux_x64'),
     _Platform(gn_cpu='arm64',
               bazel_cpu='aarch64',
               bazel_platform='//:linux_aarch64'),
+    _Platform(gn_cpu='riscv64',
+              bazel_cpu='riscv64',
+              bazel_platform='//:linux_riscv64')
 ]
 
 
@@ -321,11 +330,16 @@ def _objectbuild_from_bazel_log(action, platform: _Platform) -> ObjectBuild:
     else:
         dir = src_path[2]
 
-    if dir == 'bf16-f32-gemm':
-        # TODO: crbug.com/395969334 - This target breaks windows builds.
-        return None
     args = [arg for arg in action_args if arg.startswith('-m')]
-    return ObjectBuild(platform=platform, src=src, dir=dir, args=args)
+    ob = ObjectBuild(platform=platform, src=src, dir=dir, args=args)
+    if ob.GnName() in (
+            'bf16-f32-gemm_f16c-fma-avx512f-avx512cd-avx512bw-avx512dq-avx512vl-avx512vnni-gfni',
+            'f32-gemm_f16c-fma-avx512f-avx512cd-avx512bw-avx512dq-avx512vl-avx512vnni-gfni',
+            'qd8-f32-qc8w-gemm_f16c-fma-avx512f-avx512cd-avx512bw-avx512dq-avx512vl-avx512vnni-gfni',
+    ):
+        # TODO: crbug.com/395969334 - These target breaks windows builds.
+        return None
+    return ob
 
 
 def _run_bazel_cmd(args: list[str]) -> str:
@@ -342,6 +356,7 @@ def _run_bazel_cmd(args: list[str]) -> str:
         raise Exception(
             "bazel is not installed. Please run `sudo apt-get install " +
             "bazel` or put the bazel executable in $PATH")
+
     cmd = [exec_path]
     cmd.extend(args)
     logging.info('Running: %s', cmd)
@@ -371,11 +386,12 @@ def _query_object_builds(platform: _Platform) -> list[ObjectBuild]:
     # Make sure we have a clean start, this is important if the Android NDK
     # version changed.
     _run_bazel_cmd(['clean'])
+
     logs = _run_bazel_cmd([
         'aquery',
         f'--platforms={platform.bazel_platform}',
         f'--cpu={platform.bazel_cpu}',
-        'mnemonic("CppCompile", filter("//:", deps(@xnnpack//:XNNPACK)))',
+        'mnemonic("CppCompile", deps(@xnnpack//:XNNPACK))',
         "--output=jsonproto",
     ])
     logging.info('parsing actions from bazel aquery...')

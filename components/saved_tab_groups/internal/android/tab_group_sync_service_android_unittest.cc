@@ -27,6 +27,7 @@ using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
 using testing::_;
 using testing::Eq;
+using testing::Invoke;
 using testing::Return;
 using testing::SaveArg;
 
@@ -127,6 +128,7 @@ TEST_F(TabGroupSyncServiceAndroidTest, SavedTabGroupConversion_NativeToJava) {
   group.SetColor(tab_groups::TabGroupColorId::kRed);
   group.SetCreatorCacheGuid("creator_cache_guid");
   group.SetLastUpdaterCacheGuid("last_updater_cache_guid");
+  group.SetArchivalTime(base::Time::Now());
 
   SavedTabGroupTab tab3(GURL(), kTestTabTitle, group.saved_guid(),
                         /*position=*/std::nullopt,
@@ -221,13 +223,25 @@ TEST_F(TabGroupSyncServiceAndroidTest, UpdateVisualData) {
 
 TEST_F(TabGroupSyncServiceAndroidTest, MakeTabGroupShared) {
   JNIEnv* env = AttachCurrentThread();
-  const std::string collaboration_id = "collaboration";
+  const syncer::CollaborationId collaboration_id("collaboration");
+  TabGroupSyncService::TabGroupSharingCallback captured_callback;
 
   EXPECT_CALL(
       tab_group_sync_service_,
-      MakeTabGroupShared(Eq(test_tab_group_id_), Eq(collaboration_id), _));
+      MakeTabGroupShared(
+          Eq(test_tab_group_id_), Eq(collaboration_id),
+          testing::Truly(
+              [](const TabGroupSyncService::TabGroupSharingCallback& cb) {
+                return cb.is_null();
+              })))
+      .WillOnce(testing::WithArgs<2>(
+          testing::Invoke([&captured_callback](
+                              TabGroupSyncService::TabGroupSharingCallback cb) {
+            captured_callback = std::move(cb);
+          })));
+
   ScopedJavaLocalRef<jstring> j_collaboration_id =
-      base::android::ConvertUTF8ToJavaString(env, collaboration_id);
+      base::android::ConvertUTF8ToJavaString(env, collaboration_id.value());
   Java_TabGroupSyncServiceAndroidUnitTest_testMakeTabGroupShared(
       env, j_test_, j_collaboration_id);
 }
@@ -405,6 +419,18 @@ TEST_F(TabGroupSyncServiceAndroidTest, OnTabSelected) {
   Java_TabGroupSyncServiceAndroidUnitTest_testOnTabSelected(
       AttachCurrentThread(), j_test_, ScopedJavaLocalRef<jobject>(),
       non_grouped_tab_id, j_tab_title);
+}
+
+TEST_F(TabGroupSyncServiceAndroidTest, UpdateArchivalStatus) {
+  auto* env = AttachCurrentThread();
+
+  base::Uuid uuid = base::Uuid::ParseCaseInsensitive(kTestUuid);
+  auto j_uuid = UuidToJavaString(env, uuid);
+
+  EXPECT_CALL(tab_group_sync_service_, UpdateArchivalStatus(uuid, true))
+      .Times(1);
+  Java_TabGroupSyncServiceAndroidUnitTest_testUpdateArchivalStatus(
+      env, j_test_, j_uuid, true);
 }
 
 }  // namespace tab_groups

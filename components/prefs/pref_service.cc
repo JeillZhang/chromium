@@ -27,7 +27,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/notreached.h"
-#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
@@ -40,34 +39,6 @@
 #if BUILDFLAG(IS_ANDROID)
 #include "components/prefs/android/pref_service_android.h"
 #endif
-
-#if BUILDFLAG(IS_CHROMEOS)
-namespace pref_service_util {
-void GetAllDottedPaths(std::string_view prefix,
-                       const base::Value::Dict& dict,
-                       std::vector<std::string>& paths) {
-  for (const auto pair : dict) {
-    std::string path;
-    if (prefix.empty()) {
-      path = pair.first;
-    } else {
-      path = base::StrCat({prefix, ".", pair.first});
-    }
-
-    if (pair.second.is_dict()) {
-      GetAllDottedPaths(path, pair.second.GetDict(), paths);
-    } else {
-      paths.push_back(path);
-    }
-  }
-}
-
-void GetAllDottedPaths(const base::Value::Dict& dict,
-                       std::vector<std::string>& paths) {
-  GetAllDottedPaths("", dict, paths);
-}
-}  // namespace pref_service_util
-#endif  // BUILDFLAG(IS_CHROMEOS)
 
 PrefService::PersistentPrefStoreLoadingObserver::
     PersistentPrefStoreLoadingObserver(PrefService* pref_service)
@@ -551,6 +522,10 @@ void PrefService::SetUserPrefValue(std::string_view path,
 
 void PrefService::UpdateCommandLinePrefStore(PrefStore* command_line_store) {
   pref_value_store_->UpdateCommandLinePrefStore(command_line_store);
+}
+
+void PrefService::UpdateExtensionPrefStore(PrefStore* extension_store) {
+  pref_value_store_->UpdateExtensionPrefStore(extension_store);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

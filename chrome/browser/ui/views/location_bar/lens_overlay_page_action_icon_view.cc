@@ -10,8 +10,8 @@
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
-#include "chrome/browser/ui/lens/lens_overlay_controller.h"
 #include "chrome/browser/ui/lens/lens_overlay_entry_point_controller.h"
+#include "chrome/browser/ui/lens/lens_search_controller.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_view_views.h"
@@ -162,7 +162,7 @@ void LensOverlayPageActionIconView::UpdateImpl() {
   // (3) It is always hidden in the NTP.
   // The overlay is unavailable on the NTP as it is unlikely to be useful to
   // users on the page, it would also appear immediately when a new tab or
-  // window is created due to focus immediatey jumping into the location bar.
+  // window is created due to focus immediately jumping into the location bar.
   // `tab` is nullptr during construction of class Browser, during LocationBar
   // construction.
   auto* tab = browser_->GetActiveTabInterface();
@@ -210,13 +210,13 @@ void LensOverlayPageActionIconView::OnExecuting(
     return;
   }
 
-  LensOverlayController* const controller =
-      LensOverlayController::GetController(GetWebContents());
+  LensSearchController* const controller =
+      LensSearchController::FromTabWebContents(GetWebContents());
   CHECK(controller);
 
   lens::RecordAmbientSearchQuery(
       lens::AmbientSearchEntryPoint::LENS_OVERLAY_LOCATION_BAR);
-  controller->ShowUI(lens::LensOverlayInvocationSource::kOmnibox);
+  controller->OpenLensOverlay(lens::LensOverlayInvocationSource::kOmnibox);
   UserEducationService::MaybeNotifyNewBadgeFeatureUsed(
       GetWebContents()->GetBrowserContext(), lens::features::kLensOverlay);
 }

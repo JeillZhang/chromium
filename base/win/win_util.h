@@ -49,19 +49,6 @@ struct NativeLibraryLoadError;
 
 namespace win {
 
-inline uint32_t HandleToUint32(HANDLE h) {
-  // Cast through uintptr_t and then unsigned int to make the truncation to
-  // 32 bits explicit. Handles are size of-pointer but are always 32-bit values.
-  // https://msdn.microsoft.com/en-us/library/aa384203(VS.85).aspx says:
-  // 64-bit versions of Windows use 32-bit handles for interoperability.
-  return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(h));
-}
-
-inline HANDLE Uint32ToHandle(uint32_t h) {
-  return reinterpret_cast<HANDLE>(
-      static_cast<uintptr_t>(static_cast<int32_t>(h)));
-}
-
 // Returns the string representing the current user sid. Does not modify
 // |user_sid| on failure.
 BASE_EXPORT bool GetUserSidString(std::wstring* user_sid);
@@ -73,6 +60,11 @@ BASE_EXPORT bool GetUserSidString(std::wstring* user_sid);
 // this function will return false. You should therefore check this flag only
 // if the OS is Vista or later.
 BASE_EXPORT bool UserAccountControlIsEnabled();
+
+// Returns true if the process is running at elevated permissions, but could
+// be at medium IL (eg. UAC is enabled and the account is not a built-in
+// administrator).
+BASE_EXPORT bool UserAccountIsUnnecessarilyElevated();
 
 // Sets the boolean value for a given key in given IPropertyStore.
 BASE_EXPORT bool SetBooleanValueForPropertyStore(
@@ -322,15 +314,6 @@ BASE_EXPORT std::optional<std::wstring> ExpandEnvironmentVariables(
 // `::GetCurrentProcess()` or `GetCurrentProcessHandle()`.
 BASE_EXPORT expected<std::wstring, NTSTATUS> GetObjectTypeName(HANDLE handle);
 
-// Returns a smart pointer wrapping `handle` if it references an object of type
-// `object_type_name`. Crashes the process if `handle` is valid but of an
-// unexpected type. This function will fail with STATUS_INVALID_HANDLE if called
-// with the pseudo handle returned by `::GetCurrentProcess()` or
-// `GetCurrentProcessHandle()`.
-BASE_EXPORT expected<ScopedHandle, NTSTATUS> TakeHandleOfType(
-    HANDLE handle,
-    std::wstring_view object_type_name);
-
 // Process Power Throttling APIs are only available on Windows 11. By default,
 // Windows will throttle processes based on various heuristics (power plan,
 // media playback state, MMCSS apis, app visibility, etc). This can result in
@@ -379,6 +362,10 @@ BASE_EXPORT ProcessPowerState GetProcessTimerThrottleState(HANDLE process);
 // are a no-op and return false.
 BASE_EXPORT bool SetProcessTimerThrottleState(HANDLE process,
                                               ProcessPowerState state);
+
+// Returns the serial number of the device.  Needs to be called from a COM
+// enabled thread.
+BASE_EXPORT std::optional<std::wstring> GetSerialNumber();
 
 // Allows changing the domain enrolled state for the life time of the object.
 // The original state is restored upon destruction.

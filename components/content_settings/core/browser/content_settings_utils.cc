@@ -125,7 +125,7 @@ PatternPair ParsePatternString(const std::string& pattern_str) {
 
 void GetRendererContentSettingRules(const HostContentSettingsMap* map,
                                     RendererContentSettingRules* rules) {
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+#if !BUILDFLAG(IS_IOS)
   rules->mixed_content_rules =
       map->GetSettingsForOneType(ContentSettingsType::MIXEDSCRIPT);
 #else
@@ -245,6 +245,8 @@ const std::vector<ContentSettingsType>& GetTypesWithTemporaryGrants() {
       ContentSettingsType::MEDIASTREAM_CAMERA,
       ContentSettingsType::HAND_TRACKING,
       ContentSettingsType::SMART_CARD_DATA,
+      ContentSettingsType::AR,
+      ContentSettingsType::VR,
   }};
   return *types;
 }
@@ -260,6 +262,8 @@ const std::vector<ContentSettingsType>& GetTypesWithTemporaryGrantsInHcsm() {
       ContentSettingsType::MEDIASTREAM_MIC,
       ContentSettingsType::MEDIASTREAM_CAMERA,
       ContentSettingsType::HAND_TRACKING,
+      ContentSettingsType::AR,
+      ContentSettingsType::VR,
   }};
   return *types;
 }

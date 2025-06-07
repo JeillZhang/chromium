@@ -44,7 +44,6 @@
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/geometry/calculation_value.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
@@ -131,15 +130,17 @@ class StyleResolverTest : public PageTestBase {
     return style.MaxHeight();
   }
 
-  void UpdateStyleForOutOfFlow(Element& element, AtomicString try_name) {
+  void UpdateStyleAndLayoutTreeForOutOfFlow(Element& element,
+                                            AtomicString try_name) {
     ScopedCSSName* scoped_name =
         MakeGarbageCollected<ScopedCSSName>(try_name, &GetDocument());
     StyleRulePositionTry* rule =
         GetStyleEngine().GetPositionTryRule(*scoped_name);
     CHECK(rule);
-    GetStyleEngine().UpdateStyleForOutOfFlow(
-        element, /* try_set */ &rule->Properties(), kNoTryTactics,
-        /* anchor_evaluator */ nullptr);
+    GetStyleEngine().UpdateStyleAndLayoutTreeForOutOfFlow(
+        element, /*try_fallback_index*/ 0,
+        /*try_set=*/&rule->Properties(), kNoTryTactics,
+        /*anchor_evaluator=*/nullptr);
   }
 
   size_t GetCurrentOldStylesCount() {
@@ -634,10 +635,6 @@ TEST_F(StyleResolverTest, BackgroundImageFetch) {
 }
 
 TEST_F(StyleResolverTest, FetchForAtPage) {
-  // Without PageMarginBoxes enabled, only a thimbleful of properties are
-  // supported, and background-image is not one of them.
-  ScopedPageMarginBoxesForTest enable(true);
-
   // The background-image property applies in an @page context, according to
   // https://drafts.csswg.org/css-page-3/#page-property-list
   GetDocument().documentElement()->setInnerHTML(R"HTML(
@@ -660,8 +657,6 @@ TEST_F(StyleResolverTest, FetchForAtPage) {
 }
 
 TEST_F(StyleResolverTest, NoFetchForAtPage) {
-  ScopedPageMarginBoxesForTest enable(true);
-
   // The list-style-image property doesn't apply in an @page context, since
   // it's not in https://drafts.csswg.org/css-page-3/#page-property-list
   GetDocument().documentElement()->setInnerHTML(R"HTML(
@@ -687,8 +682,6 @@ TEST_F(StyleResolverTest, NoFetchForAtPage) {
 // test for it. See https://drafts.csswg.org/css-page-3/#page-property-list for
 // applicable properties within a page context.
 TEST_F(StyleResolverTest, PageComputedStyle) {
-  ScopedPageMarginBoxesForTest enable(true);
-
   GetDocument().documentElement()->setInnerHTML(R"HTML(
     <style>
       html {
@@ -752,50 +745,6 @@ TEST_F(StyleResolverTest, PageComputedStyle) {
   EXPECT_TRUE(style->HasAutoColumnCount());
   EXPECT_TRUE(style->HasAutoColumnWidth());
   EXPECT_FALSE(style->ColumnGap().has_value());
-}
-
-TEST_F(StyleResolverTest, PageComputedStyleLimited) {
-  ScopedPageMarginBoxesForTest enable(false);
-
-  GetDocument().documentElement()->setInnerHTML(R"HTML(
-    <style>
-      html {
-        margin: 77px;
-      }
-      body {
-        /* Note: @page inherits from html, but not body. */
-        margin: 13px;
-      }
-      @page {
-        size: 100px 150px;
-        margin: inherit;
-        margin-top: 11px;
-        margin-inline-end: 12px;
-        page-orientation: rotate-left;
-        padding-top: 7px;
-      }
-    </style>
-    <body></body>
-  )HTML");
-
-  UpdateAllLifecyclePhasesForTest();
-  const ComputedStyle* style =
-      GetDocument().GetStyleResolver().StyleForPage(0, g_empty_atom);
-  ASSERT_TRUE(style);
-
-  EXPECT_EQ(style->GetPageSizeType(), PageSizeType::kFixed);
-  gfx::SizeF page_size = style->PageSize();
-  EXPECT_EQ(page_size.width(), 100);
-  EXPECT_EQ(page_size.height(), 150);
-
-  EXPECT_EQ(style->MarginTop(), Length::Fixed(11));
-  EXPECT_EQ(style->MarginRight(), Length::Fixed(12));
-  EXPECT_EQ(style->MarginBottom(), Length::Fixed(77));
-  EXPECT_EQ(style->MarginLeft(), Length::Fixed(77));
-  EXPECT_EQ(style->GetPageOrientation(), PageOrientation::kRotateLeft);
-
-  // The padding-top declaration should be ignored.
-  EXPECT_EQ(style->PaddingTop(), Length::Fixed(0));
 }
 
 TEST_F(StyleResolverTest, NoFetchForHighlightPseudoElements) {
@@ -1272,6 +1221,20 @@ TEST_F(StyleResolverTest, ComputeValueStandardProperty) {
       target, CSSPropertyName(property_id), *parsed_value);
   ASSERT_TRUE(computed_value);
   EXPECT_EQ("rgb(0, 128, 0)", computed_value->CssText());
+}
+
+TEST_F(StyleResolverTest, ComputedValueRootElement) {
+  UpdateAllLifecyclePhasesForTest();
+  Element* target = GetDocument().documentElement();
+  ASSERT_TRUE(target);
+  CSSPropertyID property_id = CSSPropertyID::kFontSize;
+  const CSSValue* parsed_value = css_test_helpers::ParseLonghand(
+      GetDocument(), GetCSSPropertyFontSize(), "calc(40px + 2px)");
+  ASSERT_TRUE(parsed_value);
+  const CSSValue* computed_value = StyleResolver::ComputeValue(
+      target, CSSPropertyName(property_id), *parsed_value);
+  ASSERT_TRUE(computed_value);
+  EXPECT_EQ("42px", computed_value->CssText());
 }
 
 namespace {
@@ -3131,20 +3094,20 @@ TEST_F(StyleResolverTest, PositionTryStylesBasic_Cascade) {
   EXPECT_EQ(Length::Auto(), GetTop(*base_style));
   EXPECT_EQ(Length::Auto(), GetLeft(*base_style));
 
-  UpdateStyleForOutOfFlow(*target, AtomicString("--f1"));
+  UpdateStyleAndLayoutTreeForOutOfFlow(*target, AtomicString("--f1"));
   const ComputedStyle* try1 = target->GetComputedStyle();
   ASSERT_TRUE(try1);
   EXPECT_EQ(Length::Auto(), GetTop(*try1));
   EXPECT_EQ(Length::Fixed(100), GetLeft(*try1));
 
-  UpdateStyleForOutOfFlow(*target, AtomicString("--f2"));
+  UpdateStyleAndLayoutTreeForOutOfFlow(*target, AtomicString("--f2"));
   const ComputedStyle* try2 = target->GetComputedStyle();
   ASSERT_TRUE(try2);
   EXPECT_EQ(Length::Fixed(100), GetTop(*try2));
   EXPECT_EQ(Length::Auto(), GetLeft(*try2));
 
   // Shorthand should also work
-  UpdateStyleForOutOfFlow(*target, AtomicString("--f3"));
+  UpdateStyleAndLayoutTreeForOutOfFlow(*target, AtomicString("--f3"));
   const ComputedStyle* try3 = target->GetComputedStyle();
   ASSERT_TRUE(try3);
   EXPECT_EQ(Length::Fixed(50), GetTop(*try3));
@@ -3180,7 +3143,7 @@ TEST_F(StyleResolverTest, PositionTryStylesResolveLogicalProperties_Cascade) {
   EXPECT_EQ(Length::Fixed(50), GetRight(*base_style));
 
   // 'inset-inline-start' should resolve to 'bottom'
-  UpdateStyleForOutOfFlow(*target, AtomicString("--f1"));
+  UpdateStyleAndLayoutTreeForOutOfFlow(*target, AtomicString("--f1"));
   const ComputedStyle* try1 = target->GetComputedStyle();
   ASSERT_TRUE(try1);
   EXPECT_EQ(Length::Fixed(50), GetTop(*try1));
@@ -3189,7 +3152,7 @@ TEST_F(StyleResolverTest, PositionTryStylesResolveLogicalProperties_Cascade) {
   EXPECT_EQ(Length::Fixed(50), GetRight(*try1));
 
   // 'inset-block' with two parameters should set 'right' and then 'left'
-  UpdateStyleForOutOfFlow(*target, AtomicString("--f2"));
+  UpdateStyleAndLayoutTreeForOutOfFlow(*target, AtomicString("--f2"));
   const ComputedStyle* try2 = target->GetComputedStyle();
   ASSERT_TRUE(try2);
   EXPECT_EQ(Length::Fixed(50), GetTop(*try2));
@@ -3219,7 +3182,7 @@ TEST_F(StyleResolverTest, PositionTryStylesResolveRelativeLengthUnits_Cascade) {
   EXPECT_EQ(Length::Auto(), GetTop(*base_style));
 
   // '2em' should resolve to '40px'
-  UpdateStyleForOutOfFlow(*target, AtomicString("--f1"));
+  UpdateStyleAndLayoutTreeForOutOfFlow(*target, AtomicString("--f1"));
   const ComputedStyle* try1 = target->GetComputedStyle();
   ASSERT_TRUE(try1);
   EXPECT_EQ(Length::Fixed(40), GetTop(*try1));
@@ -3250,7 +3213,7 @@ TEST_F(StyleResolverTest, PositionTryStylesInBeforePseudoElement_Cascade) {
   EXPECT_EQ(Length::Auto(), GetTop(*base_style));
 
   // 'position-try-fallbacks' applies to ::before pseudo-element.
-  UpdateStyleForOutOfFlow(*before, AtomicString("--f1"));
+  UpdateStyleAndLayoutTreeForOutOfFlow(*before, AtomicString("--f1"));
   const ComputedStyle* try1 = before->GetComputedStyle();
   ASSERT_TRUE(try1);
   EXPECT_EQ(Length::Fixed(50), GetTop(*try1));
@@ -3288,7 +3251,7 @@ TEST_F(StyleResolverTest, PositionTryStylesCSSWideKeywords_Cascade) {
   EXPECT_EQ(Length::Fixed(50), GetBottom(*base_style));
   EXPECT_EQ(Length::Fixed(50), GetRight(*base_style));
 
-  UpdateStyleForOutOfFlow(*target, AtomicString("--f1"));
+  UpdateStyleAndLayoutTreeForOutOfFlow(*target, AtomicString("--f1"));
   const ComputedStyle* try1 = target->GetComputedStyle();
   ASSERT_TRUE(try1);
   EXPECT_EQ(Length::Auto(), GetTop(*try1));
@@ -3296,7 +3259,7 @@ TEST_F(StyleResolverTest, PositionTryStylesCSSWideKeywords_Cascade) {
   EXPECT_EQ(Length::Fixed(50), GetBottom(*try1));
   EXPECT_EQ(Length::Fixed(50), GetRight(*try1));
 
-  UpdateStyleForOutOfFlow(*target, AtomicString("--f2"));
+  UpdateStyleAndLayoutTreeForOutOfFlow(*target, AtomicString("--f2"));
   const ComputedStyle* try2 = target->GetComputedStyle();
   ASSERT_TRUE(try2);
   EXPECT_EQ(Length::Fixed(50), GetTop(*try2));
@@ -3304,7 +3267,7 @@ TEST_F(StyleResolverTest, PositionTryStylesCSSWideKeywords_Cascade) {
   EXPECT_EQ(Length::Fixed(50), GetBottom(*try2));
   EXPECT_EQ(Length::Fixed(50), GetRight(*try2));
 
-  UpdateStyleForOutOfFlow(*target, AtomicString("--f3"));
+  UpdateStyleAndLayoutTreeForOutOfFlow(*target, AtomicString("--f3"));
   const ComputedStyle* try3 = target->GetComputedStyle();
   ASSERT_TRUE(try3);
   EXPECT_EQ(Length::Fixed(50), GetTop(*try3));
@@ -3336,7 +3299,7 @@ TEST_F(StyleResolverTest, PositionTryPropertyValueChange_Cascade) {
     EXPECT_EQ(Length::Auto(), GetTop(*base_style));
     EXPECT_EQ(Length::Auto(), GetLeft(*base_style));
 
-    UpdateStyleForOutOfFlow(*target, AtomicString("--foo"));
+    UpdateStyleAndLayoutTreeForOutOfFlow(*target, AtomicString("--foo"));
     const ComputedStyle* fallback = target->GetComputedStyle();
     ASSERT_TRUE(fallback);
     EXPECT_EQ(Length::Fixed(100), GetTop(*fallback));
@@ -3352,7 +3315,7 @@ TEST_F(StyleResolverTest, PositionTryPropertyValueChange_Cascade) {
     EXPECT_EQ(Length::Auto(), GetTop(*base_style));
     EXPECT_EQ(Length::Auto(), GetLeft(*base_style));
 
-    UpdateStyleForOutOfFlow(*target, AtomicString("--bar"));
+    UpdateStyleAndLayoutTreeForOutOfFlow(*target, AtomicString("--bar"));
     const ComputedStyle* fallback = target->GetComputedStyle();
     ASSERT_TRUE(fallback);
     ASSERT_TRUE(fallback);
@@ -3421,9 +3384,8 @@ TEST_F(StyleResolverTest, TrySet_Basic) {
   )CSS");
   ASSERT_TRUE(try_set);
 
-  const ComputedStyle* try_style = StyleForId(
-      "div",
-      StyleRecalcContext{.try_set = try_set, .is_interleaved_oof = true});
+  const ComputedStyle* try_style =
+      StyleForId("div", StyleRecalcContext{.try_set = try_set});
   ASSERT_TRUE(try_style);
   EXPECT_EQ("20px", ComputedValue("left", *try_style));
   EXPECT_EQ("30px", ComputedValue("right", *try_style));
@@ -3453,9 +3415,8 @@ TEST_F(StyleResolverTest, TrySet_RevertLayer) {
   )CSS");
   ASSERT_TRUE(try_set);
 
-  const ComputedStyle* try_style = StyleForId(
-      "div",
-      StyleRecalcContext{.try_set = try_set, .is_interleaved_oof = true});
+  const ComputedStyle* try_style =
+      StyleForId("div", StyleRecalcContext{.try_set = try_set});
   ASSERT_TRUE(try_style);
   EXPECT_EQ("10px", ComputedValue("left", *try_style));
   EXPECT_EQ("30px", ComputedValue("right", *try_style));
@@ -3485,9 +3446,8 @@ TEST_F(StyleResolverTest, TrySet_Revert) {
   )CSS");
   ASSERT_TRUE(try_set);
 
-  const ComputedStyle* try_style = StyleForId(
-      "div",
-      StyleRecalcContext{.try_set = try_set, .is_interleaved_oof = true});
+  const ComputedStyle* try_style =
+      StyleForId("div", StyleRecalcContext{.try_set = try_set});
   ASSERT_TRUE(try_style);
   EXPECT_EQ("auto", ComputedValue("left", *try_style));
   EXPECT_EQ("30px", ComputedValue("right", *try_style));
@@ -3518,9 +3478,8 @@ TEST_F(StyleResolverTest, TrySet_NonAbsPos) {
   )CSS");
   ASSERT_TRUE(try_set);
 
-  const ComputedStyle* try_style = StyleForId(
-      "div",
-      StyleRecalcContext{.try_set = try_set, .is_interleaved_oof = true});
+  const ComputedStyle* try_style =
+      StyleForId("div", StyleRecalcContext{.try_set = try_set});
   ASSERT_TRUE(try_style);
   EXPECT_EQ("10px", ComputedValue("left", *try_style));
   EXPECT_EQ("auto", ComputedValue("right", *try_style));
@@ -3554,9 +3513,8 @@ TEST_F(StyleResolverTest, TrySet_NonAbsPosDynamic) {
   ASSERT_TRUE(try_set);
 
   div->SetInlineStyleProperty(CSSPropertyID::kPosition, "static");
-  const ComputedStyle* try_style = StyleForId(
-      "div",
-      StyleRecalcContext{.try_set = try_set, .is_interleaved_oof = true});
+  const ComputedStyle* try_style =
+      StyleForId("div", StyleRecalcContext{.try_set = try_set});
   ASSERT_TRUE(try_style);
   EXPECT_EQ("10px", ComputedValue("left", *try_style));
   EXPECT_EQ("auto", ComputedValue("right", *try_style));
@@ -3601,8 +3559,7 @@ TEST_F(StyleResolverTest, TryTacticsSet_Flip) {
 
   const ComputedStyle* try_style =
       StyleForId("div", StyleRecalcContext{.try_set = try_set,
-                                           .try_tactics_set = try_tactics_set,
-                                           .is_interleaved_oof = true});
+                                           .try_tactics_set = try_tactics_set});
   ASSERT_TRUE(try_style);
   EXPECT_EQ("200px", ComputedValue("left", *try_style));
   EXPECT_EQ("100px", ComputedValue("right", *try_style));
@@ -3938,7 +3895,7 @@ TEST_F(StyleResolverTest, PseudoCSSRulesForElementExcludeStartingStyle) {
       target, kPseudoIdBefore, g_null_atom);
   ASSERT_NE(pseudo_rules, nullptr);
   EXPECT_EQ(pseudo_rules->size(), 1u);
-  EXPECT_EQ(pseudo_rules->at(0).first->cssText(),
+  EXPECT_EQ(pseudo_rules->at(0).rule->cssText(),
             "#target::before { content: \"X\"; color: green; }");
 }
 

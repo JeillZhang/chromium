@@ -4,129 +4,79 @@
 
 #include "chrome/browser/regional_capabilities/regional_capabilities_service_client.h"
 
-#include <optional>
-
-#include "base/functional/bind.h"
-#include "base/functional/callback.h"
-#include "base/test/bind.h"
+#include "base/test/task_environment.h"
+#include "base/test/test_future.h"
+#include "chrome/browser/regional_capabilities/regional_capabilities_test_environment.h"
 #include "components/country_codes/country_codes.h"
-#include "components/regional_capabilities/regional_capabilities_service.h"
+#include "components/variations/pref_names.h"
+#include "components/variations/service/test_variations_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "base/android/jni_android.h"
-#include "base/android/jni_string.h"
-#include "chrome/browser/regional_capabilities/android/test_utils_jni_headers/RegionalCapabilitiesServiceTestUtil_jni.h"
-#endif
+using ::country_codes::CountryId;
 
 namespace regional_capabilities {
-
 namespace {
 
-#if BUILDFLAG(IS_ANDROID)
-constexpr char kBelgiumCountryCode[] = "BE";
-
-constexpr int kBelgiumCountryId =
-    country_codes::CountryCharsToCountryID(kBelgiumCountryCode[0],
-                                           kBelgiumCountryCode[1]);
-
-class TestSupportAndroid {
+class RegionalCapabilitiesServiceClientTest : public testing::Test {
  public:
-  TestSupportAndroid() {
-    JNIEnv* env = base::android::AttachCurrentThread();
-    base::android::ScopedJavaLocalRef<jobject> java_ref =
-        Java_RegionalCapabilitiesServiceTestUtil_Constructor(env);
-    java_test_util_ref_.Reset(env, java_ref.obj());
-  }
+  RegionalCapabilitiesServiceClientTest() = default;
 
-  ~TestSupportAndroid() {
-    JNIEnv* env = base::android::AttachCurrentThread();
-    Java_RegionalCapabilitiesServiceTestUtil_destroy(env, java_test_util_ref_);
-  }
+  ~RegionalCapabilitiesServiceClientTest() override = default;
 
-  void ReturnDeviceCountry(const std::string& device_country) {
-    JNIEnv* env = base::android::AttachCurrentThread();
-    Java_RegionalCapabilitiesServiceTestUtil_returnDeviceCountry(
-        env, java_test_util_ref_,
-        base::android::ConvertUTF8ToJavaString(env, device_country));
-  }
+ protected:
+  base::test::TaskEnvironment task_environment_;
 
-  void TriggerDeviceCountryFailure() {
-    JNIEnv* env = base::android::AttachCurrentThread();
-
-    Java_RegionalCapabilitiesServiceTestUtil_triggerDeviceCountryFailure(
-        env, java_test_util_ref_);
-  }
-
- private:
-  base::android::ScopedJavaGlobalRef<jobject> java_test_util_ref_;
+  RegionalCapabilitiesTestEnvironment rcaps_env_;
 };
-#endif
 
-}  // namespace
+TEST_F(RegionalCapabilitiesServiceClientTest, GetVariationsLatestCountryId) {
+  // Set up variations_service::GetLatestCountry().
+  rcaps_env_.pref_service().SetString(variations::prefs::kVariationsCountry,
+                                      "fr");
 
-class RegionalCapabilitiesServiceClientTest : public ::testing::Test {};
+  RegionalCapabilitiesServiceClient client(&rcaps_env_.variations_service());
+
+  EXPECT_EQ(client.GetVariationsLatestCountryId(), CountryId("FR"));
+}
+
+TEST_F(RegionalCapabilitiesServiceClientTest,
+       GetVariationsLatestCountryIdWithoutVariationsService) {
+  RegionalCapabilitiesServiceClient client(/* variations_service */ nullptr);
+
+  EXPECT_EQ(client.GetVariationsLatestCountryId(), CountryId());
+}
 
 TEST_F(RegionalCapabilitiesServiceClientTest, GetFallbackCountryId) {
-#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
-  RegionalCapabilitiesServiceClient client(/* variations_service= */ nullptr);
-#else
-  RegionalCapabilitiesServiceClient client;
-#endif
+  RegionalCapabilitiesServiceClient client(&rcaps_env_.variations_service());
 
   EXPECT_EQ(client.GetFallbackCountryId(),
             country_codes::GetCurrentCountryID());
 }
 
-#if BUILDFLAG(IS_ANDROID)
+TEST_F(RegionalCapabilitiesServiceClientTest,
+       GetFallbackCountryIdWithoutVariationsService) {
+  RegionalCapabilitiesServiceClient client(/* variations_service */ nullptr);
 
-TEST_F(RegionalCapabilitiesServiceClientTest, FetchCountryId_Sync) {
-  RegionalCapabilitiesServiceClient client;
-
-  TestSupportAndroid test_support;
-  test_support.ReturnDeviceCountry(kBelgiumCountryCode);
-
-  std::optional<int> actual_country_id;
-  client.FetchCountryId(
-      base::BindLambdaForTesting([&actual_country_id](int device_country_id) {
-        actual_country_id = device_country_id;
-      }));
-  EXPECT_EQ(actual_country_id, kBelgiumCountryId);
+  EXPECT_EQ(client.GetFallbackCountryId(),
+            country_codes::GetCurrentCountryID());
 }
 
-TEST_F(RegionalCapabilitiesServiceClientTest, FetchCountryId_Async) {
-  RegionalCapabilitiesServiceClient client;
+TEST_F(RegionalCapabilitiesServiceClientTest, FetchCountryId) {
+  RegionalCapabilitiesServiceClient client(&rcaps_env_.variations_service());
 
-  TestSupportAndroid test_support;
-
-  std::optional<int> actual_country_id;
-  client.FetchCountryId(
-      base::BindLambdaForTesting([&actual_country_id](int device_country_id) {
-        actual_country_id = device_country_id;
-      }));
-  EXPECT_EQ(actual_country_id, std::nullopt);
-
-  test_support.ReturnDeviceCountry(kBelgiumCountryCode);
-
-  EXPECT_EQ(actual_country_id, kBelgiumCountryId);
+  base::test::TestFuture<CountryId> future;
+  client.FetchCountryId(future.GetCallback());
+  EXPECT_EQ(future.Get(), country_codes::GetCurrentCountryID());
 }
 
-TEST_F(RegionalCapabilitiesServiceClientTest, FetchCountryId_Failure) {
-  RegionalCapabilitiesServiceClient client;
+TEST_F(RegionalCapabilitiesServiceClientTest,
+       FetchCountryIdWithoutVariationsService) {
+  RegionalCapabilitiesServiceClient client(/* variations_service */ nullptr);
 
-  TestSupportAndroid test_support;
-  test_support.TriggerDeviceCountryFailure();
-
-  std::optional<int> actual_country_id;
-  client.FetchCountryId(
-      base::BindLambdaForTesting([&actual_country_id](int device_country_id) {
-        actual_country_id = device_country_id;
-      }));
-
-  // The callback is dropped.
-  EXPECT_EQ(actual_country_id, std::nullopt);
+  base::test::TestFuture<CountryId> future;
+  client.FetchCountryId(future.GetCallback());
+  EXPECT_EQ(future.Get(), country_codes::GetCurrentCountryID());
 }
 
-#endif  // BUILDFLAG(IS_ANDROID)
-
+}  // namespace
 }  // namespace regional_capabilities

@@ -1257,7 +1257,7 @@ policies:
   1256: PdfViewerOutOfProcessIframeEnabled
   1257: LockScreenAutoStartOnlineReauth
   1258: KeyboardFocusableScrollersEnabled
-  1259: ExtensibleEnterpriseSSOEnabled
+  1259: ExtensibleEnterpriseSSOBlocklist
   1260: CSSCustomStateDeprecatedSyntaxEnabled
   1261: MemorySaverModeSavings
   1262: KioskVisionTelemetryEnabled
@@ -1325,7 +1325,7 @@ policies:
   1324: WebRtcIPHandlingUrl
   1325: GenAIPhotoEditingSettings
   1326: PartitionedBlobUrlUsage
-  1327: GlicSettings
+  1327: ''
   1328: DefaultControlledFrameSetting
   1329: ControlledFrameAllowedForUrls
   1330: ControlledFrameBlockedForUrls
@@ -1334,6 +1334,39 @@ policies:
   1333: ServiceWorkerToControlSrcdocIframeEnabled
   1334: ProvisionManagedClientCertificateForBrowser
   1335: GeminiSettings
+  1336: GenAISmartGroupingSettings
+  1337: GenAiChromeOsSmartActionsSettings
+  1338: RelaunchFastIfOutdated
+  1339: ClassManagementCaptionsEnabled
+  1340: ClassManagementClassroomIntegrationEnabled
+  1341: ClassManagementNetworkRestrictionEnabled
+  1342: ''
+  1343: ClassManagementViewScreenEnabled
+  1344: KioskChromeAppsForceAllowed
+  1345: ReduceAcceptLanguageEnabled
+  1346: GenAIInlineImageSettings
+  1347: UserSecuritySignalsReporting
+  1348: UserSecurityAuthenticatedReporting
+  1349: HappyEyeballsV3Enabled
+  1350: FaceGazeEnabled
+  1351: ProvisionalNotificationsAllowed
+  1352: DeviceLoginScreenFaceGazeEnabled
+  1353: EnterpriseLogoUrlForBrowser
+  1354: EnterpriseCustomLabelForBrowser
+  1355: DefaultSmartCardConnectSetting
+  1356: DeviceUserInitiatedFirmwareUpdatesEnabled
+  1357: BuiltInAIAPIsEnabled
+  1358: TabGroupSharingSettings
+  1359: NTPFooterManagementNoticeEnabled
+  1360: NTPFooterExtensionAttributionEnabled
+  1361: ClearWindowNameForNewBrowsingContextGroup
+  1362: PasswordManagerBlocklist
+  1363: TLS13EarlyDataEnabled
+  1364: LocalNetworkAccessRestrictionsEnabled
+  1365: PrefetchWithServiceWorkerEnabled
+  1366: AIModeSearchSuggestSettings
+  1367: AIModeSettings
+  1368: WatermarkStyle
 
 atomic_groups:
   1: Homepage

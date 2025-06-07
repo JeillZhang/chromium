@@ -94,9 +94,7 @@ void SingleThreadProxy::Start() {
     scheduler_settings.commit_to_active_tree = true;
 
     std::unique_ptr<CompositorTimingHistory> compositor_timing_history(
-        new CompositorTimingHistory(
-            CompositorTimingHistory::BROWSER_UMA,
-            layer_tree_host_->rendering_stats_instrumentation()));
+        new CompositorTimingHistory(CompositorTimingHistory::BROWSER_UMA));
     scheduler_on_impl_thread_ = std::make_unique<Scheduler>(
         this, scheduler_settings, layer_tree_host_->GetId(),
         task_runner_provider_->MainThreadTaskRunner(),
@@ -461,10 +459,15 @@ void SingleThreadProxy::Stop() {
 }
 
 void SingleThreadProxy::QueueImageDecode(int request_id,
-                                         const DrawImage& image) {
+                                         const DrawImage& image,
+                                         bool speculative) {
   DCHECK(task_runner_provider_->IsMainThread());
+  if (speculative) {
+    CHECK(!speculative_decode_request_in_flight_);
+    speculative_decode_request_in_flight_ = true;
+  }
   DebugScopedSetImplThread impl(task_runner_provider_);
-  host_impl_->QueueImageDecode(request_id, image);
+  host_impl_->QueueImageDecode(request_id, image, speculative);
 }
 
 void SingleThreadProxy::SetMutator(std::unique_ptr<LayerTreeMutator> mutator) {
@@ -651,9 +654,18 @@ void SingleThreadProxy::SetNeedsImplSideInvalidation(
   }
 }
 
+bool SingleThreadProxy::SpeculativeDecodeRequestInFlight() const {
+  return speculative_decode_request_in_flight_;
+}
+
 void SingleThreadProxy::NotifyImageDecodeRequestFinished(
     int request_id,
+    bool speculative,
     bool decode_succeeded) {
+  if (speculative) {
+    CHECK(speculative_decode_request_in_flight_);
+    speculative_decode_request_in_flight_ = false;
+  }
   DCHECK(!task_runner_provider_->HasImplThread() ||
          task_runner_provider_->IsImplThread());
   if (base::FeatureList::IsEnabled(
@@ -944,6 +956,11 @@ void SingleThreadProxy::SetUkmSmoothnessDestination(
   DCHECK(task_runner_provider_->IsMainThread());
 }
 
+void SingleThreadProxy::SetUkmDroppedFramesDestination(
+    base::WritableSharedMemoryMapping ukm_smoothness_data) {
+  DCHECK(task_runner_provider_->IsMainThread());
+}
+
 void SingleThreadProxy::ClearHistory() {
   DCHECK(task_runner_provider_->IsImplThread());
   if (scheduler_on_impl_thread_)
@@ -967,6 +984,15 @@ void SingleThreadProxy::SetWaitingForScrollEvent(
   if (scheduler_on_impl_thread_) {
     NOTREACHED();
   }
+}
+
+bool SingleThreadProxy::IsRenderingPaused() const {
+  return pause_rendering_;
+}
+
+void SingleThreadProxy::NotifyNewLocalSurfaceIdExpectedWhilePaused() {
+  DebugScopedSetImplThread impl(task_runner_provider_);
+  host_impl_->NotifyNewLocalSurfaceIdExpectedWhilePaused();
 }
 
 size_t SingleThreadProxy::CommitDurationSampleCountForTesting() const {
@@ -1304,6 +1330,12 @@ void SingleThreadProxy::WillNotReceiveBeginFrame() {
 void SingleThreadProxy::DidReceiveCompositorFrameAck() {
   DebugScopedSetMainThread main(task_runner_provider_);
   layer_tree_host_->DidReceiveCompositorFrameAckDeprecatedForCompositor();
+}
+
+void SingleThreadProxy::SetShouldThrottleFrameRate(bool flag) {
+  if (scheduler_on_impl_thread_) {
+    scheduler_on_impl_thread_->SetShouldThrottleFrameRate(flag);
+  }
 }
 
 }  // namespace cc

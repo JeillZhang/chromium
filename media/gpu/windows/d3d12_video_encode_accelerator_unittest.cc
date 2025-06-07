@@ -13,7 +13,7 @@
 #include "media/gpu/windows/d3d12_video_encode_delegate.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 using media::SetComPointeeAndReturnOk;
 using testing::_;
@@ -56,10 +56,10 @@ class MockVideoEncoderDelegate : public D3D12VideoEncodeDelegate {
                                       UINT,
                                       const gfx::ColorSpace&,
                                       const BitstreamBuffer&,
-                                      bool));
+                                      const VideoEncoder::EncodeOptions&));
   MOCK_METHOD(EncoderStatus::Or<BitstreamBufferMetadata>,
               EncodeImpl,
-              (ID3D12Resource*, UINT, bool),
+              (ID3D12Resource*, UINT, const VideoEncoder::EncodeOptions&),
               (override));
 
  protected:
@@ -84,12 +84,13 @@ class MockVideoEncoderDelegateFactory
     ON_CALL(*encoder_delegate, GetMaxNumOfRefFrames())
         .WillByDefault(Return(16));
     ON_CALL(*encoder_delegate, Encode(_, _, _, _, _))
-        .WillByDefault(Invoke(
-            [](Microsoft::WRL::ComPtr<ID3D12Resource>, UINT,
-               const gfx::ColorSpace&, const BitstreamBuffer& bitstream_buffer,
-               bool) -> D3D12VideoEncodeDelegate::EncodeResult {
-              return {bitstream_buffer.id()};
-            }));
+        .WillByDefault(Invoke([](Microsoft::WRL::ComPtr<ID3D12Resource>, UINT,
+                                 const gfx::ColorSpace&,
+                                 const BitstreamBuffer& bitstream_buffer,
+                                 const VideoEncoder::EncodeOptions&)
+                                  -> D3D12VideoEncodeDelegate::EncodeResult {
+          return {bitstream_buffer.id()};
+        }));
     return std::move(encoder_delegate);
   }
 
@@ -142,9 +143,8 @@ class D3D12VideoEncodeAcceleratorTest : public testing::Test {
   }
 
   scoped_refptr<VideoFrame> CreateTestVideoFrame() {
-    gfx::GpuMemoryBufferHandle fake_handle;
-    fake_handle.type = gfx::DXGI_SHARED_HANDLE;
-    fake_handle.set_dxgi_handle(gfx::DXGIHandle::CreateFakeForTest());
+    gfx::GpuMemoryBufferHandle fake_handle(
+        gfx::DXGIHandle::CreateFakeForTest());
 
     const auto si_usage = gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY |
                           gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
@@ -205,8 +205,9 @@ TEST_F(D3D12VideoEncodeAcceleratorTest, SupportedProfilesCanBeInitialized) {
   for (const auto& profile :
        d3d12_video_encode_accelerator->GetSupportedProfiles()) {
     auto config = SupportedProfileToConfig(profile);
-    EXPECT_TRUE(d3d12_video_encode_accelerator->Initialize(
-        config, client_.get(), media_log_->Clone()));
+    EXPECT_TRUE(d3d12_video_encode_accelerator
+                    ->Initialize(config, client_.get(), media_log_->Clone())
+                    .is_ok());
     EXPECT_CALL(*client_, NotifyEncoderInfoChange(_)).Times(1);
     EXPECT_CALL(*client_, NotifyErrorStatus(_)).Times(0);
     WaitForEncoderTasksToComplete();
@@ -235,10 +236,14 @@ TEST_F(D3D12VideoEncodeAcceleratorTest, RejectsUnsupportedConfig) {
     auto bad_config = supported_config;
     bad_config.output_profile = video_codec_profile;
     bad_config.input_visible_size = size;
-    EXPECT_TRUE(d3d12_video_encode_accelerator->Initialize(
-        bad_config, client_.get(), media_log_->Clone()));
+    EXPECT_FALSE(
+        d3d12_video_encode_accelerator
+            ->Initialize(bad_config, client_.get(), media_log_->Clone())
+            .is_ok());
+    // Errors should be returned early and InitializeTask() should not be
+    // called.
     EXPECT_CALL(*client_, NotifyEncoderInfoChange(_)).Times(0);
-    EXPECT_CALL(*client_, NotifyErrorStatus(_)).Times(1);
+    EXPECT_CALL(*client_, NotifyErrorStatus(_)).Times(0);
     WaitForEncoderTasksToComplete();
     Mock::VerifyAndClearExpectations(&client_);
   }
@@ -263,8 +268,10 @@ TEST_F(D3D12VideoEncodeAcceleratorTest,
             bitstream_buffer_count = count;
             bitstream_buffer_size = size_in_bytes;
           }));
-  EXPECT_TRUE(d3d12_video_encode_accelerator->Initialize(
-      supported_config, client_.get(), media_log_->Clone()));
+  EXPECT_TRUE(
+      d3d12_video_encode_accelerator
+          ->Initialize(supported_config, client_.get(), media_log_->Clone())
+          .is_ok());
   WaitForEncoderTasksToComplete();
   Mock::VerifyAndClearExpectations(&client_);
 

@@ -34,6 +34,7 @@ import org.chromium.chrome.browser.compositor.layouts.components.LayoutTab;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutHelperManager;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.fullscreen.BrowserControlsManager;
+import org.chromium.chrome.browser.gesturenav.OverscrollGlowCoordinator;
 import org.chromium.chrome.browser.layouts.CompositorModelChangeProcessor;
 import org.chromium.chrome.browser.layouts.EventFilter;
 import org.chromium.chrome.browser.layouts.EventFilter.EventType;
@@ -76,7 +77,6 @@ import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 import org.chromium.ui.resources.ResourceManager;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
 import org.chromium.ui.util.TokenHolder;
-import org.chromium.ui.util.XrUtils;
 import org.chromium.url.GURL;
 
 import java.util.ArrayList;
@@ -91,6 +91,12 @@ import java.util.Set;
  */
 public class LayoutManagerImpl
         implements ManagedLayoutManager, LayoutUpdateHost, LayoutProvider, BackPressHandler {
+
+    /** Returns the {@link StripLayoutHelperManager} managed by this class. */
+    public @Nullable StripLayoutHelperManager getStripLayoutHelperManager() {
+        return null;
+    }
+
     /** Sampling at 60 fps. */
     private static final long FRAME_DELTA_TIME_MS = 16;
 
@@ -205,6 +211,7 @@ public class LayoutManagerImpl
             // Open the new tab
             if (type == TabLaunchType.FROM_RESTORE
                     || type == TabLaunchType.FROM_REPARENTING
+                    || type == TabLaunchType.FROM_REPARENTING_BACKGROUND
                     || type == TabLaunchType.FROM_EXTERNAL_APP
                     || type == TabLaunchType.FROM_LAUNCHER_SHORTCUT
                     || type == TabLaunchType.FROM_STARTUP
@@ -344,6 +351,7 @@ public class LayoutManagerImpl
 
         overlayOrder =
                 new Class[] {
+                    OverscrollGlowCoordinator.getSceneOverlayClass(),
                     // Place the tab strip behind the toolbar scene layer as during tab strip
                     // transition, the toolbar will move up and cover the tab strip.
                     StripLayoutHelperManager.class,
@@ -432,8 +440,6 @@ public class LayoutManagerImpl
         mIsNewEventFilter = layoutFilter != mActiveEventFilter;
         mActiveEventFilter = layoutFilter;
 
-        if (mActiveEventFilter != null) mActiveLayout.unstallImmediately();
-
         return mActiveEventFilter != null;
     }
 
@@ -481,10 +487,47 @@ public class LayoutManagerImpl
     }
 
     /**
+     * Gives the {@link LayoutManagerImpl} a chance to process the generic motion events from the
+     * Android {@link View} system.
+     *
+     * @param e A {@link MotionEvent} instance.
+     * @return Whether or not {@code e} was consumed.
+     */
+    public boolean dispatchGenericMotionEvent(MotionEvent e) {
+        if (mActiveLayout == null) return false;
+
+        PointF offsets = getMotionOffsets(e);
+
+        // The last added overlay will be drawn on top of everything else, therefore the last
+        // filter added should have the first chance to intercept any motion events.
+        for (int i = mSceneOverlays.size() - 1; i >= 0; i--) {
+            if (!mSceneOverlays.get(i).isSceneOverlayTreeShowing()) continue;
+            if (didEventFilterHandleGenericMotionEvent(
+                    mSceneOverlays.get(i).getEventFilter(), offsets, e)) {
+                return true;
+            }
+        }
+
+        // If no overlay's filter took the event, check the layout.
+        if (didEventFilterHandleGenericMotionEvent(mActiveLayout.getEventFilter(), offsets, e)) {
+            return true;
+        }
+        return false;
+    }
+
+    private boolean didEventFilterHandleGenericMotionEvent(
+            EventFilter eventFilter, PointF offsets, MotionEvent e) {
+        if (eventFilter == null) return false;
+        if (offsets != null) eventFilter.setCurrentMotionEventOffsets(offsets.x, offsets.y);
+        return eventFilter.onGenericMotionEvent(e);
+    }
+
+    /**
      * Gives the {@link LayoutManagerImpl} a chance to process the hover events from the Android
      * {@link View} system.
+     *
      * @param e A {@link MotionEvent} instance.
-     * @return  Whether or not {@code e} was consumed.
+     * @return Whether or not {@code e} was consumed.
      */
     public boolean onHoverEvent(MotionEvent e) {
         if (mActiveEventFilter == null) return false;
@@ -980,7 +1023,6 @@ public class LayoutManagerImpl
         TopUiThemeColorProvider topUiTheme = mTopUiThemeColorProvider.get();
         layoutTab.initFromHost(
                 topUiTheme.getBackgroundColor(tab),
-                shouldStall(tab),
                 canUseLiveTexture,
                 topUiTheme.getSceneLayerBackground(tab),
                 ThemeUtils.getTextBoxColorForToolbarBackground(
@@ -1001,11 +1043,6 @@ public class LayoutManagerImpl
 
         layoutTab.set(
                 LayoutTab.BACKGROUND_COLOR, mTopUiThemeColorProvider.get().getBackgroundColor(tab));
-    }
-
-    // Whether the tab is ready to display or it should be faded in as it loads.
-    private static boolean shouldStall(Tab tab) {
-        return (tab.isFrozen() || tab.needsReload()) && !tab.isNativePage();
     }
 
     @Override
@@ -1138,10 +1175,6 @@ public class LayoutManagerImpl
     @Override
     public void showLayout(int layoutType, boolean animate) {
         Layout activeLayout = getActiveLayout();
-        // On XR devices the layout transition animations are not required.
-        if (XrUtils.isXrDevice()) {
-            animate = false;
-        }
         if (activeLayout != null && !activeLayout.isStartingToHide()) {
             setNextLayout(getLayoutForType(layoutType), animate);
             activeLayout.startHiding();
@@ -1186,12 +1219,14 @@ public class LayoutManagerImpl
             if (oldLayout != null) {
                 oldLayout.forceAnimationToFinish();
                 oldLayout.detachViews();
+                oldLayout.setIsActive(false);
 
                 // TODO(crbug.com/40141330): hide oldLayout if it's not hidden.
             }
             layout.contextChanged(mHost.getContext());
             layout.attachViews(mContentContainer);
             mActiveLayout = layout;
+            mActiveLayout.setIsActive(true);
         }
 
         BrowserControlsVisibilityManager controlsVisibilityManager =
@@ -1247,17 +1282,12 @@ public class LayoutManagerImpl
      */
     protected void setNextLayout(Layout layout, boolean animate) {
         mNextActiveLayout = (layout == null) ? getDefaultLayout() : layout;
-        mAnimateNextLayout = XrUtils.isXrDevice() ? false : animate;
+        mAnimateNextLayout = animate;
     }
 
     @Override
     public @LayoutType int getNextLayoutType() {
         return mNextActiveLayout != null ? mNextActiveLayout.getLayoutType() : LayoutType.NONE;
-    }
-
-    @Override
-    public boolean isActiveLayout(Layout layout) {
-        return layout == mActiveLayout;
     }
 
     @Override

@@ -19,6 +19,7 @@
 #include <utility>
 
 #include "base/bits.h"
+#include "base/containers/span.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/unsafe_shared_memory_region.h"
@@ -53,7 +54,7 @@
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/skia_conversions.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gfx/win/d3d_shared_fence.h"
 #include "ui/gl/buildflags.h"
 #include "ui/gl/direct_composition_support.h"
@@ -1224,17 +1225,16 @@ void D3DImageBackingFactoryTest::RunCreateSharedImageFromHandleTest(
       &shared_handle);
   ASSERT_EQ(hr, S_OK);
 
-  gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle;
-  gpu_memory_buffer_handle.type = gfx::DXGI_SHARED_HANDLE;
-  gpu_memory_buffer_handle.set_dxgi_handle(
-      gfx::DXGIHandle(base::win::ScopedHandle(shared_handle)));
+  gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle{
+      gfx::DXGIHandle(base::win::ScopedHandle(shared_handle))};
 
   // Clone before moving the handle in CreateSharedImage.
   auto dup_handle = gpu_memory_buffer_handle.Clone();
 
   auto backing = shared_image_factory_->CreateSharedImage(
       mailbox, format, size, color_space, surface_origin, alpha_type, usage,
-      "TestLabel", std::move(gpu_memory_buffer_handle));
+      "TestLabel", /*is_thread_safe=*/false,
+      std::move(gpu_memory_buffer_handle));
   ASSERT_NE(backing, nullptr);
 
   EXPECT_EQ(backing->format(), format);
@@ -1255,7 +1255,7 @@ void D3DImageBackingFactoryTest::RunCreateSharedImageFromHandleTest(
   auto dup_mailbox = Mailbox::Generate();
   auto dup_backing = shared_image_factory_->CreateSharedImage(
       dup_mailbox, format, size, color_space, surface_origin, alpha_type, usage,
-      "TestLabel", std::move(dup_handle));
+      "TestLabel", /*is_thread_safe=*/false, std::move(dup_handle));
   ASSERT_NE(dup_backing, nullptr);
 
   EXPECT_EQ(dup_backing->format(), format);
@@ -1547,15 +1547,14 @@ D3DImageBackingFactoryTest::CreateVideoImage(const gfx::Size& size,
   const gpu::Mailbox mailbox = gpu::Mailbox::Generate();
   std::unique_ptr<SharedImageBacking> shared_image_backing;
   if (use_factory) {
-    gfx::GpuMemoryBufferHandle gmb_handle;
-    gmb_handle.type = gfx::DXGI_SHARED_HANDLE;
-    gmb_handle.set_dxgi_handle(gfx::DXGIHandle(std::move(shared_handle)));
+    gfx::GpuMemoryBufferHandle gmb_handle(
+        gfx::DXGIHandle(std::move(shared_handle)));
     DCHECK(gmb_handle.dxgi_handle().IsValid());
 
     shared_image_backing = shared_image_factory_->CreateSharedImage(
         mailbox, viz::MultiPlaneFormat::kNV12, size, gfx::ColorSpace(),
         kTopLeft_GrSurfaceOrigin, kPremul_SkAlphaType, usage, "TestLabel",
-        std::move(gmb_handle));
+        /*is_thread_safe=*/false, std::move(gmb_handle));
     if (!shared_image_backing) {
       return {};
     }
@@ -1857,9 +1856,7 @@ void D3DImageBackingFactoryTest::RunCreateFromSharedMemoryMultiplanarTest(
     FillNV12(shm_mapping.GetMemoryAs<uint8_t>(), size, 255, 255, 255);
   }
 
-  gfx::GpuMemoryBufferHandle shm_gmb_handle;
-  shm_gmb_handle.type = gfx::SHARED_MEMORY_BUFFER;
-  shm_gmb_handle.set_region(shm_region.Duplicate());
+  gfx::GpuMemoryBufferHandle shm_gmb_handle(shm_region.Duplicate());
   DCHECK(shm_gmb_handle.region().IsValid());
   shm_gmb_handle.stride = size.width();
 
@@ -1984,8 +1981,9 @@ void D3DImageBackingFactoryTest::RunCreateFromSharedMemoryMultiplanarTest(
     ASSERT_TRUE(overlay_image);
     EXPECT_EQ(overlay_image->type(), gl::DCLayerOverlayType::kShMemPixmap);
 
-    CheckNV12(overlay_image->shm_video_pixmap(), overlay_image->pixmap_stride(),
-              size, kYClearValue, kUClearValue, kVClearValue);
+    CheckNV12(overlay_image->shm_video_pixmap().data(),
+              overlay_image->pixmap_stride(), size, kYClearValue, kUClearValue,
+              kVClearValue);
   }
 }
 

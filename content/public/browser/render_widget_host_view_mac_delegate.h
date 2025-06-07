@@ -39,10 +39,6 @@ enum AcceptMouseEventsOption {
 
 @class NSEvent;
 @protocol RenderWidgetHostViewMacDelegate
-// Notification of when a gesture begins/ends.
-- (void)beginGestureWithEvent:(NSEvent*)event;
-- (void)endGestureWithEvent:(NSEvent*)event;
-
 // This is a low level API which provides touches associated with an event.
 // It is used in conjunction with gestures to determine finger placement
 // on the trackpad.
@@ -51,10 +47,6 @@ enum AcceptMouseEventsOption {
 - (void)touchesCancelledWithEvent:(NSEvent*)event;
 - (void)touchesEndedWithEvent:(NSEvent*)event;
 
-// The browser process received an ACK from the renderer after it processed
-// |event|.
-- (void)rendererHandledWheelEvent:(const blink::WebMouseWheelEvent&)event
-                         consumed:(BOOL)consumed;
 - (void)rendererHandledGestureScrollEvent:(const blink::WebGestureEvent&)event
                                  consumed:(BOOL)consumed;
 - (void)rendererHandledOverscrollEvent:(const ui::DidOverscrollParams&)params;

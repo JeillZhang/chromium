@@ -43,6 +43,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/task_runner.h"
@@ -2365,7 +2366,7 @@ Status StorageQueue::SingleFile::Open(bool read_only) {
       filename_, read_only ? (base::File::FLAG_OPEN | base::File::FLAG_READ)
                            : (base::File::FLAG_OPEN_ALWAYS |
                               base::File::FLAG_APPEND | base::File::FLAG_READ));
-  if (!handle_ || !handle_->IsValid()) {
+  if (!handle_->IsValid()) {
     handle_.reset();
     base::UmaHistogramEnumeration(reporting::kUmaDataLossErrorReason,
                                   DataLossErrorReason::FAILED_TO_OPEN_FILE,

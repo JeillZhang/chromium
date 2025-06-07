@@ -69,6 +69,7 @@ static_library("shelf") {
 
   public_deps = [
     "//chrome/browser:browser_public_dependencies",
+    "//chrome/browser/ui/extensions:extension_enable_flow_delegate",
     "//chrome/browser/ui/tabs:tab_strip_model_observer",
   ]
 
@@ -80,7 +81,6 @@ static_library("shelf") {
     "//ash/webui/projector_app/public/cpp",
     "//chrome/app/theme:chrome_unscaled_resources",
     "//chrome/app/vector_icons",
-    "//chrome/browser:browser_process",
     "//chrome/browser/apps:icon_standardizer",
     "//chrome/browser/apps/app_service:constants",
     "//chrome/browser/ash/accessibility",
@@ -105,6 +105,7 @@ static_library("shelf") {
     "//chrome/browser/ash/plugin_vm",
     "//chrome/browser/ash/policy/handlers",
     "//chrome/browser/ash/profiles",
+    "//chrome/browser/ash/system_web_apps",
     "//chrome/browser/chromeos/extensions/login_screen/login/cleanup",
     "//chrome/browser/extensions",
     "//chrome/browser/image_decoder",
@@ -118,7 +119,9 @@ static_library("shelf") {
     "//chrome/browser/ui/ash/multi_user",
     "//chrome/browser/ui/ash/shelf/app_service",
     "//chrome/browser/ui/ash/system_web_apps",
+    "//chrome/browser/ui/extensions",
     "//chrome/browser/ui/tabs:tab_enums",
+    "//chrome/browser/ui/web_applications",
     "//chrome/browser/ui/webui/ash/settings/app_management",
     "//chrome/browser/web_applications",
     "//chrome/common",
@@ -140,6 +143,7 @@ static_library("shelf") {
     "//components/prefs",
     "//components/sync_preferences",
     "//components/webapps/common",
+    "//extensions/browser",
     "//extensions/common",
     "//ui/chromeos/styles:cros_tokens_color_mappings_generator",
   ]
@@ -311,6 +315,8 @@ source_set("browser_tests") {
     "//chrome/browser/ui",
     "//chrome/browser/ui:test_support",
     "//chrome/browser/ui/ash/system_web_apps",
+    "//chrome/browser/ui/extensions",
+    "//chrome/browser/ui/web_applications",
     "//chrome/browser/web_applications",
     "//chrome/browser/web_applications:web_applications_test_support",
     "//chrome/common",

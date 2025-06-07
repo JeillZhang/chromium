@@ -5,11 +5,12 @@
 #include "chrome/browser/ui/autofill/autofill_suggestion_controller_utils.h"
 
 #include <string>
+#include <variant>
 #include <vector>
 
-#include "base/functional/overloaded.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
+#include "components/autofill/core/browser/metrics/autofill_metrics.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "components/autofill/core/browser/suggestions/suggestion_type.h"
 #include "components/autofill/core/common/autofill_features.h"
@@ -22,6 +23,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 #if !BUILDFLAG(IS_ANDROID)
 // UserEducationService is not implemented on Android.
@@ -46,12 +48,13 @@ bool IsFooterSuggestionType(SuggestionType type) {
     case SuggestionType::kManageAutofillAi:
     case SuggestionType::kManageCreditCard:
     case SuggestionType::kManageIban:
+    case SuggestionType::kManageLoyaltyCard:
     case SuggestionType::kManagePlusAddress:
     case SuggestionType::kScanCreditCard:
     case SuggestionType::kSeePromoCodeDetails:
-    case SuggestionType::kShowAccountCards:
     case SuggestionType::kUndoOrClear:
     case SuggestionType::kViewPasswordDetails:
+    case SuggestionType::kPendingStateSignin:
       return true;
     case SuggestionType::kAccountStoragePasswordEntry:
     case SuggestionType::kAddressEntry:
@@ -76,6 +79,7 @@ bool IsFooterSuggestionType(SuggestionType type) {
     case SuggestionType::kGeneratePasswordEntry:
     case SuggestionType::kIbanEntry:
     case SuggestionType::kInsecureContextPaymentDisabledMessage:
+    case SuggestionType::kLoyaltyCardEntry:
     case SuggestionType::kMerchantPromoCodeEntry:
     case SuggestionType::kMixedFormMessage:
     case SuggestionType::kPasswordEntry:
@@ -85,11 +89,10 @@ bool IsFooterSuggestionType(SuggestionType type) {
     case SuggestionType::kSeparator:
     case SuggestionType::kTitle:
     case SuggestionType::kVirtualCreditCardEntry:
+    case SuggestionType::kIdentityCredential:
     case SuggestionType::kWebauthnCredential:
     case SuggestionType::kWebauthnSignInWithAnotherDevice:
     case SuggestionType::kFillAutofillAi:
-    case SuggestionType::kAutofillAiError:
-    case SuggestionType::kAutofillAiLoadingState:
     case SuggestionType::kBnplEntry:
       return false;
   }
@@ -116,8 +119,8 @@ bool IsStandaloneSuggestionType(SuggestionType type) {
 
 content::RenderFrameHost* GetRenderFrameHost(
     AutofillSuggestionDelegate& delegate) {
-  return absl::visit(
-      base::Overloaded{
+  return std::visit(
+      absl::Overload{
           [](AutofillDriver* driver) {
             return static_cast<ContentAutofillDriver*>(driver)
                 ->render_frame_host();
@@ -215,7 +218,7 @@ std::vector<Suggestion> UpdateSuggestionsFromDataList(
     }
     return suggestions;
   }
-
+  AutofillMetrics::LogDataListSuggestionsUpdated();
   // Add a separator if there are any other values.
   if (!suggestions.empty() &&
       suggestions[0].type != SuggestionType::kSeparator) {

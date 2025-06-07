@@ -9,6 +9,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import static org.chromium.chrome.browser.flags.ChromeFeatureList.sAndroidAppIntegrationWithFaviconUseLargeFavicon;
@@ -18,21 +19,24 @@ import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Bitmap.Config;
 
-import androidx.test.filters.SmallTest;
-
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mockito;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.TimeUtils;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.auxiliary_search.AuxiliarySearchGroupProto.AuxiliarySearchEntry;
+import org.chromium.chrome.browser.auxiliary_search.AuxiliarySearchProvider.MetaDataVersion;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
+import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.url.JUnitTestGURLs;
 
 import java.io.File;
 
@@ -56,6 +60,7 @@ public class AuxiliarySearchUtilsUnitTest {
     }
 
     @Test
+    @EnableFeatures("AndroidAppIntegrationWithFavicon:use_large_favicon/false")
     public void testGetFaviconSize_small() {
         Resources resources = ContextUtils.getApplicationContext().getResources();
         int faviconSizeSmall =
@@ -76,7 +81,6 @@ public class AuxiliarySearchUtilsUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testShareTabsWithOs() {
         SharedPreferencesManager prefsManager = ChromeSharedPreferences.getInstance();
         AuxiliarySearchHooks hooksMock = Mockito.mock(AuxiliarySearchHooks.class);
@@ -109,7 +113,6 @@ public class AuxiliarySearchUtilsUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testIncreaseModuleImpressions() {
         SharedPreferencesManager prefsManager = ChromeSharedPreferences.getInstance();
         prefsManager.removeKey(ChromePreferenceKeys.AUXILIARY_SEARCH_MODULE_IMPRESSION);
@@ -121,7 +124,6 @@ public class AuxiliarySearchUtilsUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testHasUserResponded() {
         SharedPreferencesManager prefsManager = ChromeSharedPreferences.getInstance();
         prefsManager.removeKey(ChromePreferenceKeys.AUXILIARY_SEARCH_MODULE_USER_RESPONDED);
@@ -135,7 +137,6 @@ public class AuxiliarySearchUtilsUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testExceedMaxImpressions() {
         SharedPreferencesManager prefsManager = ChromeSharedPreferences.getInstance();
         prefsManager.removeKey(ChromePreferenceKeys.AUXILIARY_SEARCH_MODULE_IMPRESSION);
@@ -151,7 +152,6 @@ public class AuxiliarySearchUtilsUnitTest {
     }
 
     @Test
-    @SmallTest
     @EnableFeatures({ChromeFeatureList.ANDROID_APP_INTEGRATION_MODULE + ":force_card_shown/false"})
     public void testCanShowCard() {
         assertTrue(AuxiliarySearchUtils.canShowCard(null));
@@ -176,7 +176,6 @@ public class AuxiliarySearchUtilsUnitTest {
     }
 
     @Test
-    @SmallTest
     @EnableFeatures({ChromeFeatureList.ANDROID_APP_INTEGRATION_MODULE + ":force_card_shown/true"})
     public void testCanShowCard_ForceCardShown() {
         assertTrue(AuxiliarySearchUtils.FORCE_CARD_SHOWN.getValue());
@@ -187,7 +186,6 @@ public class AuxiliarySearchUtilsUnitTest {
     }
 
     @Test
-    @SmallTest
     @EnableFeatures({
         ChromeFeatureList.ANDROID_APP_INTEGRATION_WITH_FAVICON + ":skip_device_check/false"
     })
@@ -204,7 +202,23 @@ public class AuxiliarySearchUtilsUnitTest {
     }
 
     @Test
-    @SmallTest
+    @EnableFeatures({
+        ChromeFeatureList.ANDROID_APP_INTEGRATION_MULTI_DATA_SOURCE
+                + ":multi_data_source_skip_device_check/false"
+    })
+    public void testIsShareTabsWithOsDefaultEnabled_MultiDataSource() {
+        AuxiliarySearchHooks hooksMock = Mockito.mock(AuxiliarySearchHooks.class);
+        when(hooksMock.isEnabled()).thenReturn(true);
+        when(hooksMock.isSettingDefaultEnabledByOs()).thenReturn(true);
+        AuxiliarySearchControllerFactory.getInstance().setHooksForTesting(hooksMock);
+
+        assertTrue(AuxiliarySearchUtils.isShareTabsWithOsDefaultEnabled());
+
+        when(hooksMock.isSettingDefaultEnabledByOs()).thenReturn(false);
+        assertFalse(AuxiliarySearchUtils.isShareTabsWithOsDefaultEnabled());
+    }
+
+    @Test
     @EnableFeatures({
         ChromeFeatureList.ANDROID_APP_INTEGRATION_WITH_FAVICON + ":skip_device_check/true"
     })
@@ -218,7 +232,20 @@ public class AuxiliarySearchUtilsUnitTest {
     }
 
     @Test
-    @SmallTest
+    @EnableFeatures({
+        ChromeFeatureList.ANDROID_APP_INTEGRATION_MULTI_DATA_SOURCE
+                + ":multi_data_source_skip_device_check/true"
+    })
+    public void testIsShareTabsWithOsDefaultEnabled_SkipDeviceCheck_MultiDataSource() {
+        assertTrue(AuxiliarySearchUtils.MULTI_DATA_SOURCE_SKIP_DEVICE_CHECK.getValue());
+
+        assertFalse(AuxiliarySearchControllerFactory.getInstance().isSettingDefaultEnabledByOs());
+        // Verifies that isShareTabsWithOsDefaultEnabled() returns true if skipping device check is
+        // enabled on Pixel devices.
+        assertTrue(AuxiliarySearchUtils.isShareTabsWithOsDefaultEnabled());
+    }
+
+    @Test
     @EnableFeatures({
         ChromeFeatureList.ANDROID_APP_INTEGRATION_WITH_FAVICON + ":skip_device_check/true",
         ChromeFeatureList.ANDROID_APP_INTEGRATION_MODULE + ":show_third_party_card/true"
@@ -230,5 +257,55 @@ public class AuxiliarySearchUtilsUnitTest {
         // Verifies that isShareTabsWithOsDefaultEnabled() returns false if skipping device check is
         // enabled on third party devices.
         assertFalse(AuxiliarySearchUtils.isShareTabsWithOsDefaultEnabled());
+    }
+
+    @Test
+    @EnableFeatures({
+        ChromeFeatureList.ANDROID_APP_INTEGRATION_MULTI_DATA_SOURCE
+                + ":multi_data_source_skip_device_check/true",
+        ChromeFeatureList.ANDROID_APP_INTEGRATION_MODULE + ":show_third_party_card/true"
+    })
+    public void
+            testIsShareTabsWithOsDefaultEnabled_SkipDeviceCheck_NonPixelDevices_MultiDataSource() {
+        assertTrue(AuxiliarySearchUtils.MULTI_DATA_SOURCE_SKIP_DEVICE_CHECK.getValue());
+
+        assertFalse(AuxiliarySearchControllerFactory.getInstance().isSettingDefaultEnabledByOs());
+        // Verifies that isShareTabsWithOsDefaultEnabled() returns false if skipping device check is
+        // enabled on third party devices.
+        assertFalse(AuxiliarySearchUtils.isShareTabsWithOsDefaultEnabled());
+    }
+
+    @Test
+    public void testGetMetadataVersion() {
+        Tab tab = mock(Tab.class);
+        assertEquals(MetaDataVersion.V1, AuxiliarySearchUtils.getMetadataVersion(tab));
+
+        AuxiliarySearchEntry entry = AuxiliarySearchEntry.newBuilder().build();
+        assertEquals(MetaDataVersion.V1, AuxiliarySearchUtils.getMetadataVersion(entry));
+
+        AuxiliarySearchDataEntry dataEntry =
+                new AuxiliarySearchDataEntry(
+                        /* type= */ AuxiliarySearchEntryType.TAB,
+                        /* url= */ JUnitTestGURLs.URL_1,
+                        /* title= */ "Title 1",
+                        /* lastActiveTime= */ TimeUtils.uptimeMillis(),
+                        /* tabId= */ 10,
+                        /* appId= */ null,
+                        /* visitId= */ -1,
+                        /* score= */ 0);
+        assertEquals(
+                MetaDataVersion.MULTI_TYPE_V2, AuxiliarySearchUtils.getMetadataVersion(dataEntry));
+    }
+
+    @Test
+    public void testSchemaVersion() {
+        var sharedPreference = ChromeSharedPreferences.getInstance();
+        sharedPreference.removeKey(ChromePreferenceKeys.AUXILIARY_SEARCH_SCHEMA_VERSION);
+
+        assertEquals(0, AuxiliarySearchUtils.getSchemaVersion());
+
+        int version = 10;
+        AuxiliarySearchUtils.setSchemaVersion(version);
+        assertEquals(version, AuxiliarySearchUtils.getSchemaVersion());
     }
 }

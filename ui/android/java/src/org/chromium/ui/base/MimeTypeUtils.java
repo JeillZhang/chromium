@@ -4,12 +4,12 @@
 package org.chromium.ui.base;
 
 import android.Manifest;
+import android.content.ClipDescription;
 import android.os.Build;
 import android.webkit.MimeTypeMap;
 
 import androidx.annotation.IntDef;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.url.GURL;
@@ -28,6 +28,9 @@ public class MimeTypeUtils {
 
     /** The MIME type for a tab object dragged from Chrome. */
     public static final String CHROME_MIMETYPE_TAB = "chrome/tab";
+
+    /** The MIME type for a tab group object dragged from Chrome. */
+    public static final String CHROME_MIMETYPE_TAB_GROUP = "chrome/tab-group";
 
     /** The MIME type for pdf. */
     public static final String PDF_MIME_TYPE = "application/pdf";
@@ -80,11 +83,11 @@ public class MimeTypeUtils {
     /**
      * @param mimeType The mime type associated with an operation that needs a permission.
      * @return The name of the Android permission to request. Returns null if no permission will
-     *         allow access to the file, for example on Android T+ where READ_EXTERNAL_STORAGE has
-     *         been replaced with a handful of READ_MEDIA_* permissions.
+     *     allow access to the file, for example on Android T+ where READ_EXTERNAL_STORAGE has been
+     *     replaced with a handful of READ_MEDIA_* permissions.
      */
     public @Nullable static String getPermissionNameForMimeType(@MimeTypeUtils.Type int mimeType) {
-        if (useExternalStoragePermission()) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             return Manifest.permission.READ_EXTERNAL_STORAGE;
         }
 
@@ -100,9 +103,9 @@ public class MimeTypeUtils {
         }
     }
 
-    static boolean useExternalStoragePermission() {
-        // Extracted into a helper method for easy testing. Can be replaced with test annotations
-        // once Robolectric recognizes SDK = T.
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || !BuildInfo.targetsAtLeastT();
+    public static boolean clipDescriptionHasBrowserContent(ClipDescription clipDescription) {
+        if (clipDescription == null) return false;
+        return clipDescription.hasMimeType(CHROME_MIMETYPE_TAB)
+                || clipDescription.hasMimeType(CHROME_MIMETYPE_TAB_GROUP);
     }
 }

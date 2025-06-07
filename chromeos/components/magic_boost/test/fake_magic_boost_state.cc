@@ -9,8 +9,8 @@
 namespace chromeos {
 namespace test {
 
-bool FakeMagicBoostState::IsMagicBoostAvailable() {
-  return is_magic_boost_available_;
+bool FakeMagicBoostState::ShouldIncludeOrcaInOptInSync() {
+  return false;
 }
 
 bool FakeMagicBoostState::CanShowNoticeBannerForHMR() {
@@ -30,8 +30,8 @@ void FakeMagicBoostState::AsyncWriteHMREnabled(bool enabled) {
   UpdateHMREnabled(enabled);
 }
 
-void FakeMagicBoostState::SetMagicBoostAvailability(bool available) {
-  is_magic_boost_available_ = available;
+void FakeMagicBoostState::SetAvailability(bool available) {
+  UpdateMagicBoostAvailable(available);
 }
 
 void FakeMagicBoostState::SetMagicBoostEnabled(bool enabled) {

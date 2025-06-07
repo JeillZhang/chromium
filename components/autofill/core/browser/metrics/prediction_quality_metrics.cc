@@ -84,6 +84,7 @@ enum FieldTypeGroupForMetrics {
   GROUP_ADDRESS_HOME_HOUSE_NUMBER_AND_APT = 46,
   GROUP_STANDALONE_CREDIT_CARD_VERIFICATION = 47,
   GROUP_AUTOFILL_AI = 48,
+  GROUP_LOYALTY_CARD = 49,
   // Note: if adding an enum value here, run
   // tools/metrics/histograms/update_autofill_enums.py
   NUM_FIELD_TYPE_GROUPS_FOR_METRICS
@@ -222,6 +223,10 @@ int GetFieldTypeGroupPredictionQualityMetric(FieldType field_type,
 
     case FieldTypeGroup::kAutofillAi:
       group = GROUP_AUTOFILL_AI;
+      break;
+
+    case FieldTypeGroup::kLoyaltyCard:
+      group = GROUP_LOYALTY_CARD;
       break;
 
     case FieldTypeGroup::kAddress:
@@ -391,9 +396,9 @@ int GetFieldTypeGroupPredictionQualityMetric(FieldType field_type,
         case IMPROVED_PREDICTION:
         case PASSPORT_NAME_TAG:
         case PASSPORT_NUMBER:
-        case PASSPORT_ISSUING_COUNTRY_TAG:
-        case PASSPORT_EXPIRATION_DATE_TAG:
-        case PASSPORT_ISSUE_DATE_TAG:
+        case PASSPORT_ISSUING_COUNTRY:
+        case PASSPORT_EXPIRATION_DATE:
+        case PASSPORT_ISSUE_DATE:
         case LOYALTY_MEMBERSHIP_PROGRAM:
         case LOYALTY_MEMBERSHIP_PROVIDER:
         case LOYALTY_MEMBERSHIP_ID:
@@ -402,11 +407,14 @@ int GetFieldTypeGroupPredictionQualityMetric(FieldType field_type,
         case VEHICLE_VIN:
         case VEHICLE_MAKE:
         case VEHICLE_MODEL:
+        case VEHICLE_YEAR:
+        case VEHICLE_PLATE_STATE:
         case DRIVERS_LICENSE_NAME_TAG:
         case DRIVERS_LICENSE_REGION:
         case DRIVERS_LICENSE_NUMBER:
-        case DRIVERS_LICENSE_EXPIRATION_DATE_TAG:
-        case DRIVERS_LICENSE_ISSUE_DATE_TAG:
+        case DRIVERS_LICENSE_EXPIRATION_DATE:
+        case DRIVERS_LICENSE_ISSUE_DATE:
+        case EMAIL_OR_LOYALTY_MEMBERSHIP_ID:
           NOTREACHED() << field_type << " type is not in that group.";
       }
       break;
@@ -907,16 +915,27 @@ void LogFieldPredictionOverlapMetrics(const AutofillField& field) {
                                       autocomplete_agrees);
 
   std::string_view field_type_str = FieldTypeToStringView(submitted_field_type);
+  std::string prediction_source =
+      field.PredictionSource().has_value()
+          ? base::StrCat({AutofillPredictionSourceToStringView(
+                              *field.PredictionSource()),
+                          "Active."})
+          : "NoPredictionExists.";
 
-  // TODO(crbug.com/376432267): Add per active source histogram as well.
+  // Autocomplete-aggreated histograms:
   {
-    // Autocomplete-aggreated histograms:
     std::string prefix =
         base::StrCat({kFieldPredictionOverlapPrefix, kAutocompleteAggregate});
+    // Sources aggregated:
     base::UmaHistogramEnumeration(
         base::StrCat({prefix, kSourcesOverall, kAllTypes}), sample);
     base::UmaHistogramEnumeration(
         base::StrCat({prefix, kSourcesOverall, field_type_str}), sample);
+    // Source-specific:
+    base::UmaHistogramEnumeration(
+        base::StrCat({prefix, prediction_source, kAllTypes}), sample);
+    base::UmaHistogramEnumeration(
+        base::StrCat({prefix, prediction_source, field_type_str}), sample);
   }
 
   // Autocomplete-specific histograms:
@@ -924,10 +943,16 @@ void LogFieldPredictionOverlapMetrics(const AutofillField& field) {
     std::string prefix = base::StrCat(
         {kFieldPredictionOverlapPrefix,
          autocomplete_present ? kAutocompletePresent : kAutocompleteAbsent});
+    // Sources aggregated:
     base::UmaHistogramEnumeration(
         base::StrCat({prefix, kSourcesOverall, kAllTypes}), sample);
     base::UmaHistogramEnumeration(
         base::StrCat({prefix, kSourcesOverall, field_type_str}), sample);
+    // Source-specific:
+    base::UmaHistogramEnumeration(
+        base::StrCat({prefix, prediction_source, kAllTypes}), sample);
+    base::UmaHistogramEnumeration(
+        base::StrCat({prefix, prediction_source, field_type_str}), sample);
   }
 }
 

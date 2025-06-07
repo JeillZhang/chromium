@@ -53,6 +53,10 @@ ui::ImageModel GetIconImage(bool active, bool enabled) {
              : ui::ImageModel::FromVectorIcon(kDictationOffNewuiIcon, color_id);
 }
 
+bool IsDictationActive() {
+  return Shell::Get()->accessibility_controller()->dictation_active();
+}
+
 }  // namespace
 
 DictationButtonTray::DictationButtonTray(
@@ -67,8 +71,15 @@ DictationButtonTray::DictationButtonTray(
       shell->window_tree_host_manager()->input_method()->GetTextInputClient();
   in_text_input_ =
       (client && client->GetTextInputType() != ui::TEXT_INPUT_TYPE_NONE);
+
+  // If a view that accepts text input is focused, make the tray enabled (i.e.
+  // clickable). However, at this point the dictation is not active (i.e.
+  // dictation is not listening to speech).
+  SetEnabled(in_text_input_);
+  SetIsActive(false);
+
   const ui::ImageModel icon_image =
-      GetIconImage(/*active=*/false, /*enabled=*/in_text_input_);
+      GetIconImage(/*active=*/false, /*enabled=*/GetEnabled());
   const int vertical_padding = (kTrayItemSize - icon_image.Size().height()) / 2;
   const int horizontal_padding =
       (kTrayItemSize - icon_image.Size().height()) / 2;
@@ -83,7 +94,6 @@ DictationButtonTray::DictationButtonTray(
   shell->AddShellObserver(this);
   shell->accessibility_controller()->AddObserver(this);
   shell->session_controller()->AddObserver(this);
-  shell->window_tree_host_manager()->input_method()->AddObserver(this);
 
   GetViewAccessibility().SetName(
       l10n_util::GetStringUTF16(IDS_ASH_DICTATION_BUTTON_ACCESSIBLE_NAME));
@@ -105,21 +115,15 @@ DictationButtonTray::~DictationButtonTray() {
   if (session_controller) {
     session_controller->RemoveObserver(this);
   }
-  auto* window_tree_host_manager = shell->window_tree_host_manager();
-  if (window_tree_host_manager) {
-    auto* input_method = window_tree_host_manager->input_method();
-    if (input_method) {
-      input_method->RemoveObserver(this);
-    }
-  }
+  input_method_observation_.Reset();
 }
 
 void DictationButtonTray::OnDictationStarted() {
-  UpdateIcon(/*dictation_active=*/true);
+  UpdateStateAndIcon(/*is_dictation_active=*/true, GetEnabled());
 }
 
 void DictationButtonTray::OnDictationEnded() {
-  UpdateIcon(/*dictation_active=*/false);
+  UpdateStateAndIcon(/*is_dictation_active=*/false, GetEnabled());
 }
 
 void DictationButtonTray::OnAccessibilityStatusChanged() {
@@ -187,8 +191,10 @@ void DictationButtonTray::UpdateOnSpeechRecognitionDownloadChanged(
   if (!visible_preferred())
     return;
 
-  bool download_in_progress = download_progress > 0 && download_progress < 100;
-  SetEnabled(!download_in_progress && in_text_input_);
+  const bool download_in_progress =
+      download_progress > 0 && download_progress < 100;
+  const bool is_dictation_enabled = !download_in_progress && in_text_input_;
+  UpdateStateAndIcon(IsDictationActive(), is_dictation_enabled);
   icon_->SetTooltipText(l10n_util::GetStringUTF16(
       download_in_progress
           ? IDS_ASH_ACCESSIBILITY_DICTATION_BUTTON_TOOLTIP_SODA_DOWNLOADING
@@ -229,32 +235,46 @@ void DictationButtonTray::OnDictationButtonPressed(const ui::Event& event) {
   CheckDictationStatusAndUpdateIcon();
 }
 
-void DictationButtonTray::UpdateIcon(bool dictation_active) {
-  icon_->SetImage(GetIconImage(dictation_active, GetEnabled()));
-  SetIsActive(dictation_active);
-}
-
 void DictationButtonTray::UpdateProgressIndicatorBounds() {
   if (progress_indicator_)
     progress_indicator_->layer()->SetBounds(GetBackgroundBounds());
 }
 
 void DictationButtonTray::UpdateVisibility() {
-  bool is_visible =
+  const bool is_visible =
       Shell::Get()->accessibility_controller()->dictation().enabled();
+  if (is_visible && !input_method_observation_.IsObserving()) {
+    input_method_observation_.Observe(
+        Shell::Get()->window_tree_host_manager()->input_method());
+  } else if (!is_visible) {
+    input_method_observation_.Reset();
+  }
+
   SetVisiblePreferred(is_visible);
 }
 
+void DictationButtonTray::UpdateStateAndIcon(bool is_dictation_active,
+                                             bool is_dictation_enabled) {
+  const bool should_update_icon = is_active() != is_dictation_active ||
+                                  GetEnabled() != is_dictation_enabled;
+  SetIsActive(is_dictation_active);
+  SetEnabled(is_dictation_enabled);
+
+  if (should_update_icon) {
+    icon_->SetImage(GetIconImage(is_dictation_active, is_dictation_enabled));
+  }
+}
+
 void DictationButtonTray::CheckDictationStatusAndUpdateIcon() {
-  UpdateIcon(Shell::Get()->accessibility_controller()->dictation_active());
+  UpdateStateAndIcon(IsDictationActive(), GetEnabled());
 }
 
 void DictationButtonTray::TextInputChanged(const ui::TextInputClient* client) {
   in_text_input_ =
       client && client->GetTextInputType() != ui::TEXT_INPUT_TYPE_NONE;
-  SetEnabled((download_progress_ <= 0 || download_progress_ >= 100) &&
-             in_text_input_);
-  CheckDictationStatusAndUpdateIcon();
+  const bool is_dictation_enabled =
+      (download_progress_ <= 0 || download_progress_ >= 100) && in_text_input_;
+  UpdateStateAndIcon(IsDictationActive(), is_dictation_enabled);
 }
 
 BEGIN_METADATA(DictationButtonTray)

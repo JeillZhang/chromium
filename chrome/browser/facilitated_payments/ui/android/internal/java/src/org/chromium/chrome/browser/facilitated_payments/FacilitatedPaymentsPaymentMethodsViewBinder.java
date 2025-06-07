@@ -5,13 +5,13 @@
 package org.chromium.chrome.browser.facilitated_payments;
 
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.AdditionalInfoProperties.SHOW_PAYMENT_METHOD_SETTINGS_CALLBACK;
-import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_ACCOUNT_DRAWABLE_ID;
-import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_ACCOUNT_ICON_BITMAP;
-import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_ACCOUNT_SUMMARY;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_ACCOUNT_ICON;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_ACCOUNT_NUMBER;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_ACCOUNT_PAYMENT_RAIL;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_ACCOUNT_TRANSACTION_LIMIT;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_ACCOUNT_TYPE;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_NAME;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.ON_BANK_ACCOUNT_CLICK_ACTION;
-import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.DISMISS_HANDLER;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.EwalletProperties.ACCOUNT_DISPLAY_NAME;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.EwalletProperties.EWALLET_DRAWABLE_ID;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.EwalletProperties.EWALLET_ICON_BITMAP;
@@ -25,8 +25,10 @@ import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymen
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.HeaderProperties.TITLE;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SCREEN;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SCREEN_VIEW_MODEL;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SURVIVES_NAVIGATION;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.ERROR_SCREEN;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.FOP_SELECTOR;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.PIX_ACCOUNT_LINKING_PROMPT;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.PROGRESS_SCREEN;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.UNINITIALIZED;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.UI_EVENT_LISTENER;
@@ -46,6 +48,7 @@ import android.widget.TextView;
 
 import androidx.appcompat.content.res.AppCompatResources;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.AdditionalInfoProperties;
 import org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.FooterProperties;
 import org.chromium.ui.modelutil.PropertyKey;
@@ -58,6 +61,7 @@ import org.chromium.ui.widget.TextViewWithClickableSpans;
  * Provides functions that map {@link FacilitatedPaymentsPaymentMethodsProperties} changes in a
  * {@link PropertyModel} to the suitable method in {@link FacilitatedPaymentsPaymentMethodsView}.
  */
+@NullMarked
 class FacilitatedPaymentsPaymentMethodsViewBinder {
     /**
      * Called whenever a property in the given model changes. It updates the given view accordingly.
@@ -85,29 +89,38 @@ class FacilitatedPaymentsPaymentMethodsViewBinder {
             switch (model.get(SCREEN)) {
                 case FOP_SELECTOR:
                     {
-                        FacilitatedPaymentsSequenceView fop_selector_screen =
+                        FacilitatedPaymentsSequenceView fopSelectorScreen =
                                 new FacilitatedPaymentsFopSelectorScreen();
-                        fop_selector_screen.setupView(view.getScreenHolder());
-                        view.setNextScreen(fop_selector_screen);
-                        model.set(SCREEN_VIEW_MODEL, fop_selector_screen.getModel());
+                        fopSelectorScreen.setupView(view.getScreenHolder());
+                        view.setNextScreen(fopSelectorScreen);
+                        model.set(SCREEN_VIEW_MODEL, fopSelectorScreen.getModel());
                         break;
                     }
                 case PROGRESS_SCREEN:
                     {
-                        FacilitatedPaymentsSequenceView progress_screen =
+                        FacilitatedPaymentsSequenceView progressScreen =
                                 new FacilitatedPaymentsProgressScreen();
-                        progress_screen.setupView(view.getScreenHolder());
-                        view.setNextScreen(progress_screen);
-                        model.set(SCREEN_VIEW_MODEL, progress_screen.getModel());
+                        progressScreen.setupView(view.getScreenHolder());
+                        view.setNextScreen(progressScreen);
+                        model.set(SCREEN_VIEW_MODEL, progressScreen.getModel());
                         break;
                     }
                 case ERROR_SCREEN:
                     {
-                        FacilitatedPaymentsSequenceView error_screen =
+                        FacilitatedPaymentsSequenceView errorScreen =
                                 new FacilitatedPaymentsErrorScreen();
-                        error_screen.setupView(view.getScreenHolder());
-                        view.setNextScreen(error_screen);
-                        model.set(SCREEN_VIEW_MODEL, error_screen.getModel());
+                        errorScreen.setupView(view.getScreenHolder());
+                        view.setNextScreen(errorScreen);
+                        model.set(SCREEN_VIEW_MODEL, errorScreen.getModel());
+                        break;
+                    }
+                case PIX_ACCOUNT_LINKING_PROMPT:
+                    {
+                        FacilitatedPaymentsSequenceView pixAccountLinkingPrompt =
+                                new PixAccountLinkingPrompt();
+                        pixAccountLinkingPrompt.setupView(view.getScreenHolder());
+                        view.setNextScreen(pixAccountLinkingPrompt);
+                        model.set(SCREEN_VIEW_MODEL, pixAccountLinkingPrompt.getModel());
                         break;
                     }
                 default:
@@ -116,10 +129,10 @@ class FacilitatedPaymentsPaymentMethodsViewBinder {
         } else if (propertyKey == SCREEN_VIEW_MODEL) {
             // This property contains the model to manipulate the {@link #SCREEN} view. No need to
             // update the {@code view} for this property. Intentional fall-through.
-        } else if (propertyKey == DISMISS_HANDLER) {
-            view.setDismissHandler(model.get(DISMISS_HANDLER));
         } else if (propertyKey == UI_EVENT_LISTENER) {
             view.setUiEventListener(model.get(UI_EVENT_LISTENER));
+        } else if (propertyKey == SURVIVES_NAVIGATION) {
+            view.setSurvivesNavigation(model.get(SURVIVES_NAVIGATION));
         } else {
             assert false : "Unhandled update to property:" + propertyKey;
         }
@@ -237,10 +250,11 @@ class FacilitatedPaymentsPaymentMethodsViewBinder {
                     view.findViewById(R.id.facilitated_payments_continue_button_title);
             buttonTitleText.setText(R.string.autofill_payment_method_continue_button);
         } else if (propertyKey == BANK_NAME
-                || propertyKey == BANK_ACCOUNT_SUMMARY
+                || propertyKey == BANK_ACCOUNT_PAYMENT_RAIL
+                || propertyKey == BANK_ACCOUNT_TYPE
+                || propertyKey == BANK_ACCOUNT_NUMBER
                 || propertyKey == BANK_ACCOUNT_TRANSACTION_LIMIT
-                || propertyKey == BANK_ACCOUNT_DRAWABLE_ID
-                || propertyKey == BANK_ACCOUNT_ICON_BITMAP
+                || propertyKey == BANK_ACCOUNT_ICON
                 || propertyKey == ACCOUNT_DISPLAY_NAME
                 || propertyKey == EWALLET_ICON_BITMAP
                 || propertyKey == EWALLET_NAME

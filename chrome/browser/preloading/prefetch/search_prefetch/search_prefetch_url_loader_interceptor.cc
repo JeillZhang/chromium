@@ -10,7 +10,9 @@
 #include <utility>
 
 #include "base/functional/callback.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/trace_event/trace_event.h"
+#include "chrome/browser/preloading/prefetch/search_prefetch/field_trial_settings.h"
 #include "chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_service.h"
 #include "chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_service_factory.h"
 #include "chrome/browser/preloading/prefetch/search_prefetch/search_prefetch_url_loader.h"
@@ -118,9 +120,6 @@ SearchPrefetchURLLoaderInterceptor::MaybeCreateLoaderForRequest(
   }
 
   if (is_prerender_main_frame_navigation) {
-    if (!prerender_utils::IsSearchSuggestionPrerenderEnabled()) {
-      return {};
-    }
     return service->MaybeCreateResponseReader(tentative_resource_request);
   }
 
@@ -128,7 +127,16 @@ SearchPrefetchURLLoaderInterceptor::MaybeCreateLoaderForRequest(
   auto handler =
       service->TakePrefetchResponseFromMemoryCache(tentative_resource_request);
   if (handler) {
+    // Track whether the prefetch response is served to a warm-up request.
+    base::UmaHistogramBoolean(
+        "Omnibox.SearchPrefetch.ServedToOnlyFromCacheRequest",
+        tentative_resource_request.load_flags & net::LOAD_ONLY_FROM_CACHE
+            ? true
+            : false);
     return handler;
+  }
+  if (IsNoVarySearchDiskCacheEnabled()) {
+    return {};
   }
   if (tentative_resource_request.load_flags & net::LOAD_SKIP_CACHE_VALIDATION) {
     return service->TakePrefetchResponseFromDiskCache(
@@ -142,7 +150,8 @@ SearchPrefetchURLLoaderInterceptor::MaybeProxyRequestHandler(
     content::BrowserContext* browser_context,
     SearchPrefetchURLLoader::RequestHandler prefetched_loader_handler) {
   network::URLLoaderFactoryBuilder factory_builder;
-
+  TRACE_EVENT("loading",
+              "SearchPrefetchURLLoaderInterceptor::MaybeProxyRequestHandler");
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   content::WebContents* web_contents =
       content::WebContents::FromFrameTreeNodeId(frame_tree_node_id_);

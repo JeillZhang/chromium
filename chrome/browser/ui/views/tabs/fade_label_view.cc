@@ -23,7 +23,7 @@ void FadeLabel::SetData(const FadeLabelViewData& data) {
   data_ = data;
   std::u16string text = data.text;
   const bool is_filename = data.is_filename;
-  SetElideBehavior(is_filename ? gfx::NO_ELIDE : gfx::ELIDE_TAIL);
+  SetElideBehavior(is_filename ? gfx::NO_ELIDE : data.elide);
   if (is_filename) {
     text = TruncateFilenameToTwoLines(text);
   }
@@ -83,9 +83,9 @@ std::u16string_view FadeLabelView::GetText() const {
   return primary_view_->GetText();
 }
 
-void FadeLabelView::SetEnabledColorId(ui::ColorId color) {
-  primary_view_->SetEnabledColorId(color);
-  fade_out_view_->SetEnabledColorId(color);
+void FadeLabelView::SetEnabledColor(ui::ColorId color) {
+  primary_view_->SetEnabledColor(color);
+  fade_out_view_->SetEnabledColor(color);
 }
 
 using FadeWrapper_Label_FadeLabelViewData =

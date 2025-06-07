@@ -5,14 +5,15 @@
 #include "chrome/browser/enterprise/data_protection/data_protection_navigation_controller.h"
 
 #include "base/feature_list.h"
+#include "chrome/browser/enterprise/data_protection/data_protection_features.h"
 #include "chrome/browser/enterprise/data_protection/data_protection_navigation_observer.h"
 #include "chrome/browser/enterprise/watermark/settings.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/tabs/public/tab_interface.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "components/enterprise/watermarking/content/watermark_text_container.h"
 #include "components/enterprise/watermarking/watermark.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents.h"
 
 namespace {
@@ -44,10 +45,6 @@ namespace enterprise_data_protection {
 DataProtectionNavigationController::DataProtectionNavigationController(
     tabs::TabInterface* tab_interface)
     : content::WebContentsObserver(nullptr), tab_interface_(tab_interface) {
-  if (!IsDataProtectionEnabled(
-          tab_interface->GetBrowserWindowInterface()->GetProfile())) {
-    return;
-  }
   Observe(tab_interface->GetContents());
   tab_subscriptions_.push_back(tab_interface_->RegisterDidActivate(
       base::BindRepeating(&DataProtectionNavigationController::TabForegrounded,
@@ -97,13 +94,18 @@ void DataProtectionNavigationController::DidStartNavigation(
     return;
   }
 
-  enterprise_data_protection::DataProtectionNavigationObserver::
-      CreateForNavigationIfNeeded(
-          browser->profile(), navigation_handle,
+  auto navigation_observer = enterprise_data_protection::
+      DataProtectionNavigationObserver::CreateForNavigationIfNeeded(
+          this, browser->profile(), navigation_handle,
           base::BindOnce(&DataProtectionNavigationController::
                              ApplyDataProtectionSettingsOrDelayIfEmpty,
                          weak_ptr_factory_.GetWeakPtr(),
                          web_contents()->GetWeakPtr()));
+
+  if (navigation_observer) {
+    navigation_observers_.emplace(navigation_handle->GetNavigationId(),
+                                  std::move(navigation_observer));
+  }
 }
 
 void DataProtectionNavigationController::
@@ -249,6 +251,13 @@ void DataProtectionNavigationController::
     clear_screenshot_protection_on_page_load_ = false;
   }
 #endif
+}
+
+void DataProtectionNavigationController::Cleanup(int64_t navigation_id) {
+  // Not all navigation IDs passed to this cleanup will have been added to the
+  // map, DataProtectionNavigationObserver tracks all navigations that happen
+  // during its lifetime.
+  navigation_observers_.erase(navigation_id);
 }
 
 // Called when the associated tab will enter the background.

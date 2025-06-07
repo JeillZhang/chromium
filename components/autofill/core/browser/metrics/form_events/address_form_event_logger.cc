@@ -47,6 +47,10 @@ CategoryResolvedKeyMetricBucket ProfileCategoriesToMetricBucket(
       return CategoryResolvedKeyMetricBucket::kAccountChrome;
     case AutofillProfileRecordTypeCategory::kAccountNonChrome:
       return CategoryResolvedKeyMetricBucket::kAccountNonChrome;
+    case AutofillProfileRecordTypeCategory::kAccountHome:
+      return CategoryResolvedKeyMetricBucket::kAccountHome;
+    case AutofillProfileRecordTypeCategory::kAccountWork:
+      return CategoryResolvedKeyMetricBucket::kAccountWork;
   }
 }
 
@@ -231,8 +235,7 @@ void AddressFormEventLogger::LogAutofillAddressOnTypingCorrectnessMetrics(
       base::MakeFlatMap<FieldGlobalId, std::u16string>(
           submitted_form_fields, {},
           [](const std::unique_ptr<AutofillField>& field) {
-            return std::make_pair(field->global_id(),
-                                  field->value(ValueSemantics::kCurrent));
+            return std::make_pair(field->global_id(), field->value());
           });
   // Used to delete fields for which correctness was logged from
   // `autofill_on_typing_value_used_`.

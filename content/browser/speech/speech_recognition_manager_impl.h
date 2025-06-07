@@ -61,7 +61,7 @@ class CONTENT_EXPORT SpeechRecognitionManagerImpl
   // issued when it is not created yet or destroyed (by BrowserMainLoop).
   static SpeechRecognitionManagerImpl* GetInstance();
 
-  static bool IsOnDeviceSpeechRecognitionAvailable(
+  static bool IsOnDeviceSpeechRecognitionInstalled(
       const SpeechRecognitionSessionConfig& config);
 
   // SpeechRecognitionManager implementation.
@@ -106,6 +106,16 @@ class CONTENT_EXPORT SpeechRecognitionManagerImpl
   void OnAudioLevelsChange(int session_id,
                            float volume,
                            float noise_volume) override;
+
+  int CreateSession(
+      const SpeechRecognitionSessionConfig& config,
+      mojo::PendingReceiver<media::mojom::SpeechRecognitionSession>
+          session_receiver,
+      mojo::PendingRemote<media::mojom::SpeechRecognitionSessionClient>
+          client_remote,
+      std::optional<SpeechRecognitionAudioForwarderConfig>
+          audio_forwarder_config,
+      bool can_render_frame_use_on_device);
 
   SpeechRecognitionManagerDelegate* delegate() const { return delegate_.get(); }
 

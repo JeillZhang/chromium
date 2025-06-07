@@ -24,11 +24,11 @@
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
+#include "gpu/command_buffer/client/test_shared_image_interface.h"
 #include "gpu/command_buffer/common/mailbox_holder.h"
 #include "media/base/color_plane_layout.h"
 #include "media/base/limits.h"
 #include "media/base/simple_sync_token_client.h"
-#include "media/video/fake_gpu_memory_buffer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/libyuv/include/libyuv.h"
 
@@ -75,7 +75,7 @@ media::VideoFrameMetadata GetFullVideoFrameMetadata() {
   metadata.allow_overlay = true;
   metadata.copy_required = true;
   metadata.end_of_stream = true;
-  metadata.texture_owner = true;
+  metadata.in_surface_view = true;
   metadata.wants_promotion_hint = true;
   metadata.protected_video = true;
   metadata.hw_protected = true;
@@ -127,7 +127,7 @@ void VerifyVideoFrameMetadataEquality(const media::VideoFrameMetadata& a,
   EXPECT_EQ(a.reference_time, b.reference_time);
   EXPECT_EQ(a.read_lock_fences_enabled, b.read_lock_fences_enabled);
   EXPECT_EQ(a.transformation, b.transformation);
-  EXPECT_EQ(a.texture_owner, b.texture_owner);
+  EXPECT_EQ(a.in_surface_view, b.in_surface_view);
   EXPECT_EQ(a.wants_promotion_hint, b.wants_promotion_hint);
   EXPECT_EQ(a.protected_video, b.protected_video);
   EXPECT_EQ(a.hw_protected, b.hw_protected);
@@ -149,8 +149,6 @@ void VerifyVideoFrameMetadataEquality(const media::VideoFrameMetadata& a,
 }  // namespace
 
 namespace media {
-
-using base::MD5DigestToBase16;
 
 // Helper function that initializes a YV12 frame with white and black scan
 // lines based on the |white_to_black| parameter.  If 0, then the entire
@@ -242,12 +240,7 @@ void ExpectFrameExtents(VideoPixelFormat format, const char* expected_hash) {
            frame->stride(plane) * frame->rows(plane));
   }
 
-  base::MD5Context context;
-  base::MD5Init(&context);
-  VideoFrame::HashFrameForTesting(&context, *frame.get());
-  base::MD5Digest digest;
-  base::MD5Final(&digest, &context);
-  EXPECT_EQ(MD5DigestToBase16(digest), expected_hash);
+  EXPECT_EQ(VideoFrame::HexHashOfFrameForTesting(*frame.get()), expected_hash);
 }
 
 TEST(VideoFrame, CreateFrame) {
@@ -268,21 +261,15 @@ TEST(VideoFrame, CreateFrame) {
     InitializeYV12Frame(frame.get(), 0.0f);
     ExpectFrameColor(frame.get(), 0xFF000000);
   }
-  base::MD5Digest digest;
-  base::MD5Context context;
-  base::MD5Init(&context);
-  VideoFrame::HashFrameForTesting(&context, *frame.get());
-  base::MD5Final(&digest, &context);
-  EXPECT_EQ(MD5DigestToBase16(digest), "9065c841d9fca49186ef8b4ef547e79b");
+  EXPECT_EQ(VideoFrame::HexHashOfFrameForTesting(*frame.get()),
+            "48a14002453cf6ff6719661fc0715cbf1978214c182d1b4bbb9afb934051d630");
   {
     SCOPED_TRACE("");
     InitializeYV12Frame(frame.get(), 1.0f);
     ExpectFrameColor(frame.get(), 0xFFFFFFFF);
   }
-  base::MD5Init(&context);
-  VideoFrame::HashFrameForTesting(&context, *frame.get());
-  base::MD5Final(&digest, &context);
-  EXPECT_EQ(MD5DigestToBase16(digest), "911991d51438ad2e1a40ed5f6fc7c796");
+  EXPECT_EQ(VideoFrame::HexHashOfFrameForTesting(*frame.get()),
+            "a08db3e63e9b8ca723142d7fb734716a3a2af9f0e655271eb5acc9d2c2088dbb");
 
   // Test single planar frame.
   frame = VideoFrame::CreateFrame(PIXEL_FORMAT_ARGB, size, gfx::Rect(size),
@@ -538,24 +525,25 @@ TEST(VideoFrame, WrapSharedMemory) {
   EXPECT_EQ(frame->data(VideoFrame::Plane::kY)[0], 0xff);
 }
 
-TEST(VideoFrame, WrapExternalGpuMemoryBuffer) {
+TEST(VideoFrame, WrapMappableSharedImage) {
   gfx::Size coded_size = gfx::Size(256, 256);
   gfx::Rect visible_rect(coded_size);
   auto timestamp = base::Milliseconds(1);
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-  const uint64_t modifier = 0x001234567890abcdULL;
-#else
-  const uint64_t modifier = gfx::NativePixmapHandle::kNoModifier;
-#endif
-  std::unique_ptr<gfx::GpuMemoryBuffer> gmb =
-      std::make_unique<FakeGpuMemoryBuffer>(
-          coded_size, gfx::BufferFormat::YUV_420_BIPLANAR, modifier);
-  gfx::GpuMemoryBuffer* gmb_raw_ptr = gmb.get();
-  scoped_refptr<gpu::ClientSharedImage> shared_image =
-      gpu::ClientSharedImage::CreateForTesting();
-  auto frame = VideoFrame::WrapExternalGpuMemoryBuffer(
-      visible_rect, coded_size, std::move(gmb), shared_image, gpu::SyncToken(),
-      base::DoNothing(), timestamp);
+  scoped_refptr<gpu::TestSharedImageInterface> test_sii =
+      base::MakeRefCounted<gpu::TestSharedImageInterface>();
+
+  // Setting some default usage in order to get a mappable shared image.
+  const auto si_usage = gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY |
+                        gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
+
+  auto shared_image = test_sii->CreateSharedImage(
+      {viz::MultiPlaneFormat::kNV12, coded_size, gfx::ColorSpace(),
+       gpu::SharedImageUsageSet(si_usage), "VideoFrameTest"},
+      gpu::kNullSurfaceHandle, gfx::BufferUsage::GPU_READ);
+  auto mailbox = shared_image->mailbox();
+  auto frame = VideoFrame::WrapMappableSharedImage(
+      std::move(shared_image), test_sii->GenVerifiedSyncToken(),
+      base::DoNothing(), visible_rect, coded_size, timestamp);
 
   EXPECT_EQ(frame->layout().format(), PIXEL_FORMAT_NV12);
   EXPECT_EQ(frame->layout().coded_size(), coded_size);
@@ -565,15 +553,13 @@ TEST(VideoFrame, WrapExternalGpuMemoryBuffer) {
     EXPECT_EQ(frame->layout().planes()[i].stride,
               static_cast<size_t>(coded_size.width()));
   }
-  EXPECT_EQ(frame->layout().modifier(), modifier);
   EXPECT_EQ(frame->storage_type(), VideoFrame::STORAGE_GPU_MEMORY_BUFFER);
-  EXPECT_EQ(frame->GetGpuMemoryBufferForTesting(), gmb_raw_ptr);
   EXPECT_EQ(frame->coded_size(), coded_size);
   EXPECT_EQ(frame->visible_rect(), visible_rect);
   EXPECT_EQ(frame->timestamp(), timestamp);
   EXPECT_EQ(frame->HasSharedImage(), true);
   EXPECT_EQ(frame->HasReleaseMailboxCB(), true);
-  EXPECT_EQ(frame->shared_image()->mailbox(), shared_image->mailbox());
+  EXPECT_EQ(frame->shared_image()->mailbox(), mailbox);
 }
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -643,8 +629,12 @@ TEST(VideoFrame, WrapExternalDmabufs) {
 TEST(VideoFrame, CheckFrameExtents) {
   // Each call consists of a Format and the expected hash of all
   // planes if filled with kFillByte (defined in ExpectFrameExtents).
-  ExpectFrameExtents(PIXEL_FORMAT_YV12, "8e5d54cb23cd0edca111dd35ffb6ff05");
-  ExpectFrameExtents(PIXEL_FORMAT_I422, "cce408a044b212db42a10dfec304b3ef");
+  ExpectFrameExtents(
+      PIXEL_FORMAT_YV12,
+      "cdf392577e7dced37c10e986b82be9aaabdfe32a3e8c1e132c9986a533447740");
+  ExpectFrameExtents(
+      PIXEL_FORMAT_I422,
+      "df513a840bbb43915da7b3d00c1191ce3f46d6e657db5ab7f65e3f879c6eded0");
 }
 
 static void TextureCallback(gpu::SyncToken* called_sync_token,
@@ -771,7 +761,6 @@ TEST(VideoFrame, AllocationSize_OddSize) {
   for (unsigned int i = 1u; i <= PIXEL_FORMAT_MAX; ++i) {
     const VideoPixelFormat format = static_cast<VideoPixelFormat>(i);
     switch (format) {
-      case PIXEL_FORMAT_YUV444P9:
       case PIXEL_FORMAT_YUV444P10:
       case PIXEL_FORMAT_YUV444P12:
       case PIXEL_FORMAT_P410LE:
@@ -791,7 +780,6 @@ TEST(VideoFrame, AllocationSize_OddSize) {
         EXPECT_EQ(84u, VideoFrame::AllocationSize(format, size))
             << VideoPixelFormatToString(format);
         break;
-      case PIXEL_FORMAT_YUV422P9:
       case PIXEL_FORMAT_YUV422P10:
       case PIXEL_FORMAT_YUV422P12:
       case PIXEL_FORMAT_P210LE:
@@ -804,7 +792,6 @@ TEST(VideoFrame, AllocationSize_OddSize) {
         EXPECT_EQ(45u, VideoFrame::AllocationSize(format, size))
             << VideoPixelFormatToString(format);
         break;
-      case PIXEL_FORMAT_YUV420P9:
       case PIXEL_FORMAT_YUV420P10:
       case PIXEL_FORMAT_YUV420P12:
       case PIXEL_FORMAT_P010LE:
@@ -862,7 +849,7 @@ TEST(VideoFrame, NoFrameSizeExceedsUint32) {
   const auto max_size = gfx::Size(max_dimension, max_dimension);
   for (unsigned int i = 1u; i <= PIXEL_FORMAT_MAX; ++i) {
     // Deprecated pixel formats.
-    if (i == 13 || i == 15 || i == 25) {
+    if (i == 13 || i == 15 || i == 16 || i == 18 || i == 20 || i == 25) {
       continue;
     }
 

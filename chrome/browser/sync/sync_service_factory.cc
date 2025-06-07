@@ -7,16 +7,17 @@
 #include <string>
 #include <utility>
 
+#include "base/check_is_test.h"
 #include "base/containers/extend.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/android/webapk/webapk_sync_service_factory.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/collaboration/collaboration_service_factory.h"
 #include "chrome/browser/commerce/product_specifications/product_specifications_service_factory.h"
 #include "chrome/browser/consent_auditor/consent_auditor_factory.h"
 #include "chrome/browser/data_sharing/data_sharing_service_factory.h"
@@ -68,6 +69,7 @@
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/browser_sync/common_controller_builder.h"
+#include "components/collaboration/public/collaboration_service.h"
 #include "components/password_manager/core/browser/sharing/password_receiver_service.h"
 #include "components/plus_addresses/webdata/plus_address_webdata_service.h"
 #include "components/saved_tab_groups/public/features.h"
@@ -75,6 +77,7 @@
 #include "components/spellcheck/browser/pref_names.h"
 #include "components/sync/base/command_line_switches.h"
 #include "components/sync/base/features.h"
+#include "components/sync/engine/net/http_bridge.h"
 #include "components/sync/service/sync_service_impl.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "components/variations/service/google_groups_manager.h"
@@ -203,6 +206,8 @@ syncer::DataTypeController::TypeVector CreateCommonControllers(
       LocalOrSyncableBookmarkSyncServiceFactory::GetForProfile(profile),
       AccountBookmarkSyncServiceFactory::GetForProfile(profile));
   builder.SetConsentAuditor(ConsentAuditorFactory::GetForProfile(profile));
+  builder.SetCollaborationService(
+      collaboration::CollaborationServiceFactory::GetForProfile(profile));
   builder.SetDataSharingService(
       data_sharing::DataSharingServiceFactory::GetForProfile(profile));
   builder.SetDeviceInfoSyncService(
@@ -357,7 +362,13 @@ std::unique_ptr<syncer::SyncClient> BuildSyncClient(Profile* profile) {
 }
 
 std::unique_ptr<KeyedService> BuildSyncService(
+    std::optional<syncer::CreateHttpPostProviderFactory>
+        create_http_post_provider_factory_for_test,
     content::BrowserContext* context) {
+  if (create_http_post_provider_factory_for_test.has_value()) {
+    CHECK_IS_TEST();
+  }
+
   syncer::SyncServiceImpl::InitParams init_params;
 
   Profile* profile = Profile::FromBrowserContext(context);
@@ -370,6 +381,16 @@ std::unique_ptr<KeyedService> BuildSyncService(
   init_params.sync_client = BuildSyncClient(profile);
   init_params.url_loader_factory = profile->GetDefaultStoragePartition()
                                        ->GetURLLoaderFactoryForBrowserProcess();
+  init_params.create_http_post_provider_factory =
+      std::move(create_http_post_provider_factory_for_test)
+          .value_or(base::BindRepeating(
+              [](const std::string& user_agent,
+                 std::unique_ptr<network::PendingSharedURLLoaderFactory>
+                     pending_url_loader_factory)
+                  -> std::unique_ptr<syncer::HttpPostProviderFactory> {
+                return std::make_unique<syncer::HttpBridgeFactory>(
+                    user_agent, std::move(pending_url_loader_factory));
+              }));
   init_params.network_connection_tracker =
       content::GetNetworkConnectionTracker();
   init_params.channel = chrome::GetChannel();
@@ -439,6 +460,9 @@ std::unique_ptr<KeyedService> BuildSyncService(
   SendTabToSelfSyncServiceFactory::GetForProfile(profile)
       ->OnSyncServiceInitialized(sync_service.get());
 
+  collaboration::CollaborationServiceFactory::GetForProfile(profile)
+      ->OnSyncServiceInitialized(sync_service.get());
+
   // Allow sync_preferences/ components to use SyncService.
   sync_preferences::PrefServiceSyncable* pref_service =
       PrefServiceSyncableFromProfile(profile);
@@ -493,6 +517,7 @@ SyncServiceFactory::SyncServiceFactory()
   DependsOn(BookmarkModelFactory::GetInstance());
   DependsOn(BookmarkUndoServiceFactory::GetInstance());
   DependsOn(browser_sync::UserEventServiceFactory::GetInstance());
+  DependsOn(collaboration::CollaborationServiceFactory::GetInstance());
   DependsOn(ConsentAuditorFactory::GetInstance());
   DependsOn(DataTypeStoreServiceFactory::GetInstance());
   DependsOn(DeviceInfoSyncServiceFactory::GetInstance());
@@ -562,7 +587,8 @@ SyncServiceFactory::~SyncServiceFactory() = default;
 std::unique_ptr<KeyedService>
 SyncServiceFactory::BuildServiceInstanceForBrowserContext(
     content::BrowserContext* context) const {
-  return BuildSyncService(context);
+  return BuildSyncService(
+      /*create_http_post_provider_factory_for_test=*/std::nullopt, context);
 }
 
 bool SyncServiceFactory::ServiceIsNULLWhileTesting() const {
@@ -607,8 +633,11 @@ SyncServiceFactory::GetAllSyncServices() {
 
 // static
 BrowserContextKeyedServiceFactory::TestingFactory
-SyncServiceFactory::GetDefaultFactory() {
-  return base::BindRepeating(&BuildSyncService);
+SyncServiceFactory::GetDefaultFactory(
+    std::optional<syncer::CreateHttpPostProviderFactory>
+        create_http_post_provider_factory_for_test) {
+  return base::BindRepeating(
+      &BuildSyncService, std::move(create_http_post_provider_factory_for_test));
 }
 
 #if BUILDFLAG(IS_ANDROID)

@@ -149,7 +149,8 @@ Response BrowserHandler::SetWindowBounds(
           "restore it to normal state first.");
     }
     window->GetExclusiveAccessContext()->EnterFullscreen(
-        GURL(), EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE, display::kInvalidDisplayId);
+        url::Origin(), EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE,
+        display::kInvalidDisplayId);
   } else if (window_state == "maximized") {
     if (window->IsMinimized() || window->IsFullscreen()) {
       return Response::ServerError(
@@ -198,7 +199,9 @@ protocol::Response BrowserHandler::ExecuteBrowserCommand(
           {protocol::Browser::BrowserCommandIdEnum::OpenTabSearch,
            IDC_TAB_SEARCH},
           {protocol::Browser::BrowserCommandIdEnum::CloseTabSearch,
-           IDC_TAB_SEARCH_CLOSE}};
+           IDC_TAB_SEARCH_CLOSE},
+          {protocol::Browser::BrowserCommandIdEnum::OpenGlic, IDC_OPEN_GLIC},
+      };
   if (command_id_map.count(command_id) == 0) {
     return Response::InvalidParams("Invalid BrowserCommandId: " + command_id);
   }

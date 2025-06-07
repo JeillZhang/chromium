@@ -555,7 +555,7 @@ ui::MenuModel* TextfieldTest::GetContextMenuModel() {
 }
 
 void TextfieldTest::MockAXModeAdded() {
-  ui::AXMode mode = ui::AXPlatformForTest::GetInstance().GetProcessMode();
+  ui::AXMode mode = ui::AXPlatformForTest::GetInstance().GetAccessibilityMode();
   widget_->OnAXModeAdded(mode);
 }
 
@@ -1807,11 +1807,9 @@ TEST_F(TextfieldTest, OnKeyPressBinding) {
 
     ~TestDelegate() override = default;
 
-    bool GetTextEditCommandsForEvent(
-        const ui::Event& event,
-        int text_flags,
-        std::vector<ui::TextEditCommandAuraLinux>* commands) override {
-      return false;
+    ui::TextEditCommand GetTextEditCommandForEvent(const ui::Event& event,
+                                                   int text_flags) override {
+      return ui::TextEditCommand::INVALID_COMMAND;
     }
   };
 
@@ -3765,16 +3763,16 @@ TEST_F(TextfieldTest, SelectionClipboard_Password) {
 
 // Long_Press gesture in Textfield can initiate a drag and drop now.
 TEST_F(TextfieldTest, TestLongPressInitiatesDragDrop) {
+  // Enable touch-drag-drop to make long press effective.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(::features::kTouchDragAndDrop);
+
   InitTextfield();
   textfield_->SetText(u"Hello string world");
 
   // Ensure the textfield will provide selected text for drag data.
   textfield_->SetSelectedRange(gfx::Range(6, 12));
   const gfx::Point kStringPoint(GetCursorPositionX(9), GetCursorYForTesting());
-
-  // Enable touch-drag-drop to make long press effective.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kEnableTouchDragDrop);
 
   // Create a long press event in the selected region should start a drag.
   ui::GestureEvent long_press = CreateTestGestureEvent(
@@ -4292,7 +4290,7 @@ TEST_F(TextfieldTest, InitialAccessibilityProperties) {
 TEST_F(TextfieldTest, SetAccessibleNameNotifiesAccessibilityEvent) {
   InitTextfield();
   std::u16string test_tooltip_text = u"Test Accessible Name";
-  test::AXEventCounter counter(views::AXEventManager::Get());
+  test::AXEventCounter counter(views::AXUpdateNotifier::Get());
   EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kTextChanged));
   textfield_->GetViewAccessibility().SetName(test_tooltip_text);
   EXPECT_EQ(1, counter.GetCount(ax::mojom::Event::kTextChanged));
@@ -4309,6 +4307,17 @@ TEST_F(TextfieldTest, SetAccessibleNameNotifiesAccessibilityEvent) {
   // for which there are other `NameFrom` values). `NameFrom::kContents` is
   // typically not an appropriate value.
   EXPECT_EQ(data.GetNameFrom(), ax::mojom::NameFrom::kAttribute);
+}
+
+// Changing the value of the textfield should trigger a kTextChanged event.
+TEST_F(TextfieldTest, SetValueAccessibilityEvents) {
+  InitTextfield();
+  std::u16string value = u"hello world";
+  test::AXEventCounter counter(views::AXUpdateNotifier::Get());
+  EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kTextChanged));
+  textfield_->GetViewAccessibility().SetValue(value);
+  EXPECT_EQ(1, counter.GetCount(ax::mojom::Event::kTextChanged));
+  EXPECT_EQ(value, textfield_->GetViewAccessibility().GetValue());
 }
 
 #if BUILDFLAG(IS_WIN)

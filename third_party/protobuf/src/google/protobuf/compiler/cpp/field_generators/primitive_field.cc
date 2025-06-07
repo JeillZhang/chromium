@@ -11,7 +11,6 @@
 
 #include <cstddef>
 #include <memory>
-#include <string>
 #include <vector>
 
 #include "absl/log/absl_check.h"
@@ -26,6 +25,10 @@
 #include "google/protobuf/descriptor.pb.h"
 #include "google/protobuf/io/printer.h"
 #include "google/protobuf/wire_format.h"
+#include "google/protobuf/wire_format_lite.h"
+
+// Must be included last.
+#include "google/protobuf/port_def.inc"
 
 namespace google {
 namespace protobuf {
@@ -246,8 +249,8 @@ void SingularPrimitive::GenerateSerializeWithCachedSizesToArray(
     // template parameter that handles the EnsureSpace and the writing
     // of the tag+value to the array
     p->Emit(R"cc(
-      target = ::$proto_ns$::internal::WireFormatLite::
-          Write$declared_type$ToArrayWithField<$number$>(
+      target =
+          $pbi$::WireFormatLite::Write$declared_type$ToArrayWithField<$number$>(
               stream, this_._internal_$name$(), target);
     )cc");
   } else {
@@ -454,11 +457,11 @@ void RepeatedPrimitive::GenerateAccessorDeclarations(io::Printer* p) const {
     $DEPRECATED$ void $set_name$(int index, $Type$ value);
     $DEPRECATED$ void $add_name$($Type$ value);
     $DEPRECATED$ const $pb$::RepeatedField<$Type$>& $name$() const;
-    $DEPRECATED$ $pb$::RepeatedField<$Type$>* $mutable_name$();
+    $DEPRECATED$ $pb$::RepeatedField<$Type$>* $nonnull$ $mutable_name$();
 
     private:
     const $pb$::RepeatedField<$Type$>& $_internal_name$() const;
-    $pb$::RepeatedField<$Type$>* $_internal_mutable_name$();
+    $pb$::RepeatedField<$Type$>* $nonnull$ $_internal_mutable_name$();
 
     public:
   )cc");
@@ -501,7 +504,7 @@ void RepeatedPrimitive::GenerateInlineAccessorDefinitions(
     }
   )cc");
   p->Emit(R"cc(
-    inline $pb$::RepeatedField<$Type$>* $Msg$::mutable_$name$()
+    inline $pb$::RepeatedField<$Type$>* $nonnull$ $Msg$::mutable_$name$()
         ABSL_ATTRIBUTE_LIFETIME_BOUND {
       $WeakDescriptorSelfPin$;
       $annotate_mutable_list$;
@@ -518,7 +521,8 @@ void RepeatedPrimitive::GenerateInlineAccessorDefinitions(
         $TsanDetectConcurrentRead$;
         return *$field_$;
       }
-      inline $pb$::RepeatedField<$Type$>* $Msg$::_internal_mutable_$name_internal$() {
+      inline $pb$::RepeatedField<$Type$>* $nonnull$
+      $Msg$::_internal_mutable_$name_internal$() {
         $TsanDetectConcurrentRead$;
         $PrepareSplitMessageForWrite$;
         if ($field_$.IsDefault()) {
@@ -534,7 +538,8 @@ void RepeatedPrimitive::GenerateInlineAccessorDefinitions(
         $TsanDetectConcurrentRead$;
         return $field_$;
       }
-      inline $pb$::RepeatedField<$Type$>* $Msg$::_internal_mutable_$name_internal$() {
+      inline $pb$::RepeatedField<$Type$>* $nonnull$
+      $Msg$::_internal_mutable_$name_internal$() {
         $TsanDetectConcurrentRead$;
         return &$field_$;
       }
@@ -608,7 +613,7 @@ void RepeatedPrimitive::GenerateByteSize(io::Printer* p) const {
              auto fixed_size = FixedSize(field_->type());
              if (fixed_size.has_value()) {
                p->Emit({{"kFixed", *fixed_size}}, R"cc(
-                 std::size_t{$kFixed$} *
+                 ::size_t{$kFixed$} *
                      ::_pbi::FromIntSize(this_._internal_$name$_size());
                )cc");
              } else {
@@ -625,19 +630,19 @@ void RepeatedPrimitive::GenerateByteSize(io::Printer* p) const {
                  data_size == 0
                      ? 0
                      : $kTagBytes$ + ::_pbi::WireFormatLite::Int32Size(
-                                         static_cast<int32_t>(data_size));
+                                         static_cast<::int32_t>(data_size));
                )cc");
              } else {
                p->Emit(R"cc(
-                 std::size_t{$kTagBytes$} *
+                 ::size_t{$kTagBytes$} *
                      ::_pbi::FromIntSize(this_._internal_$name$_size());
                )cc");
              }
            }},
       },
       R"cc(
-        std::size_t data_size = $data_size$;
-        std::size_t tag_size = $tag_size$;
+        ::size_t data_size = $data_size$;
+        ::size_t tag_size = $tag_size$;
         total_size += tag_size + data_size;
       )cc");
 }
@@ -659,3 +664,5 @@ std::unique_ptr<FieldGeneratorBase> MakeRepeatedPrimitiveGenerator(
 }  // namespace compiler
 }  // namespace protobuf
 }  // namespace google
+
+#include "google/protobuf/port_undef.inc"

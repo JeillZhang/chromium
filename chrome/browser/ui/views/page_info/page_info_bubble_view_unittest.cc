@@ -15,6 +15,7 @@
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/content_settings/page_specific_content_settings_delegate.h"
 #include "chrome/browser/history/history_service_factory.h"
+#include "chrome/browser/permissions/system/system_permission_settings.h"
 #include "chrome/browser/privacy_sandbox/mock_privacy_sandbox_service.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_service_factory.h"
 #include "chrome/browser/ssl/chrome_security_state_tab_helper.h"
@@ -41,7 +42,9 @@
 #include "chrome/test/views/chrome_test_views_delegate.h"
 #include "components/content_settings/core/browser/content_settings_uma_util.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
+#include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/cookie_blocking_3pcd_status.h"
+#include "components/content_settings/core/common/cookie_controls_state.h"
 #include "components/content_settings/core/common/features.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/history/core/browser/history_service.h"
@@ -51,6 +54,7 @@
 #include "components/permissions/permission_util.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/strings/grit/privacy_sandbox_strings.h"
 #include "components/ukm/test_ukm_recorder.h"
 #include "content/public/browser/ssl_status.h"
 #include "content/public/test/browser_task_environment.h"
@@ -228,6 +232,13 @@ class PageInfoBubbleViewTestApi {
     return static_cast<views::Label*>(title_label)->GetText();
   }
 
+  std::u16string_view GetPrivacyAndSiteDataSubpageTitle() {
+    navigation_handler()->OpenPrivacyAndSiteDataPage();
+    auto* title_label = bubble_delegate_->GetViewByID(
+        PageInfoViewFactory::VIEW_ID_PAGE_INFO_SUBPAGE_TITLE);
+    return static_cast<views::Label*>(title_label)->GetText();
+  }
+
   // Returns the text shown on the view.
   std::u16string GetTextOnView(views::View* view) {
     EXPECT_TRUE(view);
@@ -265,6 +276,13 @@ class PageInfoBubbleViewTestApi {
   std::u16string_view GetCookiesButtonTitleText() {
     auto* button = bubble_delegate_->GetViewByID(
         PageInfoViewFactory::VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_COOKIES_SUBPAGE);
+    return static_cast<RichHoverButton*>(button)->GetTitleText();
+  }
+
+  std::u16string_view GetPrivacyAndSiteDataButtonTitleText() {
+    auto* button = bubble_delegate_->GetViewByID(
+        PageInfoViewFactory::
+            VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_PRIVACY_SITE_DATA_SUBPAGE);
     return static_cast<RichHoverButton*>(button)->GetTitleText();
   }
 
@@ -433,10 +451,12 @@ class PageInfoBubbleViewTest : public testing::Test {
   void SetUp() override {
     TestingBrowserProcess::GetGlobal()->CreateGlobalFeaturesForTesting();
 
-    if (!web_contents_helper_) {
-      web_contents_helper_ =
-          std::make_unique<ScopedWebContentsTestHelper>(false);
-    }
+    // Create after the global features to ensure that there are no
+    // dangling pointers during teardown.
+    CHECK(!web_contents_helper_);
+    web_contents_helper_ =
+        std::make_unique<ScopedWebContentsTestHelper>(off_the_record_);
+
     views_helper_ = std::make_unique<views::ScopedViewsTestHelper>(
         std::make_unique<ChromeTestViewsDelegate<>>());
     views::Widget::InitParams parent_params(
@@ -465,6 +485,8 @@ class PageInfoBubbleViewTest : public testing::Test {
   void TearDown() override { parent_window_->CloseNow(); }
 
  protected:
+  bool off_the_record_ = false;
+
   std::unique_ptr<ScopedWebContentsTestHelper> web_contents_helper_;
   std::unique_ptr<views::ScopedViewsTestHelper> views_helper_;
   raw_ptr<MockTrustSafetySentimentService> mock_sentiment_service_;
@@ -521,6 +543,10 @@ TEST_F(PageInfoBubbleViewTest, NotificationPermissionRevokeUkm) {
 // Test UI construction and reconstruction via
 // PageInfoBubbleView::SetPermissionInfo().
 TEST_F(PageInfoBubbleViewTest, SetPermissionInfo) {
+  // Mock system-level location permission.
+  system_permission_settings::ScopedSettingsForTesting system_location_settings(
+      ContentSettingsType::GEOLOCATION, /*blocked=*/false);
+
   PermissionInfoList list(1);
   list.back().type = ContentSettingsType::GEOLOCATION;
   list.back().setting = CONTENT_SETTING_BLOCK;
@@ -607,9 +633,7 @@ TEST_F(PageInfoBubbleViewTest, CheckToggleSettingForCapturedSurfaceControl) {
 
 class PageInfoBubbleViewOffTheRecordTest : public PageInfoBubbleViewTest {
  public:
-  PageInfoBubbleViewOffTheRecordTest() {
-    web_contents_helper_ = std::make_unique<ScopedWebContentsTestHelper>(true);
-  }
+  PageInfoBubbleViewOffTheRecordTest() { off_the_record_ = true; }
 };
 
 // Test resetting blocked in Incognito permission.
@@ -989,7 +1013,6 @@ TEST_F(PageInfoBubbleViewTest, UpdatingSiteDataRetainsLayout) {
   // Create a fake cookies info.
   PageInfoUI::CookiesNewInfo cookies;
   cookies.allowed_sites_count = 10;
-  cookies.protections_on = true;
   cookies.enforcement = CookieControlsEnforcement::kNoEnforcement;
   cookies.blocking_status = CookieBlocking3pcdStatus::kNotIn3pcd;
 
@@ -1171,8 +1194,7 @@ class PageInfoBubbleViewCookies3pcdButtonTest
   PageInfoBubbleViewCookies3pcdButtonTest() {
     feature_list_.InitWithFeatures(
         {content_settings::features::kTrackingProtection3pcd}, {});
-    web_contents_helper_ =
-        std::make_unique<ScopedWebContentsTestHelper>(GetParam());
+    off_the_record_ = GetParam();
   }
 
  protected:
@@ -1226,15 +1248,14 @@ INSTANTIATE_TEST_SUITE_P(All,
 class PageInfoBubbleViewCookiesSubpageTitleTest
     : public PageInfoBubbleViewTest,
       public testing::WithParamInterface<
-          testing::tuple</*protections_on*/ bool,
+          testing::tuple<CookieControlsState,
                          CookieBlocking3pcdStatus,
                          /*is_otr*/ bool>> {
  public:
   PageInfoBubbleViewCookiesSubpageTitleTest() {
     feature_list_.InitWithFeatures(
         {content_settings::features::kTrackingProtection3pcd}, {});
-    web_contents_helper_ = std::make_unique<ScopedWebContentsTestHelper>(
-        testing::get<2>(GetParam()));
+    off_the_record_ = testing::get<2>(GetParam());
   }
 
  private:
@@ -1244,7 +1265,7 @@ class PageInfoBubbleViewCookiesSubpageTitleTest
 TEST_P(PageInfoBubbleViewCookiesSubpageTitleTest,
        DisplaysCookiesAndSiteDataTitle) {
   PageInfoUI::CookiesNewInfo cookie_info;
-  cookie_info.protections_on = testing::get<0>(GetParam());
+  cookie_info.controls_state = testing::get<0>(GetParam());
   cookie_info.blocking_status = testing::get<1>(GetParam());
   api_->SetCookieInfo(cookie_info);
   EXPECT_EQ(api_->GetCookiesSubpageTitle(),
@@ -1254,7 +1275,41 @@ TEST_P(PageInfoBubbleViewCookiesSubpageTitleTest,
 INSTANTIATE_TEST_SUITE_P(
     All,
     PageInfoBubbleViewCookiesSubpageTitleTest,
-    testing::Combine(/*protections_on*/ testing::Bool(),
+    testing::Combine(testing::Values(CookieControlsState::kAllowed3pc,
+                                     CookieControlsState::kBlocked3pc),
                      testing::Values(CookieBlocking3pcdStatus::kNotIn3pcd,
                                      CookieBlocking3pcdStatus::kAll),
                      /*is_otr*/ testing::Bool()));
+
+class PageInfoBubbleViewPrivacyAndSiteDataSubpageTitleTest
+    : public PageInfoBubbleViewTest,
+      public testing::WithParamInterface<CookieControlsState> {
+ public:
+  PageInfoBubbleViewPrivacyAndSiteDataSubpageTitleTest() {
+    feature_list_.InitWithFeatures(
+        {privacy_sandbox::kActUserBypassUx,
+         privacy_sandbox::kFingerprintingProtectionUx},
+        {});
+    off_the_record_ = true;
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+TEST_P(PageInfoBubbleViewPrivacyAndSiteDataSubpageTitleTest,
+       DisplaysPrivacyAndSiteDataTitle) {
+  PageInfoUI::CookiesNewInfo cookie_info;
+  cookie_info.controls_state = GetParam();
+  api_->SetCookieInfo(cookie_info);
+
+  EXPECT_EQ(api_->GetPrivacyAndSiteDataButtonTitleText(),
+            l10n_util::GetStringUTF16(IDS_PAGE_INFO_PRIVACY_SITE_DATA_HEADER));
+  EXPECT_EQ(api_->GetPrivacyAndSiteDataSubpageTitle(),
+            l10n_util::GetStringUTF16(IDS_PAGE_INFO_PRIVACY_SITE_DATA_HEADER));
+}
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         PageInfoBubbleViewPrivacyAndSiteDataSubpageTitleTest,
+                         testing::Values(CookieControlsState::kActiveTp,
+                                         CookieControlsState::kPausedTp));

@@ -94,7 +94,7 @@ class DummySyncDictionary : public SharedDictionary {
     std::unique_ptr<crypto::SecureHash> secure_hash =
         crypto::SecureHash::Create(crypto::SecureHash::SHA256);
     secure_hash->Update(data_->data(), size_);
-    secure_hash->Finish(hash_.data, sizeof(hash_.data));
+    secure_hash->Finish(hash_);
   }
 
   // SharedDictionary
@@ -240,9 +240,7 @@ class SharedDictionaryNetworkTransactionTest : public ::testing::Test {
 
  protected:
   std::unique_ptr<HttpTransaction> CreateNetworkTransaction() {
-    std::unique_ptr<HttpTransaction> network_transaction;
-    network_layer_->CreateTransaction(DEFAULT_PRIORITY, &network_transaction);
-    return network_transaction;
+    return network_layer_->CreateTransaction(DEFAULT_PRIORITY);
   }
 
   void RunUntilIdle() { task_environment_.RunUntilIdle(); }

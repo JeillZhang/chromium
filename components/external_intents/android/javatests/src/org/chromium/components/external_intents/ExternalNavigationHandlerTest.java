@@ -73,10 +73,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RunWith(BaseJUnit4ClassRunner.class)
 @Batch(Batch.UNIT_TESTS)
 @Features.DisableFeatures(ExternalIntentsFeatures.EXTERNAL_NAVIGATION_DEBUG_LOGS_NAME)
-@Features.EnableFeatures({
-    ExternalIntentsFeatures.BLOCK_FRAME_RENAVIGATIONS_NAME,
-    ExternalIntentsFeatures.BLOCK_INTENTS_TO_SELF_NAME
-})
+@Features.EnableFeatures(ExternalIntentsFeatures.BLOCK_INTENTS_TO_SELF_NAME)
 public class ExternalNavigationHandlerTest {
     // Expectations
     private static final int IGNORE = 0x0;
@@ -431,9 +428,14 @@ public class ExternalNavigationHandlerTest {
                     "chrome-native://newtab",
                     "devtools://foo",
                     "fido://something",
+                    "intent:chrome-urls#Intent;package=com.android.chrome;scheme=fido;end;",
+                    "intent:chrome-urls#Intent;package=com.android.chrome;scheme=FIDO;end;",
                     "intent:chrome-urls#Intent;package=com.android.chrome;scheme=about;end;",
+                    "intent:chrome-urls#Intent;package=com.android.chrome;scheme=ABOUT;end;",
                     "intent:chrome-urls#Intent;package=com.android.chrome;scheme=chrome;end;",
+                    "intent:chrome-urls#Intent;package=com.android.chrome;scheme=CHROME;end;",
                     "intent://com.android.chrome.FileProvider/foo.html#Intent;scheme=content;end;",
+                    "intent://com.android.chrome.FileProvider/foo.html#Intent;scheme=CONTENT;end;",
                     "intent:///x.mhtml#Intent;package=com.android.chrome;action=android.intent.action.VIEW;scheme=file;end;"
                 };
         for (String url : urlsToIgnore) {
@@ -1864,6 +1866,74 @@ public class ExternalNavigationHandlerTest {
     }
 
     @Test
+    @Features.EnableFeatures(ExternalIntentsFeatures.REPARENT_TOP_LEVEL_NAVIGATION_FROM_PWA_NAME)
+    @SmallTest
+    public void testReparentTopLevelNavigationWithNoSpecializedHandler() {
+        mDelegate.add(new IntentActivity(YOUTUBE_MOBILE_URL, YOUTUBE_PACKAGE_NAME));
+
+        mUrlHandler = new ExternalNavigationHandlerForTesting(mDelegate);
+        ExternalNavigationParams params =
+                new ExternalNavigationParams.Builder(
+                                new GURL(SEARCH_RESULT_URL_FOR_TOM_HANKS), false)
+                        .setOpenInNewTab(true)
+                        .setIsMainFrame(true)
+                        .setIsRendererInitiated(true)
+                        .setIsInDesktopWindowingMode(true)
+                        .setIsTabInPWA(true)
+                        .setIsInitialNavigationInFrame(true)
+                        .setRedirectHandler(redirectHandlerForLinkClick())
+                        .build();
+        OverrideUrlLoadingResult result = mUrlHandler.shouldOverrideUrlLoading(params);
+        Assert.assertEquals(
+                OverrideUrlLoadingResultType.OVERRIDE_WITH_REPARENT_TO_BROWSER,
+                result.getResultType());
+        Assert.assertNull(mUrlHandler.mStartActivityIntent);
+    }
+
+    @Test
+    @Features.EnableFeatures(ExternalIntentsFeatures.REPARENT_TOP_LEVEL_NAVIGATION_FROM_PWA_NAME)
+    @SmallTest
+    public void testDoNotReparentTopLevelNavigationWithSpecializedHandler() {
+        mDelegate.add(new IntentActivity(YOUTUBE_MOBILE_URL, YOUTUBE_PACKAGE_NAME));
+
+        mUrlHandler = new ExternalNavigationHandlerForTesting(mDelegate);
+        ExternalNavigationParams params =
+                new ExternalNavigationParams.Builder(new GURL(YOUTUBE_MOBILE_URL), false)
+                        .setOpenInNewTab(true)
+                        .setIsMainFrame(true)
+                        .setIsRendererInitiated(true)
+                        .setIsInDesktopWindowingMode(true)
+                        .setIsTabInPWA(true)
+                        .setIsInitialNavigationInFrame(true)
+                        .setRedirectHandler(redirectHandlerForLinkClick())
+                        .build();
+        OverrideUrlLoadingResult result = mUrlHandler.shouldOverrideUrlLoading(params);
+        Assert.assertEquals(
+                OverrideUrlLoadingResultType.OVERRIDE_WITH_EXTERNAL_INTENT, result.getResultType());
+        Assert.assertNotNull(mUrlHandler.mStartActivityIntent);
+    }
+
+    @Test
+    @Features.EnableFeatures(ExternalIntentsFeatures.REPARENT_TOP_LEVEL_NAVIGATION_FROM_PWA_NAME)
+    @SmallTest
+    public void testDoNotReparentSelfNavigation() {
+        mUrlHandler = new ExternalNavigationHandlerForTesting(mDelegate);
+        ExternalNavigationParams params =
+                new ExternalNavigationParams.Builder(new GURL(YOUTUBE_MOBILE_URL), false)
+                        .setOpenInNewTab(true)
+                        .setIsMainFrame(true)
+                        .setIsRendererInitiated(true)
+                        .setIsInDesktopWindowingMode(true)
+                        .setIsTabInPWA(true)
+                        .setIsInitialNavigationInFrame(false)
+                        .setRedirectHandler(redirectHandlerForLinkClick())
+                        .build();
+        OverrideUrlLoadingResult result = mUrlHandler.shouldOverrideUrlLoading(params);
+        Assert.assertEquals(OverrideUrlLoadingResultType.NO_OVERRIDE, result.getResultType());
+        Assert.assertTrue(mUrlHandler.mStartActivityIntent == null);
+    }
+
+    @Test
     @SmallTest
     public void testCanExternalAppHandleUrl() {
         mDelegate.setCanResolveActivityForExternalSchemes(false);
@@ -1995,6 +2065,8 @@ public class ExternalNavigationHandlerTest {
                         OverrideUrlLoadingResultType.OVERRIDE_WITH_EXTERNAL_INTENT,
                         START_OTHER_ACTIVITY);
         // Schemes on Android are case-sensitive, so ensure the scheme is passed through as-is.
+        // It would be better if they were normalized to lower case for standards compliance,
+        // but this breaks some APKs that have mixed-case schemes.
         Assert.assertEquals("w3irD", mUrlHandler.mStartActivityIntent.getScheme());
     }
 
@@ -2955,9 +3027,9 @@ public class ExternalNavigationHandlerTest {
     }
 
     private static class IntentActivity {
-        private String mUrlPrefix;
-        private String mPackageName;
-        private boolean mIsExported;
+        private final String mUrlPrefix;
+        private final String mPackageName;
+        private final boolean mIsExported;
         private boolean mIsNotSpecialized;
 
         public IntentActivity(String urlPrefix, String packageName) {
@@ -3324,6 +3396,11 @@ public class ExternalNavigationHandlerTest {
             mSafeBrowsingIntent = intent;
         }
 
+        @Override
+        public Intent createIntentToPreventIncognitoAccess(GURL url) {
+            return null;
+        }
+
         public void reset() {
             startIncognitoIntentCalled = false;
         }
@@ -3418,7 +3495,7 @@ public class ExternalNavigationHandlerTest {
 
         private String mReferrerWebappPackageName;
 
-        private ArrayList<IntentActivity> mIntentActivities = new ArrayList<IntentActivity>();
+        private final ArrayList<IntentActivity> mIntentActivities = new ArrayList<IntentActivity>();
         private boolean mCanResolveActivityForExternalSchemes = true;
         private boolean mCanResolveActivityForMarket = true;
         public boolean mIsChromeAppInForeground = true;
@@ -3461,7 +3538,7 @@ public class ExternalNavigationHandlerTest {
         private boolean mChromeAppInForegroundRequired = true;
         private boolean mIsBackgroundTabNavigation;
         private boolean mHasUserGesture;
-        private RedirectHandler mRedirectHandler;
+        private final RedirectHandler mRedirectHandler;
         private boolean mIsRendererInitiated = true;
         private boolean mIsMainFrame = true;
         private boolean mIsInitialNavigationInFrame;
@@ -3625,7 +3702,7 @@ public class ExternalNavigationHandlerTest {
     }
 
     private static class TestPackageManager extends MockPackageManager {
-        private TestExternalNavigationDelegate mDelegate;
+        private final TestExternalNavigationDelegate mDelegate;
 
         public TestPackageManager(TestExternalNavigationDelegate delegate) {
             mDelegate = delegate;
@@ -3644,7 +3721,7 @@ public class ExternalNavigationHandlerTest {
     }
 
     private static class TestContext extends ContextWrapper {
-        private PackageManager mPackageManager;
+        private final PackageManager mPackageManager;
 
         public TestContext(Context baseContext, TestExternalNavigationDelegate delegate) {
             super(baseContext);

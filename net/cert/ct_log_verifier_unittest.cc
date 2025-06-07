@@ -13,11 +13,13 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "base/time/time.h"
 #include "crypto/secure_hash.h"
 #include "net/base/hash_value.h"
@@ -32,18 +34,6 @@
 namespace net {
 
 namespace {
-
-// Calculate the power of two nearest to, but less than, |n|.
-// |n| must be at least 2.
-size_t CalculateNearestPowerOfTwo(size_t n) {
-  DCHECK_GT(n, 1u);
-
-  size_t ret = size_t(1) << (sizeof(size_t) * 8 - 1);
-  while (ret >= n)
-    ret >>= 1;
-
-  return ret;
-}
 
 // All test data replicated from
 // https://github.com/google/certificate-transparency/blob/c41b090ecc14ddd6b3531dc7e5ce36b21e253fdd/cpp/merkletree/merkle_tree_test.cc
@@ -96,7 +86,7 @@ struct ConsistencyProofTestVector {
 
 // A collection of consistency proofs between various sub-trees of the sample
 // tree.
-const auto kConsistencyProofs = std::to_array<ConsistencyProofTestVector>({
+constexpr auto kConsistencyProofs = std::to_array<ConsistencyProofTestVector>({
     // Empty consistency proof between trees of the same size (1).
     {1, 1, 0, {"", "", ""}},
     // Consistency proof between tree of size 1 and tree of size 8, with 3
@@ -135,7 +125,7 @@ struct AuditProofTestVector {
 
 // A collection of audit proofs for various leaves and sub-trees of the tree
 // defined by |kRootHashes|.
-const auto kAuditProofs = std::to_array<AuditProofTestVector>({
+constexpr auto kAuditProofs = std::to_array<AuditProofTestVector>({
     {0, 1, 0, {"", "", ""}},
     {0,
      8,
@@ -595,17 +585,15 @@ namespace rfc6962 {
 std::string HashLeaf(const std::string& leaf) {
   const char kLeafPrefix[] = {'\x00'};
 
-  SHA256HashValue sha256;
-  memset(sha256.data, 0, sizeof(sha256.data));
+  SHA256HashValue sha256 = {0};
 
   std::unique_ptr<crypto::SecureHash> hash(
       crypto::SecureHash::Create(crypto::SecureHash::SHA256));
   hash->Update(kLeafPrefix, 1);
   hash->Update(leaf.data(), leaf.size());
-  hash->Finish(sha256.data, sizeof(sha256.data));
+  hash->Finish(sha256);
 
-  return std::string(reinterpret_cast<const char*>(sha256.data),
-                     sizeof(sha256.data));
+  return std::string(base::as_string_view(sha256));
 }
 
 // Calculates the root hash of a Merkle tree, given its leaf data and size.
@@ -617,7 +605,7 @@ std::string HashTree(std::string leaves[], size_t tree_size) {
     return HashLeaf(leaves[0]);
 
   // Find the index of the last leaf in the left sub-tree.
-  const size_t split = CalculateNearestPowerOfTwo(tree_size);
+  const size_t split = std::bit_floor(tree_size - 1);
 
   // Hash the left and right sub-trees, then hash the results.
   return ct::internal::HashNodes(HashTree(leaves, split),
@@ -638,7 +626,7 @@ std::vector<std::string> CreateAuditProof(std::string leaves[],
     return proof;
 
   // Find the index of the first leaf in the right sub-tree.
-  const size_t split = CalculateNearestPowerOfTwo(tree_size);
+  const size_t split = std::bit_floor(tree_size - 1);
 
   // Recurse down the correct branch of the tree (left or right) to reach the
   // leaf with |leaf_index|. Add the hash of the branch not taken at each step
@@ -679,7 +667,7 @@ std::vector<std::string> CreateConsistencyProof(std::string leaves[],
   }
 
   // Find the index of the last leaf in the left sub-tree.
-  const size_t split = CalculateNearestPowerOfTwo(new_tree_size);
+  const size_t split = std::bit_floor(new_tree_size - 1);
 
   if (old_tree_size <= split) {
     // Root of the old tree is in the left subtree of the new tree.

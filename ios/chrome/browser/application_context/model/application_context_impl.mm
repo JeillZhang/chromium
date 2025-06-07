@@ -22,6 +22,7 @@
 #import "base/task/thread_pool.h"
 #import "base/time/default_clock.h"
 #import "base/time/default_tick_clock.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/breadcrumbs/core/breadcrumbs_status.h"
 #import "components/breadcrumbs/core/crash_reporter_breadcrumb_observer.h"
 #import "components/component_updater/component_updater_service.h"
@@ -51,6 +52,7 @@
 #import "ios/chrome/browser/component_updater/model/ios_component_updater_configurator.h"
 #import "ios/chrome/browser/crash_report/model/breadcrumbs/application_breadcrumbs_logger.h"
 #import "ios/chrome/browser/default_browser/model/utils.h"
+#import "ios/chrome/browser/download/model/auto_deletion/auto_deletion_service.h"
 #import "ios/chrome/browser/gcm/model/ios_chrome_gcm_profile_service_factory.h"
 #import "ios/chrome/browser/history/model/history_service_factory.h"
 #import "ios/chrome/browser/metrics/model/ios_chrome_metrics_services_manager_client.h"
@@ -99,11 +101,13 @@ ApplicationContextImpl::ApplicationContextImpl(
     const base::CommandLine& command_line,
     const std::string& locale,
     const std::string& country)
-    : local_state_task_runner_(local_state_task_runner) {
+    : application_locale_storage_(std::make_unique<ApplicationLocaleStorage>()),
+      local_state_task_runner_(local_state_task_runner) {
   DCHECK(!GetApplicationContext());
   SetApplicationContext(this);
 
   SetApplicationLocale(locale);
+  application_locale_storage_->Set(locale);
   application_country_ = country;
 
   update_client::UpdateQueryParams::SetDelegate(
@@ -128,7 +132,7 @@ void ApplicationContextImpl::PostCreateThreads() {
                             std::unique_ptr<os_crypt_async::KeyProvider>>>());
 
   // Trigger an instance grab on a background thread if necessary.
-  std::ignore = os_crypt_async_->GetInstance(base::DoNothing());
+  os_crypt_async_->GetInstance(base::DoNothing());
 
   web::GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(&IOSChromeIOThread::InitOnIO,
@@ -185,15 +189,14 @@ void ApplicationContextImpl::StartTearDown() {
     safe_browsing_service_->ShutDown();
   }
 
-  // Need to clear profiles before the IO thread. In detail:
-  // - First unload the profiles (which deallocate them), including their
-  // keyed services, which may depend on the AccountProfileMapper.
-  // - Then destroy the AccountProfileMapper, which depends on the
-  //   ProfileManagerIOS.
-  // - Finally destroy the ProfileManagerIOS.
-  if (profile_manager_) {
-    profile_manager_->UnloadAllProfiles();
-  }
+  // Ensure that the profiles have all be unloaded. This is required because
+  // the profiles' KeyedService may use the AccountProfileMapper, and thus
+  // they have to be destroyed before the ProfileManagerIOS. However since
+  // the AccountProfileMapper depends on the ProfileManagerIOS, it must be
+  // destroyed before.
+  profile_manager_->PrepareForDestruction();
+  CHECK_EQ(profile_manager_->GetLoadedProfiles().size(), 0u);
+
   account_profile_mapper_.reset();
   profile_manager_.reset();
 
@@ -305,6 +308,13 @@ const std::string& ApplicationContextImpl::GetApplicationLocale() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!application_locale_.empty());
   return application_locale_;
+}
+
+ApplicationLocaleStorage*
+ApplicationContextImpl::GetApplicationLocaleStorage() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  CHECK(application_locale_storage_);
+  return application_locale_storage_.get();
 }
 
 const std::string& ApplicationContextImpl::GetApplicationCountry() {
@@ -457,11 +467,15 @@ ApplicationContextImpl::GetNetworkConnectionTracker() {
 BrowserPolicyConnectorIOS* ApplicationContextImpl::GetBrowserPolicyConnector() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!browser_policy_connector_.get()) {
+#if !BUILDFLAG(USE_BLINK)
     // Ensure that the ResourceBundle has already been initialized. If this
     // DCHECK ever fails, a call to
     // BrowserPolicyConnector::OnResourceBundleCreated() will need to be added
     // later in the startup sequence, after the ResourceBundle is initialized.
+    // Blink based startup will call OnResourceBundleCreated in
+    // IOSChromeMainParts::PreCreateThreads.
     DCHECK(ui::ResourceBundle::HasSharedInstance());
+#endif
     version_info::Channel channel = ::GetChannel();
     policy::ConfigurationPolicyProvider* test_policy_provider =
         tests_hook::GetOverriddenPlatformPolicyProvider();
@@ -517,7 +531,7 @@ AccountProfileMapper* ApplicationContextImpl::GetAccountProfileMapper() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!account_profile_mapper_) {
     account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-        GetSystemIdentityManager(), GetProfileManager());
+        GetSystemIdentityManager(), GetProfileManager(), GetLocalState());
   }
   return account_profile_mapper_.get();
 }
@@ -549,6 +563,15 @@ ApplicationContextImpl::GetAdditionalFeaturesController() {
         ios::provider::CreateAdditionalFeaturesController();
   }
   return additional_features_controller_.get();
+}
+
+auto_deletion::AutoDeletionService*
+ApplicationContextImpl::GetAutoDeletionService() {
+  if (!auto_deletion_service_) {
+    auto_deletion_service_ =
+        std::make_unique<auto_deletion::AutoDeletionService>(GetLocalState());
+  }
+  return auto_deletion_service_.get();
 }
 
 #if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)

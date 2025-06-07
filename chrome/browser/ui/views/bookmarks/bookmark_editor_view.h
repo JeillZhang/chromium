@@ -123,6 +123,9 @@ class BookmarkEditorView : public BookmarkEditor,
       const gfx::Point& point,
       ui::mojom::MenuSourceType source_type) override;
 
+  // Returns true if the new folder button is enabled.
+  bool IsNewFolderButtonEnabledForTesting() const;
+
  private:
   friend class BookmarkEditorViewTest;
 
@@ -143,7 +146,7 @@ class BookmarkEditorView : public BookmarkEditor,
                            const base::Location& location) override;
   void BookmarkAllUserNodesRemoved(const std::set<GURL>& removed_urls,
                                    const base::Location& location) override;
-  void BookmarkNodeChanged(const bookmarks::BookmarkNode* node) override {}
+  void BookmarkNodeChanged(const bookmarks::BookmarkNode* node) override;
   void BookmarkNodeChildrenReordered(
       const bookmarks::BookmarkNode* node) override;
   void BookmarkNodeFaviconChanged(
@@ -158,7 +161,9 @@ class BookmarkEditorView : public BookmarkEditor,
 
   // Expands all the nodes in the tree and selects the parent node of the
   // url we're editing or the most recent parent if the url being editted isn't
-  // starred.
+  // starred. If the feature flag `SyncEnableBookmarksInTransportMode`, this
+  // only expands the nodes leading up to the parent node. All others remain
+  // collapsed.
   void ExpandAndSelect();
 
   // Returns true if a bookmark folder is currently selected.
@@ -186,17 +191,17 @@ class BookmarkEditorView : public BookmarkEditor,
   // Recursively adds newly created folders and sets the title of nodes to
   // match the user edited title.
   //
-  // bb_node gives the BookmarkNode the edits are to be applied to, with b_node
-  // the source of the edits.
+  // target_node gives the BookmarkNode the edits are to be applied to, with
+  // source_node the source of the edits.
   //
-  // If b_node == parent_b_node, parent_bb_node is set to bb_node. This is
-  // used to determine the new BookmarkNode parent based on the EditorNode
-  // parent.
+  // If source_node == parent_source_node, parent_target_node is set to
+  // target_node. This is used to determine the new BookmarkNode parent based on
+  // the EditorNode parent.
   void ApplyNameChangesAndCreateNewFolders(
-      const bookmarks::BookmarkNode* bb_node,
-      BookmarkEditorView::EditorNode* b_node,
-      BookmarkEditorView::EditorNode* parent_b_node,
-      const bookmarks::BookmarkNode** parent_bb_node);
+      const bookmarks::BookmarkNode* target_node,
+      BookmarkEditorView::EditorNode* source_node,
+      BookmarkEditorView::EditorNode* parent_source_node,
+      const bookmarks::BookmarkNode** parent_target_node);
 
   // Returns the current url the user has input.
   GURL GetInputURL() const;
@@ -215,6 +220,11 @@ class BookmarkEditorView : public BookmarkEditor,
   // added to the model and returned. This does NOT start editing. This is used
   // internally by NewFolder and broken into a separate method for testing.
   EditorNode* AddNewFolder(EditorNode* parent);
+
+  // Creates a title and a URL field if the dialog is adding/editing a bookmark
+  // that is not a folder. If the dialog is for adding/editing a folder, creates
+  // only a title field.
+  void AddLabels();
 
   // If |editor_node| is expanded it's added to |expanded_nodes| and this is
   // recursively invoked for all the children.
@@ -246,10 +256,11 @@ class BookmarkEditorView : public BookmarkEditor,
   // Used to create a new folder.
   raw_ptr<views::LabelButton> new_folder_button_ = nullptr;
 
-  // The text field used for editing the URL.
+  // The text field used for editing the URL. Null if this is a `MOVE` dialog or
+  // treating a folder rather than a bookmark.
   raw_ptr<views::Textfield> url_tf_ = nullptr;
 
-  // The text field used for editing the title.
+  // The text field used for editing the title. Null if this is a `MOVE` dialog.
   raw_ptr<views::Textfield> title_tf_ = nullptr;
 
   const EditDetails details_;

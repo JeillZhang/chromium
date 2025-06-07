@@ -247,7 +247,6 @@ PreloadingEligibility ToEligibility(PrerenderFinalStatus status) {
     case PrerenderFinalStatus::kInvalidSchemeNavigation:
       return PreloadingEligibility::kHttpOrHttpsOnly;
     case PrerenderFinalStatus::kNavigationRequestBlockedByCsp:
-    case PrerenderFinalStatus::kMainFrameNavigation:
     case PrerenderFinalStatus::kMojoBinderPolicy:
     case PrerenderFinalStatus::kRendererProcessCrashed:
     case PrerenderFinalStatus::kRendererProcessKilled:
@@ -340,6 +339,17 @@ PreloadingEligibility ToEligibility(PrerenderFinalStatus status) {
   }
 
   NOTREACHED();
+}
+
+template <class ContainerType>
+void DestructPrerenderHosts(ContainerType& hosts) {
+  // Swap the container and let it scope out instead of directly destructing the
+  // hosts in the container, for example, by `hosts.clear()`. This avoids
+  // potential cases where a host being deleted indirectly modifies the
+  // container while the container is being cleared up.
+  // See https://crbug.com/40263658 for contexts.
+  ContainerType temp;
+  hosts.swap(temp);
 }
 
 // Represents a contract and ensures that the given prerender attempt is started
@@ -524,6 +534,9 @@ PrerenderHostRegistry::~PrerenderHostRegistry() {
   // Here we have to delete the prerender hosts synchronously, to ensure the
   // FrameTrees would not access the WebContents.
   CancelAllHosts(final_status);
+  DestructPrerenderHosts(to_be_deleted_hosts_);
+  DestructPrerenderHosts(pending_deletion_hosts_);
+
   Observe(nullptr);
   for (Observer& obs : observers_)
     obs.OnRegistryDestroyed();
@@ -558,6 +571,9 @@ FrameTreeNodeId PrerenderHostRegistry::CreateAndStartHost(
         base::FeatureList::IsEnabled(blink::features::kPrerender2InNewTab));
 
   FrameTreeNodeId frame_tree_node_id;
+
+  std::optional<blink::mojom::SpeculationEagerness> eagerness =
+      attributes.GetEagerness();
 
   {
     RenderFrameHostImpl* initiator_rfh =
@@ -755,15 +771,14 @@ FrameTreeNodeId PrerenderHostRegistry::CreateAndStartHost(
     // when the number reaches the limit.
     if (!initiator_web_contents.GetPrerenderHostRegistry()
              ->IsAllowedToStartPrerenderingForTrigger(attributes.trigger_type,
-                                                      attributes.eagerness)) {
+                                                      eagerness)) {
       // The reason we don't consider limit exceeded as an ineligibility
       // reason is because we can't replicate the behavior in our other
       // experiment groups for analysis. To prevent this we set
       // TriggeringOutcome to kFailure and look into the failure reason to
       // learn more.
       PrerenderFinalStatus final_status;
-      switch (GetPrerenderLimitGroup(attributes.trigger_type,
-                                     attributes.eagerness)) {
+      switch (GetPrerenderLimitGroup(attributes.trigger_type, eagerness)) {
         case PrerenderLimitGroup::kSpeculationRulesEager:
           final_status =
               PrerenderFinalStatus::kMaxNumOfRunningEagerPrerendersExceeded;
@@ -789,7 +804,7 @@ FrameTreeNodeId PrerenderHostRegistry::CreateAndStartHost(
     prerender_host_by_frame_tree_node_id_[frame_tree_node_id] =
         std::move(prerender_host);
 
-    if (GetPrerenderLimitGroup(attributes.trigger_type, attributes.eagerness) ==
+    if (GetPrerenderLimitGroup(attributes.trigger_type, eagerness) ==
         PrerenderLimitGroup::kSpeculationRulesNonEager) {
       non_eager_prerender_host_id_by_arrival_order_.push_back(
           frame_tree_node_id);
@@ -864,7 +879,8 @@ FrameTreeNodeId PrerenderHostRegistry::CreateAndStartHostForNewTab(
   prerender_new_tab_handle_by_frame_tree_node_id_[prerender_host_id] =
       std::move(handle);
 
-  if (GetPrerenderLimitGroup(attributes.trigger_type, attributes.eagerness) ==
+  if (GetPrerenderLimitGroup(attributes.trigger_type,
+                             attributes.GetEagerness()) ==
       PrerenderLimitGroup::kSpeculationRulesNonEager) {
     non_eager_prerender_host_id_by_arrival_order_.push_back(prerender_host_id);
   }
@@ -1081,10 +1097,11 @@ bool PrerenderHostRegistry::CancelHostInternal(
   // that this new-tab host belongs to. This will eventually destroy `this`, so
   // it should be performed asynchronously.
   if (base::FeatureList::IsEnabled(blink::features::kPrerender2InNewTab)) {
-    CHECK(prerender_host->initiator_web_contents());
     WebContentsImpl* initiator_web_contents = static_cast<WebContentsImpl*>(
         prerender_host->initiator_web_contents().get());
-    if (web_contents() != initiator_web_contents &&
+    // The initiator WebContents may not be alive.
+    // See crrev.com/c/6286546/comment/1adfe28c_4f769aa7 for more details.
+    if (initiator_web_contents && web_contents() != initiator_web_contents &&
         !initiator_web_contents->IsBeingDestroyed()) {
       base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE,
@@ -1121,7 +1138,16 @@ bool PrerenderHostRegistry::CancelNewTabHostInternal(
   std::unique_ptr<PrerenderNewTabHandle> handle = std::move(iter->second);
   prerender_new_tab_handle_by_frame_tree_node_id_.erase(iter);
   NotifyCancel(frame_tree_node_id, reason);
-  handle->CancelPrerendering(reason);
+
+  if (reason.final_status() == PrerenderFinalStatus::kSpeculationRuleRemoved) {
+    auto& new_tab_registry = handle->GetPrerenderHostRegistry();
+    new_tab_registry.SchedulePendingDeletionPrerenderNewTabHandle(
+        std::move(handle));
+    new_tab_registry.CancelHost(frame_tree_node_id, reason);
+  } else {
+    handle->CancelPrerendering(reason);
+  }
+
   return true;
 }
 
@@ -1539,11 +1565,6 @@ base::WeakPtr<PrerenderHostRegistry> PrerenderHostRegistry::GetWeakPtr() {
 
 void PrerenderHostRegistry::DidStartNavigation(
     NavigationHandle* navigation_handle) {
-  if (!base::FeatureList::IsEnabled(
-          blink::features::kPrerender2MainFrameNavigation)) {
-    return;
-  }
-
   // DidStartNavigation is used for monitoring the main frame navigation in a
   // prerendered page so do nothing for other navigations.
   auto* navigation_request = NavigationRequest::From(navigation_handle);
@@ -1739,9 +1760,28 @@ bool PrerenderHostRegistry::CanNavigationActivateHost(
   return true;
 }
 
-void PrerenderHostRegistry::DeleteDelayedToBeDeletedHosts(
+void PrerenderHostRegistry::DeletePendingDeletionHosts(
     FrameTreeNodeId prerender_host_id) {
-  delayed_to_be_deleted_hosts_.erase(prerender_host_id);
+  // Avoid directly destructing the host in the map. See the comments in
+  // `DestructPrerenderHosts()` for details.
+  std::unique_ptr<PrerenderHost> prerender_host =
+      std::move(pending_deletion_hosts_[prerender_host_id]);
+  pending_deletion_hosts_.erase(prerender_host_id);
+  DestructPrerenderHosts(prerender_host);
+
+  if (pending_deletion_new_tab_prerender_handle_) {
+    // Delete the handle asynchronously to avoid delete `this`, as the handle
+    // owns the prerender WebContents, which indirectly owns this
+    // PrerenderHostRegistry.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->DeleteSoon(
+        FROM_HERE, std::move(pending_deletion_new_tab_prerender_handle_));
+  }
+}
+
+void PrerenderHostRegistry::SchedulePendingDeletionPrerenderNewTabHandle(
+    std::unique_ptr<PrerenderNewTabHandle> handle) {
+  CHECK(!pending_deletion_new_tab_prerender_handle_);
+  pending_deletion_new_tab_prerender_handle_ = std::move(handle);
 }
 
 void PrerenderHostRegistry::ScheduleToDeleteAbandonedHost(
@@ -1757,11 +1797,10 @@ void PrerenderHostRegistry::ScheduleToDeleteAbandonedHost(
       // Fire unload related events upon intended prerender cancellation.
       RenderFrameHostImpl* rfhi = prerender_host->GetPrerenderedMainFrameHost();
       FrameTreeNodeId prerender_host_id = prerender_host->frame_tree_node_id();
-      delayed_to_be_deleted_hosts_[prerender_host_id] =
-          std::move(prerender_host);
+      pending_deletion_hosts_[prerender_host_id] = std::move(prerender_host);
       rfhi->ClosePage(RenderFrameHostImpl::ClosePageSource::kPrerenderDiscard,
                       base::BindRepeating(
-                          &PrerenderHostRegistry::DeleteDelayedToBeDeletedHosts,
+                          &PrerenderHostRegistry::DeletePendingDeletionHosts,
                           weak_factory_.GetWeakPtr(), prerender_host_id));
       return;
     }
@@ -1780,13 +1819,7 @@ void PrerenderHostRegistry::ScheduleToDeleteAbandonedHost(
 }
 
 void PrerenderHostRegistry::DeleteAbandonedHosts() {
-  // Swap the vector and let it scope out instead of directly destructing the
-  // hosts in the vector, for example, by `to_be_deleted_hosts_.clear()`. This
-  // avoids potential cases where a host being deleted indirectly modifies
-  // `to_be_deleted_hosts_` while the vector is being cleared up. See
-  // https://crbug.com/1431744 for contexts.
-  std::vector<std::unique_ptr<PrerenderHost>> hosts;
-  to_be_deleted_hosts_.swap(hosts);
+  DestructPrerenderHosts(to_be_deleted_hosts_);
 }
 
 void PrerenderHostRegistry::NotifyTrigger(const GURL& url) {
@@ -1982,6 +2015,37 @@ bool PrerenderHostRegistry::IsAllowedToStartPrerenderingForEmbedder() {
   int host_count = GetHostCountByLimitGroup(PrerenderLimitGroup::kEmbedder);
   return web_contents()->GetDelegate()->AllowedPrerenderingCount(
              *web_contents()) > host_count;
+}
+
+void PrerenderHostRegistry::CancelHostsByOriginFilter(
+    const StoragePartition::StorageKeyMatcherFunction& storage_key_filter,
+    PrerenderFinalStatus final_status) {
+  std::vector<FrameTreeNodeId> ids_to_be_deleted;
+
+  for (const auto& [host_id, host] : prerender_host_by_frame_tree_node_id_) {
+    if (host->initiator_origin().has_value()) {
+      if (storage_key_filter.Run(blink::StorageKey::CreateFirstParty(
+              host->initiator_origin().value()))) {
+        ids_to_be_deleted.push_back(host_id);
+      }
+    }
+  }
+
+  for (const auto& [host_id, handle] :
+       prerender_new_tab_handle_by_frame_tree_node_id_) {
+    if (handle->initiator_origin().has_value()) {
+      if (storage_key_filter.Run(blink::StorageKey::CreateFirstParty(
+              handle->initiator_origin().value()))) {
+        ids_to_be_deleted.push_back(host_id);
+      }
+    } else {
+      CHECK(prerender_new_tab_handle_by_frame_tree_node_id_.empty());
+    }
+  }
+
+  if (!ids_to_be_deleted.empty()) {
+    CancelHosts(ids_to_be_deleted, PrerenderCancellationReason(final_status));
+  }
 }
 
 }  // namespace content

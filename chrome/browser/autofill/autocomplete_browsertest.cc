@@ -11,6 +11,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/mock_callback.h"
 #include "base/time/time.h"
+#include "base/version_info/version_info.h"
 #include "build/build_config.h"
 #include "chrome/browser/autofill/autocomplete_history_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -124,8 +125,8 @@ class AutocompleteTest : public InProcessBrowserTest {
     command_line->AppendSwitch(blink::switches::kAllowPreCommitInput);
   }
 
-  // Uses the browser to open the file named |filename| based on the given
-  // |disposition|.
+  // Uses the browser to open the file named `filename` based on the given
+  // `disposition`.
   void NavigateToFile(const char* filename,
                       const WindowOpenDisposition& disposition =
                           WindowOpenDisposition::NEW_FOREGROUND_TAB) {
@@ -149,8 +150,8 @@ class AutocompleteTest : public InProcessBrowserTest {
 
     for (const char c : value) {
       ui::DomKey key = ui::DomKey::FromCharacter(c);
-      ui::KeyboardCode key_code = ui::NonPrintableDomKeyToKeyboardCode(key);
-      ui::DomCode code = ui::UsLayoutKeyboardCodeToDomCode(key_code);
+      ui::DomCode code = UsLayoutDomKeyToDomCode(key);
+      ui::KeyboardCode key_code = DomCodeToUsLayoutKeyboardCode(code);
       content::SimulateKeyPress(web_contents(), key, code, key_code, false,
                                 false, false, false);
       ASSERT_TRUE(autofill_manager()->text_field_change_waiter().Wait(1));
@@ -172,7 +173,7 @@ class AutocompleteTest : public InProcessBrowserTest {
   // `autocomplete_history_manager()` and waiting for the cleanup to complete.
   void TriggerRetentionPolicyCleanup() {
     pref_service()->SetInteger(prefs::kAutocompleteLastVersionRetentionPolicy,
-                               CHROME_VERSION_MAJOR - 1);
+                               version_info::GetMajorVersionNumberAsInt() - 1);
     autocomplete_history_manager()->Init(
         WebDataServiceFactory::GetAutofillWebDataForProfile(
             current_profile(), ServiceAccessType::EXPLICIT_ACCESS),
@@ -278,11 +279,11 @@ IN_PROC_BROWSER_TEST_F(AutocompleteTest,
   // finished, yet.
   WaitForPrefValue(pref_service(),
                    prefs::kAutocompleteLastVersionRetentionPolicy,
-                   base::Value(CHROME_VERSION_MAJOR));
+                   base::Value(version_info::GetMajorVersionNumberAsInt()));
 
   int saved_version = pref_service()->GetInteger(
       prefs::kAutocompleteLastVersionRetentionPolicy);
-  EXPECT_EQ(CHROME_VERSION_MAJOR, saved_version);
+  EXPECT_EQ(version_info::GetMajorVersionNumberAsInt(), saved_version);
 }
 
 // Tests that the retention policy cleanup removes an expired entry.

@@ -9,9 +9,7 @@
 #include "chrome/browser/ai/ai_context_bound_object.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
-#include "third_party/blink/public/mojom/ai/ai_language_model.mojom-forward.h"
-
-class AIManager;
+#include "services/on_device_model/public/cpp/capabilities.h"
 
 // A base class for tasks which create an on-device session.
 class CreateOnDeviceSessionTask
@@ -81,6 +79,9 @@ class CreateOnDeviceSessionTask
       optimization_guide::ModelBasedCapabilityKey feature,
       optimization_guide::OnDeviceModelEligibilityReason reason) override;
 
+  void OnGetEligibility(
+      optimization_guide::OnDeviceModelEligibilityReason eligibility);
+
   std::unique_ptr<optimization_guide::OptimizationGuideModelExecutor::Session>
   StartSession();
 
@@ -93,45 +94,7 @@ class CreateOnDeviceSessionTask
   const raw_ptr<content::BrowserContext> browser_context_;
   const optimization_guide::ModelBasedCapabilityKey feature_;
   State state_ = CreateOnDeviceSessionTask::State::kNotStarted;
-};
-
-// Implementation of the `CreateOnDeviceSessionTask` base class for
-// `AILanguageModel`.
-class CreateLanguageModelOnDeviceSessionTask
-    : public CreateOnDeviceSessionTask {
- public:
-  CreateLanguageModelOnDeviceSessionTask(
-      AIManager& ai_manager,
-      AIContextBoundObjectSet& context_bound_object_set,
-      content::BrowserContext* browser_context,
-      const blink::mojom::AILanguageModelSamplingParamsPtr& sampling_params,
-      base::OnceCallback<
-          void(std::unique_ptr<
-               optimization_guide::OptimizationGuideModelExecutor::Session>)>
-          completion_callback);
-  ~CreateLanguageModelOnDeviceSessionTask() override;
-
-  CreateLanguageModelOnDeviceSessionTask(
-      const CreateLanguageModelOnDeviceSessionTask&) = delete;
-  CreateLanguageModelOnDeviceSessionTask& operator=(
-      const CreateLanguageModelOnDeviceSessionTask&) = delete;
-
- protected:
-  // `CreateOnDeviceSessionTask` implementation.
-  void OnFinish(std::unique_ptr<
-                optimization_guide::OptimizationGuideModelExecutor::Session>
-                    session) override;
-
-  void UpdateSessionConfigParams(
-      optimization_guide::SessionConfigParams* config_params) override;
-
- private:
-  std::optional<optimization_guide::SamplingParams> sampling_params_ =
-      std::nullopt;
-  base::OnceCallback<void(
-      std::unique_ptr<
-          optimization_guide::OptimizationGuideModelExecutor::Session>)>
-      completion_callback_;
+  base::WeakPtrFactory<CreateOnDeviceSessionTask> weak_factory_{this};
 };
 
 #endif  // CHROME_BROWSER_AI_AI_CREATE_ON_DEVICE_SESSION_TASK_H_

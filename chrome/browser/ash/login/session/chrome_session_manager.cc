@@ -15,6 +15,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/syslog_logging.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
@@ -82,7 +83,7 @@ void StartKioskSession(KioskAppId app, bool is_auto_launch = false) {
 
   CHECK_DEREF(input_method::InputMethodManager::Get())
       .GetActiveIMEState()
-      ->SetInputMethodLoginDefault();
+      ->SetInputMethodLoginDefault(/*is_in_oobe_context=*/false);
 
   // Manages its own lifetime. See ShutdownDisplayHost().
   auto* display_host = new LoginDisplayHostWebUI();
@@ -205,12 +206,16 @@ void StartUserSession(user_manager::UserManager* user_manager,
 
     if (!is_running_test &&
         user->GetAccountId() == user_manager::StubAccountId()) {
+      // TODO(crbug.com/404133029): Avoid g_browser_process usage.
+      scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory =
+          g_browser_process->shared_url_loader_factory();
+
       // Add stub user to Account Manager. (But not when running tests: this
       // allows tests to setup appropriate environment)
       InitializeAccountManager(
-          user_profile->GetPath(),
-          /*initialization_callback=*/base::BindOnce(
-              &UpsertStubUserToAccountManager, user_profile, user));
+          std::move(shared_url_loader_factory), user_profile->GetPath(),
+          /*initialization_callback=*/
+          base::BindOnce(&UpsertStubUserToAccountManager, user_profile, user));
     }
 
     user_session_mgr->OnUserProfileLoaded(user_profile, user);
@@ -253,7 +258,10 @@ void StartUserSession(user_manager::UserManager* user_manager,
   // If we have recently restarted in-session after a chrome crash, we need
   // to initialize `AuthHub` in in-session mode.
   // See documentation in `auth_hub.h` for more details.
-  AuthHub::Get()->InitializeForMode(AuthHubMode::kInSession);
+
+  if (ash::features::IsAuthPanelUsingAuthHub()) {
+    AuthHub::Get()->InitializeForMode(AuthHubMode::kInSession);
+  }
 }
 
 void LaunchShimlessRma() {
@@ -429,11 +437,7 @@ void ChromeSessionManager::Initialize(
 
   KioskCryptohomeRemover::RemoveObsoleteCryptohomes();
 
-  if (ShouldOneTimeAutoLaunchKioskApp(parsed_command_line, local_state)) {
-    VLOG(1) << "One time auto launching kiosk app";
-    KioskAppId app_id = ExtractOneTimeAutoLaunchKioskAppId(local_state);
-    StartKioskSession(app_id);
-  } else if (ShouldAutoLaunchKioskApp(parsed_command_line, local_state)) {
+  if (ShouldAutoLaunchKioskApp(parsed_command_line, local_state)) {
     VLOG(1) << "Starting Chrome with kiosk auto launch.";
     StartAutoLaunchKioskSession();
   } else if (parsed_command_line.HasSwitch(switches::kLoginManager)) {

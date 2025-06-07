@@ -49,7 +49,10 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/web_applications/test/isolated_web_app_test_utils.h"
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
@@ -69,6 +72,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/storage_partition.h"
@@ -144,7 +148,7 @@ class TestFunctionDispatcherDelegate
 
  private:
   extensions::WindowController* GetExtensionWindowController() const override {
-    return browser_->extension_window_controller();
+    return browser_->GetFeatures().extension_window_controller();
   }
 
   content::WebContents* GetAssociatedWebContents() const override {
@@ -355,7 +359,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, GetCurrentWindow) {
   EXPECT_GE(*tab0_id, 0);
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, GetAllWindows) {
+// TODO(crbug.com/40745605): Test is flaky on Linux debug builds.
+#if BUILDFLAG(IS_LINUX) && !defined(NDEBUG)
+#define MAYBE_GetAllWindows DISABLED_GetAllWindows
+#else
+#define MAYBE_GetAllWindows GetAllWindows
+#endif
+IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, MAYBE_GetAllWindows) {
   const size_t NUM_WINDOWS = 5;
   std::set<int> window_ids;
   std::set<int> result_ids;
@@ -1741,6 +1751,39 @@ IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, DiscardWithoutId) {
   EXPECT_FALSE(result.contains("url"));
 }
 
+IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, TestGroupDetachedAndReInserted) {
+  // This implicitly creates the `TabsEventRouter`, which is required to get a
+  // tab update event.
+  TabsWindowsAPI::Get(profile())->tabs_event_router();
+
+  chrome::AddTabAt(browser(), GURL(), -1, true);
+  chrome::AddTabAt(browser(), GURL(), -1, true);
+  chrome::AddTabAt(browser(), GURL(), -1, true);
+
+  tab_groups::TabGroupId group =
+      browser()->tab_strip_model()->AddToNewGroup({0, 1});
+
+  TestEventRouterObserver event_observer(
+      EventRouter::Get(browser()->profile()));
+
+  std::unique_ptr<DetachedTabCollection> detached_group =
+      browser()->tab_strip_model()->DetachTabGroupForInsertion(group);
+
+  event_observer.WaitForEventWithName(api::tabs::OnUpdated::kEventName);
+  EXPECT_TRUE(base::Contains(event_observer.events(),
+                             api::tabs::OnUpdated::kEventName));
+
+  event_observer.ClearEvents();
+
+  browser()->tab_strip_model()->InsertDetachedTabGroupAt(
+      std::move(detached_group), 1);
+
+  // Group added as well as the tab's group changed event should be sent.
+  event_observer.WaitForEventWithName(api::tabs::OnUpdated::kEventName);
+  EXPECT_TRUE(base::Contains(event_observer.events(),
+                             api::tabs::OnUpdated::kEventName));
+}
+
 IN_PROC_BROWSER_TEST_F(ExtensionTabsTest, Freezing) {
   // Create a background tab.
   ui_test_utils::NavigateToURLWithDisposition(
@@ -2465,7 +2508,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowsCreate_WithOpener) {
   ASSERT_TRUE(extension);
 
   // Navigate a tab to an extension page.
-  GURL extension_url = extension->GetResourceURL("file.html");
+  GURL extension_url = extension->ResolveExtensionURL("file.html");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), extension_url));
   content::WebContents* old_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -2537,7 +2580,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowsCreate_NoOpener) {
   ASSERT_TRUE(extension);
 
   // Navigate a tab to an extension page.
-  GURL extension_url = extension->GetResourceURL("file.html");
+  GURL extension_url = extension->ResolveExtensionURL("file.html");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), extension_url));
   content::WebContents* old_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -2577,7 +2620,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, WindowsCreate_OpenerAndOrigin) {
   ASSERT_TRUE(extension);
 
   // Navigate a tab to an extension page.
-  GURL extension_url = extension->GetResourceURL("file.html");
+  GURL extension_url = extension->ResolveExtensionURL("file.html");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), extension_url));
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -2658,7 +2701,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, TabsUpdate_WebToAboutBlank) {
   const extensions::Extension* extension =
       LoadExtension(test_data_dir_.AppendASCII("../simple_with_file"));
   ASSERT_TRUE(extension);
-  GURL extension_url = extension->GetResourceURL("file.html");
+  GURL extension_url = extension->ResolveExtensionURL("file.html");
   url::Origin extension_origin = url::Origin::Create(extension_url);
   GURL web_url = embedded_test_server()->GetURL("/title1.html");
   url::Origin web_origin = url::Origin::Create(web_url);
@@ -2718,7 +2761,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, TabsUpdate_WebToAboutNewTab) {
   const extensions::Extension* extension =
       LoadExtension(test_data_dir_.AppendASCII("../simple_with_file"));
   ASSERT_TRUE(extension);
-  GURL extension_url = extension->GetResourceURL("file.html");
+  GURL extension_url = extension->ResolveExtensionURL("file.html");
   url::Origin extension_origin = url::Origin::Create(extension_url);
   GURL web_url = embedded_test_server()->GetURL("/title1.html");
   url::Origin web_origin = url::Origin::Create(web_url);
@@ -2778,7 +2821,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, TabsUpdate_WebToNonWAR) {
   const extensions::Extension* extension =
       LoadExtension(test_data_dir_.AppendASCII("../simple_with_file"));
   ASSERT_TRUE(extension);
-  GURL extension_url = extension->GetResourceURL("file.html");
+  GURL extension_url = extension->ResolveExtensionURL("file.html");
   url::Origin extension_origin = url::Origin::Create(extension_url);
   GURL web_url = embedded_test_server()->GetURL("/title1.html");
   url::Origin web_origin = url::Origin::Create(web_url);

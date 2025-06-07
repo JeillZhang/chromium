@@ -61,6 +61,8 @@ TEST_F(ControlledFramePermissionsTest, Verify) {
       case WEB_VIEW_PERMISSION_TYPE_MEDIA:
       case WEB_VIEW_PERMISSION_TYPE_NEW_WINDOW:
       case WEB_VIEW_PERMISSION_TYPE_POINTER_LOCK:
+      case WEB_VIEW_PERMISSION_TYPE_CLIPBOARD_READ_WRITE:
+      case WEB_VIEW_PERMISSION_TYPE_CLIPBOARD_SANITIZED_WRITE:
         break;
       default:
         web_view_permissions.push_back(i);
@@ -148,7 +150,6 @@ TEST_F(ControlledFramePermissionsTest, Verify) {
       case ContentSettingsType::BLUETOOTH_CHOOSER_DATA:
       case ContentSettingsType::SAFE_BROWSING_URL_CHECK_DATA:
       case ContentSettingsType::FILE_SYSTEM_READ_GUARD:
-      case ContentSettingsType::INSECURE_PRIVATE_NETWORK:
       case ContentSettingsType::PERMISSION_AUTOREVOCATION_DATA:
       case ContentSettingsType::FILE_SYSTEM_LAST_PICKED_DIRECTORY:
       case ContentSettingsType::FILE_SYSTEM_ACCESS_CHOOSER_DATA:
@@ -196,6 +197,12 @@ TEST_F(ControlledFramePermissionsTest, Verify) {
       case ContentSettingsType::
           ARE_SUSPICIOUS_NOTIFICATIONS_ALLOWLISTED_BY_USER:
       case ContentSettingsType::CONTROLLED_FRAME:
+      case ContentSettingsType::REVOKED_DISRUPTIVE_NOTIFICATION_PERMISSIONS:
+      case ContentSettingsType::LOCAL_NETWORK_ACCESS:
+      case ContentSettingsType::
+          ON_DEVICE_SPEECH_RECOGNITION_LANGUAGES_DOWNLOADED:
+      case ContentSettingsType::INITIALIZED_TRANSLATIONS:
+      case ContentSettingsType::SUSPICIOUS_NOTIFICATION_IDS:
         break;
 
       default:
@@ -253,6 +260,7 @@ TEST_F(ControlledFramePermissionsTest, Verify) {
       case blink::PermissionType::AUTOMATIC_FULLSCREEN:
       case blink::PermissionType::HAND_TRACKING:
       case blink::PermissionType::WEB_APP_INSTALLATION:
+      case blink::PermissionType::LOCAL_NETWORK_ACCESS:
         break;
 
       default:

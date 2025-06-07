@@ -119,6 +119,9 @@
           ],
           'merge': {
             'script': '//tools/perf/process_perf_results.py',
+            'args': [
+              '--upload-skia-json',
+            ],
           },
         },
       },
@@ -147,6 +150,9 @@
           ],
           'merge': {
             'script': '//tools/perf/process_perf_results.py',
+            'args': [
+              '--upload-skia-json',
+            ],
           },
         },
       },
@@ -159,6 +165,26 @@
           'test_level_retries': 2,
           'timeout_sec': 14400,
           'shards': 15,
+        },
+      },
+    },
+
+    'chromeos_chrome_all_tast_tests_tfc': {
+      'chrome_all_tast_tests': {
+        'skylab': {
+          'tast_expr': 'STUB_STRING_TO_RUN_TAST_TESTS',
+          'timeout_sec': 14400,
+          'cros_test_tags': [
+            'group:mainline',
+            'dep:chrome',
+          ],
+          'cros_test_tags_exclude': [
+            'informational',
+            'dep:no_chrome_dcheck',
+          ],
+          'cros_test_names_exclude_from_file': [
+            'chromeos/tast_control_disabled_tests.txt',
+          ],
         },
       },
     },
@@ -1505,7 +1531,7 @@
             'gpu_force_command_decoder_passthrough',
             'gpu_force_angle_metal',
             'gpu_force_skia_graphite',
-            'gpu_force_high_performance_gpu_for_webgl',
+            'gpu_force_high_performance_gpu_for_webgl_metal',
             'gpu_enable_metal_debug_layers',
             'gpu_integration_test_webgl2_args',
             'gpu_integration_test_common_args',
@@ -1625,7 +1651,7 @@
             'gpu_force_command_decoder_passthrough',
             'gpu_force_angle_metal',
             'gpu_force_skia_ganesh',
-            'gpu_force_high_performance_gpu_for_webgl',
+            'gpu_force_high_performance_gpu_for_webgl_metal',
             'gpu_enable_metal_debug_layers',
             'gpu_integration_test_webgl1_args',
             'gpu_integration_test_common_args',
@@ -1643,7 +1669,7 @@
             'gpu_force_command_decoder_passthrough',
             'gpu_force_angle_metal',
             'gpu_force_skia_graphite',
-            'gpu_force_high_performance_gpu_for_webgl',
+            'gpu_force_high_performance_gpu_for_webgl_metal',
             'gpu_enable_metal_debug_layers',
             'gpu_integration_test_webgl1_args',
             'gpu_integration_test_common_args',
@@ -1714,6 +1740,63 @@
       },
     },
 
+    'gpu_webrtc_gl_passthrough_ganesh_telemetry_test': {
+      'webrtc_gl_passthrough_ganesh_tests': {
+        'test_common': {
+          'mixins': [
+            'has_native_resultdb_integration',
+            'gpu_force_command_decoder_passthrough',
+            'gpu_force_angle_gl',
+            'gpu_force_skia_ganesh',
+            'gpu_integration_test_common_args',
+          ],
+        },
+        'telemetry_test_name': 'webrtc',
+      },
+    },
+
+    'gpu_webrtc_metal_passthrough_ganesh_telemetry_test': {
+      'webrtc_metal_passthrough_ganesh_tests': {
+        'test_common': {
+          'mixins': [
+            'has_native_resultdb_integration',
+            'gpu_force_command_decoder_passthrough',
+            'gpu_force_angle_metal',
+            'gpu_force_skia_ganesh',
+            'gpu_integration_test_common_args',
+          ],
+        },
+        'telemetry_test_name': 'webrtc',
+      },
+    },
+
+    'gpu_webrtc_metal_passthrough_graphite_telemetry_test': {
+      'webrtc_metal_passthrough_graphite_tests': {
+        'test_common': {
+          'mixins': [
+            'has_native_resultdb_integration',
+            'gpu_force_command_decoder_passthrough',
+            'gpu_force_angle_metal',
+            'gpu_force_skia_graphite',
+            'gpu_integration_test_common_args',
+          ],
+        },
+        'telemetry_test_name': 'webrtc',
+      },
+    },
+
+    'gpu_webrtc_telemetry_test': {
+      'webrtc_tests': {
+        'test_common': {
+          'mixins': [
+            'has_native_resultdb_integration',
+            'gpu_integration_test_common_args',
+          ],
+        },
+        'telemetry_test_name': 'webrtc',
+      },
+    },
+
     'linux_chromeos_lacros_gtests': {
       'chromeos_unittests': {},
     },
@@ -1742,6 +1825,16 @@
       'ui_chromeos_unittests': {},
       'usage_time_limit_unittests': {
         'experiment_percentage': 100,
+      },
+      'views_ax_chromeos_browser_tests': {
+        'test_common': {
+          'args': [
+            '--enable-features=ViewsAccessibilitySerializeOnDataChanged',
+            '--test-launcher-filter-file=../../testing/buildbot/filters/views_ax_chromeos.browser_tests.filter',
+          ],
+        },
+        'test': 'browser_tests',
+        'experiment_percentage': 10,
       },
       'wayland_client_perftests': {},
       'wayland_client_tests': {},
@@ -2040,6 +2133,31 @@
       },
     },
 
+    'translatekit_script_tests': {
+      'chrome_wpt_tests': {
+        'test_common': {
+          'mixins': [
+            'has_native_resultdb_integration',
+          ],
+          'args': [
+            '--test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/chrome.filter',
+          ],
+          'merge': {
+            'script': '//third_party/blink/tools/merge_web_test_results.py',
+            'args': [
+              '--verbose',
+            ],
+          },
+        },
+        'results_handler': 'layout tests',
+        'args': [
+          '-t',
+          'Release',
+          'external/wpt/ai/translator',
+        ],
+      },
+    },
+
     'vulkan_swiftshader_isolated_scripts': {
       'vulkan_swiftshader_blink_web_tests': {
         'test_common': {
@@ -2184,6 +2302,9 @@
       'gpu_webgl_conformance_metal_passthrough_ganesh_telemetry_tests',
       'gpu_webgl_conformance_metal_passthrough_graphite_telemetry_tests',
       'gpu_webgl_conformance_swangle_passthrough_representative_telemetry_tests',
+      'gpu_webrtc_gl_passthrough_ganesh_telemetry_test',
+      'gpu_webrtc_metal_passthrough_ganesh_telemetry_test',
+      'gpu_webrtc_metal_passthrough_graphite_telemetry_test',
     ],
 
     'gpu_fyi_win_release_telemetry_tests': [
@@ -2195,6 +2316,7 @@
       'gpu_webgl_conformance_d3d11_passthrough_telemetry_tests',
       'gpu_webgl_conformance_d3d9_passthrough_telemetry_tests',
       'gpu_webgl_conformance_vulkan_passthrough_telemetry_tests',
+      'gpu_webrtc_telemetry_test',
     ],
 
     'gpu_telemetry_tests_v8': [
@@ -2286,7 +2408,7 @@
     'chromeos_ctp_preuprev_tests_slow_boards': {
       'chromeos_chrome_all_tast_tests': {
         'mixins': [
-          'skylab-shards-50',
+          'skylab-shards-45',
         ],
         'variants': [
           'CROS_RELEASE_LKGM',
@@ -2342,6 +2464,14 @@
         ],
       },
       'chromeos_device_only_gtests': {
+        'variants': [
+          'CROS_RELEASE_LKGM',
+        ],
+      },
+    },
+
+    'chromeos_tfc_tests': {
+      'chromeos_chrome_all_tast_tests_tfc': {
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2601,7 +2731,7 @@
     'optimization_guide_ios_sim_gtests': {
       'optimization_guide_ios_unittests': {
         'variants': [
-          'SIM_IPHONE_14_18_0',
+          'SIM_IPHONE_14_18_2',
         ],
       },
     },

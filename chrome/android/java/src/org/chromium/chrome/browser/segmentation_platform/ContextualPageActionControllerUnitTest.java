@@ -15,11 +15,13 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.Callback;
@@ -41,6 +43,7 @@ import org.chromium.components.commerce.core.ShoppingService;
 @Config(manifest = Config.NONE)
 @EnableFeatures({ChromeFeatureList.CONTEXTUAL_PAGE_ACTIONS})
 public class ContextualPageActionControllerUnitTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     private ObservableSupplierImpl<Profile> mProfileSupplier;
     private ObservableSupplierImpl<Tab> mTabSupplier;
 
@@ -54,7 +57,6 @@ public class ContextualPageActionControllerUnitTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
 
         mProfileSupplier = new ObservableSupplierImpl<>();
         mTabSupplier = new ObservableSupplierImpl<>();
@@ -76,15 +78,22 @@ public class ContextualPageActionControllerUnitTest {
                     protected void initActionProviders(
                             Supplier<ShoppingService> shoppingServiceSupplier,
                             Supplier<BookmarkModel> bookmarkModelSupplier) {
-                        mActionProviders.add(
-                                (tab, signalAccumulator) -> {
-                                    // Supply all signals and notify controller.
-                                    signalAccumulator.setHasReaderMode(true);
-                                    signalAccumulator.setHasPriceTracking(true);
-                                    signalAccumulator.setHasPriceInsights(true);
-                                    signalAccumulator.setHasDiscounts(true);
-                                    signalAccumulator.notifySignalAvailable();
-                                });
+                        mActionProviders.put(
+                                AdaptiveToolbarButtonVariant.READER_MODE,
+                                (ActionProvider)
+                                        (tab, signalAccumulator) -> {
+                                            // Supply all signals and notify controller.
+                                            signalAccumulator.setSignal(
+                                                    AdaptiveToolbarButtonVariant.READER_MODE, true);
+                                            signalAccumulator.setSignal(
+                                                    AdaptiveToolbarButtonVariant.PRICE_TRACKING,
+                                                    true);
+                                            signalAccumulator.setSignal(
+                                                    AdaptiveToolbarButtonVariant.PRICE_INSIGHTS,
+                                                    true);
+                                            signalAccumulator.setSignal(
+                                                    AdaptiveToolbarButtonVariant.DISCOUNTS, true);
+                                        });
                     }
                 };
 

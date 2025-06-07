@@ -49,7 +49,6 @@
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/base/signin_prefs.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/accounts_mutator.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
@@ -111,6 +110,7 @@ class MockSigninUiDelegate : public signin_ui_util::SigninUiDelegate {
                signin_metrics::PromoAction,
                const CoreAccountId&,
                TurnSyncOnHelper::SigninAbortedMode,
+               bool,
                bool),
               (override));
 
@@ -166,8 +166,6 @@ std::string GetConfiguration(SyncAllDataConfig sync_all,
              types.Has(syncer::UserSelectableType::kReadingList));
   result.Set("savedTabGroupsSynced",
              types.Has(syncer::UserSelectableType::kSavedTabGroups));
-  result.Set("sharedTabGroupDataSynced",
-             types.Has(syncer::UserSelectableType::kSharedTabGroupData));
   result.Set("tabsSynced", types.Has(syncer::UserSelectableType::kTabs));
   result.Set("themesSynced", types.Has(syncer::UserSelectableType::kThemes));
   result.Set("typedUrlsSynced",
@@ -1039,7 +1037,6 @@ TEST_F(PeopleHandlerTest, OngoingSetupCustomPassphraseRequired) {
 
   const auto passphrase_time = base::Time::Now();
 
-  sync_service_->SetSyncFeatureRequested();
   sync_user_settings()->SetPassphraseRequired();
   sync_user_settings()->SetPassphraseType(
       syncer::PassphraseType::kCustomPassphrase);
@@ -1419,9 +1416,12 @@ TEST(PeopleHandlerWebOnlySigninTest, ChromeSigninUserAvailableOnWebSignin) {
       IdentityTestEnvironmentProfileAdaptor::
           GetIdentityTestEnvironmentFactoriesWithAppendedFactories(
               {TestingProfile::TestingFactory{
-                  ChromeSigninClientFactory::GetInstance(),
-                  base::BindRepeating(&BuildChromeSigninClientWithURLLoader,
-                                      &url_loader_factory)}}));
+                   ChromeSigninClientFactory::GetInstance(),
+                   base::BindRepeating(&BuildChromeSigninClientWithURLLoader,
+                                       &url_loader_factory)},
+               TestingProfile::TestingFactory{
+                   SyncServiceFactory::GetInstance(),
+                   base::BindRepeating(&BuildTestSyncService)}}));
 
   std::unique_ptr<TestingProfile> profile = builder.Build();
   auto identity_test_env_adaptor =
@@ -1896,27 +1896,6 @@ TEST_F(PeopleHandlerSignoutTest, SignoutNotAllowedSyncOn) {
             GaiaUrls::GetInstance()->service_logout_url());
 }
 
-TEST_F(PeopleHandlerSignoutTest, SignoutWithSyncOff) {
-  auto account_1 = identity_test_env()->MakePrimaryAccountAvailable(
-      "a@gmail.com", ConsentLevel::kSignin);
-  auto account_2 = identity_test_env()->MakeAccountAvailable("b@gmail.com");
-  EXPECT_TRUE(identity_manager()->HasPrimaryAccount(ConsentLevel::kSignin));
-  EXPECT_EQ(2U, identity_manager()->GetAccountsWithRefreshTokens().size());
-
-  CreatePeopleHandler();
-
-  base::Value::List args;
-  args.Append(/*value=*/false);
-  SimulateSignout(args);
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-  EXPECT_EQ(web_contents()->GetVisibleURL(),
-            GaiaUrls::GetInstance()->LogOutURLWithContinueURL(GURL()));
-#else
-  EXPECT_FALSE(identity_manager()->HasPrimaryAccount(ConsentLevel::kSignin));
-  EXPECT_TRUE(identity_manager()->GetAccountsWithRefreshTokens().empty());
-#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
-}
-
 TEST_F(PeopleHandlerSignoutTest, SignoutWithSyncOn) {
   auto account_1 = identity_test_env()->MakePrimaryAccountAvailable(
       "a@gmail.com", ConsentLevel::kSync);
@@ -1935,13 +1914,8 @@ TEST_F(PeopleHandlerSignoutTest, SignoutWithSyncOn) {
   args.Append(/*value=*/false);
   SimulateSignout(args);
 
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
   EXPECT_EQ(web_contents()->GetVisibleURL(),
             GaiaUrls::GetInstance()->LogOutURLWithContinueURL(GURL()));
-#else
-  EXPECT_FALSE(identity_manager()->HasPrimaryAccount(ConsentLevel::kSignin));
-  EXPECT_TRUE(identity_manager()->GetAccountsWithRefreshTokens().empty());
-#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
   EXPECT_FALSE(identity_manager()->HasPrimaryAccount(ConsentLevel::kSync));
 }
 
@@ -1953,13 +1927,14 @@ TEST_F(PeopleHandlerSignoutTest, Signout) {
   EXPECT_EQ(2U, identity_manager()->GetAccountsWithRefreshTokens().size());
 
   CreatePeopleHandler();
+  EXPECT_FALSE(browser()->signin_view_controller()->ShowsModalDialog());
 
   base::Value::List args;
   args.Append(/*value=*/false);
   SimulateSignout(args);
-  EXPECT_EQ(web_contents()->GetVisibleURL(),
-            GaiaUrls::GetInstance()->LogOutURLWithContinueURL(GURL()));
-  EXPECT_FALSE(identity_manager()->HasPrimaryAccount(ConsentLevel::kSignin));
+  // The signout confirmation dialog is shown.
+  EXPECT_TRUE(identity_manager()->HasPrimaryAccount(ConsentLevel::kSignin));
+  EXPECT_TRUE(browser()->signin_view_controller()->ShowsModalDialog());
 }
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 

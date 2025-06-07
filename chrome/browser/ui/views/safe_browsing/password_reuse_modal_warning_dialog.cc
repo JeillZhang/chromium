@@ -222,7 +222,8 @@ void PasswordReuseModalWarningDialog::CreateGaiaPasswordReuseModalWarningDialog(
   SetLayoutManager(std::make_unique<views::FillLayout>());
   // Makes message label align with title label.
   const int horizontal_adjustment =
-      provider->GetDistanceMetric(DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE) +
+      provider->GetDistanceMetric(
+          views::DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE) +
       provider->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_HORIZONTAL);
   if (base::i18n::IsRTL()) {
     message_body_label->SetBorder(views::CreateEmptyBorder(
@@ -231,7 +232,7 @@ void PasswordReuseModalWarningDialog::CreateGaiaPasswordReuseModalWarningDialog(
     message_body_label->SetBorder(views::CreateEmptyBorder(
         gfx::Insets::TLBR(0, horizontal_adjustment, 0, 0)));
   }
-  AddChildView(message_body_label);
+  AddChildViewRaw(message_body_label);
 }
 
 gfx::Size PasswordReuseModalWarningDialog::GetMinimumSize() const {
@@ -268,7 +269,7 @@ ui::ImageModel PasswordReuseModalWarningDialog::GetWindowIcon() {
              : ui::ImageModel::FromVectorIcon(
                    kSecurityIcon, ui::kColorIcon,
                    ChromeLayoutProvider::Get()->GetDistanceMetric(
-                       DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE));
+                       views::DISTANCE_BUBBLE_HEADER_VECTOR_ICON_SIZE));
 }
 
 void PasswordReuseModalWarningDialog::OnGaiaPasswordChanged() {

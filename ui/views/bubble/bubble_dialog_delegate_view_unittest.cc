@@ -24,6 +24,8 @@
 #include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/compositor/compositor.h"
+#include "ui/compositor/layer.h"
+#include "ui/compositor/layer_type.h"
 #include "ui/display/test/test_screen.h"
 #include "ui/events/event_utils.h"
 #include "ui/views/animation/ink_drop.h"
@@ -54,8 +56,8 @@ namespace views {
 using test::TestInkDrop;
 
 namespace {
-
 constexpr gfx::Size kContentSize = gfx::Size(200, 200);
+}
 
 class TestBubbleDialogDelegateView : public BubbleDialogDelegateView {
   METADATA_HEADER(TestBubbleDialogDelegateView, BubbleDialogDelegateView)
@@ -67,7 +69,7 @@ class TestBubbleDialogDelegateView : public BubbleDialogDelegateView {
                                  BubbleBorder::NO_SHADOW,
                                  true) {
     view_->SetFocusBehavior(FocusBehavior::ALWAYS);
-    AddChildView(view_.get());
+    AddChildViewRaw(view_.get());
   }
   ~TestBubbleDialogDelegateView() override = default;
   TestBubbleDialogDelegateView(const TestBubbleDialogDelegateView&) = delete;
@@ -140,6 +142,8 @@ class TestBubbleDialogDelegateView : public BubbleDialogDelegateView {
 
 BEGIN_METADATA(TestBubbleDialogDelegateView)
 END_METADATA
+
+namespace {
 
 class TestAlertBubbleDialogDelegateView : public TestBubbleDialogDelegateView {
   METADATA_HEADER(TestAlertBubbleDialogDelegateView,
@@ -217,7 +221,7 @@ TEST_F(BubbleDialogDelegateViewTest, CreateDelegate) {
       Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_WINDOW);
   TestBubbleDialogDelegateView* bubble_delegate =
       new TestBubbleDialogDelegateView(anchor_widget->GetContentsView());
-  bubble_delegate->set_background_color(SK_ColorGREEN);
+  bubble_delegate->SetBackgroundColor(SK_ColorGREEN);
   Widget* bubble_widget =
       BubbleDialogDelegateView::CreateBubble(bubble_delegate);
   EXPECT_EQ(bubble_delegate, bubble_widget->widget_delegate());
@@ -1022,39 +1026,25 @@ INSTANTIATE_TEST_SUITE_P(AnchorAtFarScreenCorners,
                          testing::ValuesIn(kAnchorAtFarScreenCornersParams));
 
 // Tests whether the BubbleDialogDelegateView will create a layer backed
-// ClientView when SetPaintClientToLayer is set to true.
-TEST_F(BubbleDialogDelegateViewTest, WithClientLayerTest) {
+// ClientView.
+TEST_F(BubbleDialogDelegateViewTest, ClientViewIsPaintedToLayer) {
   std::unique_ptr<Widget> anchor_widget = CreateTestWidget(
       Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_WINDOW);
   auto bubble_delegate = std::make_unique<BubbleDialogDelegateView>(
-      nullptr, BubbleBorder::TOP_LEFT);
-  bubble_delegate->SetPaintClientToLayer(true);
+      BubbleDialogDelegateView::CreatePassKey(), nullptr,
+      BubbleBorder::TOP_LEFT);
   bubble_delegate->set_parent_window(anchor_widget->GetNativeView());
 
   WidgetAutoclosePtr bubble_widget(
       BubbleDialogDelegateView::CreateBubble(std::move(bubble_delegate)));
 
-  EXPECT_NE(nullptr, bubble_widget->client_view()->layer());
-}
-
-// Tests to ensure BubbleDialogDelegateView does not create a layer backed
-// ClientView when SetPaintClientToLayer is set to false.
-TEST_F(BubbleDialogDelegateViewTest, WithoutClientLayerTest) {
-  std::unique_ptr<Widget> anchor_widget = CreateTestWidget(
-      Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_WINDOW);
-  auto bubble_delegate = std::make_unique<BubbleDialogDelegateView>(
-      nullptr, BubbleBorder::TOP_LEFT);
-  bubble_delegate->SetPaintClientToLayer(false);
-  bubble_delegate->set_parent_window(anchor_widget->GetNativeView());
-
-  WidgetAutoclosePtr bubble_widget(
-      BubbleDialogDelegateView::CreateBubble(std::move(bubble_delegate)));
-
-  EXPECT_EQ(nullptr, bubble_widget->client_view()->layer());
+  auto* client_view_layer = bubble_widget->client_view()->layer();
+  EXPECT_TRUE(client_view_layer);
+  EXPECT_EQ(client_view_layer->type(), ui::LAYER_TEXTURED);
 }
 
 TEST_F(BubbleDialogDelegateViewTest, AlertAccessibleEvent) {
-  views::test::AXEventCounter counter(views::AXEventManager::Get());
+  views::test::AXEventCounter counter(views::AXUpdateNotifier::Get());
   std::unique_ptr<Widget> anchor_widget = CreateTestWidget(
       Widget::InitParams::CLIENT_OWNS_WIDGET, Widget::InitParams::TYPE_WINDOW);
   auto bubble_delegate = std::make_unique<TestBubbleDialogDelegateView>(
@@ -1077,8 +1067,6 @@ TEST_F(BubbleDialogDelegateViewTest, AlertAccessibleEvent) {
 }
 
 // Anchoring Tests -------------------------------------------------------------
-
-namespace {
 
 class AnchorTestBubbleDialogDelegateView : public BubbleDialogDelegateView {
  public:
@@ -1165,8 +1153,6 @@ class BubbleDialogDelegateViewAnchorTest : public test::WidgetTest {
  private:
   WidgetAutoclosePtr dummy_widget_;
 };
-
-}  // namespace
 
 TEST_F(BubbleDialogDelegateViewAnchorTest,
        AnchoredToWidgetShouldPaintAsActive) {
@@ -1408,6 +1394,7 @@ TEST_F(BubbleUmaLoggerTest, LogMetricFromDelegate) {
   auto anchored_view = std::make_unique<View>();
   BubbleDialogDelegate delegate(anchored_view.get(),
                                 BubbleBorder::Arrow::TOP_LEFT);
+  delegate.SetOwnedByWidget(WidgetDelegate::OwnedByWidgetPassKey());
   delegate.SetContentsView(std::make_unique<Label>());
 
   TestBubbleUmaLogger logger;

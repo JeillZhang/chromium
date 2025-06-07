@@ -13,11 +13,11 @@ import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Callback;
+import org.chromium.base.lifetime.DestroyChecker;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
-import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutHelperManager;
 import org.chromium.chrome.browser.device.DeviceClassManager;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.hub.HubLayout;
@@ -76,6 +76,7 @@ public class LayoutManagerChrome extends LayoutManagerImpl
     private final HubLayoutDependencyHolder mHubLayoutDependencyHolder;
     private final ThumbnailChangeListener mThumbnailChangeListener = (id) -> requestUpdate();
     private final Callback<TabContentManager> mOnTabContentManager = this::onTabContentManager;
+    private final DestroyChecker mDestroyChecker = new DestroyChecker();
 
     protected @Nullable DesktopWindowStateManager mDesktopWindowStateManager;
 
@@ -205,10 +206,12 @@ public class LayoutManagerChrome extends LayoutManagerImpl
 
     @Override
     public void showLayout(int layoutType, boolean animate) {
+        if (mDestroyChecker.isDestroyed()) return;
+
         if (layoutType == LayoutType.TAB_SWITCHER && mHubLayout == null) {
             initTabSwitcher();
         }
-        super.showLayout(layoutType, XrUtils.isXrDevice() ? false : animate);
+        super.showLayout(layoutType, animate);
     }
 
     /**
@@ -236,6 +239,7 @@ public class LayoutManagerChrome extends LayoutManagerImpl
     @Override
     public void destroy() {
         super.destroy();
+        mDestroyChecker.destroy();
 
         if (mTabContentManagerSupplier != null) {
             mTabContentManagerSupplier.removeObserver(mOnTabContentManager);
@@ -287,7 +291,8 @@ public class LayoutManagerChrome extends LayoutManagerImpl
         boolean animate = !tabRemoved && animationsEnabled();
         if (getActiveLayoutType() != LayoutType.TAB_SWITCHER
                 && showOverview
-                && getNextLayoutType() != LayoutType.TAB_SWITCHER) {
+                && getNextLayoutType() != LayoutType.TAB_SWITCHER
+                && !XrUtils.isXrDevice()) {
             showLayout(LayoutType.TAB_SWITCHER, animate);
         }
         super.tabClosed(id, nextId, incognito, tabRemoved);
@@ -295,7 +300,7 @@ public class LayoutManagerChrome extends LayoutManagerImpl
 
     @Override
     public void onTabsAllClosing(boolean incognito) {
-        if (getActiveLayout() == mStaticLayout && !incognito) {
+        if (getActiveLayout() == mStaticLayout && !incognito && !XrUtils.isXrDevice()) {
             showLayout(LayoutType.TAB_SWITCHER, /* animate= */ false);
         }
         super.onTabsAllClosing(incognito);
@@ -326,18 +331,13 @@ public class LayoutManagerChrome extends LayoutManagerImpl
         return mHubLayout;
     }
 
-    /** Returns the {@link StripLayoutHelperManager} managed by this class. */
-    public StripLayoutHelperManager getStripLayoutHelperManager() {
-        return null;
-    }
-
     /**
      * @param enabled Whether or not to allow model-reactive animations (tab creation, closing,
      *     etc.). Note that on an XR device the this param value is ignored and animation is
      *     disabled.
      */
     public void setEnableAnimations(boolean enabled) {
-        mEnableAnimations = XrUtils.isXrDevice() ? false : enabled;
+        mEnableAnimations = enabled;
     }
 
     /** Returns whether animations should be done for model changes. */

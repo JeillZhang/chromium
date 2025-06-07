@@ -799,12 +799,11 @@ DownloadUIModel::DangerUiPattern DownloadUIModel::GetDangerUiPattern() const {
 bool DownloadUIModel::ShouldShowInBubble() const {
   return ShouldShowInShelf();
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 bool DownloadUIModel::IsEphemeralWarning() const {
   return false;
 }
-
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 std::string DownloadUIModel::GetMimeType() const {
   return "text/html";
@@ -1317,7 +1316,7 @@ DownloadUIModel::BubbleStatusTextBuilder::GetInterruptedStatusText(
   return l10n_util::GetStringUTF16(string_id);
 }
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 void DownloadUIModel::CompleteSafeBrowsingScan() {}
 void DownloadUIModel::ReviewScanningVerdict(
     content::WebContents* web_contents) {}

@@ -85,14 +85,13 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
 
   void EnterTestMode(const GURL& update_url,
                      const GURL& crash_upload_url,
-                     const GURL& device_management_url,
                      const GURL& app_logo_url,
                      base::TimeDelta idle_timeout,
                      base::TimeDelta server_keep_alive_time,
                      base::TimeDelta ceca_connection_timeout) const override {
-    updater::test::EnterTestMode(
-        update_url, crash_upload_url, device_management_url, app_logo_url,
-        idle_timeout, server_keep_alive_time, ceca_connection_timeout);
+    updater::test::EnterTestMode(update_url, crash_upload_url, app_logo_url,
+                                 idle_timeout, server_keep_alive_time,
+                                 ceca_connection_timeout);
   }
 
   void ExitTestMode() const override {
@@ -122,16 +121,18 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
                               target_url);
   }
 
-  void ExpectAppCommandPing(ScopedServer* test_server,
-                            const std::string& appid,
-                            const std::string& appcommandid,
-                            int errorcode,
-                            int eventresult,
-                            int event_type,
-                            const base::Version& version) const override {
+  void ExpectAppCommandPing(
+      ScopedServer* test_server,
+      const std::string& appid,
+      const std::string& appcommandid,
+      int errorcode,
+      int eventresult,
+      int event_type,
+      const base::Version& version,
+      const base::Version& updater_version) const override {
     updater::test::ExpectAppCommandPing(updater_scope_, test_server, appid,
                                         appcommandid, errorcode, eventresult,
-                                        event_type, version);
+                                        event_type, version, updater_version);
   }
 
   void ExpectUpdateCheckRequest(ScopedServer* test_server) const override {
@@ -215,8 +216,9 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
     updater::test::SetupFakeUpdaterLowerVersion(updater_scope_);
   }
 
-  void SetupRealUpdater(const base::FilePath& updater_path) const override {
-    updater::test::SetupRealUpdater(updater_scope_, updater_path);
+  void SetupRealUpdater(const base::FilePath& updater_path,
+                        const base::Value::List& switches) const override {
+    updater::test::SetupRealUpdater(updater_scope_, updater_path, switches);
   }
 
   void SetExistenceCheckerPath(const std::string& app_id,
@@ -365,8 +367,10 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
         updater_scope_, app_id, command_id, parameters, expected_exit_code);
   }
 
-  void ExpectLegacyPolicyStatusSucceeds() const override {
-    updater::test::ExpectLegacyPolicyStatusSucceeds(updater_scope_);
+  void ExpectLegacyPolicyStatusSucceeds(
+      const base::Version& updater_version) const override {
+    updater::test::ExpectLegacyPolicyStatusSucceeds(updater_scope_,
+                                                    updater_version);
   }
 
   void LegacyInstallApp(const std::string& app_id,
@@ -444,7 +448,16 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
       std::optional<UpdaterScope> store_flag,
       std::optional<std::string> want_tag) const override {
     updater::test::ExpectKSAdminFetchTag(updater_scope_, elevate, product_id,
-                                         xc_path, store_flag, want_tag);
+                                         xc_path, store_flag,
+                                         std::move(want_tag));
+  }
+
+  void ExpectKSAdminXattrBrand(
+      bool elevate,
+      const base::FilePath& path,
+      std::optional<std::string> want_brand) const override {
+    updater::test::ExpectKSAdminXattrBrand(updater_scope_, elevate, path,
+                                           std::move(want_brand));
   }
 #endif  // BUILDFLAG(IS_MAC)
 
@@ -474,9 +487,12 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
   }
 
   void RunOfflineInstall(bool is_legacy_install,
-                         bool is_silent_install) override {
+                         bool is_silent_install,
+                         int installer_result,
+                         int installer_error) override {
     updater::test::RunOfflineInstall(updater_scope_, is_legacy_install,
-                                     is_silent_install);
+                                     is_silent_install, installer_result,
+                                     installer_error);
   }
 
   void RunOfflineInstallOsNotSupported(bool is_legacy_install,
@@ -484,6 +500,21 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
                                        const std::string& language) override {
     updater::test::RunOfflineInstallOsNotSupported(
         updater_scope_, is_legacy_install, is_silent_install, language);
+  }
+
+  void RunMockOfflineMetaInstall(const std::string& app_id,
+                                 const base::Version& version,
+                                 const base::FilePath& installer_path,
+                                 const std::string& arguments,
+                                 bool is_silent_install,
+                                 const std::string& platform,
+                                 int string_resource_id_to_find,
+                                 const std::string& language,
+                                 bool expect_success) override {
+    updater::test::RunMockOfflineMetaInstall(
+        updater_scope_, app_id, version, installer_path, arguments,
+        is_silent_install, platform, string_resource_id_to_find, language,
+        expect_success);
   }
 
   void DMPushEnrollmentToken(const std::string& enrollment_token) override {

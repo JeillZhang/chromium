@@ -37,7 +37,8 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.UnguessableToken;
@@ -51,7 +52,8 @@ import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.overlay_window.PlaybackState;
@@ -70,8 +72,11 @@ import java.util.concurrent.TimeoutException;
 @Restriction(DeviceRestriction.RESTRICTION_TYPE_NON_AUTO)
 @RequiresApi(Build.VERSION_CODES.O)
 public class PictureInPictureActivityTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private static final long NATIVE_OVERLAY = 100L;
     private static final long PIP_TIMEOUT_MILLISECONDS = 10000L;
@@ -84,11 +89,11 @@ public class PictureInPictureActivityTest {
     private Tab mTab;
 
     // Source rect hint that we'll provide as the video element position.
-    private Rect mSourceRectHint = new Rect(100, 200, 300, 400);
+    private final Rect mSourceRectHint = new Rect(100, 200, 300, 400);
 
     // Helper to capture the source rect hint bounds that PictureInPictureActivity would like to use
     // for `makeEnterIntoPip`, if any.
-    private PictureInPictureActivity.LaunchIntoPipHelper mLaunchIntoPipHelper =
+    private final PictureInPictureActivity.LaunchIntoPipHelper mLaunchIntoPipHelper =
             new PictureInPictureActivity.LaunchIntoPipHelper() {
                 @Override
                 public Bundle build(Context activityContext, Rect bounds) {
@@ -106,8 +111,7 @@ public class PictureInPictureActivityTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.startOnBlankPage();
         mTab = mActivityTestRule.getActivity().getActivityTab();
         PictureInPictureActivityJni.setInstanceForTesting(mNativeMock);
         mOriginalHelper = PictureInPictureActivity.setLaunchIntoPipHelper(mLaunchIntoPipHelper);
@@ -444,7 +448,7 @@ public class PictureInPictureActivityTest {
                 ActivityTestUtils.launchActivityWithTimeout(
                         InstrumentationRegistry.getInstrumentation(),
                         PictureInPictureActivity.class,
-                        new Callable<Void>() {
+                        new Callable<>() {
                             @Override
                             public Void call() throws TimeoutException {
                                 ThreadUtils.runOnUiThreadBlocking(

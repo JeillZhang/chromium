@@ -140,9 +140,9 @@ class COMPONENT_EXPORT(AX_PLATFORM) BrowserAccessibilityManager
   virtual void FireAriaNotificationEvent(
       BrowserAccessibility* node,
       const std::string& announcement,
-      const std::string& notification_id,
+      ax::mojom::AriaNotificationPriority priority_property,
       ax::mojom::AriaNotificationInterrupt interrupt_property,
-      ax::mojom::AriaNotificationPriority priority_property) {}
+      const std::string& type) {}
 
   virtual void FireBlinkEvent(ax::mojom::Event event_type,
                               BrowserAccessibility* node,
@@ -262,7 +262,7 @@ class COMPONENT_EXPORT(AX_PLATFORM) BrowserAccessibilityManager
   // Called when the renderer process has notified us of tree changes. Returns
   // false in fatal-error conditions, in which case the caller should destroy
   // the manager.
-  virtual bool OnAccessibilityEvents(const AXUpdatesAndEvents& details);
+  virtual bool OnAccessibilityEvents(AXUpdatesAndEvents& details);
 
   // Allows derived classes to do event pre-processing
   virtual void BeforeAccessibilityEvents();

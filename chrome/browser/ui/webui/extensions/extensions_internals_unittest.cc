@@ -5,7 +5,6 @@
 #include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/browser/extensions/permissions/permissions_updater.h"
 #include "chrome/browser/extensions/permissions/scripting_permissions_modifier.h"
@@ -14,7 +13,9 @@
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/event_router_factory.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/features/simple_feature.h"
 #include "extensions/common/permissions/api_permission.h"
@@ -27,6 +28,8 @@
 #include "extensions/common/user_script.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace {
 
@@ -53,7 +56,7 @@ TEST_F(ExtensionsInternalsUnitTest, Basic) {
           .SetVersion("1.2.3.4")
           .SetLocation(extensions::mojom::ManifestLocation::kExternalPref)
           .Build();
-  service()->AddExtension(extension.get());
+  registrar()->AddExtension(extension.get());
 
   ExtensionsInternalsSource source(profile());
   auto extensions_list = base::JSONReader::Read(source.WriteToString());
@@ -92,7 +95,7 @@ TEST_F(ExtensionsInternalsUnitTest, WriteToStringPermissions) {
           .AddContentScript("not-real.js", {"https://chromium.org/foo"})
           .Build();
 
-  service()->AddExtension(extension.get());
+  registrar()->AddExtension(extension.get());
   ExtensionsInternalsSource source(profile());
   auto extensions_list = base::JSONReader::Read(source.WriteToString());
   ASSERT_TRUE(extensions_list) << "Failed to parse extensions internals json.";
@@ -138,7 +141,7 @@ TEST_F(ExtensionsInternalsUnitTest, WriteToStringTabSpecificPermissions) {
       extensions::ExtensionBuilder("test")
           .AddAPIPermission("activeTab")
           .Build();
-  service()->AddExtension(extension.get());
+  registrar()->AddExtension(extension.get());
 
   ExtensionsInternalsSource source(profile());
   auto extensions_list = base::JSONReader::Read(source.WriteToString());
@@ -192,7 +195,7 @@ TEST_F(ExtensionsInternalsUnitTest, WriteToStringWithheldPermissions) {
       extensions::ExtensionBuilder("test")
           .AddHostPermission("https://example.com/*")
           .Build();
-  service()->AddExtension(extension.get());
+  registrar()->AddExtension(extension.get());
 
   ExtensionsInternalsSource source(profile());
   auto extensions_list = base::JSONReader::Read(source.WriteToString());

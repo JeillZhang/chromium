@@ -138,12 +138,14 @@ suite('FeedbackFlowTestSuite', () => {
     }
   }
 
-  function setFromSettingsSearchFlag(fromSettingsSearch: boolean) {
-    if (fromSettingsSearch) {
+  function setSettingsSearchDoNotRecordMetricsFlag(
+      settingsSearchDoNotRecordMetrics: boolean) {
+    if (settingsSearchDoNotRecordMetrics) {
       const queryParams = new URLSearchParams(window.location.search);
-      const fromSettingsSearch = 'true';
+      const settingsSearchDoNotRecordMetrics = 'true';
       queryParams.set(
-          AdditionalContextQueryParam.FROM_SETTINGS_SEARCH, fromSettingsSearch);
+          AdditionalContextQueryParam.SETTINGS_SEARCH_DO_NOT_RECORD_METRICS,
+          settingsSearchDoNotRecordMetrics);
 
       window.history.replaceState(null, '', '?' + queryParams.toString());
     } else {
@@ -152,6 +154,30 @@ suite('FeedbackFlowTestSuite', () => {
           '?' +
               '');
     }
+  }
+
+  async function fillDescriptionAndClickContinue(): Promise<void> {
+    const activePage = getActivePage<SearchPageElement>();
+    strictQuery('textarea', activePage.shadowRoot, HTMLTextAreaElement).value =
+        'text';
+    strictQuery('#buttonContinue', activePage.shadowRoot, CrButtonElement)
+        .click();
+    await flushTasks();
+  }
+
+  function checkAndGetSysInfoAndMetricsCheckbox(): CrCheckboxElement {
+    const newActivePage = getActivePage<ShareDataPageElement>();
+    assertEquals('shareDataPage', newActivePage.id);
+
+    const sysInfoAndMetricsCheckboxContainer =
+        strictQuery('#sysInfoContainer', newActivePage.shadowRoot, HTMLElement);
+    assertTrue(!!sysInfoAndMetricsCheckboxContainer);
+
+    const sysInfoAndMetricsCheckbox = strictQuery(
+        '#sysInfoCheckbox', newActivePage.shadowRoot, CrCheckboxElement);
+    assertTrue(!!sysInfoAndMetricsCheckbox);
+
+    return sysInfoAndMetricsCheckbox;
   }
 
   // Test that the search page is shown by default.
@@ -278,8 +304,8 @@ suite('FeedbackFlowTestSuite', () => {
     continueButton.click();
     await clickPromise;
 
-    assertEquals(FeedbackFlowState.SEARCH, eventDetail!.detail!.currentState);
-    assertEquals('abc', eventDetail!.detail!.description);
+    assertEquals(FeedbackFlowState.SEARCH, eventDetail!.detail.currentState);
+    assertEquals('abc', eventDetail!.detail.description);
 
     // Should move to share data page when click the continue button.
     activePage = getActivePage<ShareDataPageElement>();
@@ -439,16 +465,15 @@ suite('FeedbackFlowTestSuite', () => {
 
     const searchPage = findChildElement(page, '.iron-selected');
     assertTrue(!!searchPage);
-    assertEquals('searchPage', searchPage!.id);
+    assertEquals('searchPage', searchPage.id);
 
-    const inputElement = findChildElement(searchPage as Element, 'textarea') as
-        HTMLTextAreaElement;
+    const inputElement =
+        findChildElement(searchPage, 'textarea') as HTMLTextAreaElement;
     inputElement.value = 'wifi wi-fi internet network hotspot';
     // The flag ShouldShowWifiDebugLogsCheckBox_ is only updated when continue
     // button is clicked.
     const continueButton =
-        findChildElement(searchPage as Element, '#buttonContinue') as
-        CrButtonElement;
+        findChildElement(searchPage, '#buttonContinue') as CrButtonElement;
     continueButton.click();
     await flushTasks();
 
@@ -469,14 +494,13 @@ suite('FeedbackFlowTestSuite', () => {
     assertTrue(!!searchPage);
     assertEquals('searchPage', searchPage.id);
 
-    const inputElement = findChildElement(searchPage as Element, 'textarea') as
-        HTMLTextAreaElement;
+    const inputElement =
+        findChildElement(searchPage, 'textarea') as HTMLTextAreaElement;
     inputElement.value = 'wi-fi';
     // The flag ShouldShowWifiDebugLogsCheckBox_ is only updated when continue
     // button is clicked.
     const continueButton =
-        findChildElement(searchPage as Element, '#buttonContinue') as
-        CrButtonElement;
+        findChildElement(searchPage, '#buttonContinue') as CrButtonElement;
     continueButton.click();
     await flushTasks();
 
@@ -497,14 +521,13 @@ suite('FeedbackFlowTestSuite', () => {
     assertTrue(!!searchPage);
     assertEquals('searchPage', searchPage.id);
 
-    const inputElement = findChildElement(searchPage as Element, 'textarea') as
-        HTMLTextAreaElement;
+    const inputElement =
+        findChildElement(searchPage, 'textarea') as HTMLTextAreaElement;
     inputElement.value = 'wi-fi';
     // The flag ShouldShowWifiDebugLogsCheckBox_ is only updated when continue
     // button is clicked.
     const continueButton =
-        findChildElement(searchPage as Element, '#buttonContinue') as
-        CrButtonElement;
+        findChildElement(searchPage, '#buttonContinue') as CrButtonElement;
     continueButton.click();
     await flushTasks();
 
@@ -816,68 +839,35 @@ suite('FeedbackFlowTestSuite', () => {
   });
 
   // Test the sys info and metrics checkbox will not be checked if
-  // fromSettingsSearch flag has been passed.
+  // settingsSearchDoNotRecordMetrics flag has been passed.
   test(
-      'SysinfoAndMetricsCheckboxIsUncheckedWhenFeedbackIsSentFromSettingsSearch',
+      'SysinfoAndMetricsCheckboxIsUncheckedWhenFeedbackIsSentFromSettingsSearchAndQueryDoesNotContainFingerprint',
       async () => {
-        // Replacing the query string to set the fromSettingsSearch flag as
-        // true.
-        setFromSettingsSearchFlag(true);
+        testWithInternalAccount();
+        setSettingsSearchDoNotRecordMetricsFlag(true);
         await initializePage();
-        const feedbackContext = getFeedbackContext();
-        assertTrue(feedbackContext.fromSettingsSearch);
 
-        const activePage = getActivePage<SearchPageElement>();
-        strictQuery('textarea', activePage.shadowRoot, HTMLTextAreaElement)
-            .value = 'text';
-        strictQuery('#buttonContinue', activePage.shadowRoot, CrButtonElement)
-            .click();
-        await flushTasks();
+        await fillDescriptionAndClickContinue();
 
-        // Check the sys info and metrics checkbox component is unchecked when
-        // the feedback app has opened through settings search
-        const newActivePage = getActivePage<ShareDataPageElement>();
-        assertEquals('shareDataPage', newActivePage.id);
-
-        const sysInfoAndMetricsCheckboxContainer = strictQuery(
-            '#sysInfoContainer', newActivePage.shadowRoot, HTMLElement);
-        assertTrue(!!sysInfoAndMetricsCheckboxContainer);
-
-        const sysInfoAndMetricsCheckbox = strictQuery(
-            '#sysInfoCheckbox', newActivePage.shadowRoot, CrCheckboxElement);
-        assertTrue(!!sysInfoAndMetricsCheckbox);
+        const sysInfoAndMetricsCheckbox =
+            checkAndGetSysInfoAndMetricsCheckbox();
         assertFalse(sysInfoAndMetricsCheckbox.checked);
       });
 
   // Test the sys info and metrics checkbox will be checked if
-  // fromSettingsSearch flag not passed.
+  // fromSettingsSearch flag has been passed and the search query contains the
+  // word "fingerprint".
   test(
-      'SysinfoAndMetricsCheckboxIsCheckedWhenFeedbackIsNotSentFromSettingsSearch',
+      'SysinfoAndMetricsCheckboxIsCheckedWhenFeedbackIsSentFromSettingsSearchAndQueryContainsFingerprint',
       async () => {
-        // Replacing the query string to set the fromSettingsSearch flag as
-        // false.
-        setFromSettingsSearchFlag(false);
+        testWithInternalAccount();
+        setSettingsSearchDoNotRecordMetricsFlag(false);
         await initializePage();
-        const feedbackContext = getFeedbackContext();
-        assertFalse(feedbackContext.fromSettingsSearch);
 
-        const activePage = getActivePage<SearchPageElement>();
-        strictQuery('textarea', activePage.shadowRoot, HTMLTextAreaElement)
-            .value = 'text';
-        strictQuery('#buttonContinue', activePage.shadowRoot, CrButtonElement)
-            .click();
-        await flushTasks();
+        await fillDescriptionAndClickContinue();
 
-        const newActivePage = getActivePage<ShareDataPageElement>();
-        assertEquals('shareDataPage', newActivePage.id);
-
-        const sysInfoAndMetricsContainer = strictQuery(
-            '#sysInfoContainer', newActivePage.shadowRoot, HTMLElement);
-        assertTrue(!!sysInfoAndMetricsContainer);
-
-        const sysInfoAndMetricsCheckbox = strictQuery(
-            '#sysInfoCheckbox', newActivePage.shadowRoot, CrCheckboxElement);
-        assertTrue(!!sysInfoAndMetricsCheckbox);
+        const sysInfoAndMetricsCheckbox =
+            checkAndGetSysInfoAndMetricsCheckbox();
         assertTrue(sysInfoAndMetricsCheckbox.checked);
       });
 
@@ -906,7 +896,7 @@ suite('FeedbackFlowTestSuite', () => {
     await clickPromise;
 
     assertEquals(
-        FeedbackFlowState.CONFIRMATION, eventDetail!.detail!.currentState);
+        FeedbackFlowState.CONFIRMATION, eventDetail!.detail.currentState);
 
     // Should navigate to search page.
     const newActivePage = getActivePage<SearchPageElement>();
@@ -947,7 +937,7 @@ suite('FeedbackFlowTestSuite', () => {
 
     // Click send new report button.
     strictQuery(
-        '#buttonNewReport', confirmationPage!.shadowRoot, CrButtonElement)
+        '#buttonNewReport', confirmationPage.shadowRoot, CrButtonElement)
         .click();
     await goBackClickPromise;
 
@@ -958,7 +948,7 @@ suite('FeedbackFlowTestSuite', () => {
 
     // Add some text and clicks continue button.
     searchPage.setDescription(/*text=*/ 'abc123');
-    strictQuery('#buttonContinue', searchPage!.shadowRoot, CrButtonElement)
+    strictQuery('#buttonContinue', searchPage.shadowRoot, CrButtonElement)
         .click();
     await continueClickPromise;
 
@@ -978,7 +968,8 @@ suite('FeedbackFlowTestSuite', () => {
   });
 
   // Test that the extra diagnostics, category tag, page_url, fromAssistant
-  // and fromSettingsSearch flag get set when query parameter is non-empty.
+  // and settingsSearchDoNotRecordMetrics flag get set when query parameter is
+  // non-empty.
   test(
       'AdditionalContextParametersProvidedInUrl_FeedbackContext_Matches',
       async () => {
@@ -1002,10 +993,10 @@ suite('FeedbackFlowTestSuite', () => {
         const fromAssistant = 'true';
         queryParams.set(
             AdditionalContextQueryParam.FROM_ASSISTANT, fromAssistant);
-        const fromSettingsSearch = 'true';
+        const settingsSearchDoNotRecordMetrics = 'true';
         queryParams.set(
-            AdditionalContextQueryParam.FROM_SETTINGS_SEARCH,
-            fromSettingsSearch);
+            AdditionalContextQueryParam.SETTINGS_SEARCH_DO_NOT_RECORD_METRICS,
+            settingsSearchDoNotRecordMetrics);
         // Replace current querystring with the new one.
         window.history.replaceState(null, '', '?' + queryParams.toString());
         await initializePage();
@@ -1026,7 +1017,7 @@ suite('FeedbackFlowTestSuite', () => {
         assertEquals(
             decodeURIComponent(category_tag), feedbackContext.categoryTag);
         assertTrue(feedbackContext.fromAssistant);
-        assertTrue(feedbackContext.fromSettingsSearch);
+        assertTrue(feedbackContext.settingsSearchDoNotRecordMetrics);
 
         // Set the pageUrl in fake feedback context back to its origin value
         // because it's overwritten by the page_url passed from the app.
@@ -1057,7 +1048,7 @@ suite('FeedbackFlowTestSuite', () => {
         assertEquals('', descriptionElement.value);
         assertEquals('', feedbackContext.categoryTag);
         assertFalse(feedbackContext.fromAssistant);
-        assertFalse(feedbackContext.fromSettingsSearch);
+        assertFalse(feedbackContext.settingsSearchDoNotRecordMetrics);
       });
 
   /**
@@ -1110,7 +1101,7 @@ suite('FeedbackFlowTestSuite', () => {
     const data = {
       id: 'help-content-clicked-for-testing',
     };
-    iframe.contentWindow!.parent!.postMessage(data, OS_FEEDBACK_TRUSTED_ORIGIN);
+    iframe.contentWindow!.parent.postMessage(data, OS_FEEDBACK_TRUSTED_ORIGIN);
 
     // Wait for the "help-content-clicked" message has been received.
     await resolver.promise;
@@ -1291,7 +1282,7 @@ suite('FeedbackFlowTestSuite', () => {
             '"descriptionPlaceholder":"fake description placeholder",' +
             '"fromAssistant": true, ' +
             '"fromAutofill": true, ' +
-            '"fromSettingsSearch": true, ' +
+            '"settingsSearchDoNotRecordMetrics": true, ' +
             '"hasLinkedCrossDevicePhone": true, ' +
             '"isInternalAccount": true, ' +
             '"pageUrl":"chrome://flags/",' +
@@ -1317,7 +1308,7 @@ suite('FeedbackFlowTestSuite', () => {
         '{"fake key1":"fake value1"}', feedbackContext.autofillMetadata);
     assertTrue(feedbackContext.fromAssistant);
     assertTrue(feedbackContext.fromAutofill);
-    assertTrue(feedbackContext.fromSettingsSearch);
+    assertTrue(feedbackContext.settingsSearchDoNotRecordMetrics);
     assertTrue(feedbackContext.hasLinkedCrossDevicePhone);
     assertTrue(feedbackContext.isInternalAccount);
 
@@ -1355,7 +1346,7 @@ suite('FeedbackFlowTestSuite', () => {
         assertEquals('{}', feedbackContext.autofillMetadata);
         assertFalse(feedbackContext.fromAssistant);
         assertFalse(feedbackContext.fromAutofill);
-        assertFalse(feedbackContext.fromSettingsSearch);
+        assertFalse(feedbackContext.settingsSearchDoNotRecordMetrics);
         assertFalse(feedbackContext.isInternalAccount);
         assertFalse(feedbackContext.hasLinkedCrossDevicePhone);
 

@@ -44,6 +44,7 @@
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/path_service.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -73,7 +74,8 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_request_utils.h"
-#include "content/public/browser/prefetch_request_status_listener.h"
+#include "content/public/browser/render_process_host.h"
+#include "content/public/browser/spare_render_process_host_manager.h"
 #include "content/public/browser/ssl_host_state_delegate.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
@@ -161,7 +163,6 @@ void MigrateProfileData(base::FilePath cache_path,
   migrate_context_storage_data("QuotaManager-journal");
   migrate_context_storage_data("Service Worker");
   migrate_context_storage_data("VideoDecodeStats");
-  migrate_context_storage_data("databases");
   migrate_context_storage_data("shared_proto_db");
   migrate_context_storage_data("webrtc_event_logs");
 }
@@ -192,7 +193,7 @@ AwBrowserContext::AwBrowserContext(std::string name,
       service_worker_xrw_allowlist_matcher_(
           base::MakeRefCounted<AwContentsOriginMatcher>()) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  TRACE_EVENT0("startup", "AwBrowserContext::AwBrowserContext");
+  TRACE_EVENT("startup", "AwBrowserContext::AwBrowserContext", "name", name_);
 
   profile_metrics::SetBrowserProfileType(
       this, profile_metrics::BrowserProfileType::kRegular);
@@ -216,6 +217,15 @@ AwBrowserContext::AwBrowserContext(std::string name,
 
   EnsureResourceContextInitialized();
   prefetch_manager_ = std::make_unique<AwPrefetchManager>(this);
+
+  // This should be initialized as soon as possible when creating the profile,
+  // in order to load the database from disk.
+  origin_trials_controller_delegate_ =
+      std::make_unique<origin_trials::OriginTrials>(
+          std::make_unique<origin_trials::LevelDbPersistenceProvider>(
+              GetPath(),
+              GetDefaultStoragePartition()->GetProtoDatabaseProvider()),
+          std::make_unique<blink::TrialTokenValidator>());
 }
 
 AwBrowserContext::~AwBrowserContext() {
@@ -490,14 +500,6 @@ AwBrowserContext::RetrieveInProgressDownloadManager() {
 
 content::OriginTrialsControllerDelegate*
 AwBrowserContext::GetOriginTrialsControllerDelegate() {
-  if (!origin_trials_controller_delegate_) {
-    origin_trials_controller_delegate_ =
-        std::make_unique<origin_trials::OriginTrials>(
-            std::make_unique<origin_trials::LevelDbPersistenceProvider>(
-                GetPath(),
-                GetDefaultStoragePartition()->GetProtoDatabaseProvider()),
-            std::make_unique<blink::TrialTokenValidator>());
-  }
   return origin_trials_controller_delegate_.get();
 }
 
@@ -579,17 +581,14 @@ void AwBrowserContext::ConfigureNetworkContextParams(
   // Allow SHA-1 to be used for locally-installed trust anchors, as WebView
   // should behave like the Android system would.
   context_params->initial_ssl_config->sha1_local_anchors_enabled = true;
-  // Do not enforce the Legacy Symantec PKI policies outlined in
-  // https://security.googleblog.com/2017/09/chromes-plan-to-distrust-symantec.html,
-  // defer to the Android system.
-  context_params->initial_ssl_config->symantec_enforcement_disabled = true;
 
-  // WebView does not currently support Certificate Transparency
-  // (http://crbug.com/921750).
+  // WebView supports Certificate Transparency from Android B via Android's CT
+  // policy. (http://crbug.com/921750).
   context_params->enforce_chrome_ct_policy = false;
 
   context_params->enable_brotli = true;
   context_params->enable_zstd = true;
+  context_params->stale_dns_enabled = enable_stale_dns_;
 
   context_params->check_clear_text_permitted =
       AwContentBrowserClient::get_check_cleartext_permitted();
@@ -602,6 +601,11 @@ void AwBrowserContext::ConfigureNetworkContextParams(
         context_params->ip_protection_control.InitWithNewPipeAndPassRemote());
     context_params->enable_ip_protection =
         aw_ipp_core_host->IsIpProtectionEnabled();
+  }
+
+  if (base::FeatureList::IsEnabled(features::kWebViewQuicConnectionTimeout)) {
+    context_params->quic_idle_connection_timeout_seconds =
+        features::kWebViewQuicConnectionTimeoutSeconds.Get();
   }
 
   // Add proxy settings
@@ -674,13 +678,27 @@ void AwBrowserContext::SetServiceWorkerIoThreadClient(
 }
 
 int AwBrowserContext::AllowedPrerenderingCount() const {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   return allowed_prerendering_count_;
 }
 
 void AwBrowserContext::SetAllowedPrerenderingCount(JNIEnv* const env,
                                                    int allowed_count) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   CHECK_GT(allowed_count, 0);
-  allowed_prerendering_count_ = allowed_count;
+  allowed_prerendering_count_ =
+      std::min(allowed_count, MAX_ALLOWED_PRERENDERING_COUNT);
+}
+
+void AwBrowserContext::WarmUpSpareRenderer(JNIEnv* const env) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  base::TimeTicks start_time = base::TimeTicks::Now();
+  content::RenderProcessHost* rph =
+      content::SpareRenderProcessHostManager::Get().WarmupSpare(this);
+  base::UmaHistogramTimes("Android.WebView.WarmUpSpareRenderer.Duration",
+                          base::TimeTicks::Now() - start_time);
+  base::UmaHistogramBoolean(
+      "Android.WebView.WarmUpSpareRenderer.StartsNewRenderer", rph != nullptr);
 }
 
 std::unique_ptr<AwContentsIoThreadClient>

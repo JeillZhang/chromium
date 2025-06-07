@@ -12,11 +12,13 @@
 #include "base/feature_list.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
+#include "base/types/expected.h"
 #include "build/android_buildflags.h"
 #include "build/buildflag.h"
 #include "content/public/browser/desktop_media_id.h"
 #include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 #include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/native_widget_types.h"
@@ -27,7 +29,7 @@ namespace content {
 class WebContents;
 }
 
-#if BUILDFLAG(IS_DESKTOP_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 BASE_DECLARE_FEATURE(kAndroidMediaPicker);
 #endif
 
@@ -37,7 +39,10 @@ BASE_DECLARE_FEATURE(kAndroidMediaPicker);
 // TODO(crbug.com/40637301): Rename this class.
 class DesktopMediaPicker {
  public:
-  using DoneCallback = base::OnceCallback<void(content::DesktopMediaID id)>;
+  using DoneCallbackArgumentType =
+      base::expected<content::DesktopMediaID,
+                     blink::mojom::MediaStreamRequestResult>;
+  using DoneCallback = base::OnceCallback<void(DoneCallbackArgumentType)>;
 
   struct Params {
     // Possible sources of the request.
@@ -87,6 +92,9 @@ class DesktopMediaPicker {
     // Indicates that, if audio ends up being captured, then local playback
     // over the user's local speakers should be suppressed.
     bool suppress_local_audio_playback = false;
+    // Captured audio should not include audio originating from the document
+    // that called getDisplayMedia.
+    bool restrict_own_audio = false;
     // This flag controls the behvior in the case where the picker is invoked to
     // select a screen and there is only one screen available.  If true, the
     // dialog is bypassed entirely and the screen is automatically selected.

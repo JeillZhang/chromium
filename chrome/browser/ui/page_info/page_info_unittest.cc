@@ -14,6 +14,7 @@
 #include "base/at_exit.h"
 #include "base/functional/bind.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -378,15 +379,6 @@ TEST_F(PageInfoTest, PermissionStringsHaveMidSentenceVersion) {
         EXPECT_EQ(base::ToLowerASCII(normal), base::ToLowerASCII(mid_sentence));
         break;
 #endif
-      case ContentSettingsType::CAPTURED_SURFACE_CONTROL:
-        // The mid sentence for 'CAPTURED_SURFACE_CONTROL' type is different
-        // from the normal text and instead matches the submenu text which is
-        // "scrolling & zooming".
-        normal = l10n_util::GetStringUTF16(
-            IDS_SITE_SETTINGS_TYPE_CAPTURED_SURFACE_CONTROL_SUB_MENU);
-        EXPECT_NE(normal, mid_sentence);
-        EXPECT_EQ(base::ToLowerASCII(normal), mid_sentence);
-        break;
       default:
         EXPECT_NE(normal, mid_sentence);
         EXPECT_EQ(base::ToLowerASCII(normal), mid_sentence);
@@ -1549,10 +1541,10 @@ TEST_F(PageInfoTest, ShowInfoBarWhenAllowingThirdPartyCookies) {
   // its call chain.
   EXPECT_CALL(*mock_ui(), SetCookieInfo(_)).Times(2);
 
-  page_info()->OnStatusChanged(
-      /*controls_visible=*/true, /*protections_on=*/true,
-      CookieControlsEnforcement::kNoEnforcement,
-      CookieBlocking3pcdStatus::kNotIn3pcd, base::Time(), /*features=*/{});
+  page_info()->OnStatusChanged(CookieControlsState::kBlocked3pc,
+                               CookieControlsEnforcement::kNoEnforcement,
+                               CookieBlocking3pcdStatus::kNotIn3pcd,
+                               base::Time());
 
   EXPECT_EQ(0u, infobar_manager()->infobars().size());
   page_info()->OnThirdPartyToggleClicked(/*block_third_party_cookies=*/false);
@@ -1572,10 +1564,10 @@ TEST_F(PageInfoTest, ShowInfoBarWhenBlockingThirdPartyCookies) {
   Mock::VerifyAndClearExpectations(mock_ui());
   EXPECT_CALL(*mock_ui(), SetCookieInfo(_)).Times(2);
 
-  page_info()->OnStatusChanged(
-      /*controls_visible=*/true, /*protections_on=*/false,
-      CookieControlsEnforcement::kNoEnforcement,
-      CookieBlocking3pcdStatus::kNotIn3pcd, base::Time(), /*features=*/{});
+  page_info()->OnStatusChanged(CookieControlsState::kAllowed3pc,
+                               CookieControlsEnforcement::kNoEnforcement,
+                               CookieBlocking3pcdStatus::kNotIn3pcd,
+                               base::Time());
 
   EXPECT_EQ(0u, infobar_manager()->infobars().size());
   page_info()->OnThirdPartyToggleClicked(/*block_third_party_cookies=*/true);
@@ -2145,15 +2137,6 @@ TEST_F(UnifiedAutoplaySoundSettingsPageInfoTest, NotSoundSetting_Noop) {
 // Unit tests for logic in the PageInfoUI that toggles permission between
 // allow/block and remember/forget.
 class PageInfoToggleStatesUnitTest : public ::testing::Test {
- public:
-  void SetUp() override {
-    scoped_feature_list_.InitAndEnableFeature(
-        permissions::features::kOneTimePermission);
-    ::testing::Test::SetUp();
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Testing all possible state transitions for a permission that doesn't

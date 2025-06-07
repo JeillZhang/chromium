@@ -22,7 +22,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -48,6 +47,7 @@
 #include "cc/layers/heads_up_display_layer_impl.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/painted_scrollbar_layer.h"
+#include "cc/metrics/ukm_dropped_frames_data.h"
 #include "cc/metrics/ukm_manager.h"
 #include "cc/metrics/ukm_smoothness_data.h"
 #include "cc/paint/paint_worklet_layer_painter.h"
@@ -287,8 +287,9 @@ LayerTreeHost::~LayerTreeHost() {
   property_tree_delegate_->SetLayerTreeHost(nullptr);
 
   // Fail any pending image decodes.
-  for (auto& pair : pending_image_decodes_)
-    std::move(pair.second).Run(false);
+  for (auto& entry : pending_image_decodes_) {
+    std::move(entry.second.first).Run(false);
+  }
 
   if (proxy_) {
     proxy_->Stop();
@@ -518,9 +519,9 @@ void LayerTreeHost::NotifyImageDecodeFinished(int request_id,
                                               bool decode_succeeded) {
   DCHECK(IsMainThread());
   auto it = pending_image_decodes_.find(request_id);
-  CHECK(it != pending_image_decodes_.end(), base::NotFatalUntil::M130);
+  CHECK(it != pending_image_decodes_.end());
   // Issue stored callback and remove them from the pending list.
-  std::move(it->second).Run(decode_succeeded);
+  std::move(it->second.first).Run(decode_succeeded);
   pending_image_decodes_.erase(it);
 }
 
@@ -534,7 +535,10 @@ void LayerTreeHost::NotifyTransitionRequestsFinished(
   if (it == view_transition_callbacks_.end()) {
     return;
   }
-  std::move(it->second).Run(rects);
+  // The callback can cause more requests to be added and run the lifecycle, so
+  // unwind the stack before calling it.
+  task_runner_provider_->MainThreadTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(it->second), rects));
   view_transition_callbacks_.erase(it);
 }
 
@@ -735,10 +739,14 @@ void LayerTreeHost::OnDeferCommitsChanged(
   client_->OnDeferCommitsChanged(defer_status, reason, trigger);
 }
 
+void LayerTreeHost::SetShouldThrottleFrameRate(bool flag) {
+  proxy_->SetShouldThrottleFrameRate(flag);
+}
+
 DISABLE_CFI_PERF
-void LayerTreeHost::SetNeedsAnimate() {
+void LayerTreeHost::SetNeedsAnimate(bool urgent) {
   DCHECK(IsMainThread());
-  proxy_->SetNeedsAnimate();
+  proxy_->SetNeedsAnimate(urgent);
   swap_promise_manager_.NotifyLatencyInfoSwapPromiseMonitors();
   events_metrics_manager_.SaveActiveEventMetrics();
 }
@@ -846,16 +854,12 @@ bool LayerTreeHost::IsVisible() const {
 
 void LayerTreeHost::SetShouldWarmUp() {
   DCHECK(IsMainThread());
-  CHECK(base::FeatureList::IsEnabled(features::kWarmUpCompositor));
   should_warm_up_ = true;
   proxy_->SetShouldWarmUp();
 }
 
 bool LayerTreeHost::ShouldWarmUp() const {
   DCHECK(IsMainThread());
-  if (!base::FeatureList::IsEnabled(features::kWarmUpCompositor)) {
-    return false;
-  }
   return should_warm_up_;
 }
 
@@ -1607,6 +1611,14 @@ void LayerTreeHost::SetLocalSurfaceIdFromParent(
   pending_commit_state()->local_surface_id_from_parent =
       local_surface_id_from_parent;
 
+  // If rendering is currently paused, we need to notify that a new local
+  // surface id is expected. This is used to unblock pending copy output
+  // requests in viz that might not be satisfied due to the fact that we aren't
+  // producing new frames.
+  if (proxy()->IsRenderingPaused()) {
+    proxy()->NotifyNewLocalSurfaceIdExpectedWhilePaused();
+  }
+
   // If the parent sequence number has not advanced, then there is no need to
   // commit anything. This can occur when the child sequence number has
   // advanced. Which means that child has changed visual properties, and the
@@ -1684,6 +1696,7 @@ bool LayerTreeHost::PaintContent(const LayerList& update_layer_list) {
 }
 
 void LayerTreeHost::AddSurfaceRange(const viz::SurfaceRange& surface_range) {
+  CHECK(surface_range.IsValid());
   if (++pending_commit_state()->surface_ranges[surface_range] == 1) {
     pending_commit_state()->needs_surface_ranges_sync = true;
     SetNeedsCommit();
@@ -1892,18 +1905,24 @@ bool LayerTreeHost::RunsOnCurrentThread() const {
 }
 
 void LayerTreeHost::QueueImageDecode(const DrawImage& image,
-                                     base::OnceCallback<void(bool)> callback) {
+                                     base::OnceCallback<void(bool)> callback,
+                                     bool speculative) {
   TRACE_EVENT0("cc", "LayerTreeHost::QueueImageDecode");
   int next_id = s_image_decode_sequence_number.GetNext();
   if (base::FeatureList::IsEnabled(
           features::kSendExplicitDecodeRequestsImmediately)) {
-    proxy()->QueueImageDecode(next_id, image);
+    proxy()->QueueImageDecode(next_id, image, speculative);
   } else {
-    pending_commit_state()->queued_image_decodes.emplace_back(
-        next_id, std::make_unique<DrawImage>(image));
+    pending_commit_state()->queued_image_decodes.emplace_back(std::make_tuple(
+        next_id, std::make_unique<DrawImage>(image), speculative));
   }
-  pending_image_decodes_.emplace(next_id, std::move(callback));
+  pending_image_decodes_.emplace(
+      next_id, std::make_pair(std::move(callback), speculative));
   SetNeedsCommit();
+}
+
+bool LayerTreeHost::SpeculativeDecodeRequestInFlight() const {
+  return proxy_->SpeculativeDecodeRequestInFlight();
 }
 
 LayerListIterator LayerTreeHost::begin() {
@@ -1984,6 +2003,20 @@ LayerTreeHost::CreateSharedMemoryForSmoothnessUkm() {
   proxy_->SetUkmSmoothnessDestination(
       std::move(ukm_smoothness_mapping.mapping));
   return std::move(ukm_smoothness_mapping.region);
+}
+
+base::ReadOnlySharedMemoryRegion
+LayerTreeHost::CreateSharedMemoryForDroppedFramesUkm() {
+  DCHECK(IsMainThread());
+  const auto size = sizeof(UkmDroppedFramesDataShared);
+  auto ukm_dropped_frames_mapping =
+      base::ReadOnlySharedMemoryRegion::Create(size);
+  if (!ukm_dropped_frames_mapping.IsValid()) {
+    return {};
+  }
+  proxy_->SetUkmDroppedFramesDestination(
+      std::move(ukm_dropped_frames_mapping.mapping));
+  return std::move(ukm_dropped_frames_mapping.region);
 }
 
 void LayerTreeHost::SetRenderFrameObserver(

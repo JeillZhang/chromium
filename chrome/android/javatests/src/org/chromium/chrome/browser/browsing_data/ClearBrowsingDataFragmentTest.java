@@ -89,8 +89,9 @@ import org.chromium.chrome.browser.sync.FakeSyncServiceImpl;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.components.browser_ui.settings.SpinnerPreference;
 import org.chromium.components.browsing_data.DeleteBrowsingDataAction;
@@ -108,7 +109,8 @@ import java.util.Set;
 @Batch(Batch.PER_CLASS)
 public class ClearBrowsingDataFragmentTest {
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule
     public SettingsActivityTestRule<ClearBrowsingDataFragment> mSettingsActivityTestRule =
@@ -146,7 +148,7 @@ public class ClearBrowsingDataFragmentTest {
         when(mBrowsingDataBridgeMock.getBrowsingDataDeletionTimePeriod(any()))
                 .thenReturn(DEFAULT_TIME_PERIOD);
 
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.startOnBlankPage();
 
         // There can be some left-over notification channels from other tests.
         // TODO(crbug.com/41452182): Find a general solution to avoid leaking channels between
@@ -494,7 +496,7 @@ public class ClearBrowsingDataFragmentTest {
     @LargeTest
     public void testDialogAboutOtherFormsOfBrowsingHistory() throws Exception {
         // Sign in.
-        mSigninTestRule.addTestAccountThenSigninAndEnableSync();
+        mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
         OtherFormsOfHistoryDialogFragment.clearShownPreferenceForTesting();
 
         // History is not selected. We still need to select some other datatype, otherwise the
@@ -659,7 +661,7 @@ public class ClearBrowsingDataFragmentTest {
     @Feature({"SiteEngagement"})
     public void testImportantSitesDialogNoFiltering() throws Exception {
         // Sign in.
-        mSigninTestRule.addTestAccountThenSigninAndEnableSync();
+        mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
 
         final String[] importantOrigins = {"http://www.facebook.com", "https://www.google.com"};
         // First mark our origins as important.
@@ -693,7 +695,7 @@ public class ClearBrowsingDataFragmentTest {
     @Feature({"SiteEngagement"})
     public void testImportantSitesDialogNoopOnCancel() throws Exception {
         // Sign in.
-        mSigninTestRule.addTestAccountThenSigninAndEnableSync();
+        mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
 
         final String[] importantOrigins = {"http://www.facebook.com", "http://www.google.com"};
         // First mark our origins as important.
@@ -727,7 +729,7 @@ public class ClearBrowsingDataFragmentTest {
     @Feature({"SiteEngagement"})
     public void testImportantSitesDialog() throws Exception {
         // Sign in.
-        mSigninTestRule.addTestAccountThenSigninAndEnableSync();
+        mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
 
         final String kKeepDomain = "https://www.chrome.com";
         final String kClearDomain = "https://www.google.com";
@@ -905,7 +907,7 @@ public class ClearBrowsingDataFragmentTest {
     }
 
     private void setDataTypesToClear(final Integer... typesToClear) {
-        Set<Integer> typesToClearSet = new ArraySet<Integer>(Arrays.asList(typesToClear));
+        Set<Integer> typesToClearSet = new ArraySet<>(Arrays.asList(typesToClear));
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     for (@DialogOption Integer option : ClearBrowsingDataFragment.getAllOptions()) {

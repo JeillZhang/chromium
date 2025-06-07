@@ -95,11 +95,22 @@ public class MaterialSwitchWithText extends LinearLayout implements Checkable, O
     }
 
     /**
+     * Set the title for the Textview besides the material switch in this {@link
+     * MaterialSwitchWithText}
+     *
+     * @param text The string besides the material switch
+     */
+    public void setText(String text) {
+        mTextView.setText(text);
+    }
+
+    /**
      * Set the OnCheckedChangeListener for the switch.
      *
      * @see CompoundButton#setOnCheckedChangeListener(CompoundButton.OnCheckedChangeListener).
      */
-    public void setOnCheckedChangeListener(CompoundButton.OnCheckedChangeListener listener) {
+    public void setOnCheckedChangeListener(
+            CompoundButton.@Nullable OnCheckedChangeListener listener) {
         mSwitch.setOnCheckedChangeListener(listener);
     }
 }

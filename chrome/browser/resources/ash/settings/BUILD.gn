@@ -8,7 +8,7 @@ import("//ui/webui/resources/tools/generate_grd.gni")
 import("//ui/webui/webui_features.gni")
 import("./os_settings.gni")
 
-assert(is_chromeos_ash, "ChromeOS Settings is ChromeOS only")
+assert(is_chromeos, "ChromeOS Settings is ChromeOS only")
 
 nearby_share_tsc_dir =
     "$root_gen_dir/chrome/browser/resources/chromeos/nearby_share/shared/tsc"
@@ -361,7 +361,7 @@ build_webui("build") {
     "system_preferences_page/system_preferences_page.ts",
   ]
 
-  non_web_component_files = [
+  ts_files = [
     "assert_extras.ts",
     "common/app_management/actions.ts",
     "common/app_management/api_listener.ts",
@@ -485,7 +485,6 @@ build_webui("build") {
 
   icons_html_files = [
     "app_management_icons.html",
-    "icons.html",
     "os_a11y_page/facegaze_icons.html",
     "os_settings_icons.html",
   ]

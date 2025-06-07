@@ -26,6 +26,7 @@
 #include "third_party/blink/renderer/core/animation/css/css_animations.h"
 #include "third_party/blink/renderer/core/css/css_light_dark_value_pair.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
+#include "third_party/blink/renderer/core/css/css_uri_value.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/dom/flat_tree_traversal.h"
 #include "third_party/blink/renderer/core/dom/node.h"
@@ -243,6 +244,17 @@ void StyleResolverState::LoadPendingResources() {
                                                 css_to_length_conversion_data_);
 }
 
+SVGResource* StyleResolverState::GetSVGResource(
+    CSSPropertyID property_id,
+    const cssvalue::CSSURIValue& value) {
+  SVGResource* resource =
+      element_style_resources_.GetSVGResourceFromValue(property_id, value);
+  if (resource && value.IsLocal(GetDocument())) {
+    SetHasTreeScopedReference();
+  }
+  return resource;
+}
+
 const FontDescription& StyleResolverState::ParentFontDescription() const {
   return parent_style_->GetFontDescription();
 }
@@ -369,6 +381,36 @@ void StyleResolverState::UpdateLineHeight() {
 bool StyleResolverState::CanAffectAnimations() const {
   return conditionally_affects_animations_ ||
          StyleBuilder().CanAffectAnimations();
+}
+
+void StyleResolverState::SetComputedStyleFlagsFromAuthorFlags(
+    CSSProperty::Flags author_flags) {
+  // These three flags are only used if HasAppearance() is set
+  // (they are used for knowing whether appearance: auto is to be overridden),
+  // but we compute them nevertheless, to avoid suddenly having to compute them
+  // after-the-fact if inline style is updated incrementally.
+  if (author_flags & CSSProperty::kBackground) {
+    StyleBuilder().SetHasAuthorBackground();
+  }
+  if (author_flags & CSSProperty::kBorder) {
+    StyleBuilder().SetHasAuthorBorder();
+  }
+  if (author_flags & CSSProperty::kBorderRadius) {
+    StyleBuilder().SetHasAuthorBorderRadius();
+  }
+
+  if (RuntimeEnabledFeatures::CSSDoNotHideVisitedColorEnabled()) {
+    if (author_flags & CSSProperty::kHighlightColors) {
+      StyleBuilder().SetHasAuthorHighlightColors();
+    }
+  } else {
+    if ((InsideLink() != EInsideLink::kInsideVisitedLink &&
+         (author_flags & CSSProperty::kHighlightColors)) ||
+        (InsideLink() == EInsideLink::kInsideVisitedLink &&
+         (author_flags & CSSProperty::kVisitedHighlightColors))) {
+      StyleBuilder().SetHasAuthorHighlightColors();
+    }
+  }
 }
 
 }  // namespace blink

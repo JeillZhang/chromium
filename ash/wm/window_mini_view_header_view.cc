@@ -88,7 +88,7 @@ WindowMiniViewHeaderView::WindowMiniViewHeaderView(
   title_label_->SetSubpixelRenderingEnabled(false);
   title_label_->SetFontList(gfx::FontList().Derive(
       kLabelFontDelta, gfx::Font::NORMAL, gfx::Font::Weight::MEDIUM));
-  title_label_->SetEnabledColorId(cros_tokens::kCrosSysPrimary);
+  title_label_->SetEnabledColor(cros_tokens::kCrosSysPrimary);
   title_label_->SetPaintToLayer();
   title_label_->layer()->SetFillsBoundsOpaquely(false);
   icon_label_view_->SetFlexForView(title_label_, 1);
@@ -131,8 +131,7 @@ void WindowMiniViewHeaderView::UpdateTitleLabel(aura::Window* window) {
 }
 
 void WindowMiniViewHeaderView::RefreshHeaderViewRoundedCorners() {
-  const int default_corner_radius =
-      window_util::GetMiniWindowRoundedCornerRadius();
+  const int default_corner_radius = kWindowMiniViewCornerRadius;
   const gfx::RoundedCornersF new_rounded_corners =
       custom_header_view_rounded_corners_.value_or(gfx::RoundedCornersF(
           default_corner_radius, default_corner_radius, 0, 0));

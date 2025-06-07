@@ -57,7 +57,7 @@ void WaitForHistogram(const std::string& histogram_name) {
       std::make_unique<base::StatisticsRecorder::ScopedHistogramSampleObserver>(
           histogram_name,
           base::BindLambdaForTesting(
-              [&](const char* histogram_name, uint64_t name_hash,
+              [&](std::string_view histogram_name, uint64_t name_hash,
                   base::HistogramBase::Sample32 sample) { run_loop.Quit(); }));
   run_loop.Run();
 }
@@ -170,12 +170,17 @@ class WebUIContentsPreloadManagerBrowserSmokeTest
         features::kPreloadTopChromeWebUI,
         {{features::kPreloadTopChromeWebUIModeName, GetParam()},
          {features::kPreloadTopChromeWebUISmartPreloadName, "true"}});
+    test_api().DisableDelayPreload(true);
   }
   void SetUpPreloadURL() override {
     // Don't preload for the default browser. The smoke test will
     // test each WebUI in a new browser.
     ON_CALL(*mock_preload_candidate_selector(), GetURLToPreload(_))
         .WillByDefault(Return(std::nullopt));
+  }
+  void TearDown() override {
+    WebUIContentsPreloadManagerBrowserTestBase::TearDown();
+    test_api().DisableDelayPreload(false);
   }
 };
 
@@ -230,7 +235,7 @@ class TestTopChromeWebUIController : public TopChromeWebUIController {
  public:
   explicit TestTopChromeWebUIController(content::WebUI* web_ui)
       : TopChromeWebUIController(web_ui) {}
-  static std::string GetWebUIName() { return "Test"; }
+  static std::string_view GetWebUIName() { return "Test"; }
 };
 
 class TestTopChromeWebUIConfig

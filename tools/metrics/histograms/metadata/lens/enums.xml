@@ -36,6 +36,7 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="Translate text in region"/>
   <int value="4" label="Copy as image"/>
   <int value="5" label="Save as image"/>
+  <int value="6" label="Copy text in region"/>
 </enum>
 
 <!-- LINT.ThenChange(//chrome/browser/resources/lens/overlay/metrics_utils.ts:ContextMenuOption) -->
@@ -103,6 +104,13 @@ chromium-metrics-reviews@google.com.
   <int value="3" label="Toolbar button"/>
   <int value="4" label="Find in page dialog button"/>
   <int value="5" label="Omnibox button"/>
+  <int value="6" label="LVF Shutter Button"/>
+  <int value="7" label="LVF Gallery"/>
+  <int value="8" label="Context Menu"/>
+  <int value="9" label="Omnibox Page Action"/>
+  <int value="10" label="Omnibox Contextual Suggestion"/>
+  <int value="11" label="Homework action chip"/>
+  <int value="12" label="AI Hub"/>
 </enum>
 
 <!-- LINT.ThenChange(//components/lens/lens_overlay_invocation_source.h:LensOverlayInvocationSource) -->
@@ -114,6 +122,7 @@ chromium-metrics-reviews@google.com.
   <int value="0" label="WebNavigation"/>
   <int value="1" label="Omnibox"/>
   <int value="2" label="ContextMenu"/>
+  <int value="3" label="ExploreBarTab"/>
 </enum>
 
 <!-- LINT.ThenChange(//components/lens/lens_overlay_new_tab_source.h:LensOverlayNewTabSource) -->
@@ -184,6 +193,8 @@ chromium-metrics-reviews@google.com.
 
 <!-- LINT.IfChange(LensOverlayMimeType) -->
 
+<!-- The MimeType enum used for UKM metrics. -->
+
 <enum name="MimeType">
   <summary>
     The mime type of the document the Lens Overlay is invoked on.
@@ -196,9 +207,27 @@ chromium-metrics-reviews@google.com.
   <int value="5" label="Video"/>
   <int value="6" label="Audio"/>
   <int value="7" label="Json"/>
+  <int value="8" label="AnnotatedPageContent"/>
 </enum>
 
 <!-- LINT.ThenChange(//components/lens/lens_overlay_mime_type.h:LensOverlayMimeType) -->
+
+<!-- LINT.IfChange(SheetDimensionState) -->
+
+<enum name="SheetDimensionState">
+  <summary>
+    Indicates the size of the bottom panel. When the panel is closed, value 0
+    &quot;hidden&quot; is used.
+  </summary>
+  <int value="0" label="Hidden"/>
+  <int value="1" label="Large"/>
+  <int value="2" label="Medium"/>
+  <int value="3" label="Peaking"/>
+  <int value="4" label="Consent"/>
+  <int value="5" label="InfoMessage"/>
+</enum>
+
+<!-- LINT.ThenChange(//ios/chrome/browser/lens_overlay/model/lens_overlay_sheet_detent_state.h:SheetDimensionState) -->
 
 <!-- LINT.IfChange(LensOverlaySidePanelResultStatus) -->
 
@@ -212,9 +241,10 @@ chromium-metrics-reviews@google.com.
   <int value="1" label="Result shown"/>
   <int value="2" label="Error page shown (offline)"/>
   <int value="3" label="Error page shown (start query response error)"/>
+  <int value="4" label="Error page shown (protected)"/>
 </enum>
 
-<!-- LINT.ThenChange(//components/lens/lens_overlay_side_panel_result.h:LensOverlaySidePanelResultStatus) -->
+<!-- LINT.ThenChange(//components/lens/lens_overlay_side_panel_result.h:LensOverlaySidePanelResultStatus,//chrome/browser/lens/core/mojom/lens_side_panel.mojom:SidePanelResultStatus) -->
 
 </enums>
 

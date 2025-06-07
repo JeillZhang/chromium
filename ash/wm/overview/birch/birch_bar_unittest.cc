@@ -39,6 +39,7 @@
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/callback_helpers.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_mock_clock_override.h"
@@ -113,15 +114,10 @@ class TestBirchItem : public BirchItem {
 }  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
-// BirchBarTest:
-// The test class of birch bar with Forest feature enabled by default.
+// BirchBarTestBase:
 class BirchBarTestBase : public AshTestBase {
  public:
-  BirchBarTestBase() {
-    feature_list_.InitWithFeatures(
-        {features::kForestFeature, features::kCoralFeature}, {});
-  }
-
+  BirchBarTestBase() = default;
   BirchBarTestBase(const BirchBarTestBase&) = delete;
   BirchBarTestBase& operator=(const BirchBarTestBase&) = delete;
   ~BirchBarTestBase() override = default;
@@ -353,7 +349,7 @@ class BirchBarTestBase : public AshTestBase {
   raw_ptr<TestBirchDataProvider<BirchWeatherItem>> weather_provider_;
 
  private:
-  base::test::ScopedFeatureList feature_list_;
+  base::test::ScopedFeatureList feature_list_{features::kCoralFeature};
 };
 
 // Adds a mock clock override to the test since the time may impact the ranking
@@ -385,7 +381,7 @@ TEST_F(BirchBarTest, ShowBirchBar) {
 
 TEST_F(BirchBarTest, DoNotShowBirchBarForSecondaryUser) {
   // Sign in a secondary user.
-  SimulateUserLogin("user2@test.com");
+  SimulateUserLogin({"user2@test.com"});
   ASSERT_FALSE(Shell::Get()->session_controller()->IsUserPrimary());
 
   EnterOverview();

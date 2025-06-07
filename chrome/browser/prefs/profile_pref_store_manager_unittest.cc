@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/prefs/profile_pref_store_manager.h"
 
@@ -173,7 +169,7 @@ class ProfilePrefStoreManagerTest : public testing::Test,
 
   void ReloadConfiguration() {
     manager_ = std::make_unique<ProfilePrefStoreManager>(profile_dir_.GetPath(),
-                                                         seed_, "device_id");
+                                                         seed_);
   }
 
   void TearDown() override {

@@ -402,7 +402,8 @@
       "898FB5A39687D210766B8998BA4530B99C9E6586",  // http://crbug.com/819404
       "82F30B65397BC3E4ADE627BBD857AB8A58210648",  // http://crbug.com/819404
       "C74B2AF138F9EDECD04D0965AB36CA66C8290466",  // http://crbug.com/957772
-      "1B1388598AC9A5608F43DE38316D6FB5FAD3574A"   // OneDrive FS extension
+      "1B1388598AC9A5608F43DE38316D6FB5FAD3574A",  // OneDrive FS extension
+      "EC8EA268128FECE14CEC68B90686D87755D87083"   // Assessment Assistant
     ]
   },
   "nativeMessaging": {
@@ -517,7 +518,12 @@
     "platforms": ["chromeos"],
     "min_manifest_version": 3,
     "allowlist": [
-      "5C825E850034490380BCB756D43ABB2CF537AA91"  // b/359290130
+      "5C825E850034490380BCB756D43ABB2CF537AA91",  // crbug.com/359290130
+      // crbug.com/378640229
+      "EC3DE21E048B67319893889529354DFBFA96FD23",  // Smart Card Connector
+      "A19608AC34215B127FF9D7C006D67F5C8ED8146D",  // Smart Card Connector Beta
+      "6B748A5C005F21B7CBCF4170C2F883E435DEB511",  // DriveLock Smart Card Middleware
+      "075FF17D52ED6E3C2E5EC4D99F188E7A25AF47EA"   // Beta DriveLock Smart Card Middleware
     ]
   }],
   "omnibox.directInput" : {
@@ -567,6 +573,7 @@
         "93B7178E8C275515C38D4F43D9DF4648F0EA9B03",   // Identity Card Connector
         "EC3DE21E048B67319893889529354DFBFA96FD23",   // https://crbug.com/1233881
         "A19608AC34215B127FF9D7C006D67F5C8ED8146D",   // https://crbug.com/1233881
+        "1FC31C9D42DF1B51EA7648F73DF26400322999A8",   // https://crbug.com/383855830
         // https://crbug.com/1194693
         "6B748A5C005F21B7CBCF4170C2F883E435DEB511",   // DriveLock Smart Card Middleware
         "075FF17D52ED6E3C2E5EC4D99F188E7A25AF47EA",   // Beta DriveLock Smart Card Middleware

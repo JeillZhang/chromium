@@ -13,6 +13,7 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -437,7 +438,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, NoticeAppTabChanges) {
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(0, MatchAnyApp()));
 
   // Open a new tab to the app's launch URL and make sure we notice that.
-  GURL url(extension->GetResourceURL("main.html"));
+  GURL url(extension->ResolveExtensionURL("main.html"));
   ASSERT_TRUE(AddTabAtIndex(0, url, ui::PAGE_TRANSITION_TYPED));
 
   // There should be 1 "App: " tab and the original new tab page.
@@ -474,7 +475,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, NoticeAppTab) {
           last_loaded_extension_id(), extensions::ExtensionRegistry::ENABLED);
 
   // Open a new tab to the app's launch URL and make sure we notice that.
-  GURL url(extension->GetResourceURL("main.html"));
+  GURL url(extension->ResolveExtensionURL("main.html"));
   ASSERT_TRUE(AddTabAtIndex(0, url, ui::PAGE_TRANSITION_TYPED));
 
   ShowTaskManager();
@@ -706,6 +707,8 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, JSHeapMemory) {
 #define MAYBE_SentDataObserved SentDataObserved
 #endif
 IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, MAYBE_SentDataObserved) {
+  // TODO(crbug.com/397484647): Migrate TaskManagerDesktopRefreshBrowserTest
+  // version of this test into this one.
   ShowTaskManager();
   GURL test_gurl = embedded_test_server()->GetURL("/title1.html");
 
@@ -735,6 +738,9 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, MAYBE_SentDataObserved) {
   // There shouldn't be too much usage on the browser process. Note that it
   // should be the first row since tasks are sorted by process ID then by task
   // ID.
+  if (base::FeatureList::IsEnabled(features::kTaskManagerDesktopRefresh)) {
+    model()->UpdateModel(DisplayCategory::kSystem, u"");
+  }
   EXPECT_GE(20000,
             model()->GetColumnValue(ColumnSpecifier::TOTAL_NETWORK_USE, 0));
 }
@@ -747,6 +753,8 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, MAYBE_SentDataObserved) {
 #define MAYBE_TotalSentDataObserved TotalSentDataObserved
 #endif
 IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, MAYBE_TotalSentDataObserved) {
+  // TODO(crbug.com/397484647): Migrate TaskManagerDesktopRefreshBrowserTest
+  // version of this test into this one.
   ShowTaskManager();
   GURL test_gurl = embedded_test_server()->GetURL("/title1.html");
 
@@ -794,6 +802,9 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, MAYBE_TotalSentDataObserved) {
   // There shouldn't be too much usage on the browser process. Note that it
   // should be the first row since tasks are sorted by process ID then by task
   // ID.
+  if (base::FeatureList::IsEnabled(features::kTaskManagerDesktopRefresh)) {
+    model()->UpdateModel(DisplayCategory::kSystem, u"");
+  }
   EXPECT_GE(20000,
             model()->GetColumnValue(ColumnSpecifier::TOTAL_NETWORK_USE, 0));
 }
@@ -1019,12 +1030,13 @@ IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, SubframeHistoryNavigation) {
 IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, KillSubframe) {
   ShowTaskManager();
 
+  // Navigate to a page A(B,C).
   content::TestNavigationObserver navigation_observer(
       browser()->tab_strip_model()->GetActiveWebContents());
   GURL main_url(embedded_test_server()->GetURL(
       "/cross-site/a.com/iframe_cross_site.html"));
   int expected_c_subframes = 1;
-  if (content::IsIsolatedOriginRequiredToGuaranteeDedicatedProcess()) {
+  if (!content::AreAllSitesIsolatedForTesting()) {
     // Isolate b.com so that it will be forced into a separate process. This
     // will prevent the main frame and c.com subframe from being placed in the
     // the process that gets killed by this test.
@@ -2278,9 +2290,9 @@ IN_PROC_BROWSER_TEST_F(TaskManagerDesktopRefreshBrowserTest,
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(0, MatchAnyExtension()));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(0, MatchAnyUtility()));
 
-  // Load an extension which should not be shown in the default
-  // `Tabs & Extensions` tab of the task manager. Current the task list is like
-  // below. The utility processes might be different for different systems.
+  // Load an extension which should be shown in the default `Tabs & Extensions`
+  // tab of the task manager. Current the task list is like below. The utility
+  // processes might be different for different systems.
   // Utility: Network Service
   // Utility: Video Capture
   // Utility: Storage Service

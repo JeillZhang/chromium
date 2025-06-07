@@ -75,11 +75,11 @@ class MessageGenerator {
   // default instance.
   void GenerateConstexprConstructor(io::Printer* p);
 
-  void GenerateSchema(io::Printer* p, int offset, int has_offset);
+  void GenerateSchema(io::Printer* p, int offset);
 
-  // Generate the field offsets array.  Returns the a pair of the total number
-  // of entries generated and the index of the first has_bit entry.
-  std::pair<size_t, size_t> GenerateOffsets(io::Printer* p);
+  // Generate the field offsets array.  Returns the total number of entries
+  // generated.
+  size_t GenerateOffsets(io::Printer* p);
 
   const Descriptor* descriptor() const { return descriptor_; }
 
@@ -124,6 +124,7 @@ class MessageGenerator {
   void GenerateSerializeWithCachedSizesBody(io::Printer* p);
   void GenerateSerializeWithCachedSizesBodyShuffled(io::Printer* p);
   void GenerateByteSize(io::Printer* p);
+  void GenerateByteSizeV2(io::Printer* p);
   void GenerateClassData(io::Printer* p);
   void GenerateMapEntryClassDefinition(io::Printer* p);
   void GenerateAnyMethodDefinition(io::Printer* p);
@@ -157,6 +158,7 @@ class MessageGenerator {
   void GenerateSerializeOneofFields(
       io::Printer* p, const std::vector<const FieldDescriptor*>& fields);
   void GenerateSerializeOneExtensionRange(io::Printer* p, int start, int end);
+  void GenerateSerializeAllExtensions(io::Printer* p);
 
   // Generates has_foo() functions and variables for singular field has-bits.
   void GenerateSingularFieldHasBits(const FieldDescriptor* field,
@@ -173,8 +175,9 @@ class MessageGenerator {
   // the current message's arena, reducing `GetArena()` call churn.
   bool RequiresArena(GeneratorFunction function) const;
 
-  // Returns whether impl_ has a copy ctor.
-  bool ImplHasCopyCtor() const;
+  // Returns true if all fields are trivially copayble, and has no non-field
+  // state (eg extensions).
+  bool CanUseTrivialCopy() const;
 
   // Returns the level that this message needs ArenaDtor. If the message has
   // a field that is not arena-exclusive, it needs an ArenaDtor
@@ -198,10 +201,20 @@ class MessageGenerator {
   std::vector<uint32_t> RequiredFieldsBitMask() const;
 
   // Helper functions to reduce nesting levels of deep Emit calls.
+  template <bool kIsV2 = false>
   void EmitCheckAndUpdateByteSizeForField(const FieldDescriptor* field,
                                           io::Printer* p) const;
+  template <bool kIsV2 = false>
   void EmitUpdateByteSizeForField(const FieldDescriptor* field, io::Printer* p,
                                   int& cached_has_word_index) const;
+
+  void MaybeEmitUpdateCachedHasbits(const FieldDescriptor* field,
+                                    io::Printer* p,
+                                    int& cached_has_word_index) const;
+
+  void EmitUpdateByteSizeV2ForNumerics(
+      size_t field_size, io::Printer* p, int& cached_has_word_index,
+      std::vector<const FieldDescriptor*>&& fields) const;
 
   const Descriptor* descriptor_;
   int index_in_file_messages_;

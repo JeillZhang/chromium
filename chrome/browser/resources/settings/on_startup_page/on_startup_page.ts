@@ -51,12 +51,12 @@ export class SettingsOnStartupPageElement extends
 
       ntpExtension_: Object,
 
-      prefValues_: {readOnly: true, type: Object, value: PrefValues},
+      prefValuesEnum_: {readOnly: true, type: Object, value: PrefValues},
     };
   }
 
-  prefs: Object;
-  private ntpExtension_: NtpExtension|null;
+  declare prefs: Object;
+  declare private ntpExtension_: NtpExtension|null;
 
   override connectedCallback() {
     super.connectedCallback();

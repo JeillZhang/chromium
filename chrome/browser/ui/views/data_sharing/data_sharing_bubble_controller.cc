@@ -62,10 +62,11 @@ content::WebContents* DataSharingBubbleDialogView::AddNewContents(
     const blink::mojom::WindowFeatures& window_features,
     bool user_gesture,
     bool* was_blocked) {
-  NavigateParams params(browser_, target_url,
-                        ui::PageTransition::PAGE_TRANSITION_LINK);
+  NavigateParams params(browser_, std::move(new_contents));
   params.tabstrip_index = browser_->tab_strip_model()->count();
-  params.disposition = disposition;
+  // Open link in a new window for better visibility because the bubble lays on
+  // top of the current window.
+  params.disposition = WindowOpenDisposition::NEW_WINDOW;
   Navigate(&params);
   return params.navigated_or_inserted_contents;
 }
@@ -92,9 +93,7 @@ views::View* GetAnchorViewForShare(const BrowserView* browser_view,
 
 DataSharingBubbleController::~DataSharingBubbleController() = default;
 
-void DataSharingBubbleController::Show(
-    std::variant<tab_groups::LocalTabGroupID, data_sharing::GroupToken>
-        request_info) {
+void DataSharingBubbleController::Show(data_sharing::RequestInfo request_info) {
   if (bubble_view_) {
     return;
   }
@@ -115,7 +114,7 @@ void DataSharingBubbleController::Show(
   views::View* anchor_view_for_share = nullptr;
   if (flow_value == data_sharing::kFlowShare) {
     anchor_view_for_share = GetAnchorViewForShare(
-        browser_view, std::get<tab_groups::TabGroupId>(request_info));
+        browser_view, std::get<tab_groups::TabGroupId>(request_info.id));
     if (!anchor_view_for_share) {
       // The share bubble has nothing to anchor from; return early.
       return;
@@ -162,8 +161,7 @@ void DataSharingBubbleController::Close() {
   bubble_view_ = nullptr;
 }
 
-void DataSharingBubbleController::SetOnCloseCallback(
-    base::OnceCallback<void()> callback) {
+void DataSharingBubbleController::SetOnCloseCallback(OnCloseCallback callback) {
   on_close_callback_ = std::move(callback);
 }
 
@@ -172,11 +170,40 @@ void DataSharingBubbleController::SetShowErrorDialogCallback(
   on_error_callback_ = std::move(callback);
 }
 
+void DataSharingBubbleController::SetOnShareLinkRequestedCallback(
+    collaboration::CollaborationControllerDelegate::ResultWithGroupTokenCallback
+        callback) {
+  on_share_link_requested_callback_ = std::move(callback);
+}
+
+void DataSharingBubbleController::SetJoinCallback(
+    collaboration::CollaborationControllerDelegate::ResultCallback callback) {
+  join_callback_ = std::move(callback);
+}
+
+void DataSharingBubbleController::OnUrlReadyToShare(GURL url) {
+  if (share_link_callback_) {
+    std::move(share_link_callback_).Run(url);
+  }
+}
+
 void DataSharingBubbleController::OnWidgetClosing(views::Widget* widget) {
   bubble_widget_observation_.Reset();
-  if (on_close_callback_) {
-    std::move(on_close_callback_).Run();
+  if (on_share_link_requested_callback_) {
+    std::move(on_share_link_requested_callback_)
+        .Run(collaboration::CollaborationControllerDelegate::Outcome::kCancel,
+             std::nullopt);
   }
+
+  MaybeRunJoinCallback(/*on_close=*/true);
+
+  if (on_close_callback_) {
+    std::move(on_close_callback_).Run(group_action_, group_action_progress_);
+  }
+
+  // Reset progress on dialog close.
+  group_action_ = std::nullopt;
+  group_action_progress_ = std::nullopt;
 }
 
 void DataSharingBubbleController::ApiInitComplete() {
@@ -184,8 +211,55 @@ void DataSharingBubbleController::ApiInitComplete() {
 }
 
 void DataSharingBubbleController::ShowErrorDialog(int status_code) {
+  if (share_link_callback_) {
+    // On error case, if the share link callback is present, return an empty url
+    // which will close the share dialog.
+    std::move(share_link_callback_).Run(std::nullopt);
+  }
+
   if (on_error_callback_) {
     std::move(on_error_callback_).Run();
+  }
+}
+
+void DataSharingBubbleController::OnShareLinkRequested(
+    const std::string& group_id,
+    const std::string& access_token,
+    base::OnceCallback<void(const std::optional<GURL>&)> callback) {
+  if (on_share_link_requested_callback_) {
+    share_link_callback_ = std::move(callback);
+    std::move(on_share_link_requested_callback_)
+        .Run(collaboration::CollaborationControllerDelegate::Outcome::kSuccess,
+             data_sharing::GroupToken(data_sharing::GroupId(group_id),
+                                      access_token));
+  }
+}
+
+void DataSharingBubbleController::OnGroupAction(
+    data_sharing::mojom::GroupAction action,
+    data_sharing::mojom::GroupActionProgress progress) {
+  group_action_ = action;
+  group_action_progress_ = progress;
+
+  MaybeRunJoinCallback(/*on_close=*/false);
+}
+
+void DataSharingBubbleController::MaybeRunJoinCallback(bool on_close) {
+  // Joins flow should end when the shared tab group is open after join
+  // or cancel without joining.
+  if (join_callback_) {
+    if (group_action_ == data_sharing::mojom::GroupAction::kJoinGroup &&
+        group_action_progress_ ==
+            data_sharing::mojom::GroupActionProgress::kSuccess) {
+      std::move(join_callback_)
+          .Run(collaboration::CollaborationControllerDelegate::Outcome::
+                   kSuccess);
+    } else if (on_close) {
+      // Only run cancel on close if not success.
+      std::move(join_callback_)
+          .Run(
+              collaboration::CollaborationControllerDelegate::Outcome::kCancel);
+    }
   }
 }
 

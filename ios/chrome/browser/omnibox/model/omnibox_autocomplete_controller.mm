@@ -11,53 +11,72 @@
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/user_metrics.h"
 #import "base/metrics/user_metrics_action.h"
+#import "base/trace_event/trace_event.h"
 #import "components/bookmarks/browser/bookmark_model.h"
 #import "components/omnibox/browser/autocomplete_controller.h"
 #import "components/omnibox/browser/autocomplete_match.h"
 #import "components/omnibox/browser/clipboard_provider.h"
-#import "components/omnibox/browser/omnibox_controller.h"
-#import "components/omnibox/browser/omnibox_edit_model.h"
+#import "components/omnibox/browser/omnibox_client.h"
 #import "components/omnibox/browser/omnibox_popup_selection.h"
 #import "components/open_from_clipboard/clipboard_recent_content.h"
-#import "ios/chrome/browser/omnibox/model/omnibox_popup_controller.h"
-#import "ios/chrome/browser/omnibox/ui_bundled/omnibox_view_ios.h"
+#import "ios/chrome/browser/omnibox/model/autocomplete_controller_observer_bridge.h"
+#import "ios/chrome/browser/omnibox/model/autocomplete_result_wrapper.h"
+#import "ios/chrome/browser/omnibox/model/omnibox_autocomplete_controller_debugger_delegate.h"
+#import "ios/chrome/browser/omnibox/model/omnibox_autocomplete_controller_delegate.h"
+#import "ios/chrome/browser/omnibox/model/omnibox_controller_ios.h"
+#import "ios/chrome/browser/omnibox/model/omnibox_edit_model_ios.h"
+#import "ios/chrome/browser/omnibox/model/omnibox_text_controller.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_backed_boolean.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "third_party/omnibox_proto/groups.pb.h"
+#import "ui/gfx/image/image.h"
 #import "url/gurl.h"
 
 using base::UserMetricsAction;
 
-@interface OmniboxAutocompleteController () <BooleanObserver>
+@interface OmniboxAutocompleteController () <AutocompleteControllerObserver,
+                                             BooleanObserver>
+
+/// Redefined as a readwrite
+@property(nonatomic, assign, readwrite) BOOL hasSuggestions;
+
+/// Autocomplete controller is accessed from OmniboxController. It might be
+/// changed by `SetAutocompleteControllerForTesting`.
+@property(nonatomic, assign, readonly)
+    AutocompleteController* autocompleteController;
 
 @end
 
 @implementation OmniboxAutocompleteController {
   /// Controller of the omnibox.
-  raw_ptr<OmniboxController> _omniboxController;
-  /// Controller of autocomplete.
-  raw_ptr<AutocompleteController> _autocompleteController;
-  /// Controller of the omnibox view.
-  raw_ptr<OmniboxViewIOS> _omniboxViewIOS;
+  raw_ptr<OmniboxControllerIOS> _omniboxController;
   /// Omnibox edit model. Should only be used for autocomplete interactions.
-  raw_ptr<OmniboxEditModel> _omniboxEditModel;
+  raw_ptr<OmniboxEditModelIOS> _omniboxEditModel;
 
+  /// Autocomplete controller observer.
+  std::unique_ptr<AutocompleteControllerObserverBridge>
+      _autocompleteControllerObserverBridge;
   /// Pref tracking if the bottom omnibox is enabled.
   PrefBackedBoolean* _bottomOmniboxEnabled;
   /// Preferred omnibox position, logged in omnibox logs.
   metrics::OmniboxEventProto::OmniboxPosition _preferredOmniboxPosition;
 }
 
-- (instancetype)initWithOmniboxController:(OmniboxController*)omniboxController
-                           omniboxViewIOS:(OmniboxViewIOS*)omniboxViewIOS {
+- (instancetype)
+    initWithOmniboxController:(OmniboxControllerIOS*)omniboxController
+             omniboxEditModel:(OmniboxEditModelIOS*)omniboxEditModel {
   self = [super init];
   if (self) {
     _omniboxController = omniboxController;
-    _autocompleteController = omniboxController->autocomplete_controller();
-    _omniboxViewIOS = omniboxViewIOS;
-    _omniboxEditModel = omniboxController->edit_model();
+    _omniboxEditModel = omniboxEditModel;
 
+    _autocompleteControllerObserverBridge =
+        std::make_unique<AutocompleteControllerObserverBridge>(self);
+    if (_omniboxController && _omniboxController->autocomplete_controller()) {
+      _omniboxController->autocomplete_controller()->AddObserver(
+          _autocompleteControllerObserverBridge.get());
+    }
     _preferredOmniboxPosition = metrics::OmniboxEventProto::UNKNOWN_POSITION;
     _bottomOmniboxEnabled = [[PrefBackedBoolean alloc]
         initWithPrefService:GetApplicationContext()->GetLocalState()
@@ -70,13 +89,107 @@ using base::UserMetricsAction;
 }
 
 - (void)disconnect {
+  if (_autocompleteControllerObserverBridge && _omniboxController &&
+      _omniboxController->autocomplete_controller()) {
+    _omniboxController->autocomplete_controller()->RemoveObserver(
+        _autocompleteControllerObserverBridge.get());
+    _autocompleteControllerObserverBridge.reset();
+  }
+  [self.autocompleteResultWrapper disconnect];
   [_bottomOmniboxEnabled stop];
   [_bottomOmniboxEnabled setObserver:nil];
   _bottomOmniboxEnabled = nil;
-  _autocompleteController = nullptr;
+  _autocompleteResultWrapper = nil;
   _omniboxEditModel = nullptr;
   _omniboxController = nullptr;
-  _omniboxViewIOS = nullptr;
+}
+
+- (AutocompleteController*)autocompleteController {
+  return _omniboxController ? _omniboxController->autocomplete_controller()
+                            : nullptr;
+}
+
+- (OmniboxClient*)client {
+  return _omniboxController ? _omniboxController->client() : nullptr;
+}
+
+- (void)updatePopupSuggestions {
+  if (AutocompleteController* autocompleteController =
+          self.autocompleteController) {
+    BOOL isFocusing = autocompleteController->input().focus_type() ==
+                      metrics::OmniboxFocusType::INTERACTION_FOCUS;
+
+    self.hasSuggestions = !autocompleteController->result().empty();
+    [self.delegate
+        omniboxAutocompleteControllerDidUpdateSuggestions:self
+                                           hasSuggestions:self.hasSuggestions
+                                               isFocusing:isFocusing];
+    [self.debuggerDelegate omniboxAutocompleteController:self
+                       didUpdateWithSuggestionsAvailable:self.hasSuggestions];
+  }
+}
+
+#pragma mark - AutocompleteControllerObserver
+
+- (void)autocompleteController:(AutocompleteController*)autocompleteController
+    didUpdateResultChangingDefaultMatch:(BOOL)defaultMatchChanged {
+  TRACE_EVENT0("omnibox", "OmniboxAutocompleteController::OnResultChanged");
+  DCHECK(autocompleteController == self.autocompleteController);
+  DCHECK(self.client);
+
+  const bool popup_was_open = _omniboxEditModel->PopupIsOpen();
+
+  [self updatePopupSuggestions];
+  if (defaultMatchChanged) {
+    // The default match has changed, we need to let the OmniboxEditModelIOS
+    // know about new inline autocomplete text (blue highlight).
+    if (const AutocompleteMatch* match =
+            autocompleteController->result().default_match()) {
+      // OnPopupDataChanged() resets edit model's `current_match_` early
+      // on.  Therefore, copy match.inline_autocompletion to a temp to preserve
+      // its value across the entire call.
+      _omniboxEditModel->OnPopupDataChanged(match->inline_autocompletion,
+                                            match->additional_text, *match);
+    } else {
+      _omniboxEditModel->OnPopupDataChanged(std::u16string(), std::u16string(),
+                                            AutocompleteMatch());
+    }
+  }
+
+  const bool popup_is_open = _omniboxEditModel->PopupIsOpen();
+  if (popup_was_open != popup_is_open && self.client) {
+    self.client->OnPopupVisibilityChanged(popup_is_open);
+  }
+
+  if (popup_was_open && !popup_is_open) {
+    // Closing the popup can change the default suggestion. This usually occurs
+    // when it's unclear whether the input represents a search or URL; e.g.,
+    // 'a.com/b c' or when title autocompleting. Clear the additional text to
+    // avoid suggesting the omnibox contains a URL suggestion when that may no
+    // longer be the case; i.e. when the default suggestion changed from a URL
+    // to a search suggestion upon closing the popup.
+    _omniboxEditModel->ClearAdditionalText();
+  }
+
+  // Note: The client outlives `this`, so bind a weak pointer to the callback
+  // passed in to eliminate the potential for crashes on shutdown.
+  // `should_preload` is set to `controller->done()` as prerender may only want
+  // to start preloading a result after all Autocomplete results are ready.
+  if (OmniboxClient* client = self.client) {
+    client->OnResultChanged(autocompleteController->result(),
+                            defaultMatchChanged,
+                            /*should_preload=*/autocompleteController->done(),
+                            /*on_bitmap_fetched=*/base::DoNothing());
+  }
+}
+
+#pragma mark - AutocompleteResultWrapperDelegate
+
+- (void)autocompleteResultWrapper:(AutocompleteResultWrapper*)wrapper
+              didInvalidatePedals:(NSArray<id<AutocompleteSuggestionGroup>>*)
+                                      nonPedalSuggestionsGroups {
+  [self.delegate omniboxAutocompleteController:self
+                    didUpdateSuggestionsGroups:nonPedalSuggestionsGroups];
 }
 
 #pragma mark - Boolean Observer
@@ -87,33 +200,23 @@ using base::UserMetricsAction;
         _bottomOmniboxEnabled.value
             ? metrics::OmniboxEventProto::BOTTOM_POSITION
             : metrics::OmniboxEventProto::TOP_POSITION;
-    if (_autocompleteController) {
-      _autocompleteController->SetSteadyStateOmniboxPosition(
+    if (AutocompleteController* autocompleteController =
+            self.autocompleteController) {
+      autocompleteController->SetSteadyStateOmniboxPosition(
           _preferredOmniboxPosition);
     }
   }
 }
 
-#pragma mark - OmniboxEditModel event
-
-- (void)updatePopupSuggestions {
-  if (_autocompleteController) {
-    BOOL isFocusing = _autocompleteController->input().focus_type() ==
-                      metrics::OmniboxFocusType::INTERACTION_FOCUS;
-    [self.omniboxPopupController
-        newResultsAvailable:_autocompleteController->result()
-                 isFocusing:isFocusing];
-  }
-}
-
 #pragma mark - OmniboxPopup event
 
-- (void)requestResultsWithVisibleSuggestionCount:
+- (void)requestSuggestionsWithVisibleSuggestionCount:
     (NSUInteger)visibleSuggestionCount {
-  if (!_autocompleteController) {
+  AutocompleteController* autocompleteController = self.autocompleteController;
+  if (!autocompleteController) {
     return;
   }
-  size_t resultSize = _autocompleteController->result().size();
+  size_t resultSize = autocompleteController->result().size();
   // If no suggestions are visible, consider all of them visible.
   if (visibleSuggestionCount == 0) {
     visibleSuggestionCount = resultSize;
@@ -122,26 +225,16 @@ using base::UserMetricsAction;
   if (visibleSuggestions > 0) {
     // Groups visible suggestions by search vs url. Skip the first suggestion
     // because it's the omnibox content.
-    _autocompleteController->GroupSuggestionsBySearchVsURL(1,
-                                                           visibleSuggestions);
+    autocompleteController->GroupSuggestionsBySearchVsURL(1,
+                                                          visibleSuggestions);
   }
   // Groups hidden suggestions by search vs url.
   if (visibleSuggestions < resultSize) {
-    _autocompleteController->GroupSuggestionsBySearchVsURL(visibleSuggestions,
-                                                           resultSize);
+    autocompleteController->GroupSuggestionsBySearchVsURL(visibleSuggestions,
+                                                          resultSize);
   }
 
-  [self.omniboxPopupController
-      updateWithSortedResults:_autocompleteController->result()];
-}
-
-- (BOOL)isStarredMatch:(const AutocompleteMatch&)match {
-  if (_omniboxController && _omniboxController->client()) {
-    auto* bookmark_model = _omniboxController->client()->GetBookmarkModel();
-    return bookmark_model &&
-           bookmark_model->IsBookmarked(match.destination_url);
-  }
-  return NO;
+  [self updateWithSortedResults:autocompleteController->result()];
 }
 
 - (void)selectMatchForOpening:(const AutocompleteMatch&)match
@@ -150,27 +243,23 @@ using base::UserMetricsAction;
   const auto matchSelectionTimestamp = base::TimeTicks();
   base::RecordAction(UserMetricsAction("MobileOmniboxUse"));
 
-  // OpenMatch() may close the popup, which will clear the result set and, by
-  // extension, `match` and its contents.  So copy the relevant match out to
-  // make sure it stays alive until the call completes.
-  AutocompleteMatch matchCopy = match;
-
-  if (matchCopy.type == AutocompleteMatchType::CLIPBOARD_URL) {
+  if (match.type == AutocompleteMatchType::CLIPBOARD_URL) {
     base::RecordAction(UserMetricsAction("MobileOmniboxClipboardToURL"));
     base::UmaHistogramLongTimes100(
         "MobileOmnibox.PressedClipboardSuggestionAge",
         ClipboardRecentContent::GetInstance()->GetClipboardContentAge());
   }
 
-  if (!_autocompleteController || !_omniboxEditModel) {
+  AutocompleteController* autocompleteController = self.autocompleteController;
+  if (!autocompleteController || !_omniboxEditModel) {
     return;
   }
 
   // Sometimes the match provided does not correspond to the autocomplete
   // result match specified by `index`. Most Visited Tiles, for example,
   // provide ad hoc matches that are not in the result at all.
-  if (row >= _autocompleteController->result().size() ||
-      _autocompleteController->result().match_at(row).destination_url !=
+  if (row >= autocompleteController->result().size() ||
+      autocompleteController->result().match_at(row).destination_url !=
           match.destination_url) {
     [self openCustomMatch:match
                disposition:disposition
@@ -178,27 +267,18 @@ using base::UserMetricsAction;
     return;
   }
 
-  if (match.destination_url.is_empty()) {
-    __weak __typeof__(self) weakSelf = self;
-    ClipboardRecentContent* clipboardRecentContent =
-        ClipboardRecentContent::GetInstance();
-    if (match.type == AutocompleteMatchType::CLIPBOARD_URL) {
-      clipboardRecentContent->GetRecentURLFromClipboard(base::BindOnce(
-          [](OmniboxAutocompleteController* controller,
-             WindowOpenDisposition disposition, base::TimeTicks timestamp,
-             std::optional<GURL> optionalURL) {
-            [controller openClipboardURL:optionalURL
-                             disposition:disposition
-                               timestamp:timestamp];
-          },
-          weakSelf, disposition, matchSelectionTimestamp));
-      return;
-    }
+  // Clipboard match handling.
+  if (match.destination_url.is_empty() &&
+      AutocompleteMatch::IsClipboardType(match.type)) {
+    [self openClipboardMatch:match
+                 disposition:disposition
+          selectionTimestamp:matchSelectionTimestamp];
+    return;
   }
 
-  if (_omniboxViewIOS) {
-    _omniboxViewIOS->OnSelectedMatchForOpening(matchCopy, disposition, GURL(),
-                                               std::u16string(), row);
+  if (_omniboxEditModel) {
+    _omniboxEditModel->OpenSelection(OmniboxPopupSelection(row),
+                                     matchSelectionTimestamp, disposition);
   }
 }
 
@@ -212,54 +292,213 @@ using base::UserMetricsAction;
     fill_into_edit.append(1, ' ');
   }
 
-  if (_omniboxViewIOS) {
-    _omniboxViewIOS->OnSelectedMatchForAppending(fill_into_edit);
-  }
+  [self.omniboxTextController refineWithText:fill_into_edit];
 }
 
 - (void)selectMatchForDeletion:(const AutocompleteMatch&)match {
-  if (_autocompleteController) {
-    _autocompleteController->DeleteMatch(match);
+  if (AutocompleteController* autocompleteController =
+          self.autocompleteController) {
+    autocompleteController->DeleteMatch(match);
   }
 }
 
 - (void)onScroll {
-  if (_omniboxViewIOS) {
-    _omniboxViewIOS->OnPopupDidScroll();
-  }
+  [self.omniboxTextController onScroll];
 }
 
 - (void)onCallAction {
-  if (_omniboxViewIOS) {
-    _omniboxViewIOS->OnCallActionTap();
+  [self.omniboxTextController hideKeyboard];
+}
+
+#pragma mark - OmniboxText events
+
+- (void)closeOmniboxPopup {
+  if (_omniboxController) {
+    _omniboxController->StopAutocomplete(/*clear_result=*/true);
   }
+}
+
+- (void)setTextAlignment:(NSTextAlignment)alignment {
+  [self.delegate omniboxAutocompleteController:self
+                        didUpdateTextAlignment:alignment];
+}
+
+- (void)setSemanticContentAttribute:
+    (UISemanticContentAttribute)semanticContentAttribute {
+  [self.delegate omniboxAutocompleteController:self
+             didUpdateSemanticContentAttribute:semanticContentAttribute];
+}
+
+- (void)setHasThumbnail:(BOOL)hasThumbnail {
+  self.autocompleteResultWrapper.hasThumbnail = hasThumbnail;
+}
+
+- (void)previewSuggestion:(id<AutocompleteSuggestion>)suggestion
+            isFirstUpdate:(BOOL)isFirstUpdate {
+  [self.omniboxTextController previewSuggestion:suggestion
+                                  isFirstUpdate:isFirstUpdate];
 }
 
 #pragma mark - Private
 
 /// Opens a match created outside of autocomplete controller.
-- (void)openCustomMatch:(AutocompleteMatch)match
+- (void)openCustomMatch:(std::optional<AutocompleteMatch>)match
             disposition:(WindowOpenDisposition)disposition
      selectionTimestamp:(base::TimeTicks)timestamp {
-  if (!_autocompleteController || !_omniboxEditModel) {
+  AutocompleteController* autocompleteController = self.autocompleteController;
+  if (!autocompleteController || !_omniboxEditModel || !match) {
     return;
   }
   OmniboxPopupSelection selection(
-      _autocompleteController->InjectAdHocMatch(match));
+      autocompleteController->InjectAdHocMatch(match.value()));
   _omniboxEditModel->OpenSelection(selection, timestamp, disposition);
 }
 
+/// Wraps the suggestions and send them to the delegate.
+- (void)updateWithSortedResults:(const AutocompleteResult&)results {
+  NSArray<id<AutocompleteSuggestionGroup>>* suggestionGroups =
+      [self.autocompleteResultWrapper wrapAutocompleteResultInGroups:results];
+  [self.delegate omniboxAutocompleteController:self
+                    didUpdateSuggestionsGroups:suggestionGroups];
+}
+
+#pragma mark Clipboard match handling
+
+/// Creates a match with the clipboard URL and open it.
 - (void)openClipboardURL:(std::optional<GURL>)optionalURL
              disposition:(WindowOpenDisposition)disposition
                timestamp:(base::TimeTicks)timestamp {
-  if (!optionalURL || !_autocompleteController) {
+  if (!optionalURL) {
     return;
   }
   GURL URL = std::move(optionalURL).value();
-  [self openCustomMatch:_autocompleteController->clipboard_provider()
-                            ->NewClipboardURLMatch(URL)
-             disposition:disposition
-      selectionTimestamp:timestamp];
+  if (AutocompleteController* autocompleteController =
+          self.autocompleteController) {
+    [self openCustomMatch:autocompleteController->clipboard_provider()
+                              ->NewClipboardURLMatch(URL)
+               disposition:disposition
+        selectionTimestamp:timestamp];
+  }
+}
+
+/// Creates a match with the clipboard text and open it.
+- (void)openClipboardText:(std::optional<std::u16string>)optionalText
+              disposition:(WindowOpenDisposition)disposition
+                timestamp:(base::TimeTicks)timestamp {
+  if (!optionalText) {
+    return;
+  }
+  if (AutocompleteController* autocompleteController =
+          self.autocompleteController) {
+    [self openCustomMatch:autocompleteController->clipboard_provider()
+                              ->NewClipboardTextMatch(optionalText.value())
+               disposition:disposition
+        selectionTimestamp:timestamp];
+  }
+}
+
+/// Creates a match with the clipboard image and open it.
+- (void)openClipboardImage:(std::optional<gfx::Image>)optionalImage
+               disposition:(WindowOpenDisposition)disposition
+                 timestamp:(base::TimeTicks)timestamp {
+  if (!optionalImage) {
+    return;
+  }
+
+  if (AutocompleteController* autocompleteController =
+          self.autocompleteController) {
+    __weak __typeof(self) weakSelf = self;
+    autocompleteController->clipboard_provider()->NewClipboardImageMatch(
+        optionalImage,
+        base::BindOnce(
+            [](OmniboxAutocompleteController* controller,
+               WindowOpenDisposition disposition, base::TimeTicks timestamp,
+               std::optional<AutocompleteMatch> optionalMatch) {
+              [controller openCustomMatch:optionalMatch
+                              disposition:disposition
+                       selectionTimestamp:timestamp];
+            },
+            weakSelf, disposition, timestamp));
+  }
+}
+
+/// Opens a clipboard match. Fetches the content of the clipboard and creates a
+/// new match with it.
+- (void)openClipboardMatch:(const AutocompleteMatch&)match
+               disposition:(WindowOpenDisposition)disposition
+        selectionTimestamp:(base::TimeTicks)timestamp {
+  __weak __typeof__(self) weakSelf = self;
+  ClipboardRecentContent* clipboardRecentContent =
+      ClipboardRecentContent::GetInstance();
+  CHECK(clipboardRecentContent);
+
+  switch (match.type) {
+    case AutocompleteMatchType::CLIPBOARD_URL: {
+      clipboardRecentContent->GetRecentURLFromClipboard(base::BindOnce(
+          [](OmniboxAutocompleteController* controller,
+             WindowOpenDisposition disposition, base::TimeTicks timestamp,
+             std::optional<GURL> optionalURL) {
+            [controller openClipboardURL:optionalURL
+                             disposition:disposition
+                               timestamp:timestamp];
+          },
+          weakSelf, disposition, timestamp));
+      break;
+    }
+    case AutocompleteMatchType::CLIPBOARD_TEXT: {
+      clipboardRecentContent->GetRecentTextFromClipboard(base::BindOnce(
+          [](OmniboxAutocompleteController* controller,
+             WindowOpenDisposition disposition, base::TimeTicks timestamp,
+             std::optional<std::u16string> optionalText) {
+            [controller openClipboardText:optionalText
+                              disposition:disposition
+                                timestamp:timestamp];
+          },
+          weakSelf, disposition, timestamp));
+      break;
+    }
+    case AutocompleteMatchType::CLIPBOARD_IMAGE: {
+      clipboardRecentContent->GetRecentImageFromClipboard(base::BindOnce(
+          [](OmniboxAutocompleteController* controller,
+             WindowOpenDisposition disposition, base::TimeTicks timestamp,
+             std::optional<gfx::Image> optionalImage) {
+            [controller openClipboardImage:optionalImage
+                               disposition:disposition
+                                 timestamp:timestamp];
+          },
+          weakSelf, disposition, timestamp));
+      break;
+    }
+    default:
+      NOTREACHED() << "Unsupported clipboard match type";
+  }
+}
+
+#pragma mark - Testing
+
+- (void)setAutocompleteController:
+    (std::unique_ptr<AutocompleteController>)controller {
+  CHECK(_autocompleteControllerObserverBridge);
+
+  if (!_omniboxController) {
+    return;
+  }
+
+  // Remove observation on old controller.
+  if (AutocompleteController* autocompleteController =
+          self.autocompleteController) {
+    autocompleteController->RemoveObserver(
+        _autocompleteControllerObserverBridge.get());
+  }
+  // Set new controller.
+  _omniboxController->SetAutocompleteControllerForTesting(
+      std::move(controller));
+  // Observe new controller.
+  if (AutocompleteController* autocompleteController =
+          self.autocompleteController) {
+    autocompleteController->AddObserver(
+        _autocompleteControllerObserverBridge.get());
+  }
 }
 
 @end

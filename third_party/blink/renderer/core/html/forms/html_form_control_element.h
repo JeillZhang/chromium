@@ -62,6 +62,7 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
   void DetachLayoutTree(bool performing_reattach) override;
 
   HTMLFormElement* formOwner() const final;
+  HTMLElement* formForBinding() const final;
 
   bool IsDisabledFormControl() const override;
 
@@ -111,11 +112,7 @@ class CORE_EXPORT HTMLFormControlElement : public HTMLElement,
     return PopoverTriggerSupport::kNone;
   }
 
-  // The IDL reflections:
-  AtomicString popoverTargetAction() const;
-  void setPopoverTargetAction(const AtomicString& value);
-
-  Element* interestTargetElement() override;
+  Element* InterestTargetElement() const override;
 
   void DefaultEventHandler(Event&) override;
 

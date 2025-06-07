@@ -38,8 +38,7 @@ namespace gpu {
 class TestSharedImageInterface;
 }
 
-namespace media {
-namespace test {
+namespace media::test {
 
 // Helper class allowing one thread to wait on a notification from another.
 // If notifications come in faster than they are Wait()'d for, they are
@@ -116,7 +115,7 @@ class EncodedDataHelper {
       base::span<const uint8_t> stream,
       VideoCodec codec);
 
-  static bool HasConfigInfo(const uint8_t* data, size_t size, VideoCodec codec);
+  static bool HasConfigInfo(base::span<const uint8_t> data, VideoCodec codec);
 
   virtual ~EncodedDataHelper();
   virtual scoped_refptr<DecoderBuffer> GetNextBuffer() = 0;
@@ -139,7 +138,7 @@ class EncodedDataHelperH26x : public EncodedDataHelper {
   EncodedDataHelperH26x(base::span<const uint8_t> stream, VideoCodec codec);
   ~EncodedDataHelperH26x() override = default;
 
-  static bool HasConfigInfo(const uint8_t* data, size_t size, VideoCodec codec);
+  static bool HasConfigInfo(base::span<const uint8_t> data, VideoCodec codec);
 
   scoped_refptr<DecoderBuffer> GetNextBuffer() override;
 
@@ -271,7 +270,8 @@ class AlignedDataHelper {
       VideoFrame::StorageType storage_type,
       const RawVideo::FrameData& src_frame,
       const VideoFrameLayout& src_layout,
-      const VideoFrameLayout& dst_layout);
+      const VideoFrameLayout& dst_layout,
+      gpu::TestSharedImageInterface* test_sii);
 
   const raw_ptr<const RawVideo> video_;
   // The number of frames in the given |stream|.
@@ -327,7 +327,6 @@ class RawDataHelper {
 
   const bool reverse_;
 };
-}  // namespace test
-}  // namespace media
+}  // namespace media::test
 
 #endif  // MEDIA_GPU_TEST_VIDEO_TEST_HELPERS_H_

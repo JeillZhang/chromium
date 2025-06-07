@@ -24,12 +24,14 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 
@@ -54,8 +56,11 @@ import org.chromium.chrome.browser.tabmodel.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.ui.BottomContainer;
 import org.chromium.chrome.browser.ui.RootUiCoordinator;
+import org.chromium.chrome.browser.ui.appmenu.AppMenuPropertiesDelegate;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
+import org.chromium.components.ukm.UkmRecorder;
+import org.chromium.components.ukm.UkmRecorderJni;
 import org.chromium.content_public.browser.RenderFrameHost;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.TestActivity;
@@ -64,6 +69,7 @@ import org.chromium.url.JUnitTestGURLs;
 /** Unit tests for ChromeActivity. */
 @RunWith(BaseRobolectricTestRunner.class)
 public class ChromeActivityUnitTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     Activity mActivity;
 
     @Mock RootUiCoordinator mRootUiCoordinatorMock;
@@ -75,6 +81,7 @@ public class ChromeActivityUnitTest {
     @Mock FullscreenVideoPictureInPictureController mFullscreenVideoPictureInPictureController;
     @Mock PictureInPictureUiState mPictureInPictureUiState;
     @Mock EnterpriseInfo mEnterpriseInfo;
+    @Mock UkmRecorder.Natives mUkmRecorderJniMock;
 
     ObservableSupplierImpl<ReadAloudController> mReadAloudControllerSupplier =
             new ObservableSupplierImpl<>();
@@ -106,6 +113,11 @@ public class ChromeActivityUnitTest {
         }
 
         @Override
+        public AppMenuPropertiesDelegate createAppMenuPropertiesDelegate() {
+            return null;
+        }
+
+        @Override
         public @ActivityType int getActivityType() {
             return ActivityType.TABBED;
         }
@@ -129,7 +141,6 @@ public class ChromeActivityUnitTest {
 
     @Before
     public void setup() {
-        MockitoAnnotations.initMocks(this);
         mActivity = Robolectric.buildActivity(TestActivity.class).setup().get();
     }
 
@@ -202,6 +213,8 @@ public class ChromeActivityUnitTest {
         when(mActivityTab.getUrl()).thenReturn(JUnitTestGURLs.GOOGLE_URL);
         when(mActivityTab.getWebContents()).thenReturn(mock(WebContents.class));
         when(mActivityTab.getWebContents().getMainFrame()).thenReturn(mock(RenderFrameHost.class));
+        UkmRecorderJni.setInstanceForTesting(mUkmRecorderJniMock);
+
         // Set enterprise info to report as enterprise owned.
         EnterpriseInfo.setInstanceForTest(mEnterpriseInfo);
         EnterpriseInfo.OwnedState enterpriseInfoState =

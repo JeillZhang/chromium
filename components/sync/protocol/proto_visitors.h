@@ -12,6 +12,7 @@
 #include "components/sync/protocol/arc_package_specifics.pb.h"
 #include "components/sync/protocol/autofill_offer_specifics.pb.h"
 #include "components/sync/protocol/autofill_specifics.pb.h"
+#include "components/sync/protocol/autofill_valuable_specifics.pb.h"
 #include "components/sync/protocol/autofill_wallet_credential_specifics.pb.h"
 #include "components/sync/protocol/autofill_wallet_usage_specifics.pb.h"
 #include "components/sync/protocol/bookmark_specifics.pb.h"
@@ -59,6 +60,8 @@
 #include "components/sync/protocol/sync_invalidations_payload.pb.h"
 #include "components/sync/protocol/tab_group_attribution_metadata.pb.h"
 #include "components/sync/protocol/theme_specifics.pb.h"
+#include "components/sync/protocol/theme_specifics_ios.pb.h"
+#include "components/sync/protocol/theme_types.pb.h"
 #include "components/sync/protocol/typed_url_specifics.pb.h"
 #include "components/sync/protocol/unencrypted_sharing_message.pb.h"
 #include "components/sync/protocol/unique_position.pb.h"
@@ -130,7 +133,6 @@ VISIT_PROTO_FIELDS(const sync_pb::AppListSpecifics& proto) {
   VISIT(parent_id);
   VISIT(item_ordinal);
   VISIT(item_pin_ordinal);
-  VISIT(is_user_pinned);
   VISIT(promise_package_id);
 }
 
@@ -448,6 +450,7 @@ VISIT_PROTO_FIELDS(const sync_pb::ContactInfoSpecifics& proto) {
   VISIT(address_overflow_and_landmark);
   VISIT(address_street_location_and_locality);
   VISIT(address_thoroughfare_number_and_apt);
+  VISIT(invisible_in_autofill);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::ContactInfoSpecifics::Observation& proto) {
@@ -502,7 +505,6 @@ VISIT_PROTO_FIELDS(const sync_pb::ClientCommand& proto) {
   VISIT(max_commit_batch_size);
   VISIT(throttle_delay_seconds);
   VISIT(client_invalidation_hint_buffer_size);
-  VISIT(gu_retry_delay_seconds);
   VISIT_REP(custom_nudge_delays);
   VISIT(extension_types_max_tokens);
   VISIT(extension_types_refill_interval_seconds);
@@ -655,9 +657,6 @@ VISIT_PROTO_FIELDS(const sync_pb::FeatureSpecificFields& proto) {
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::SharingSpecificFields& proto) {
-  VISIT(vapid_fcm_token);
-  VISIT_BYTES(vapid_p256dh);
-  VISIT_BYTES(vapid_auth_secret);
   VISIT_REP(enabled_features);
   VISIT(sender_id_fcm_token_v2);
   VISIT_BYTES(sender_id_p256dh_v2);
@@ -722,7 +721,7 @@ VISIT_PROTO_FIELDS(
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::EntitySpecifics& proto) {
-  static_assert(53 == GetNumDataTypes(),
+  static_assert(55 == GetNumDataTypes(),
                 "When adding a new protocol type, you will likely need to add "
                 "it here as well.");
   VISIT(encrypted);
@@ -733,6 +732,7 @@ VISIT_PROTO_FIELDS(const sync_pb::EntitySpecifics& proto) {
   VISIT(autofill);
   VISIT(autofill_offer);
   VISIT(autofill_profile);
+  VISIT(autofill_valuable);
   VISIT(autofill_wallet);
   VISIT(autofill_wallet_credential);
   VISIT(autofill_wallet_usage);
@@ -767,6 +767,7 @@ VISIT_PROTO_FIELDS(const sync_pb::EntitySpecifics& proto) {
   VISIT(security_event);
   VISIT(send_tab_to_self);
   VISIT(session);
+  VISIT(shared_tab_group_account_data);
   VISIT(shared_tab_group_data);
   VISIT(sharing_message);
   VISIT(theme);
@@ -880,7 +881,7 @@ VISIT_PROTO_FIELDS(const sync_pb::DataTypeState& proto) {
   VISIT(encryption_key_name);
   VISIT_ENUM(initial_sync_state);
   VISIT(cache_guid);
-  VISIT(authenticated_account_id);
+  VISIT(authenticated_obfuscated_gaia_id);
   VISIT_REP(invalidations);
   VISIT(notes_enabled_before_initial_sync_for_passwords);
 }
@@ -976,10 +977,13 @@ VISIT_PROTO_FIELDS(const sync_pb::WebauthnCredentialSpecifics& proto) {
   VISIT(third_party_payments_support);
   VISIT(last_used_time_windows_epoch_micros);
   VISIT(key_version);
+  VISIT(device_authorization_key_version);
   VISIT_SECRET(private_key);
   VISIT_SECRET(encrypted);
+  VISIT_SECRET(security_domain_encrypted);
   VISIT(edited_by_user);
   VISIT(hidden);
+  VISIT(hidden_time);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::HistorySpecifics::PageTransition& proto) {
@@ -1569,14 +1573,19 @@ VISIT_PROTO_FIELDS(
   VISIT(color);
 }
 
-VISIT_PROTO_FIELDS(const sync_pb::ThemeSpecifics::UserColorTheme& proto) {
+VISIT_PROTO_FIELDS(const sync_pb::ThemeSpecificsIos& proto) {
+  VISIT(user_color_theme);
+  VISIT(ntp_background);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::UserColorTheme& proto) {
   VISIT(color);
   VISIT_ENUM(browser_color_variant);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::ThemeSpecifics::Empty& proto) {}
 
-VISIT_PROTO_FIELDS(const sync_pb::ThemeSpecifics::NtpCustomBackground& proto) {
+VISIT_PROTO_FIELDS(const sync_pb::NtpCustomBackground& proto) {
   VISIT(url);
   VISIT(attribution_line_1);
   VISIT(attribution_line_2);
@@ -1627,7 +1636,7 @@ VISIT_PROTO_FIELDS(const sync_pb::UniquePosition& proto) {
 VISIT_PROTO_FIELDS(const sync_pb::UserConsentSpecifics& proto) {
   VISIT(locale);
   VISIT(client_consent_time_usec);
-  VISIT(account_id);
+  VISIT(obfuscated_gaia_id);
   VISIT(sync_consent);
   VISIT(arc_backup_and_restore_consent);
   VISIT(arc_location_service_consent);
@@ -1788,6 +1797,7 @@ VISIT_PROTO_FIELDS(const sync_pb::WalletMaskedCreditCard& proto) {
   VISIT_REP(card_benefit);
   VISIT(product_terms_url);
   VISIT_ENUM(card_info_retrieval_enrollment_state);
+  VISIT_ENUM(card_benefit_source);
 }
 
 VISIT_PROTO_FIELDS(const sync_pb::WalletMetadataSpecifics& proto) {
@@ -1990,6 +2000,36 @@ VISIT_PROTO_FIELDS(
   VISIT(title);
   VISIT_ENUM(color);
   VISIT(is_collapsed);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::AutofillValuableSpecifics& proto) {
+  VISIT(id);
+  VISIT(loyalty_card);
+}
+
+VISIT_PROTO_FIELDS(
+    const sync_pb::AutofillValuableSpecifics::LoyaltyCard& proto) {
+  VISIT(merchant_name);
+  VISIT(program_name);
+  VISIT(program_logo);
+  VISIT(loyalty_card_number);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::SharedTabDetails& proto) {
+  VISIT(shared_tab_group_guid);
+  VISIT(last_seen_timestamp_windows_epoch);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::SharedTabGroupDetails& proto) {
+  VISIT(pinned_position);
+}
+
+VISIT_PROTO_FIELDS(const sync_pb::SharedTabGroupAccountDataSpecifics& proto) {
+  VISIT(guid);
+  VISIT(collaboration_id);
+  VISIT(shared_tab_details);
+  VISIT(shared_tab_group_details);
+  VISIT(update_time_windows_epoch_micros);
 }
 
 }  // namespace syncer

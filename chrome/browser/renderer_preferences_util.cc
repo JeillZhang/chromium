@@ -13,11 +13,10 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/net/convert_explicitly_allowed_network_ports_pref.h"
 #include "chrome/browser/privacy_sandbox/tracking_protection_settings_factory.h"
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #endif
 #include "chrome/browser/profiles/profile.h"
@@ -227,6 +226,9 @@ void UpdateFromSystemSettings(blink::RendererPreferences* prefs,
 #else
   prefs->focus_ring_color = SkColorSetRGB(0x10, 0x10, 0x10);
 #endif
+
+  prefs->view_source_line_wrap_enabled =
+      pref_service->GetBoolean(prefs::kViewSourceLineWrappingEnabled);
 }
 
 }  // namespace renderer_preferences_util

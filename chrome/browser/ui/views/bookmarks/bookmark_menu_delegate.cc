@@ -101,14 +101,6 @@ ui::ImageModel GetFaviconForNode(BookmarkModel* model,
                          : ui::ImageModel::FromImage(image);
 }
 
-bool ShouldBuildPermanentNode(const BookmarkMergedSurfaceService* service,
-                              const BookmarkParentFolder& folder) {
-  return std::ranges::any_of(
-      service->GetUnderlyingNodes(folder), [](const BookmarkNode* node) {
-        return node->IsVisible() && !node->children().empty();
-      });
-}
-
 // The current behavior is that the menu gets closed (see MenuController) after
 // a drop is initiated, which deletes BookmarkMenuDelegate before the drop
 // callback is run. That's why the drop callback shouldn't be tied to
@@ -301,8 +293,7 @@ void BookmarkMenuDelegate::BuildFullMenu(MenuItemView* parent) {
 
   const BookmarkParentFolder managed_folder =
       BookmarkParentFolder::ManagedFolder();
-  if (ShouldBuildPermanentNode(GetBookmarkMergedSurfaceService(),
-                               managed_folder)) {
+  if (ShouldBuildPermanentNode(managed_folder)) {
     BuildMenuForFolder(
         managed_folder,
         chrome::GetBookmarkFolderIcon(chrome::BookmarkFolderIconType::kManaged,
@@ -403,9 +394,13 @@ bool BookmarkMenuDelegate::IsTriggerableEvent(views::MenuItemView* menu,
                         event_utils::IsPossibleDispositionEvent(e);
   const bool is_command_click = is_click && (e.flags() & ui::EF_COMMAND_DOWN);
 
-  // Cmd+Click (or Win+Click) to open all bookmark pages in a submenu.
+  // To open all bookmark pages in a submenu:
+  // 1. Cmd+Click (or Win+Click on Windows) on the submenu.
+  // 2. middle-mouse click the submenu.
   if (menu->GetType() == MenuItemView::Type::kSubMenu) {
-    return is_command_click;
+    const bool is_middle_mouse =
+        e.IsMouseEvent() && (e.flags() & ui::EF_MIDDLE_MOUSE_BUTTON);
+    return is_command_click || is_middle_mouse;
   }
 
   return is_click;
@@ -425,9 +420,8 @@ void BookmarkMenuDelegate::ExecuteCommand(int id, int mouse_event_flags) {
   std::vector<raw_ptr<const BookmarkNode, VectorExperimental>> selection =
       menu_id_to_node_map_.find(id)->second.GetUnderlyingNodes(
           GetBookmarkMergedSurfaceService());
-  chrome::OpenAllIfAllowed(browser_, selection,
-                           ui::DispositionFromEventFlags(mouse_event_flags),
-                           false);
+  bookmarks::OpenAllIfAllowed(browser_, selection,
+                              ui::DispositionFromEventFlags(mouse_event_flags));
 }
 
 bool BookmarkMenuDelegate::ShouldExecuteCommandWithoutClosingMenu(
@@ -996,15 +990,18 @@ MenuItemView* BookmarkMenuDelegate::CreateMenu(
   return menu;
 }
 
+bool BookmarkMenuDelegate::ShouldBuildPermanentNode(
+    const BookmarkParentFolder& folder) const {
+  return GetBookmarkMergedSurfaceService()->GetChildrenCount(folder);
+}
+
 void BookmarkMenuDelegate::BuildMenusForPermanentNodes() {
   CHECK(parent_menu_item_);
   const BookmarkParentFolder other_folder(BookmarkParentFolder::OtherFolder());
   const BookmarkParentFolder mobile_folder(
       BookmarkParentFolder::MobileFolder());
-  const bool should_build_other_node =
-      ShouldBuildPermanentNode(GetBookmarkMergedSurfaceService(), other_folder);
-  const bool should_build_mobile_node = ShouldBuildPermanentNode(
-      GetBookmarkMergedSurfaceService(), mobile_folder);
+  const bool should_build_other_node = ShouldBuildPermanentNode(other_folder);
+  const bool should_build_mobile_node = ShouldBuildPermanentNode(mobile_folder);
 
   if (!should_build_other_node && !should_build_mobile_node) {
     return;
@@ -1173,9 +1170,8 @@ bool BookmarkMenuDelegate::ShouldHaveBookmarksTitle() {
       GetBookmarkMergedSurfaceService();
   const bool bookmark_bar_has_children =
       service->GetChildrenCount(BookmarkParentFolder::BookmarkBarFolder());
-  return (
-      bookmark_bar_has_children ||
-      ShouldBuildPermanentNode(service, BookmarkParentFolder::ManagedFolder()));
+  return (bookmark_bar_has_children ||
+          ShouldBuildPermanentNode(BookmarkParentFolder::ManagedFolder()));
 }
 
 void BookmarkMenuDelegate::BuildBookmarksTitle(size_t index) {

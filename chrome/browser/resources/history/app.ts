@@ -17,7 +17,6 @@ import './query_manager.js';
 import './shared_style.css.js';
 import './side_bar.js';
 import '/strings.m.js';
-import './product_specifications_lists.js';
 
 import {HelpBubbleMixin} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
 import type {HelpBubbleMixinInterface} from 'chrome://resources/cr_components/help_bubble/help_bubble_mixin.js';
@@ -64,7 +63,6 @@ export function ensureLazyLoaded(): Promise<void> {
 
     lazyLoadPromise = Promise.all([
       customElements.whenDefined('history-synced-device-manager'),
-      customElements.whenDefined('product-specifications-lists'),
       customElements.whenDefined('cr-action-menu'),
       customElements.whenDefined('cr-button'),
       customElements.whenDefined('cr-checkbox'),
@@ -194,7 +192,10 @@ export class HistoryAppElement extends HistoryAppElementBase {
 
       // Updated on synced-device-manager attach by chrome.sending
       // 'otherDevicesInitialized'.
-      isUserSignedIn_: Boolean,
+      isUserSignedIn_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('isUserSignedIn'),
+      },
 
       pendingDelete_: Boolean,
 
@@ -285,53 +286,64 @@ export class HistoryAppElement extends HistoryAppElementBase {
         reflectToAttribute: true,
       },
 
-      compareHistoryEnabled_: Boolean,
-      tabContentScrollOffset_: Number,
-      nonEmbeddingsResultClicked_: Boolean,
+      tabContentScrollOffset_: {
+        type: Number,
+        value: 0,
+      },
+
+      nonEmbeddingsResultClicked_: {
+        type: Boolean,
+        value: false,
+      },
+
+      numCharsTypedInSearch_: {
+        type: Number,
+        value: 0,
+      },
+
+      historyEmbeddingsDisclaimerLinkClicked_: {
+        type: Boolean,
+        value: false,
+      },
     };
   }
 
-  static get observers() {
-    return ['onQueryStateChanged_(queryState_.*)'];
-  }
-
-  footerInfo: FooterInfo;
+  declare footerInfo: FooterInfo;
   private browserService_: BrowserService = BrowserServiceImpl.getInstance();
   private callbackRouter_: PageCallbackRouter;
-  private enableHistoryEmbeddings_: boolean;
+  declare private enableHistoryEmbeddings_: boolean;
   private eventTracker_: EventTracker = new EventTracker();
-  private hasDrawer_: boolean;
-  private historyClustersEnabled_: boolean;
-  private historyClustersVisible_: boolean;
-  private isUserSignedIn_: boolean = loadTimeData.getBoolean('isUserSignedIn');
-  private lastSelectedTab_: number;
-  private contentPage_: string;
-  private tabsContentPage_: string;
+  declare private hasDrawer_: boolean;
+  declare private historyClustersEnabled_: boolean;
+  declare private historyClustersVisible_: boolean;
+  declare private isUserSignedIn_: boolean;
+  declare private lastSelectedTab_: number;
+  declare private contentPage_: string;
+  declare private tabsContentPage_: string;
   private pageHandler_: PageHandlerRemote;
-  private pendingDelete_: boolean;
-  private queryResult_: QueryResult;
-  private queryState_: QueryState;
-  private selectedPage_: string;
-  private selectedTab_: number;
+  declare private pendingDelete_: boolean;
+  declare private queryResult_: QueryResult;
+  declare private queryState_: QueryState;
+  declare private selectedPage_: string;
+  declare private selectedTab_: number;
   private lastRecordedSelectedPageHistogramValue_: HistoryPageViewHistogram =
       HistoryPageViewHistogram.END;
-  private showHistoryClusters_: boolean;
-  private tabsIcons_: string[];
-  private tabsNames_: string[];
-  private toolbarShadow_: boolean;
+  declare private showTabs_: boolean;
+  declare private showHistoryClusters_: boolean;
+  declare private tabsIcons_: string[];
+  declare private tabsNames_: string[];
+  declare private toolbarShadow_: boolean;
   private historyClustersViewStartTime_: Date|null = null;
   private onHasOtherFormsChangedListenerId_: number|null = null;
-  private scrollTarget_: HTMLElement;
-  private queryStateAfterDate_?: Date;
-  private hasHistoryEmbeddingsResults_: boolean;
-  private compareHistoryEnabled_: boolean =
-      loadTimeData.getBoolean('compareHistoryEnabled');
+  declare private scrollTarget_: HTMLElement;
+  declare private queryStateAfterDate_?: Date;
+  declare private hasHistoryEmbeddingsResults_: boolean;
   private historyEmbeddingsResizeObserver_?: ResizeObserver;
-  private historyEmbeddingsDisclaimerLinkClicked_ = false;
-  private tabContentScrollOffset_: number = 0;
+  declare private historyEmbeddingsDisclaimerLinkClicked_: boolean;
+  declare private tabContentScrollOffset_: number;
   private dataFromNativeBeforeInput_: string|null = null;
-  private numCharsTypedInSearch_: number = 0;
-  private nonEmbeddingsResultClicked_: boolean = false;
+  declare private numCharsTypedInSearch_: number;
+  declare private nonEmbeddingsResultClicked_: boolean;
 
   constructor() {
     super();
@@ -385,9 +397,6 @@ export class HistoryAppElement extends HistoryAppElementBase {
     this.addEventListener('cr-toolbar-menu-click', this.onCrToolbarMenuClick_);
     this.addEventListener('delete-selected', this.deleteSelected);
     this.addEventListener('history-checkbox-select', this.checkboxSelected);
-    this.addEventListener(
-        'product-spec-item-select',
-        this.productSpecificationsCheckboxSelected_);
     this.addEventListener('history-close-drawer', this.closeDrawer_);
     this.addEventListener('history-view-changed', this.historyViewChanged_);
     this.addEventListener('unselect-all', this.unselectAll);
@@ -413,6 +422,9 @@ export class HistoryAppElement extends HistoryAppElementBase {
   }
 
   private onShowResultsByGroupChanged_(e: CustomEvent<{value: boolean}>) {
+    if (!this.selectedPage_) {
+      return;
+    }
     const showResultsByGroup = e.detail.value;
     if (showResultsByGroup) {
       this.selectedTab_ = TABBED_PAGES.indexOf(Page.HISTORY_CLUSTERS);
@@ -452,11 +464,6 @@ export class HistoryAppElement extends HistoryAppElementBase {
         this.showHistoryClusters_;
   }
 
-  private comparisonTablesSelected_(_selectedPage: string): boolean {
-    return this.compareHistoryEnabled_ &&
-        this.selectedPage_ === Page.PRODUCT_SPECIFICATIONS_LISTS;
-  }
-
   private onFirstRender_() {
     // Focus the search field on load. Done here to ensure the history page
     // is rendered before we try to take focus.
@@ -479,11 +486,10 @@ export class HistoryAppElement extends HistoryAppElementBase {
   override _scrollHandler() {
     if (this.scrollTarget) {
       // When the tabs are visible, show the toolbar shadow for the synced
-      // devices page or product specifications page.
+      // devices page.
       this.toolbarShadow_ = this.scrollTarget.scrollTop !== 0 &&
           (!this.showHistoryClusters_ ||
-           this.syncedTabsSelected_(this.selectedPage_) ||
-           this.selectedPage_ === Page.PRODUCT_SPECIFICATIONS_LISTS);
+           this.syncedTabsSelected_(this.selectedPage_));
     }
   }
 
@@ -499,29 +505,7 @@ export class HistoryAppElement extends HistoryAppElementBase {
     this.$.toolbar.count = this.$.history.getSelectedItemCount();
   }
 
-  /**
-   * Listens for product-specs-item being selected or deselected (through
-   * checkbox) and changes the view of the top toolbar.
-   */
-  private productSpecificationsCheckboxSelected_() {
-    if (this.selectedPage_ !== Page.PRODUCT_SPECIFICATIONS_LISTS) {
-      return;
-    }
-    const productSpecsListElement =
-        this.shadowRoot!.querySelector('product-specifications-lists');
-    assert(productSpecsListElement);
-    this.$.toolbar.count = productSpecsListElement.getSelectedItemCount();
-  }
-
   selectOrUnselectAll() {
-    if (this.selectedPage_ === Page.PRODUCT_SPECIFICATIONS_LISTS) {
-      const productSpecsListElement =
-          this.shadowRoot!.querySelector('product-specifications-lists');
-      assert(productSpecsListElement);
-      productSpecsListElement.selectOrUnselectAll();
-      this.$.toolbar.count = productSpecsListElement.getSelectedItemCount();
-      return;
-    }
     this.$.history.selectOrUnselectAll();
     this.$.toolbar.count = this.$.history.getSelectedItemCount();
   }
@@ -531,40 +515,17 @@ export class HistoryAppElement extends HistoryAppElementBase {
    * checkbox to be unselected.
    */
   private unselectAll() {
-    if (this.selectedPage_ === Page.PRODUCT_SPECIFICATIONS_LISTS) {
-      this.productSpecificationsUnselectAll_();
-      return;
-    }
     this.$.history.unselectAllItems();
     this.$.toolbar.count = 0;
   }
 
-  private productSpecificationsUnselectAll_() {
-    const productSpecsListElement =
-        this.shadowRoot!.querySelector('product-specifications-lists');
-
-    // This method is also called on selectedPageChanged, so it is possible
-    // for the list element to be empty.
-    if (productSpecsListElement) {
-      productSpecsListElement.unselectAllItems();
-      this.$.toolbar.count = 0;
-    }
-  }
-
   deleteSelected() {
-    if (this.selectedPage_ === Page.PRODUCT_SPECIFICATIONS_LISTS) {
-      const productSpecsListElement =
-          this.shadowRoot!.querySelector('product-specifications-lists');
-      assert(productSpecsListElement);
-      productSpecsListElement.deleteSelectedWithPrompt();
-    } else {
-      this.$.history.deleteSelectedWithPrompt();
-    }
+    this.$.history.deleteSelectedWithPrompt();
   }
 
-  private onQueryFinished_() {
-    this.$.history.historyResult(
-        this.queryResult_.info!, this.queryResult_.value!);
+  private onQueryFinished_(e: CustomEvent<{result: QueryResult}>) {
+    this.queryResult_ = e.detail.result;
+    this.$.history.historyResult(e.detail.result.info!, e.detail.result.value!);
     if (document.body.classList.contains('loading')) {
       document.body.classList.remove('loading');
       this.onFirstRender_();
@@ -717,9 +678,6 @@ export class HistoryAppElement extends HistoryAppElementBase {
       case Page.SYNCED_TABS:
         this.contentPage_ = Page.SYNCED_TABS;
         break;
-      case Page.PRODUCT_SPECIFICATIONS_LISTS:
-        this.contentPage_ = Page.PRODUCT_SPECIFICATIONS_LISTS;
-        break;
       default:
         this.contentPage_ = Page.HISTORY;
     }
@@ -766,12 +724,6 @@ export class HistoryAppElement extends HistoryAppElementBase {
     } else {
       this.scrollTarget = null;
     }
-
-    // Notify iron-list parents of potential resize, since the selected
-    // page or tab has changed.
-    setTimeout(() => {
-      this.$.history.notifyResize();
-    }, 0);
   }
 
   private selectedTabChanged_() {
@@ -837,9 +789,6 @@ export class HistoryAppElement extends HistoryAppElementBase {
         histogramValue = this.isUserSignedIn_ ?
             HistoryPageViewHistogram.SYNCED_TABS :
             HistoryPageViewHistogram.SIGNIN_PROMO;
-        break;
-      case Page.PRODUCT_SPECIFICATIONS_LISTS:
-        histogramValue = HistoryPageViewHistogram.PRODUCT_SPECIFICATIONS_LISTS;
         break;
       default:
         histogramValue = HistoryPageViewHistogram.HISTORY;
@@ -956,8 +905,16 @@ export class HistoryAppElement extends HistoryAppElementBase {
     this.historyEmbeddingsResizeObserver_.observe(historyEmbeddingsContainer);
   }
 
-  private onQueryStateChanged_() {
+  private onQueryStateChanged_(e: CustomEvent<{value: QueryState}>) {
     this.nonEmbeddingsResultClicked_ = false;
+    this.queryState_ = e.detail.value;
+    if (this.selectedPage_ && this.$.router) {
+      this.$.router.serializeUrl();
+    }
+  }
+
+  private onSelectedPageChanged_(e: CustomEvent<{value: string}>) {
+    this.selectedPage_ = e.detail.value;
   }
 
   private onToolbarSearchInputNativeBeforeInput_(
@@ -988,6 +945,10 @@ export class HistoryAppElement extends HistoryAppElementBase {
 
   private onToolbarSearchCleared_() {
     this.numCharsTypedInSearch_ = 0;
+  }
+
+  private onListPendingDeleteChanged_(e: CustomEvent<{value: boolean}>) {
+    this.pendingDelete_ = e.detail.value;
   }
 }
 

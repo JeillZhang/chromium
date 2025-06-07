@@ -5,6 +5,7 @@
 #include "chrome/browser/enterprise/connectors/connectors_service.h"
 
 #include <memory>
+#include <variant>
 
 #include "base/check_op.h"
 #include "base/memory/singleton.h"
@@ -40,6 +41,7 @@
 #include "components/policy/core/common/cloud/machine_level_user_cloud_policy_store.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/safe_browsing/buildflags.h"
+#include "components/safe_browsing/core/common/features.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/user_prefs/user_prefs.h"
@@ -74,17 +76,6 @@ namespace enterprise_connectors {
 
 namespace {
 
-void PopulateBrowserMetadata(bool include_device_info,
-                             ClientMetadata::Browser* browser_proto) {
-  base::FilePath browser_id;
-  if (base::PathService::Get(base::DIR_EXE, &browser_id))
-    browser_proto->set_browser_id(browser_id.AsUTF8Unsafe());
-  browser_proto->set_chrome_version(
-      std::string(version_info::GetVersionNumber()));
-  if (include_device_info)
-    browser_proto->set_machine_user(policy::GetOSUsername());
-}
-
 std::string GetClientId(Profile* profile) {
   std::string client_id;
 #if BUILDFLAG(IS_CHROMEOS)
@@ -95,18 +86,6 @@ std::string GetClientId(Profile* profile) {
   client_id = policy::BrowserDMTokenStorage::Get()->RetrieveClientId();
 #endif
   return client_id;
-}
-
-void PopulateDeviceMetadata(const ReportingSettings& reporting_settings,
-                            Profile* profile,
-                            ClientMetadata::Device* device_proto) {
-  if (!reporting_settings.per_profile && !device_proto->has_dm_token()) {
-    device_proto->set_dm_token(reporting_settings.dm_token);
-  }
-  device_proto->set_client_id(GetClientId(profile));
-  device_proto->set_os_version(policy::GetOSVersion());
-  device_proto->set_os_platform(policy::GetOSPlatform());
-  device_proto->set_name(policy::GetDeviceName());
 }
 
 bool IsURLExemptFromAnalysis(const GURL& url) {
@@ -264,7 +243,7 @@ std::optional<AnalysisSettings> ConnectorsService::GetCommonAnalysisSettings(
     if (!dm_token.has_value())
       return std::nullopt;
 
-    absl::get<CloudAnalysisSettings>(settings.value().cloud_or_local_settings)
+    std::get<CloudAnalysisSettings>(settings.value().cloud_or_local_settings)
         .dm_token = dm_token.value().value;
   }
 
@@ -540,7 +519,7 @@ std::unique_ptr<ClientMetadata> ConnectorsService::BuildClientMetadata(
   PopulateBrowserMetadata(include_device_info, metadata->mutable_browser());
 
   if (include_device_info) {
-    PopulateDeviceMetadata(reporting_settings.value(), profile,
+    PopulateDeviceMetadata(reporting_settings.value(), GetClientId(profile),
                            metadata->mutable_device());
   }
 #endif
@@ -599,7 +578,8 @@ content::BrowserContext* ConnectorsServiceFactory::GetBrowserContextToUse(
   // However, the primary/main profile might not exist in tests - then the
   // provided |context| is still used.
   if (context && !context->IsOffTheRecord() &&
-      !Profile::FromBrowserContext(context)->AsTestingProfile()) {
+      !Profile::FromBrowserContext(context)->AsTestingProfile() &&
+      !context->ShutdownStarted()) {
 #if BUILDFLAG(IS_CHROMEOS)
     auto* user_manager = user_manager::UserManager::Get();
     if (auto* primary_user = user_manager->GetPrimaryUser()) {

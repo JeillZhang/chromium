@@ -4,7 +4,6 @@
 
 #include "content/browser/webid/webid_utils.h"
 
-#include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/url_formatter/elide_url.h"
@@ -40,10 +39,8 @@ constexpr net::registry_controlled_domains::PrivateRegistryFilter
 bool IsSameSiteWithAncestors(const url::Origin& origin,
                              RenderFrameHost* render_frame_host) {
   while (render_frame_host) {
-    // Many cases are same-origin, so check that first to speed up the cases
-    // where the check passes, as IsSameSite() is slower.
-    if (!origin.IsSameOriginWith(render_frame_host->GetLastCommittedOrigin()) &&
-        !IsSameSite(origin, render_frame_host->GetLastCommittedOrigin())) {
+    if (!net::SchemefulSite::IsSameSite(
+            origin, render_frame_host->GetLastCommittedOrigin())) {
       return false;
     }
     render_frame_host = render_frame_host->GetParent();
@@ -119,10 +116,6 @@ bool IsEndpointSameOrigin(const GURL& identity_provider_config_url,
       .IsSameOriginWith(endpoint_url);
 }
 
-bool IsSameSite(const url::Origin& origin1, const url::Origin& origin2) {
-  return net::SchemefulSite(origin1) == net::SchemefulSite(origin2);
-}
-
 bool ShouldFailAccountsEndpointRequestBecauseNotSignedInWithIdp(
     RenderFrameHost& host,
     const GURL& identity_provider_config_url,
@@ -177,7 +170,10 @@ std::string GetConsoleErrorMessageFromResult(
       return "The IdP is not potentially trustworthy (are you using HTTP?)";
     }
     case FederatedAuthRequestResult::kDisabledInSettings: {
-      return "FedCM was disabled in browser Site Settings.";
+      return "FedCM was disabled either temporarily based on previous user "
+             "action or permanently via site settings. Try manage third-party "
+             "sign-in via the icon to the left of the URL bar or via site "
+             "settings.";
     }
     case FederatedAuthRequestResult::kDisabledInFlags: {
       return "FedCM was disabled in flags.";
@@ -324,6 +320,11 @@ std::string GetConsoleErrorMessageFromResult(
     case FederatedAuthRequestResult::kCorsError: {
       return "Server did not send the correct CORS headers.";
     }
+    case FederatedAuthRequestResult::kSuppressedBySegmentationPlatform: {
+      return "Dialog is suppressed because historical data shows that the user "
+             "is not interested in FedCM on this RP. For testing purposes, "
+             "disable the #fedcm-segmentation-platform flag.";
+    }
     case FederatedAuthRequestResult::kSuccess: {
       // Should not be called with success, as we should not add a console
       // message for success.
@@ -438,36 +439,8 @@ bool HasSharingPermissionOrIdpHasThirdPartyCookiesAccess(
       requester_origin, embedder_origin, url::Origin::Create(provider_url));
 }
 
-bool IsFedCmAuthzEnabled(RenderFrameHost& host, const url::Origin& idp_origin) {
-  RuntimeFeatureStateDocumentData* rfs_document_data =
-      RuntimeFeatureStateDocumentData::GetForCurrentDocument(&host);
-  // If field trials or an explicit user selection disables authz, we should
-  // respect that.
-  std::optional<bool> is_overridden = IsFedCmAuthzOverridden();
-  if (is_overridden) {
-    return *is_overridden;
-  }
-
-  // Should not be null as this gets initialized when the host gets created.
-  DCHECK(rfs_document_data);
-  std::vector<url::Origin> third_party_origins = {idp_origin};
-  // This includes origin trials.
-  bool runtime_enabled =
-      rfs_document_data->runtime_feature_state_read_context()
-          .IsFedCmAuthzEnabled() ||
-      rfs_document_data->runtime_feature_state_read_context()
-          .IsFedCmAuthzEnabledForThirdParty(third_party_origins);
-
-  bool flag_enabled = IsFedCmAuthzFlagEnabled();
-  return runtime_enabled || flag_enabled;
-}
-
 FederatedAuthRequestPageData* GetPageData(Page& page) {
   return FederatedAuthRequestPageData::GetOrCreateForPage(page);
-}
-
-int GetNewSessionID() {
-  return base::RandInt(1, 1 << 30);
 }
 
 FedCmRequesterFrameType ComputeRequesterFrameType(const RenderFrameHost& rfh,
@@ -478,9 +451,21 @@ FedCmRequesterFrameType ComputeRequesterFrameType(const RenderFrameHost& rfh,
   if (!rfh.GetParent()) {
     return FedCmRequesterFrameType::kMainFrame;
   }
-  return IsSameSite(requester, embedder)
+  return net::SchemefulSite::IsSameSite(requester, embedder)
              ? FedCmRequesterFrameType::kSameSiteIframe
              : FedCmRequesterFrameType::kCrossSiteIframe;
+}
+
+void MaybeAddResponseCodeToConsole(RenderFrameHost& render_frame_host,
+                                   const char* fetch_description,
+                                   int response_code) {
+  std::optional<std::string> console_message =
+      webid::ComputeConsoleMessageForHttpResponseCode(fetch_description,
+                                                      response_code);
+  if (console_message) {
+    render_frame_host.AddMessageToConsole(
+        blink::mojom::ConsoleMessageLevel::kError, *console_message);
+  }
 }
 
 }  // namespace content::webid

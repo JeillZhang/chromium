@@ -24,12 +24,16 @@
 #include "url/gurl.h"
 
 #if BUILDFLAG(USE_BLINK)
-#include "components/download/public/common/download_danger_type.h"
+#include "components/download/public/common/download_danger_type.h"  // nogncheck
 
 namespace download {
 class DownloadItem;
 }  // namespace download
 #endif  // BUILDFLAG(USE_BLINK)
+
+namespace signin {
+class IdentityManager;
+}
 
 namespace enterprise_connectors {
 
@@ -75,16 +79,10 @@ inline constexpr char kKeyOptInEventUrlPatterns[] = "url_patterns";
 inline constexpr char kDlpTag[] = "dlp";
 inline constexpr char kMalwareTag[] = "malware";
 
-// A MIME type string that matches all MIME types.
-inline constexpr char kWildcardMimeType[] = "*";
-
-// The reporting connector subdirectory in User_Data_Directory
-inline constexpr base::FilePath::CharType RC_BASE_DIR[] =
-    FILE_PATH_LITERAL("Enterprise/ReportingConnector/");
-
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused. Keep this enum in sync with
 // EnterpriseReportingEventType in enums.xml.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.enterprise.connectors
 enum class EnterpriseReportingEventType {
   kUnknownEvent = 0,
   kPasswordReuseEvent = 1,
@@ -126,33 +124,6 @@ inline constexpr auto kEventNameToUmaEnumMap =
          EnterpriseReportingEventType::kExtensionInstallEvent},
         {kBrowserCrashEvent, EnterpriseReportingEventType::kBrowserCrashEvent},
         {kExtensionTelemetryEvent,
-         EnterpriseReportingEventType::kExtensionTelemetryEvent},
-    });
-
-inline constexpr auto kEventCaseToUmaEnumMap =
-    base::MakeFixedFlatMap<EventCase, EnterpriseReportingEventType>({
-        {EventCase::kPasswordReuseEvent,
-         EnterpriseReportingEventType::kPasswordReuseEvent},
-        {EventCase::kPasswordChangedEvent,
-         EnterpriseReportingEventType::kPasswordChangedEvent},
-        {EventCase::kDangerousDownloadEvent,
-         EnterpriseReportingEventType::kDangerousDownloadEvent},
-        {EventCase::kInterstitialEvent,
-         EnterpriseReportingEventType::kInterstitialEvent},
-        {EventCase::kSensitiveDataEvent,
-         EnterpriseReportingEventType::kSensitiveDataEvent},
-        {EventCase::kUnscannedFileEvent,
-         EnterpriseReportingEventType::kUnscannedFileEvent},
-        {EventCase::kLoginEvent, EnterpriseReportingEventType::kLoginEvent},
-        {EventCase::kPasswordBreachEvent,
-         EnterpriseReportingEventType::kPasswordBreachEvent},
-        {EventCase::kUrlFilteringInterstitialEvent,
-         EnterpriseReportingEventType::kUrlFilteringInterstitialEvent},
-        {EventCase::kBrowserExtensionInstallEvent,
-         EnterpriseReportingEventType::kExtensionInstallEvent},
-        {EventCase::kBrowserCrashEvent,
-         EnterpriseReportingEventType::kBrowserCrashEvent},
-        {EventCase::kExtensionTelemetryEvent,
          EnterpriseReportingEventType::kExtensionTelemetryEvent},
     });
 
@@ -255,8 +226,8 @@ struct RequestHandlerResult {
   RequestHandlerResult(const RequestHandlerResult&);
   RequestHandlerResult& operator=(const RequestHandlerResult&);
 
-  bool complies;
-  FinalContentAnalysisResult final_result;
+  bool complies = false;
+  FinalContentAnalysisResult final_result = FinalContentAnalysisResult::FAILURE;
   std::string tag;
   std::string request_token;
   ContentAnalysisResponse::Result::TriggeredRule::CustomRuleMessage
@@ -300,11 +271,6 @@ GetDownloadsCustomRuleMessage(const download::DownloadItem* download_item,
 // Checks if |response| contains a negative malware verdict.
 bool ContainsMalwareVerdict(const ContentAnalysisResponse& response);
 
-enum EnterpriseRealTimeUrlCheckMode {
-  REAL_TIME_CHECK_DISABLED = 0,
-  REAL_TIME_CHECK_FOR_MAINFRAME_ENABLED = 1,
-};
-
 // Helper enum to get the corresponding regional url in service provider config
 // for data region setting policy.
 // LINT.IfChange(DataRegion)
@@ -342,6 +308,19 @@ enum class EventResult {
 // Helper function to convert a EventResult to a string that.  The format of
 // string returned is processed by the sever.
 std::string EventResultToString(EventResult result);
+
+// Returns the email address of the unconsented account signed in to the profile
+// or an empty string if no account is signed in.  If `identity_manager` is null
+// then the empty string is returned.
+std::string GetProfileEmail(signin::IdentityManager* identity_manager);
+
+// Returns the UMA metrics for tracking the successful uploaded event duration.
+std::string GetSuccessfulUploadDurationUmaMetricName(
+    EnterpriseReportingEventType event_type);
+
+// Returns the UMA metrics for tracking the failed-to-upload event duration.
+std::string GetFailedUploadDurationUmaMetricName(
+    EnterpriseReportingEventType event_type);
 
 }  // namespace enterprise_connectors
 

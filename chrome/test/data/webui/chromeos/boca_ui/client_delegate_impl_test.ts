@@ -3,34 +3,39 @@
 // found in the LICENSE file.
 
 import {ClientDelegateFactory, getNetworkInfoMojomToUI, getSessionConfigMojomToUI, getStudentActivityMojomToUI} from 'chrome-untrusted://boca-app/app/client_delegate.js';
-import type {Assignment, BocaValidPref, CaptionConfig, Config, Course, EndViewScreenSessionError, Identity, OnTaskConfig, Permission, PermissionSetting, RemoveStudentError, SessionResult, UpdateSessionError, ViewStudentScreenError, Window} from 'chrome-untrusted://boca-app/mojom/boca.mojom-webui.js';
+import type {AddStudentsError, Assignment, BocaValidPref, CaptionConfig, Config, Course, CreateSessionError, EndViewScreenSessionError, Identity, OnTaskConfig, Permission, PermissionSetting, RemoveStudentError, RenotifyStudentError, SessionResult, SetViewScreenSessionActiveError, UpdateSessionError, ViewStudentScreenError, Window} from 'chrome-untrusted://boca-app/mojom/boca.mojom-webui.js';
 import {PageHandlerRemote, SubmitAccessCodeError} from 'chrome-untrusted://boca-app/mojom/boca.mojom-webui.js';
 import type {TimeDelta} from 'chrome-untrusted://resources/mojo/mojo/public/mojom/base/time.mojom-webui.js';
 import type {Value} from 'chrome-untrusted://resources/mojo/mojo/public/mojom/base/values.mojom-webui.js';
-import type {Url} from 'chrome-untrusted://resources/mojo/url/mojom/url.mojom-webui.js';
 import {assertDeepEquals, assertTrue} from 'chrome-untrusted://webui-test/chai_assert.js';
 
 class MockRemoteHandler extends PageHandlerRemote {
   override getWindowsTabsList(): Promise<{windowList: Window[]}> {
-    const url1: Url = {
-      url: 'http://foo1',
-    };
-    const url2: Url = {
-      url: 'http://foo2',
-    };
-    const url3: Url = {
-      url: 'http://foo3',
-    };
     return Promise.resolve({
       windowList: [
         {
           name: 'window1',
           tabList: [
-            {title: 'title1', url: url1, favicon: 'dataurl1'},
-            {title: 'title2', url: url2, favicon: 'dataurl2'},
+            {
+              id: 1,
+              title: 'title1',
+              url: {url: 'http://foo1'},
+              favicon: {url: 'dataurl1'},
+            },
+            {
+              title: 'title2',
+              url: {url: 'http://foo2'},
+              favicon: {url: 'dataurl2'},
+            },
           ],
         },
-        {tabList: [{title: 'title3', url: url3, favicon: 'dataurl3'}]},
+        {
+          tabList: [{
+            title: 'title3',
+            url: {url: 'http://foo3'},
+            favicon: {url: 'dataurl3'},
+          }],
+        },
       ] as Window[],
     });
   }
@@ -81,7 +86,8 @@ class MockRemoteHandler extends PageHandlerRemote {
     });
   }
 
-  override createSession(config: Config): Promise<{success: boolean}> {
+  override createSession(config: Config):
+      Promise<{error: CreateSessionError | null}> {
     assertDeepEquals(
         {
           sessionDuration: {
@@ -108,20 +114,23 @@ class MockRemoteHandler extends PageHandlerRemote {
           sessionStartTime: null,
           onTaskConfig: {
             isLocked: true,
+            isPaused: true,
             tabs: [
               {
                 tab: {
+                  id: null,
                   url: {url: 'http://google.com/'},
                   title: 'google',
-                  favicon: 'data/image',
+                  favicon: {url: 'data/image'},
                 },
                 navigationType: 0,
               },
               {
                 tab: {
+                  id: null,
                   url: {url: 'http://youtube.com/'},
                   title: 'youtube',
-                  favicon: 'data/image',
+                  favicon: {url: 'data/image'},
                 },
                 navigationType: 1,
               },
@@ -134,7 +143,7 @@ class MockRemoteHandler extends PageHandlerRemote {
           },
         },
         config);
-    return Promise.resolve({success: true});
+    return Promise.resolve({error: null});
   }
 
   override getSession(): Promise<{result: SessionResult}> {
@@ -175,20 +184,23 @@ class MockRemoteHandler extends PageHandlerRemote {
             }],
             onTaskConfig: {
               isLocked: true,
+              isPaused: true,
               tabs: [
                 {
                   tab: {
+                    id: 1,
                     url: {url: 'http://google.com/'},
                     title: 'google',
-                    favicon: 'data/image',
+                    favicon: {url: 'data/image'},
                   },
                   navigationType: 0,
                 },
                 {
                   tab: {
+                    id: null,
                     url: {url: 'http://youtube.com/'},
                     title: 'youtube',
-                    favicon: 'data/image',
+                    favicon: {url: 'data/image'},
                   },
                   navigationType: 1,
                 },
@@ -211,20 +223,23 @@ class MockRemoteHandler extends PageHandlerRemote {
     assertDeepEquals(
         {
           isLocked: true,
+          isPaused: true,
           tabs: [
             {
               tab: {
+                id: null,
                 url: {url: 'http://google.com/'},
                 title: 'google',
-                favicon: 'data/image',
+                favicon: {url: 'data/image'},
               },
               navigationType: 0,
             },
             {
               tab: {
+                id: null,
                 url: {url: 'http://youtube.com/'},
                 title: 'youtube',
-                favicon: 'data/image',
+                favicon: {url: 'data/image'},
               },
               navigationType: 1,
             },
@@ -261,6 +276,28 @@ class MockRemoteHandler extends PageHandlerRemote {
     id;
     return Promise.resolve({error: null});
   }
+
+  override addStudents(students: Identity[]):
+      Promise<{error: AddStudentsError | null}> {
+    assertDeepEquals(
+        [
+          {
+            id: '1',
+            name: 'cat',
+            email: 'cat@gmail.com',
+            photoUrl: {url: 'cdn1'},
+          },
+          {
+            id: '2',
+            name: 'dog',
+            email: 'dog@gmail.com',
+            photoUrl: {url: 'cdn2'},
+          },
+        ],
+        students);
+    return Promise.resolve({error: null});
+  }
+
   override setFloatMode(isFloatMode: boolean): Promise<{success: boolean}> {
     isFloatMode;
     return Promise.resolve({success: true});
@@ -280,6 +317,11 @@ class MockRemoteHandler extends PageHandlerRemote {
   }
   override endViewScreenSession(id: string):
       Promise<{error: EndViewScreenSessionError | null}> {
+    id;
+    return Promise.resolve({error: null});
+  }
+  override setViewScreenSessionActive(id: string):
+      Promise<{error: SetViewScreenSessionActiveError | null}> {
     id;
     return Promise.resolve({error: null});
   }
@@ -303,6 +345,23 @@ class MockRemoteHandler extends PageHandlerRemote {
     setting;
     return Promise.resolve({success: true});
   }
+  override closeTab(tabId: number): Promise<{success: boolean}> {
+    tabId;
+    return Promise.resolve({success: true});
+  }
+  override openFeedbackDialog() {
+    return Promise.resolve();
+  }
+
+  override refreshWorkbook() {
+    return Promise.resolve();
+  }
+
+  override renotifyStudent(id: string):
+      Promise<{error: RenotifyStudentError | null}> {
+    id;
+    return Promise.resolve({error: null});
+  }
 }
 
 suite('ClientDelegateTest', function() {
@@ -318,21 +377,35 @@ suite('ClientDelegateTest', function() {
       async () => {
         const result =
             await clientDelegateImpl.getInstance().getWindowsTabsList();
-
         assertDeepEquals(
             [
               {
                 windowName: 'window1',
                 tabList: [
-                  {title: 'title1', url: 'http://foo1', favicon: 'dataurl1'},
-                  {title: 'title2', url: 'http://foo2', favicon: 'dataurl2'},
+                  {
+                    id: 1,
+                    title: 'title1',
+                    url: 'http://foo1',
+                    favicon: 'dataurl1',
+                  },
+                  {
+                    id: undefined,
+                    title: 'title2',
+                    url: 'http://foo2',
+                    favicon: 'dataurl2',
+                  },
                 ],
               },
               {
                 // Default window name should be empty
                 windowName: '',
                 tabList: [
-                  {title: 'title3', url: 'http://foo3', favicon: 'dataurl3'},
+                  {
+                    id: undefined,
+                    title: 'title3',
+                    url: 'http://foo3',
+                    favicon: 'dataurl3',
+                  },
                 ],
               },
             ],
@@ -415,6 +488,7 @@ suite('ClientDelegateTest', function() {
           sessionStartTime: undefined,
           onTaskConfig: {
             isLocked: true,
+            isPaused: true,
             tabs: [
               {
                 tab: {
@@ -440,7 +514,7 @@ suite('ClientDelegateTest', function() {
             sessionTranslationEnabled: true,
           },
         });
-        assertTrue(result);
+        assertDeepEquals(1, result);
       });
 
   test('client delegate should properly translate get session', async () => {
@@ -471,9 +545,11 @@ suite('ClientDelegateTest', function() {
             accessCode: 'testCode',
             onTaskConfig: {
               isLocked: true,
+              isPaused: true,
               tabs: [
                 {
                   tab: {
+                    id: 1,
                     title: 'google',
                     url: 'http://google.com/',
                     favicon: 'data/image',
@@ -482,6 +558,7 @@ suite('ClientDelegateTest', function() {
                 },
                 {
                   tab: {
+                    id: undefined,
                     title: 'youtube',
                     url: 'http://youtube.com/',
                     favicon: 'data/image',
@@ -511,7 +588,7 @@ suite('ClientDelegateTest', function() {
           sessionStartTime: new Date(1000000),
           students: [],
           studentsJoinViaCode: [],
-          onTaskConfig: {isLocked: false, tabs: []},
+          onTaskConfig: {isLocked: false, isPaused: false, tabs: []},
           teacher: {
             id: '0',
             name: 'teacher',
@@ -540,6 +617,7 @@ suite('ClientDelegateTest', function() {
               studentsJoinViaCode: [],
               onTaskConfig: {
                 isLocked: false,
+                isPaused: false,
                 tabs: [],
               },
               accessCode: '',
@@ -559,6 +637,7 @@ suite('ClientDelegateTest', function() {
         const result =
             await clientDelegateImpl.getInstance().updateOnTaskConfig({
               isLocked: true,
+              isPaused: true,
               tabs: [
                 {
                   tab: {
@@ -608,12 +687,48 @@ suite('ClientDelegateTest', function() {
     assertTrue(result);
   });
 
-  test(
-      'client delegate should translate data for student activity', () => {
-        const activities = [
+  test('client delegate should translate data for add students', async () => {
+    const result = await clientDelegateImpl.getInstance().addStudents([
+      {id: '1', name: 'cat', email: 'cat@gmail.com', photoUrl: 'cdn1'},
+      {id: '2', name: 'dog', email: 'dog@gmail.com', photoUrl: 'cdn2'},
+    ]);
+    assertTrue(result);
+  });
+
+  test('client delegate should translate data for student activity', () => {
+    const activities = [
+      {
+        id: '1',
+        activity: {
+          studentStatusDetail: 3,
+          isActive: true,
+          activeTab: 'google',
+          isCaptionEnabled: false,
+          isHandRaised: false,
+          joinMethod: 0,
+          viewScreenSessionCode: 'abcd',
+        },
+      },
+      {
+        id: '2',
+        activity: {
+          studentStatusDetail: 2,
+          isActive: false,
+          activeTab: 'youtube',
+          isCaptionEnabled: false,
+          isHandRaised: false,
+          joinMethod: 1,
+          viewScreenSessionCode: null,
+        },
+      },
+    ];
+    const result = getStudentActivityMojomToUI(activities);
+    assertDeepEquals(
+        [
           {
             id: '1',
-            activity: {
+            studentActivity: {
+              studentStatusDetail: 3,
               isActive: true,
               activeTab: 'google',
               isCaptionEnabled: false,
@@ -624,44 +739,19 @@ suite('ClientDelegateTest', function() {
           },
           {
             id: '2',
-            activity: {
+            studentActivity: {
+              studentStatusDetail: 2,
               isActive: false,
               activeTab: 'youtube',
               isCaptionEnabled: false,
               isHandRaised: false,
               joinMethod: 1,
-              viewScreenSessionCode: null,
+              viewScreenSessionCode: undefined,
             },
           },
-        ];
-        const result = getStudentActivityMojomToUI(activities);
-        assertDeepEquals(
-            [
-              {
-                id: '1',
-                studentActivity: {
-                  isActive: true,
-                  activeTab: 'google',
-                  isCaptionEnabled: false,
-                  isHandRaised: false,
-                  joinMethod: 0,
-                  viewScreenSessionCode: 'abcd',
-                },
-              },
-              {
-                id: '2',
-                studentActivity: {
-                  isActive: false,
-                  activeTab: 'youtube',
-                  isCaptionEnabled: false,
-                  isHandRaised: false,
-                  joinMethod: 1,
-                  viewScreenSessionCode: undefined,
-                },
-              },
-            ],
-            result);
-      });
+        ],
+        result);
+  });
 
   test('client delegate should translate data for set float', async () => {
     const result = await clientDelegateImpl.getInstance().setFloatMode(true);
@@ -725,6 +815,16 @@ suite('ClientDelegateTest', function() {
       });
 
   test(
+      'client delegate should translate data for updating a view screen' +
+          ' session to active',
+      async () => {
+        const result =
+            await clientDelegateImpl.getInstance().setViewScreenSessionActive(
+                '1');
+        assertTrue(result);
+      });
+
+  test(
       'client delegate should respond correctly for authenticateWebview',
       async () => {
         const result =
@@ -749,6 +849,38 @@ suite('ClientDelegateTest', function() {
       async () => {
         const result =
             await clientDelegateImpl.getInstance().setSitePermission('1', 0, 0);
+        assertTrue(result);
+      });
+  test('client delegate should respond correctly for close tabs', async () => {
+    const result = await clientDelegateImpl.getInstance().closeTab(1);
+    assertTrue(result);
+  });
+
+  test(
+      'client delegate should respond correctly for open feedback dialog',
+      async () => {
+        let openFeedbackDialogResponded = false;
+        await clientDelegateImpl.getInstance().openFeedbackDialog().then(() => {
+          openFeedbackDialogResponded = true;
+        });
+        assertTrue(openFeedbackDialogResponded);
+      });
+
+  test(
+      'client delegate should respond correctly for refresh workbook',
+      async () => {
+        let refreshWorkbookResponded = false;
+        await clientDelegateImpl.getInstance().refreshWorkbook().then(() => {
+          refreshWorkbookResponded = true;
+        });
+        assertTrue(refreshWorkbookResponded);
+      });
+
+  test(
+      'client delegate should translate data for renotify student',
+      async () => {
+        const result =
+            await clientDelegateImpl.getInstance().renotifyStudent('1');
         assertTrue(result);
       });
 });

@@ -16,6 +16,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/task/common/task_annotator.h"
 #include "base/task/single_thread_task_runner.h"
@@ -72,6 +73,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
+#include "services/network/public/cpp/features.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "third_party/blink/public/common/device_memory/approximated_device_memory.h"
 #include "third_party/blink/public/common/features.h"
@@ -101,39 +103,6 @@ namespace content {
 using NotRestoredReasons =
     BackForwardCacheCanStoreDocumentResult::NotRestoredReasons;
 using NotRestoredReason = BackForwardCacheMetrics::NotRestoredReason;
-
-namespace {
-
-class DOMContentLoadedObserver : public WebContentsObserver {
- public:
-  explicit DOMContentLoadedObserver(RenderFrameHostImpl* render_frame_host)
-      : WebContentsObserver(
-            WebContents::FromRenderFrameHost(render_frame_host)),
-        render_frame_host_(render_frame_host) {}
-
-  void DOMContentLoaded(RenderFrameHost* render_frame_host) override {
-    if (render_frame_host_ == render_frame_host)
-      run_loop_.Quit();
-  }
-
-  [[nodiscard]] bool Wait() {
-    if (render_frame_host_->IsDOMContentLoaded())
-      run_loop_.Quit();
-    run_loop_.Run();
-    return render_frame_host_->IsDOMContentLoaded();
-  }
-
- private:
-  raw_ptr<RenderFrameHostImpl> render_frame_host_;
-  base::RunLoop run_loop_;
-};
-
-}  // namespace
-
-bool WaitForDOMContentLoaded(RenderFrameHostImpl* rfh) {
-  DOMContentLoadedObserver observer(rfh);
-  return observer.Wait();
-}
 
 EvalJsResult GetLocalStorage(RenderFrameHostImpl* rfh, std::string key) {
   return EvalJs(rfh, JsReplace("localStorage.getItem($1)", key));
@@ -239,10 +208,6 @@ void BackForwardCacheBrowserTest::SetUpCommandLine(
     // `content::kBackForwardCacheSize`, as many browser tests here assume
     // specific or smaller cache size (e.g. 1) rather than 6.
     DisableFeature(kBackForwardCacheSize);
-
-    // WebSQL is disabled by default as of M119 (crbug/695592). Enable feature
-    // in tests during deprecation trial and enterprise policy support.
-    EnableFeatureAndSetParams(blink::features::kWebSQLAccess, "", "");
 
     SetupFeaturesAndParameters();
 
@@ -1814,7 +1779,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
 // Tests that we're getting the correct TextInputState and focus updates when a
 // page enters the back-forward cache and when it gets restored.
 // TODO(b/324570785): Re-enable the test for Android.
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_MAC)
 #define MAYBE_TextInputStateUpdated DISABLED_TextInputStateUpdated
 #else
 #define MAYBE_TextInputStateUpdated TextInputStateUpdated
@@ -1827,6 +1792,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
 
   // 1) Navigate to |url_1| and add a text input with "foo" as the value.
   EXPECT_TRUE(NavigateToURL(shell(), url_1));
+  SimulateEndOfPaintHoldingOnPrimaryMainFrame(web_contents());
   RenderFrameHostImpl* rfh_1 = current_frame_host();
   EXPECT_TRUE(ExecJs(rfh_1,
                      "document.title='bfcached';"
@@ -1927,6 +1893,7 @@ IN_PROC_BROWSER_TEST_F(BackForwardCacheBrowserTest,
   // 1) Navigate to |url_1| and add a text input with "foo" as the value in the
   // a.com subframe.
   EXPECT_TRUE(NavigateToURL(shell(), url_1));
+  SimulateEndOfPaintHoldingOnPrimaryMainFrame(web_contents());
   RenderFrameHostImpl* rfh_a = current_frame_host();
   RenderFrameHostImpl* rfh_b = rfh_a->child_at(0)->current_frame_host();
   RenderFrameHostImpl* rfh_subframe_a =
@@ -2842,7 +2809,7 @@ IN_PROC_BROWSER_TEST_P(BackForwardCacheBrowserUnloadHandlerTest,
 
   bool unload_never_blocks = IsUnloadAllowed();
   bool unload_deprecated_and_not_opted_out =
-      (base::FeatureList::IsEnabled(blink::features::kDeprecateUnload) &&
+      (base::FeatureList::IsEnabled(network::features::kDeprecateUnload) &&
        !IsUnloadDeprecationOptedOut());
   if (unload_never_blocks || unload_deprecated_and_not_opted_out) {
     // Pages with unload handlers are eligible for bfcache only if it is

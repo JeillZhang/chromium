@@ -18,6 +18,7 @@
 #include "base/rand_util.h"
 #include "base/sequence_checker.h"
 #include "base/strings/to_string.h"
+#include "base/time/default_clock.h"
 #include "base/time/time.h"
 #include "base/version.h"
 #include "build/build_config.h"
@@ -30,10 +31,12 @@
 #include "chrome/updater/policy/service.h"
 #include "chrome/updater/prefs.h"
 #include "chrome/updater/updater_scope.h"
+#include "chrome/updater/usage_stats_permissions.h"
 #include "chrome/updater/util/util.h"
 #include "components/crash/core/common/crash_key.h"
 #include "components/crx_file/crx_verifier.h"
 #include "components/prefs/pref_service.h"
+#include "components/update_client/crx_cache.h"
 #include "components/update_client/network.h"
 #include "components/update_client/patch/in_process_patcher.h"
 #include "components/update_client/patcher.h"
@@ -41,6 +44,7 @@
 #include "components/update_client/unzip/in_process_unzipper.h"
 #include "components/update_client/unzipper.h"
 #include "components/version_info/version_info.h"
+#include "event_logger.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -49,23 +53,48 @@
 
 namespace updater {
 
+namespace {
+
+// Allow internal symbolic links in zip files on macOS.
+#if BUILDFLAG(IS_POSIX)
+update_client::InProcessUnzipperFactory::SymlinkOption unzipper_symlink_option =
+    update_client::InProcessUnzipperFactory::SymlinkOption::PRESERVE;
+#else
+update_client::InProcessUnzipperFactory::SymlinkOption unzipper_symlink_option =
+    update_client::InProcessUnzipperFactory::SymlinkOption::DONT_PRESERVE;
+#endif
+
+}  // namespace
+
 Configurator::Configurator(scoped_refptr<UpdaterPrefs> prefs,
                            scoped_refptr<ExternalConstants> external_constants,
-                           bool is_ceca_experiment_enabled)
+                           UpdaterScope scope)
     : prefs_(prefs),
       external_constants_(external_constants),
       persisted_data_(base::MakeRefCounted<PersistedData>(
-          GetUpdaterScope(),
+          scope,
           prefs->GetPrefService(),
-          std::make_unique<ActivityDataService>(GetUpdaterScope()))),
-      policy_service_(
-          base::MakeRefCounted<PolicyService>(external_constants,
-                                              persisted_data_,
-                                              is_ceca_experiment_enabled)),
+          std::make_unique<ActivityDataService>(scope))),
+      policy_service_(base::MakeRefCounted<PolicyService>(external_constants,
+                                                          persisted_data_)),
       unzip_factory_(
-          base::MakeRefCounted<update_client::InProcessUnzipperFactory>()),
+          base::MakeRefCounted<update_client::InProcessUnzipperFactory>(
+              unzipper_symlink_option)),
       patch_factory_(
           base::MakeRefCounted<update_client::InProcessPatcherFactory>()),
+      crx_cache_(base::MakeRefCounted<update_client::CrxCache>(
+          GetCrxCacheDirectory(scope))),
+      event_logger_(RemoteEventLoggingAllowed(
+                        scope,
+                        external_constants->GetEventLoggingPermissionProvider())
+                        ? UpdaterEventLogger::Create(
+                              std::make_unique<RemoteLoggingDelegate>(
+                                  scope,
+                                  external_constants->EventLoggingURL(),
+                                  IsCloudManaged(),
+                                  base::WrapRefCounted(this),
+                                  std::make_unique<base::DefaultClock>()))
+                        : nullptr),
       is_managed_device_([] {
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
         return base::IsManagedOrEnterpriseDevice();
@@ -80,7 +109,8 @@ Configurator::Configurator(scoped_refptr<UpdaterPrefs> prefs,
   GetNetworkFetcherFactory();
 #endif
   static crash_reporter::CrashKeyString<6> crash_key_managed("managed");
-  crash_key_managed.Set(base::ToString(is_managed_device_));
+  crash_key_managed.Set(is_managed_device_ ? base::ToString(*is_managed_device_)
+                                           : "n/a");
 }
 Configurator::~Configurator() = default;
 
@@ -125,11 +155,6 @@ std::vector<GURL> Configurator::PingUrl() const {
 GURL Configurator::CrashUploadURL() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return external_constants_->CrashUploadURL();
-}
-
-GURL Configurator::DeviceManagementURL() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return external_constants_->DeviceManagementURL();
 }
 
 std::string Configurator::GetProdId() const {
@@ -226,6 +251,11 @@ scoped_refptr<PersistedData> Configurator::GetUpdaterPersistedData() const {
   return persisted_data_;
 }
 
+scoped_refptr<UpdaterEventLogger> Configurator::GetEventLogger() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return event_logger_;
+}
+
 bool Configurator::IsPerUserInstall() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return !IsSystemInstall();
@@ -256,6 +286,11 @@ crx_file::VerifierFormat Configurator::GetCrxVerifierFormat() const {
   return external_constants_->CrxVerifierFormat();
 }
 
+base::TimeDelta Configurator::MinimumEventLoggingCooldown() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return external_constants_->MinimumEventLoggingCooldown();
+}
+
 update_client::UpdaterStateProvider Configurator::GetUpdaterStateProvider()
     const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -264,9 +299,9 @@ update_client::UpdaterStateProvider Configurator::GetUpdaterStateProvider()
   });
 }
 
-std::optional<base::FilePath> Configurator::GetCrxCachePath() const {
+scoped_refptr<update_client::CrxCache> Configurator::GetCrxCache() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return updater::GetCrxCacheDirectory(GetUpdaterScope());
+  return crx_cache_;
 }
 
 bool Configurator::IsConnectionMetered() const {

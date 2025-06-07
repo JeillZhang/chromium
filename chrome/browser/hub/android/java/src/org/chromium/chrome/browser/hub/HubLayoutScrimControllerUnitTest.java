@@ -34,7 +34,7 @@ import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.components.browser_ui.styles.ChromeColors;
+import org.chromium.chrome.browser.theme.SurfaceColorUpdateUtils;
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
 import org.chromium.components.browser_ui.widget.scrim.ScrimProperties;
 import org.chromium.ui.base.TestActivity;
@@ -136,7 +136,7 @@ public class HubLayoutScrimControllerUnitTest {
         assertFalse(model.get(ScrimProperties.SHOW_IN_FRONT_OF_ANCHOR_VIEW));
         assertTrue(model.get(ScrimProperties.AFFECTS_STATUS_BAR));
         final @ColorInt int scrimColor =
-                ChromeColors.getPrimaryBackgroundColor(mActivity, isIncognito);
+                SurfaceColorUpdateUtils.getGridTabSwitcherBackgroundColor(mActivity, isIncognito);
         assertEquals(scrimColor, model.get(ScrimProperties.BACKGROUND_COLOR));
     }
 }

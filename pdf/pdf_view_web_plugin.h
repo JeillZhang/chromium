@@ -29,7 +29,6 @@
 #include "pdf/mojom/pdf.mojom.h"
 #include "pdf/paint_manager.h"
 #include "pdf/pdf_accessibility_action_handler.h"
-#include "pdf/pdf_accessibility_image_fetcher.h"
 #include "pdf/pdfium/pdfium_engine_client.h"
 #include "pdf/pdfium/pdfium_form_filler.h"
 #include "pdf/post_message_receiver.h"
@@ -96,7 +95,6 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
                                public PostMessageReceiver::Client,
                                public PaintManager::Client,
                                public PdfAccessibilityActionHandler,
-                               public PdfAccessibilityImageFetcher,
                                public PreviewModeClient::Client {
  public:
   // Do not save files larger than 100 MB. This cap should be kept in sync with
@@ -239,11 +237,15 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
     virtual std::unique_ptr<PdfAccessibilityDataHandler>
     CreateAccessibilityDataHandler(
         PdfAccessibilityActionHandler* action_handler,
-        PdfAccessibilityImageFetcher* image_fetcher,
-        blink::WebPluginContainer* plugin_container,
-        bool print_preview) = 0;
+        blink::WebPluginContainer* plugin_container) = 0;
 
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+    // Returns the maximum expected dimension of the images to be OCRed. If
+    // images are larger than the returned value, they will be downsampled
+    // before processing.
+    virtual void GetOcrMaxImageDimension(
+        base::OnceCallback<void(uint32_t)> callback) = 0;
+
     // Performs OCR on `image` and sends the recognized text to `callback`.
     // In case OCR service gets disconnected before or during running this
     // request, `callback` will not be called.
@@ -256,6 +258,16 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
     virtual void SetOcrDisconnectedCallback(
         base::RepeatingClosure callback) = 0;
 #endif
+  };
+
+  struct SaveDataBlock {
+    SaveDataBlock();
+    SaveDataBlock(SaveDataBlock&& other) noexcept;
+    SaveDataBlock& operator=(SaveDataBlock&&) noexcept;
+    ~SaveDataBlock();
+
+    std::vector<uint8_t> block;
+    uint32_t total_file_size = 0;
   };
 
   PdfViewWebPlugin(std::unique_ptr<Client> client,
@@ -427,10 +439,6 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
       const AccessibilityActionData& action_data) override;
   void LoadOrReloadAccessibility() override;
 
-  // PdfAccessibilityImageFetcher:
-  SkBitmap GetImageForOcr(int32_t page_index,
-                          int32_t page_object_index) override;
-
   // PreviewModeClient::Client:
   void PreviewDocumentLoadComplete() override;
   void PreviewDocumentLoadFailed() override;
@@ -459,7 +467,8 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
     return GetContentRestrictions();
   }
 
-  AccessibilityDocInfo GetAccessibilityDocInfoForTesting() const {
+  std::unique_ptr<AccessibilityDocInfo> GetAccessibilityDocInfoForTesting()
+      const {
     return GetAccessibilityDocInfo();
   }
 
@@ -481,7 +490,19 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
   const std::vector<gfx::Rect>& deferred_invalidates_for_testing() const {
     return deferred_invalidates_;
   }
+
+  bool HasInkInputsSnapshotForTesting() const {
+    return snapshot_ink_inputs_.has_value();
+  }
 #endif  // BUILDFLAG(ENABLE_PDF_INK2)
+
+  void SetMaxSaveBufferSizeForTesting(uint32_t max_save_buffer_size) {
+    max_save_buffer_size_ = max_save_buffer_size;
+  }
+
+  bool IsSaveDataBufferEmptyForTesting() const {
+    return save_data_buffer_.empty();
+  }
 
  private:
   // Callback that runs after `LoadUrl()`. The `loader` is the loader used to
@@ -547,10 +568,13 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
   void HandleGetNamedDestinationMessage(const base::Value::Dict& message);
   void HandleGetPageBoundingBoxMessage(const base::Value::Dict& message);
   void HandleGetPasswordCompleteMessage(const base::Value::Dict& message);
+  void HandleGetSaveDataBlockMessage(const base::Value::Dict& message);
   void HandleGetSelectedTextMessage(const base::Value::Dict& message);
+  void HandleGetSuggestedFileName(const base::Value::Dict& message);
   void HandleGetThumbnailMessage(const base::Value::Dict& message);
   void HandleHighlightTextFragmentsMessage(const base::Value::Dict& message);
   void HandlePrintMessage(const base::Value::Dict& /*message*/);
+  void HandleReleaseSaveInBlockBuffers(const base::Value::Dict& /*message*/);
   void HandleRotateClockwiseMessage(const base::Value::Dict& /*message*/);
   void HandleRotateCounterclockwiseMessage(
       const base::Value::Dict& /*message*/);
@@ -565,6 +589,26 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
 
   void SaveToBuffer(SaveRequestType request_type, const std::string& token);
   void SaveToFile(const std::string& token);
+
+  // Returns `block_size` bytes to save the PDF with `request_type`, starting
+  // from location `offset`. Since the caller may not know the exact file size,
+  // the first request (when `offset` is 0) can be called with `block_size` 0
+  // and in that case, the entire file data, capped at 16MB limit is returned.
+  // The function also returns the total file size.
+  // Note that it only handles files less than INT_MAX size, and if the file is
+  // larger than that, it returns 0 as file size and no data.
+  SaveDataBlock SaveBlockToBuffer(SaveRequestType request_type,
+                                  uint32_t offset,
+                                  uint32_t block_size);
+
+  // For a call to `SaveBlockToBuffer`, ensures `offset` and `block_size` have
+  // expected values and returns the effective `block_size`.
+  uint32_t VerifyParamsAndGetSaveBlockSize(uint32_t total_file_size,
+                                           uint32_t offset,
+                                           uint32_t block_size);
+
+  // Release buffered data for saving.
+  void ReleaseSaveBuffer();
 
   // Sets whether the plugin can and should handle the save by using `pdf_host_`
   // to notify the browser. Prevents duplicate notifications to the browser if
@@ -688,15 +732,14 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
       PdfViewWebPlugin& plugin);
   static std::unique_ptr<PdfInkModule> MaybeCreatePdfInkModule(
       PdfInkModuleClient* client);
-
-  void GenerateAndSendInkThumbnail(int page_index, const gfx::Size& size);
 #endif
 
   // Converts `frame_coordinates` to PDF coordinates.
   gfx::Point FrameToPdfCoordinates(const gfx::PointF& frame_coordinates) const;
 
   // Gets the accessibility doc info based on the information from `engine_`.
-  AccessibilityDocInfo GetAccessibilityDocInfo() const;
+  // The return value is never nullptr.
+  std::unique_ptr<AccessibilityDocInfo> GetAccessibilityDocInfo() const;
 
   // Sets the accessibility information about the given `page_index` in the
   // renderer.
@@ -769,6 +812,15 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
 
   // The current image snapshot.
   cc::PaintImage snapshot_;
+
+#if BUILDFLAG(ENABLE_PDF_INK2)
+  // The last saved image snapshot for rendering of Ink inputs.
+  std::optional<cc::PaintImage> snapshot_ink_inputs_;
+
+  // Tracks if `snapshot_` still needs to be updated to reflect a newly
+  // added Ink stroke.
+  bool snapshot_needs_update_for_ink_input_ = false;
+#endif
 
   // Translate from snapshot to device pixels.
   gfx::Vector2dF snapshot_translate_;
@@ -933,8 +985,21 @@ class PdfViewWebPlugin final : public PDFiumEngineClient,
   // Queue of available preview pages to load next.
   base::queue<PreviewPageInfo> preview_pages_info_;
 
+  // Buffer for saving data by Web UI.
+  // `SaveBlockToBuffer` allocates this variable when WebUI requests saving the
+  // PDF by getting the content in blocks, and the content needs to be buffered
+  // during the save process. It is released when saving is finished or
+  // canceled.
+  std::vector<uint8_t> save_data_buffer_;
+
+  // Maximum size of save data in each block.
+  uint32_t max_save_buffer_size_;
+
 #if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
   bool show_searchify_in_progress_ = false;
+
+  // Tells if searchify ever started.
+  bool searchify_started_ = false;
 #endif
 
   base::WeakPtrFactory<PdfViewWebPlugin> weak_factory_{this};

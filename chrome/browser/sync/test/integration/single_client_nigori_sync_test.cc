@@ -15,7 +15,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
@@ -25,7 +25,6 @@
 #include "chrome/browser/sync/test/integration/encryption_helper.h"
 #include "chrome/browser/sync/test/integration/password_sharing_invitation_helper.h"
 #include "chrome/browser/sync/test/integration/passwords_helper.h"
-#include "chrome/browser/sync/test/integration/secondary_account_helper.h"
 #include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
 #include "chrome/browser/sync/test/integration/status_change_checker.h"
 #include "chrome/browser/sync/test/integration/sync_disabled_checker.h"
@@ -60,9 +59,11 @@
 #include "components/trusted_vault/command_line_switches.h"
 #include "components/trusted_vault/securebox.h"
 #include "components/trusted_vault/standalone_trusted_vault_client.h"
+#include "components/trusted_vault/standalone_trusted_vault_server_constants.h"
 #include "components/trusted_vault/test/fake_security_domains_server.h"
 #include "components/trusted_vault/trusted_vault_client.h"
 #include "components/trusted_vault/trusted_vault_connection.h"
+#include "components/trusted_vault/trusted_vault_histograms.h"
 #include "components/trusted_vault/trusted_vault_server_constants.h"
 #include "components/trusted_vault/trusted_vault_service.h"
 #include "components/variations/synthetic_trial_registry.h"
@@ -79,7 +80,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "url/url_constants.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_switches.h"
 #include "chrome/browser/ash/sync/sync_error_notifier.h"
 #include "chrome/browser/ash/sync/sync_error_notifier_factory.h"
@@ -87,7 +88,7 @@
 #include "ui/views/test/widget_test.h"
 #include "ui/views/widget/any_widget_observer.h"
 #include "ui/views/widget/widget.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace {
 
@@ -109,6 +110,12 @@ using testing::NotNull;
 using testing::SizeIs;
 
 constexpr int kKeyPairVersion = 0;
+
+// This constant matches SyncSigninDelegate's internal implementation when using
+// fake accounts. Ideally it shouldn't be hardcoded here and instead the fake
+// server that implements the retrieval page should be able to determine the
+// gaia ID from cookies, but this is currently not implemented.
+constexpr GaiaId::Literal kDefaultGaiaId("gaia_id_for_user1_gmail.com");
 
 MATCHER_P(IsDataEncryptedWith, key_params, "") {
   const sync_pb::EncryptedData& encrypted_data = arg;
@@ -140,10 +147,6 @@ MATCHER_P4(StatusLabelsMatch,
     return false;
   }
   return true;
-}
-
-GaiaId GetDefaultUserGaiaID() {
-  return signin::GetTestGaiaIdForEmail(SyncTest::kDefaultUserEmail);
 }
 
 std::string ComputeKeyName(const KeyParamsForTesting& key_params) {
@@ -1147,7 +1150,7 @@ class SingleClientNigoriWithWebApiTest : public SyncTest {
         base::Unretained(security_domains_server_.get())));
 
     encryption_helper::SetupFakeTrustedVaultPages(
-        GetDefaultUserGaiaID(), kTestEncryptionKey, kTestEncryptionKeyVersion,
+        kDefaultGaiaId, kTestEncryptionKey, kTestEncryptionKeyVersion,
         kTestRecoveryMethodPublicKey, &embedded_https_test_server());
 
     embedded_https_test_server().StartAcceptingConnections();
@@ -1199,12 +1202,12 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
                   ->IsTrustedVaultKeyRequiredForPreferredDataTypes());
   ASSERT_FALSE(GetSyncService(0)->GetActiveDataTypes().Has(syncer::PASSWORDS));
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   // Verify the profile-menu error string.
   ASSERT_THAT(
       GetAvatarSyncErrorType(GetProfile(0)),
       Eq(AvatarSyncErrorType::kTrustedVaultKeyMissingForPasswordsError));
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
   // Verify the string that would be displayed in settings.
   ASSERT_THAT(GetSyncStatusLabels(GetProfile(0)),
@@ -1217,6 +1220,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
   // to be closeable via javascript.
   chrome::AddTabAt(GetBrowser(0), GURL(url::kAboutBlankURL), /*index=*/0,
                    /*foreground=*/true);
+
+  ASSERT_EQ(GetSyncService(0)->GetAccountInfo().gaia, kDefaultGaiaId);
 
   // Mimic opening a web page where the user can interact with the retrieval
   // flow.
@@ -1239,10 +1244,10 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
                                 IDS_SYNC_ACCOUNT_SYNCING, IDS_SYNC_EMPTY_STRING,
                                 SyncStatusActionType::kNoAction));
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   // Verify the profile-menu error string is empty.
   EXPECT_FALSE(GetAvatarSyncErrorType(GetProfile(0)).has_value());
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 }
 
 // Regression test for crbug.com/1479879: test verifies that client is able to
@@ -1307,7 +1312,7 @@ IN_PROC_BROWSER_TEST_F(
   EXPECT_FALSE(GetSecurityDomainsServer()->IsRecoverabilityDegraded());
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 class SingleClientNigoriWithWebApiAndDialogUIParamTest
     : public SingleClientNigoriWithWebApiTest {
  public:
@@ -1387,8 +1392,7 @@ IN_PROC_BROWSER_TEST_F(
                         GetFakeServer());
   ASSERT_TRUE(SetupClients());
   GetSyncTrustedVaultClient()->StoreKeys(
-      GetDefaultUserGaiaID(),
-      GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
+      kDefaultGaiaId, GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
       /*last_key_version=*/GetSecurityDomainsServer()->GetCurrentEpoch());
 
   NotificationDisplayServiceTester display_service(GetProfile(0));
@@ -1433,7 +1437,7 @@ IN_PROC_BROWSER_TEST_F(
                   .Wait());
 }
 
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
                        ShouldAcceptEncryptionKeysFromSubFrameIfSyncEnabled) {
@@ -1526,10 +1530,10 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
                                 IDS_SYNC_ACCOUNT_SYNCING, IDS_SYNC_EMPTY_STRING,
                                 SyncStatusActionType::kNoAction));
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   // Verify the profile-menu error string is empty.
   EXPECT_FALSE(GetAvatarSyncErrorType(GetProfile(0)).has_value());
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 }
 
 IN_PROC_BROWSER_TEST_F(
@@ -1734,11 +1738,11 @@ IN_PROC_BROWSER_TEST_F(
   // reproduces a more realistic case of the first-time turn-sync-on experience,
   // with a temporary stage where the user is signed in without sync-the-feature
   // being enabled. Except on Ash where the two steps happen at once.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   ASSERT_TRUE(SetupClients());
   ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
   ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
   // TODO(crbug.com/40914333): SetupSync(WAIT_FOR_COMMITS_TO_COMPLETE) (e.g.
   // with default argument) causes test flakiness here due to unrelated issue in
   // SharingService. From this test perspective it doesn't matter whether to use
@@ -1842,8 +1846,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
       GetFakeServer());
   ASSERT_TRUE(SetupClients());
   GetSyncTrustedVaultClient()->StoreKeys(
-      GetDefaultUserGaiaID(),
-      GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
+      kDefaultGaiaId, GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
       /*last_key_version=*/GetSecurityDomainsServer()->GetCurrentEpoch());
   ASSERT_TRUE(SetupSync());
 
@@ -1862,12 +1865,12 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
                    ->GetUserSettings()
                    ->IsTrustedVaultKeyRequiredForPreferredDataTypes());
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   // Verify the profile-menu error string.
   EXPECT_THAT(GetAvatarSyncErrorType(GetProfile(0)),
               Eq(AvatarSyncErrorType::
                      kTrustedVaultRecoverabilityDegradedForPasswordsError));
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
   // No messages expected in settings.
   EXPECT_THAT(GetSyncStatusLabels(GetProfile(0)),
@@ -1893,10 +1896,10 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
                    ->IsTrustedVaultRecoverabilityDegraded());
   EXPECT_FALSE(GetSecurityDomainsServer()->IsRecoverabilityDegraded());
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
   // Verify the profile-menu error string is empty.
   EXPECT_FALSE(GetAvatarSyncErrorType(GetProfile(0)).has_value());
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
   histogram_tester.ExpectUniqueSample(
       "Sync.TrustedVaultRecoverabilityDegradedOnStartup",
@@ -1939,15 +1942,14 @@ IN_PROC_BROWSER_TEST_F(
   GetSecurityDomainsServer()->RequirePublicKeyToAvoidRecoverabilityDegraded(
       kTestRecoveryMethodPublicKey);
   GetSyncTrustedVaultClient()->StoreKeys(
-      GetDefaultUserGaiaID(),
-      GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
+      kDefaultGaiaId, GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
       /*last_key_version=*/GetSecurityDomainsServer()->GetCurrentEpoch());
 
   // Mimic a recovery method being added before or during sign-in, which should
   // be deferred until sign-in completes.
   base::RunLoop run_loop;
   GetSyncTrustedVaultClient()->AddTrustedRecoveryMethod(
-      GetDefaultUserGaiaID(), kTestRecoveryMethodPublicKey, kTestMethodTypeHint,
+      kDefaultGaiaId, kTestRecoveryMethodPublicKey, kTestMethodTypeHint,
       run_loop.QuitClosure());
 
   ASSERT_TRUE(GetSecurityDomainsServer()->IsRecoverabilityDegraded());
@@ -1983,8 +1985,7 @@ IN_PROC_BROWSER_TEST_F(
   GetSecurityDomainsServer()->RequirePublicKeyToAvoidRecoverabilityDegraded(
       kTestRecoveryMethodPublicKey);
   GetSyncTrustedVaultClient()->StoreKeys(
-      GetDefaultUserGaiaID(),
-      GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
+      kDefaultGaiaId, GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
       /*last_key_version=*/GetSecurityDomainsServer()->GetCurrentEpoch());
   ASSERT_TRUE(GetSecurityDomainsServer()->IsRecoverabilityDegraded());
 
@@ -1999,7 +2000,7 @@ IN_PROC_BROWSER_TEST_F(
   // should be deferred until the auth error is resolved.
   base::RunLoop run_loop;
   GetSyncTrustedVaultClient()->AddTrustedRecoveryMethod(
-      GetDefaultUserGaiaID(), kTestRecoveryMethodPublicKey, kTestMethodTypeHint,
+      kDefaultGaiaId, kTestRecoveryMethodPublicKey, kTestMethodTypeHint,
       run_loop.QuitClosure());
 
   // Mimic the auth error state being resolved.
@@ -2029,8 +2030,7 @@ IN_PROC_BROWSER_TEST_F(
                         GetFakeServer());
   ASSERT_TRUE(SetupClients());
   GetSyncTrustedVaultClient()->StoreKeys(
-      GetDefaultUserGaiaID(),
-      GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
+      kDefaultGaiaId, GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
       /*last_key_version=*/GetSecurityDomainsServer()->GetCurrentEpoch());
   ASSERT_TRUE(SetupSync());
   ASSERT_FALSE(GetSecurityDomainsServer()->IsRecoverabilityDegraded());
@@ -2117,8 +2117,12 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
   EXPECT_FALSE(GetSecurityDomainsServer()->ReceivedInvalidRequest());
 
   histogram_tester.ExpectUniqueSample(
-      "TrustedVault.DownloadKeysStatus.ChromeSync",
-      /*sample=*/trusted_vault::TrustedVaultDownloadKeysStatus::kSuccess,
+      "TrustedVault.RecoverKeysOutcome.ChromeSync",
+      /*sample=*/trusted_vault::TrustedVaultRecoverKeysOutcomeForUMA::kSuccess,
+      /*expected_bucket_count=*/1);
+  histogram_tester.ExpectUniqueSample(
+      "TrustedVault.DownloadKeysStatus.PhysicalDevice.ChromeSync",
+      /*sample=*/trusted_vault::TrustedVaultDownloadKeysStatusForUMA::kSuccess,
       /*expected_bucket_count=*/1);
   histogram_tester.ExpectUniqueSample(
       "TrustedVault.SecurityDomainServiceURLFetchResponse.DownloadKeys",
@@ -2166,7 +2170,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
   // Mimic a recovery method being added.
   base::RunLoop run_loop;
   GetSyncTrustedVaultClient()->AddTrustedRecoveryMethod(
-      GetDefaultUserGaiaID(), kTestRecoveryMethodPublicKey, kTestMethodTypeHint,
+      kDefaultGaiaId, kTestRecoveryMethodPublicKey, kTestMethodTypeHint,
       run_loop.QuitClosure());
   run_loop.Run();
 
@@ -2220,7 +2224,14 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
 
   // Make sure that client is able to follow key rotation with fresh security
   // domain state.
+#if BUILDFLAG(IS_CHROMEOS)
+  ASSERT_TRUE(GetSyncService(0)
+                  ->GetUserSettings()
+                  ->IsSyncFeatureDisabledViaDashboard());
+  GetSyncService(0)->GetUserSettings()->ClearSyncFeatureDisabledViaDashboard();
+#else   // BUILDFLAG(IS_CHROMEOS)
   ASSERT_TRUE(SetupSync());
+#endif  // BUILDFLAG(IS_CHROMEOS)
   ASSERT_TRUE(FakeSecurityDomainsServerMemberStatusChecker(
                   /*expected_member_count=*/1,
                   /*expected_trusted_vault_key=*/
@@ -2250,7 +2261,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
 }
 
 // ChromeOS doesn't have unconsented primary accounts.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
                        ShouldAcceptEncryptionKeysFromTheWebInTransportMode) {
   // Mimic the account using a trusted vault passphrase.
@@ -2258,10 +2269,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientNigoriWithWebApiTest,
                         GetFakeServer());
 
   ASSERT_TRUE(SetupClients());
-
-  secondary_account_helper::SignInUnconsentedAccount(
-      GetProfile(0), &test_url_loader_factory_, SyncTest::kDefaultUserEmail);
-
+  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
   ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
   ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
 
@@ -2312,12 +2320,10 @@ IN_PROC_BROWSER_TEST_F(
                         GetFakeServer());
   ASSERT_TRUE(SetupClients());
   GetSyncTrustedVaultClient()->StoreKeys(
-      GetDefaultUserGaiaID(),
-      GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
+      kDefaultGaiaId, GetSecurityDomainsServer()->GetAllTrustedVaultKeys(),
       /*last_key_version=*/GetSecurityDomainsServer()->GetCurrentEpoch());
 
-  secondary_account_helper::SignInUnconsentedAccount(
-      GetProfile(0), &test_url_loader_factory_, SyncTest::kDefaultUserEmail);
+  ASSERT_TRUE(GetClient(0)->SignInPrimaryAccount());
   ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
   ASSERT_FALSE(GetSyncService(0)->IsSyncFeatureEnabled());
 
@@ -2349,6 +2355,6 @@ IN_PROC_BROWSER_TEST_F(
       /*sample=*/true, /*expected_bucket_count=*/1);
 }
 
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace

@@ -31,10 +31,9 @@ const char kEnableFeatures[] = "enable-features";
 // Force low-end device mode when set.
 const char kEnableLowEndDeviceMode[] = "enable-low-end-device-mode";
 
-// Enable the use of background thread priorities for background tasks in the
-// ThreadPool even on systems where it is disabled by default, e.g. due to
-// concerns about priority inversions.
-const char kEnableBackgroundThreadPool[] = "enable-background-thread-pool";
+// Configure the background threadpool field trial.
+const char kBackgroundThreadPoolFieldTrial[] =
+    "background-thread-pool-field-trial";
 
 // Handle to the shared memory segment containing field trial state that is to
 // be shared between processes. The argument to this switch is made of segments
@@ -130,6 +129,10 @@ const char kDisableHighResTimer[] = "disable-highres-timer";
 
 // Disables the USB keyboard detection for blocking the OSK on Windows.
 const char kDisableUsbKeyboardDetect[] = "disable-usb-keyboard-detect";
+
+// Forces the use of QPC for TimeTicks even if cpuid doesn't report the presence
+// of an invariant TSC.
+const char kForceHighResTimeTicks[] = "force-high-res-timeticks";
 #endif
 
 #if BUILDFLAG(IS_LINUX)

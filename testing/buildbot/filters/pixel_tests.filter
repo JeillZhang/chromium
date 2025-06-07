@@ -11,14 +11,18 @@ AddNewAddressProfileTest.*
 AppInfoDialogBrowserTest.*
 AppMenuBrowserTest*.InvokeUi_*
 AskGoogleForSuggestionsDialogTest.*
-AutofillBubbleSignInPromoInteractiveUITest.*
 BatchUploadDialogViewPixelTest.*
 BookmarkBubbleViewBrowserTest.*
 BookmarkEditorViewBrowserTest.*
+BookmarkEditorViewBrowserTestMoveDialog.*
+BookmarkEditorViewBrowserTestWithAccountBookmarks.*
 BrowserViewScrimPixelTest.*
 BubbleFrameViewBrowserTest.*
+BubbleSignInPromoInteractiveUITest.*
+CaptionBubbleBrowserTest.*
 ChromeLabs*UiTest.*
 ChromeSignoutConfirmationPromptPixelTest.*
+ChromeSignoutConfirmationPromptWithExtensionsPixelTest.*
 ConfirmBubbleTest.*
 ContentAnalysysDialogUiTest.*
 ContentSettingBubbleDialogTest.*
@@ -31,6 +35,7 @@ OldCookieControlsBubbleViewTest.*
 CryptoModulePasswordDialogTest.*
 *DataControlsDialogUiTest.*
 DeepScanningFailureModalDialogTest.*
+DiscountBubbleViewBrowserTest.*
 *DiceWebSigninInterceptionBubblePixelTest.InvokeUi_*
 *DiceWebSigninInterceptionBubbleV1SyncPromoPixelTest.InvokeUi_*
 *DiceWebSigninInterceptionBubbleV2PixelTest.InvokeUi_*
@@ -53,6 +58,7 @@ FirstRunDialogTest.*
 FirstRunIntroPixelTest.*
 GlobalErrorBubbleTest.*
 HatsBubbleTest.*
+HistorySyncOptinUIDialogPixelTest.*
 HomeButtonUiTest.*
 HungRendererDialogViewBrowserTest.*
 ImportLockDialogViewBrowserTest.*
@@ -107,8 +113,10 @@ PermissionPromptPreviewBrowserTest.InvokeUi_*
 PlusAddressCreationDialogWithNoticeTest.ShowNoticeAndCancel
 *PopupViewViewsBrowsertest*
 *PopupViewViewsPlusAddressSuggestionBrowsertest*
+PrivacySandboxPSNoticeDialogViewBrowserTest.*
 PrivacySandboxDialogViewBrowserTest.*
 PrivacySandboxDialogViewAdsApiUxEnhancementBrowserTest.*
+PrivacySandboxDialogViewAdsApiUxEnhancementsLearnMoreBrowserTest.*
 PrivacySandboxDialogViewPrivacyPolicyBrowserTest.*
 PrivacySandboxDialogViewAdsApiUxEnhancementPrivacyPolicyBrowserTest.*
 PrivacySandboxNoticeBubbleBrowserTest.*
@@ -124,6 +132,7 @@ RelaunchRecommendedBubbleViewDialogTest.*
 RelaunchRequiredDialogViewDialogTest.*
 ReopenTabPromoControllerDialogBrowserTest.*
 SafetyTipPageInfoBubbleViewDialogTest.*
+*SaveOrUpdateAutofillAiDataBubbleViewBrowsertest*
 ScreenCaptureNotificationUiBrowserTest.*
 SearchEngineChoiceUIPixelTest.*
 SecurePaymentConfirmationDialogViewTest.InvokeUi_*
@@ -131,10 +140,12 @@ SecurePaymentConfirmationDialogViewTest.InvokeUi_*
 SessionCrashedBubbleViewTest.*
 *SharedPasswordsNotificationBubbleInteractiveUiTest.*
 SharedTabGroupInteractiveUiTest.SharedTabGroupIn*
+SplitTabButtonInteractiveTest.ButtonUpdatesOnSplit
 SyncConfirmationUIDialogPixelTest.*
 SyncConfirmationUIWindowPixelTest.*
 SyncPassphraseDialogBrowserTest.*
 TabGroupEditorBubbleViewDialogBrowserTest.*
+TabGroupShortcutsInteractiveTest.Screenshot*
 TabHoverCardBubbleViewDialogBrowserTest.*
 TabSearchBubbleUIBrowserTest.*
 *TailoredSecurityDesktopDialogManagerTest.InvokeUi_*

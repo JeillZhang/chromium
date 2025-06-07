@@ -239,24 +239,25 @@ void BrowserAccessibilityManager::FireGeneratedEvent(
 
   const auto& announcements = node_data.GetStringListAttribute(
       ax::mojom::StringListAttribute::kAriaNotificationAnnouncements);
-  const auto& notification_ids = node_data.GetStringListAttribute(
-      ax::mojom::StringListAttribute::kAriaNotificationIds);
-
-  const auto& interrupt_properties = node_data.GetIntListAttribute(
-      ax::mojom::IntListAttribute::kAriaNotificationInterruptProperties);
   const auto& priority_properties = node_data.GetIntListAttribute(
       ax::mojom::IntListAttribute::kAriaNotificationPriorityProperties);
+  const std::vector<std::int32_t> interrupt_properties =
+      node_data.GetIntListAttribute(
+          ax::mojom::IntListAttribute::kAriaNotificationInterruptProperties);
+  const std::vector<std::string> types = node_data.GetStringListAttribute(
+      ax::mojom::StringListAttribute::kAriaNotificationTypes);
 
-  DCHECK_EQ(announcements.size(), notification_ids.size());
-  DCHECK_EQ(announcements.size(), interrupt_properties.size());
   DCHECK_EQ(announcements.size(), priority_properties.size());
+  DCHECK_EQ(announcements.size(), interrupt_properties.size());
+  DCHECK_EQ(announcements.size(), types.size());
 
   for (std::size_t i = 0; i < announcements.size(); ++i) {
-    FireAriaNotificationEvent(wrapper, announcements[i], notification_ids[i],
+    FireAriaNotificationEvent(wrapper, announcements[i],
+                              static_cast<ax::mojom::AriaNotificationPriority>(
+                                  priority_properties[i]),
                               static_cast<ax::mojom::AriaNotificationInterrupt>(
                                   interrupt_properties[i]),
-                              static_cast<ax::mojom::AriaNotificationPriority>(
-                                  priority_properties[i]));
+                              types[i]);
   }
 }
 
@@ -399,7 +400,7 @@ void BrowserAccessibilityManager ::
 }
 
 bool BrowserAccessibilityManager::OnAccessibilityEvents(
-    const AXUpdatesAndEvents& details) {
+    AXUpdatesAndEvents& details) {
   TRACE_EVENT0(
       "accessibility",
       is_post_load_
@@ -881,7 +882,7 @@ void BrowserAccessibilityManager::Blur(const BrowserAccessibility& node) {
   action_data.action = ax::mojom::Action::kBlur;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::SetFocus(const BrowserAccessibility& node) {
@@ -897,7 +898,7 @@ void BrowserAccessibilityManager::SetFocus(const BrowserAccessibility& node) {
   if (!delegate_->AccessibilityViewHasFocus())
     delegate_->AccessibilityViewSetFocus();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::SetSequentialFocusNavigationStartingPoint(
@@ -910,7 +911,7 @@ void BrowserAccessibilityManager::SetSequentialFocusNavigationStartingPoint(
       ax::mojom::Action::kSetSequentialFocusNavigationStartingPoint;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::SetGeneratedEventCallbackForTesting(
@@ -936,7 +937,7 @@ void BrowserAccessibilityManager::Decrement(const BrowserAccessibility& node) {
   action_data.action = ax::mojom::Action::kDecrement;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::DoDefaultAction(
@@ -959,7 +960,7 @@ void BrowserAccessibilityManager::DoDefaultAction(
   action_data.action = ax::mojom::Action::kDoDefault;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::GetImageData(const BrowserAccessibility& node,
@@ -972,7 +973,7 @@ void BrowserAccessibilityManager::GetImageData(const BrowserAccessibility& node,
   action_data.target_node_id = node.GetId();
   action_data.target_rect = gfx::Rect(gfx::Point(), max_size);
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::Increment(const BrowserAccessibility& node) {
@@ -983,7 +984,7 @@ void BrowserAccessibilityManager::Increment(const BrowserAccessibility& node) {
   action_data.action = ax::mojom::Action::kIncrement;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::Expand(const BrowserAccessibility& node) {
@@ -995,7 +996,7 @@ void BrowserAccessibilityManager::Expand(const BrowserAccessibility& node) {
   action_data.action = ax::mojom::Action::kExpand;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::Collapse(const BrowserAccessibility& node) {
@@ -1007,7 +1008,7 @@ void BrowserAccessibilityManager::Collapse(const BrowserAccessibility& node) {
   action_data.action = ax::mojom::Action::kCollapse;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::ShowContextMenu(
@@ -1019,7 +1020,7 @@ void BrowserAccessibilityManager::ShowContextMenu(
   action_data.action = ax::mojom::Action::kShowContextMenu;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::SignalEndOfTest() {
@@ -1051,7 +1052,7 @@ void BrowserAccessibilityManager::Scroll(const BrowserAccessibility& node,
   action_data.action = scroll_action;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::ScrollToMakeVisible(
@@ -1077,7 +1078,7 @@ void BrowserAccessibilityManager::ScrollToMakeVisible(
   action_data.vertical_scroll_alignment = vertical_scroll_alignment;
   action_data.scroll_behavior = scroll_behavior;
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 
   // Android has an official api for accessibility focus.
 #if !BUILDFLAG(IS_ANDROID)
@@ -1101,7 +1102,7 @@ void BrowserAccessibilityManager::ScrollToPoint(
   action_data.action = ax::mojom::Action::kScrollToPoint;
   action_data.target_point = point;
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::SetScrollOffset(
@@ -1115,7 +1116,7 @@ void BrowserAccessibilityManager::SetScrollOffset(
   action_data.action = ax::mojom::Action::kSetScrollOffset;
   action_data.target_point = offset;
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::SetValue(const BrowserAccessibility& node,
@@ -1128,7 +1129,7 @@ void BrowserAccessibilityManager::SetValue(const BrowserAccessibility& node,
   action_data.action = ax::mojom::Action::kSetValue;
   action_data.value = value;
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::SetSelection(
@@ -1136,7 +1137,7 @@ void BrowserAccessibilityManager::SetSelection(
   if (!delegate_)
     return;
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::SetSelection(
@@ -1151,7 +1152,7 @@ void BrowserAccessibilityManager::SetSelection(
   action_data.focus_offset = range.focus()->text_offset();
   action_data.action = ax::mojom::Action::kSetSelection;
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::StitchChildTree(
@@ -1168,7 +1169,7 @@ void BrowserAccessibilityManager::StitchChildTree(
   action_data.target_node_id = node.GetId();
   action_data.child_tree_id = child_tree_id;
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::LoadInlineTextBoxes(
@@ -1184,7 +1185,7 @@ void BrowserAccessibilityManager::LoadInlineTextBoxes(
   action_data.action = ax::mojom::Action::kLoadInlineTextBoxes;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::SetAccessibilityFocus(
@@ -1196,7 +1197,7 @@ void BrowserAccessibilityManager::SetAccessibilityFocus(
   action_data.action = ax::mojom::Action::kSetAccessibilityFocus;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::ClearAccessibilityFocus(
@@ -1208,7 +1209,7 @@ void BrowserAccessibilityManager::ClearAccessibilityFocus(
   action_data.action = ax::mojom::Action::kClearAccessibilityFocus;
   action_data.target_node_id = node.GetId();
   delegate_->AccessibilityPerformAction(action_data);
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 void BrowserAccessibilityManager::HitTest(const gfx::Point& frame_point,
@@ -1219,7 +1220,7 @@ void BrowserAccessibilityManager::HitTest(const gfx::Point& frame_point,
   delegate_->AccessibilityHitTest(frame_point, ax::mojom::Event::kHover,
                                   request_id,
                                   /*opt_callback=*/{});
-  AXPlatform::GetInstance().NotifyAccessibilityApiUsage();
+  AXPlatform::GetInstance().OnActionFromAssistiveTech();
 }
 
 gfx::Rect BrowserAccessibilityManager::GetViewBoundsInScreenCoordinates()
@@ -1909,9 +1910,12 @@ void BrowserAccessibilityManager::CollectChangedNodesAndParentsForAtomicUpdate(
     const AXNode* changed_node = change.node;
     DCHECK(changed_node);
 
-    BrowserAccessibility* obj = GetFromAXNode(changed_node);
-    if (obj)
-      nodes_needing_update->insert(obj->GetAXPlatformNode());
+    if (!changed_node->IsIgnored()) {
+      BrowserAccessibility* obj = GetFromAXNode(changed_node);
+      if (obj) {
+        nodes_needing_update->insert(obj->GetAXPlatformNode());
+      }
+    }
 
     const AXNode* parent = changed_node->GetUnignoredParent();
     if (!parent)

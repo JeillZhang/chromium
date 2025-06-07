@@ -77,13 +77,13 @@ public class ToolbarSwipeLayout extends Layout {
     private TopToolbarOverlayCoordinator mLeftToolbarOverlay;
     private TopToolbarOverlayCoordinator mRightToolbarOverlay;
 
-    private ObservableSupplierImpl<Tab> mLeftTabSupplier;
-    private ObservableSupplierImpl<Tab> mRightTabSupplier;
+    private final ObservableSupplierImpl<Tab> mLeftTabSupplier;
+    private final ObservableSupplierImpl<Tab> mRightTabSupplier;
 
     private final ViewGroup mContentContainer;
 
     // Whether or not to show the toolbar.
-    private boolean mMoveToolbar;
+    private final boolean mMoveToolbar;
 
     // Offsets are in pixels [0, width].
     private float mOffsetStart;
@@ -149,6 +149,7 @@ public class ToolbarSwipeLayout extends Layout {
                             () -> mRenderHost.getResourceManager(),
                             topUiColorProvider,
                             bottomControlsOffsetSupplier,
+                            new ObservableSupplierImpl<>(false),
                             LayoutType.TOOLBAR_SWIPE,
                             true);
             mLeftToolbarOverlay.setManualVisibility(true);
@@ -164,6 +165,7 @@ public class ToolbarSwipeLayout extends Layout {
                             () -> mRenderHost.getResourceManager(),
                             topUiColorProvider,
                             bottomControlsOffsetSupplier,
+                            new ObservableSupplierImpl<>(false),
                             LayoutType.TOOLBAR_SWIPE,
                             true);
             mRightToolbarOverlay.setManualVisibility(true);
@@ -317,7 +319,7 @@ public class ToolbarSwipeLayout extends Layout {
         // Prioritize toTabId because fromTabId likely has a live layer.
         int fromTabId = dragFromLeftEdge ? rightTabId : leftTabId;
         int toTabId = !dragFromLeftEdge ? rightTabId : leftTabId;
-        List<Integer> visibleTabs = new ArrayList<Integer>();
+        List<Integer> visibleTabs = new ArrayList<>();
         if (toTabId != Tab.INVALID_TAB_ID) visibleTabs.add(toTabId);
         if (fromTabId != Tab.INVALID_TAB_ID) visibleTabs.add(fromTabId);
         updateCacheVisibleIds(visibleTabs);
@@ -357,7 +359,6 @@ public class ToolbarSwipeLayout extends Layout {
 
     private void prepareLayoutTabForSwipe(LayoutTab layoutTab, boolean anonymizeToolbar) {
         assert layoutTab != null;
-        if (layoutTab.shouldStall()) layoutTab.setSaturation(0.0f);
         float heightDp = layoutTab.getOriginalContentHeight();
         layoutTab.setClipSize(layoutTab.getOriginalContentWidth(), heightDp);
         layoutTab.setScale(1.f);

@@ -20,6 +20,7 @@
 #include "components/sync/service/local_data_description.h"
 #include "components/sync/service/sync_service_observer.h"
 #include "components/sync/service/type_status_map_for_debugging.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
@@ -259,15 +260,6 @@ class SyncService : public KeyedService {
   // USER SETTINGS
   //////////////////////////////////////////////////////////////////////////////
 
-  // Indicates the the user wants Sync-the-Feature to run. It should get invoked
-  // early in the Sync setup flow, after the user has pressed "turn on Sync" but
-  // before they have actually confirmed the settings.
-  // TODO(crbug.com/40772592): Remove this API once the internal sync-requested
-  // bit is fully removed and rollback/killswitch safe. Note that it also
-  // requires finding an alternative solution to resolving
-  // IsSyncFeatureDisabledViaDashboard(), tracked in crbug.com/1443446.
-  virtual void SetSyncFeatureRequested() = 0;
-
   // Returns the SyncUserSettings, which encapsulate all the user-configurable
   // bits for Sync.
   virtual SyncUserSettings* GetUserSettings() = 0;
@@ -328,9 +320,15 @@ class SyncService : public KeyedService {
   bool HasCompletedSyncCycle() const;
 
   // The last persistent authentication error that was encountered by the
-  // SyncService. It gets cleared when the error is resolved.
+  // SyncService. It gets cleared when the error is resolved. Note that auth
+  // errors are not persisted to disk, so during browser or profile startup the
+  // function returns no error.
   virtual GoogleServiceAuthError GetAuthError() const = 0;
   virtual base::Time GetAuthErrorTime() const = 0;
+
+  // Similar to GetAuthError().IsPersistentError(), but more reliable shortly
+  // after startup / profile load, as it caches the last known value.
+  virtual bool HasCachedPersistentAuthErrorForMetrics() const = 0;
 
   // Returns true if the Chrome client is too old and needs to be updated for
   // Sync to work.
@@ -394,7 +392,7 @@ class SyncService : public KeyedService {
   // the change before local and remote data are irrevocably merged).
   // The UI calls this and holds onto the instance for as long as any part of
   // the Sync setup/configuration UI is visible.
-  virtual std::unique_ptr<SyncSetupInProgressHandle>
+  [[nodiscard]] virtual std::unique_ptr<SyncSetupInProgressHandle>
   GetSetupInProgressHandle() = 0;
 
   // Whether a Sync setup is currently in progress, i.e. a setup UI is being
@@ -432,9 +430,13 @@ class SyncService : public KeyedService {
   // synced with the server.
   // Note: This only queries the datatypes in `requested_types`.
   // Note: This includes deletions as well.
+  // Note: This must only be called in transport-only mode.
+  // TODO(crbug.com/401470426): Rename this to better reflect that it's only
+  // called in transport-only mode.
   virtual void GetTypesWithUnsyncedData(
       DataTypeSet requested_types,
-      base::OnceCallback<void(DataTypeSet)> callback) const = 0;
+      base::OnceCallback<void(absl::flat_hash_map<DataType, size_t>)> callback)
+      const = 0;
 
   // Queries the count and description/preview of existing local data for
   // `types` data types. This is an asynchronous method which returns the result

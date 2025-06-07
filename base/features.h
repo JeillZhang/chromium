@@ -17,7 +17,7 @@ namespace base::features {
 // Alphabetical:
 BASE_EXPORT BASE_DECLARE_FEATURE(kFeatureParamWithCache);
 
-BASE_EXPORT BASE_DECLARE_FEATURE(kUseRustJsonParser);
+BASE_EXPORT BASE_DECLARE_FEATURE(kFastFilePathIsParent);
 
 BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(bool,
                                        kUseRustJsonParserInCurrentSequence);
@@ -32,10 +32,16 @@ BASE_EXPORT BASE_DECLARE_FEATURE(kPartialLowEndModeOnMidRangeDevices);
 #endif
 
 #if BUILDFLAG(IS_ANDROID)
+BASE_EXPORT BASE_DECLARE_FEATURE(kBackgroundNotPerceptibleBinding);
 BASE_EXPORT BASE_DECLARE_FEATURE(kCollectAndroidFrameTimelineMetrics);
 BASE_EXPORT BASE_DECLARE_FEATURE(
     kPostPowerMonitorBroadcastReceiverInitToBackground);
 BASE_EXPORT BASE_DECLARE_FEATURE(kPostGetMyMemoryStateToBackground);
+BASE_EXPORT BASE_DECLARE_FEATURE(kUseSharedRebindServiceConnection);
+
+BASE_EXPORT BASE_DECLARE_FEATURE(kBackgroundThreadPoolFieldTrial);
+BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(int,
+                                       kBackgroundThreadPoolFieldTrialConfig);
 #endif
 
 // Policy for emitting profiler metadata from `ThreadController`.

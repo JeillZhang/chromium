@@ -35,7 +35,8 @@ std::unique_ptr<views::BubbleBorder> CreateBorder() {
       base::i18n::IsRTL() ? views::BubbleBorder::Arrow::RIGHT_TOP
                           : views::BubbleBorder::Arrow::LEFT_TOP,
       views::BubbleBorder::CHROMEOS_SYSTEM_UI_SHADOW);
-  border->SetCornerRadius(kQuickInsertContainerBorderRadius);
+  border->set_rounded_corners(
+      gfx::RoundedCornersF(kQuickInsertContainerBorderRadius));
   border->SetColor(SK_ColorTRANSPARENT);
   return border;
 }
@@ -54,7 +55,7 @@ QuickInsertSubmenuView::QuickInsertSubmenuView(
                        /*inside_border_insets=*/kInsets))
       ->set_cross_axis_alignment(
           views::BoxLayout::CrossAxisAlignment::kStretch);
-  SetBackground(views::CreateThemedRoundedRectBackground(
+  SetBackground(views::CreateRoundedRectBackground(
       kQuickInsertContainerBackgroundColor, kQuickInsertContainerBorderRadius));
 
   // Don't allow submenus within submenus.

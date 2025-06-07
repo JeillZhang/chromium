@@ -39,11 +39,6 @@ BASE_FEATURE(kBlinkExtension,
              "BlinkExtension",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enables the ChromeOS Diagnostics API.
-BASE_FEATURE(kBlinkExtensionDiagnostics,
-             "BlinkExtensionDiagnostics",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
 // Enables ChromeOS Kiosk APIs.
 BASE_FEATURE(kBlinkExtensionKiosk,
              "BlinkExtensionKiosk",
@@ -62,7 +57,7 @@ BASE_FEATURE(kCrosComponents,
 
 // Enables an app to discover and install other apps. This flag will be enabled
 // with Finch.
-BASE_FEATURE(kCrosMall, "CrosMall", base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kCrosMall, "CrosMall", base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables the Mall app for managed users. Only has an effect when kCrosMall is
 // also enabled.
@@ -85,9 +80,6 @@ BASE_FEATURE(kDisableSystemBlur,
              "DisableSystemBlur",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enables the desk profiles feature.
-BASE_FEATURE(kDeskProfiles, "DeskProfiles", base::FEATURE_DISABLED_BY_DEFAULT);
-
 // Disable idle sockets closing on memory pressure for NetworkContexts that
 // belong to Profiles. It only applies to Profiles because the goal is to
 // improve perceived performance of web browsing within the ChromeOS user
@@ -95,13 +87,6 @@ BASE_FEATURE(kDeskProfiles, "DeskProfiles", base::FEATURE_DISABLED_BY_DEFAULT);
 // certificates.
 BASE_FEATURE(kDisableIdleSocketsCloseOnMemoryPressure,
              "disable_idle_sockets_close_on_memory_pressure",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-// Disables "Office Editing for Docs, Sheets & Slides" component app so handlers
-// won't be registered, making it possible to install another version for
-// testing.
-BASE_FEATURE(kDisableOfficeEditingComponentApp,
-             "DisableOfficeEditingComponentApp",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Disables translation services of the Quick Answers V2.
@@ -121,6 +106,11 @@ BASE_FEATURE(kEssentialSearch,
              "EssentialSearch",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+// Feature flag used to enable external display event telemetry.
+BASE_FEATURE(kExternalDisplayEventTelemetry,
+             "ExternalDisplayEventTelemetry",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 // Feature flag used to gate preinstallation of the Gemini app.
 BASE_FEATURE(kGeminiAppPreinstall,
              "GeminiAppPreinstall",
@@ -134,6 +124,11 @@ BASE_FEATURE(kKioskHeartbeatsViaERP,
 // Enables the new Magic Boost Consent Flow.
 BASE_FEATURE(kMagicBoostRevamp,
              "MagicBoostRevamp",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Enables the new Magic Boost Consent Flow For Quick Answers.
+BASE_FEATURE(kMagicBoostRevampForQuickAnswers,
+             "MagicBoostRevampForQuickAnswers",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Controls enabling / disabling the mahi feature.
@@ -171,6 +166,11 @@ BASE_FEATURE(kPompano, "Pompano", base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kMahiSummarizeSelected,
              "MahiSummarizeSelected",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Controls whether NotebookLM is preinstalled.
+BASE_FEATURE(kNotebookLmAppPreinstall,
+             "NotebookLmAppPreinstall",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Kill switch to disable the new guest profile implementation on CrOS that is
 // consistent with desktop chrome.
@@ -234,7 +234,7 @@ BASE_FEATURE(kFeatureManagementDisableChromeCompose,
 // feature management module.
 BASE_FEATURE(kFeatureManagementRoundedWindows,
              "FeatureManagementRoundedWindows",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Enables the first wave of new features for the chrome.enterprise.platformKeys
 // API. That includes:
@@ -323,7 +323,31 @@ const base::FeatureParam<std::string> kMicrosoft365ScopeExtensionsDomains{
 
     // The OneDrive Business domain (for the extension to match
     // https://<customer>-my.sharepoint.com).
-    "https://sharepoint.com"};
+    "https://sharepoint.com,"
+
+    // The new branding for Microsoft 365 web apps. Word, PowerPoint and Excel
+    // can be accessed under https://word.cloud.microsoft/,
+    // https://powerpoint.cloud.microsoft/ and https://excel.cloud.microsoft/
+    // respectively.
+    "https://cloud.microsoft"};
+
+// Controls whether the PWA manifest on Microsoft 365 Urls should be overridden
+// with a static PWA manifest id.
+BASE_FEATURE(kMicrosoft365ManifestOverride,
+             "Microsoft365ManifestOverride",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Comma separated list of Urls where the M365 PWA manifest should be
+// overridden.
+const base::FeatureParam<std::string> kMicrosoft365ManifestUrls{
+    &kMicrosoft365ManifestOverride, "m365-manifest-urls",
+    /*default*/
+
+    // The current Microsoft 365 web app.
+    "https://www.microsoft365.com/,"
+
+    // The new branding for the Microsoft 365 web app.
+    "https://m365.cloud.microsoft/"};
 
 // Enables the Microsoft OneDrive integration workflow for enterprise users to
 // cloud integration support.
@@ -333,7 +357,7 @@ BASE_FEATURE(kMicrosoftOneDriveIntegrationForEnterprise,
 
 BASE_FEATURE(kRoundedWindows,
              "RoundedWindows",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enables CloudFileSystem for FileSystemProvider extensions.
 BASE_FEATURE(kFileSystemProviderCloudFileSystem,
@@ -343,6 +367,23 @@ BASE_FEATURE(kFileSystemProviderCloudFileSystem,
 // Enables a content cache in CloudFileSystem for FileSystemProvider extensions.
 BASE_FEATURE(kFileSystemProviderContentCache,
              "FileSystemProviderContentCache",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Enables hiding apps disabled by SystemFeaturesDisableList policy by default
+// in user sessions.
+BASE_FEATURE(kSystemFeaturesDisableListHidden,
+             "SystemFeaturesDisableListHidden",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Enables pinning the NotebookLM preinstalled app to the shelf.
+BASE_FEATURE(kNotebookLmAppShelfPin,
+             "NotebookLmAppShelfPin",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Resets the act of pinning the NotebookLM preinstalled app to the shelf, used
+// for manual testing.
+BASE_FEATURE(kNotebookLmAppShelfPinReset,
+             "NotebookLmAppShelfPinReset",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 const char kRoundedWindowsRadius[] = "window_radius";
@@ -371,11 +412,6 @@ bool IsBlinkExtensionEnabled() {
   return base::FeatureList::IsEnabled(kBlinkExtension);
 }
 
-bool IsBlinkExtensionDiagnosticsEnabled() {
-  return IsBlinkExtensionEnabled() &&
-         base::FeatureList::IsEnabled(kBlinkExtensionDiagnostics);
-}
-
 bool IsCrosComponentsEnabled() {
   return base::FeatureList::IsEnabled(kCrosComponents);
 }
@@ -390,10 +426,6 @@ bool IsDataControlsFileAccessDefaultDenyEnabled() {
 
 bool IsDataMigrationEnabled() {
   return base::FeatureList::IsEnabled(kDataMigration);
-}
-
-bool IsDeskProfilesEnabled() {
-  return base::FeatureList::IsEnabled(kDeskProfiles);
 }
 
 bool IsEssentialSearchEnabled() {
@@ -413,6 +445,10 @@ bool IsFileSystemProviderContentCacheEnabled() {
   return base::FeatureList::IsEnabled(kFileSystemProviderContentCache);
 }
 
+bool IsSystemFeaturesDisableListHiddenEnabled() {
+  return base::FeatureList::IsEnabled(kSystemFeaturesDisableListHidden);
+}
+
 bool IsGeminiAppPreinstallFeatureManagementEnabled() {
   return base::FeatureList::IsEnabled(kFeatureManagementGeminiAppPreinstall);
 }
@@ -423,6 +459,10 @@ bool IsGeminiAppPreinstallEnabled() {
 
 bool IsMagicBoostRevampEnabled() {
   return base::FeatureList::IsEnabled(kMagicBoostRevamp);
+}
+
+bool IsMagicBoostRevampForQuickAnswersEnabled() {
+  return base::FeatureList::IsEnabled(kMagicBoostRevampForQuickAnswers);
 }
 
 bool IsMahiEnabled() {
@@ -516,6 +556,10 @@ bool IsMicrosoft365ScopeExtensionsEnabled() {
   return base::FeatureList::IsEnabled(kMicrosoft365ScopeExtensions);
 }
 
+bool IsMicrosoft365ManifestOverrideEnabled() {
+  return base::FeatureList::IsEnabled(kMicrosoft365ManifestOverride);
+}
+
 bool IsMicrosoftOneDriveIntegrationForEnterpriseEnabled() {
   return IsUploadOfficeToCloudEnabled() &&
          base::FeatureList::IsEnabled(
@@ -530,7 +574,8 @@ bool IsRoundedWindowsEnabled() {
 }
 
 bool IsSystemBlurEnabled() {
-  return !base::FeatureList::IsEnabled(kDisableSystemBlur);
+  static bool disable_blur = base::FeatureList::IsEnabled(kDisableSystemBlur);
+  return !disable_blur;
 }
 
 bool IsPkcs12ToChapsDualWriteEnabled() {

@@ -18,6 +18,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -463,10 +464,7 @@ bool IsSpecialSymbol(char16_t c) {
 bool IsSingleUsernameType(autofill::FieldType type) {
   return type == autofill::SINGLE_USERNAME ||
          type == autofill::SINGLE_USERNAME_FORGOT_PASSWORD ||
-         (type == autofill::SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES &&
-          base::FeatureList::IsEnabled(
-              password_manager::features::
-                  kUsernameFirstFlowWithIntermediateValuesPredictions));
+         type == autofill::SINGLE_USERNAME_WITH_INTERMEDIATE_VALUES;
 }
 
 std::u16string GetHumanReadableRealm(const std::string& signon_realm) {
@@ -479,7 +477,7 @@ std::u16string GetHumanReadableRealm(const std::string& signon_realm) {
                              maybe_facet_uri.android_package_name() + "/");
   }
   GURL realm(signon_realm);
-  if (realm.is_valid()) {
+  if (realm.is_valid() && realm.has_host()) {
     return base::UTF8ToUTF16(realm.host());
   }
   return base::UTF8ToUTF16(signon_realm);

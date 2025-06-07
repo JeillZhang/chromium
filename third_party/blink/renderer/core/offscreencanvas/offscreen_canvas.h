@@ -127,6 +127,7 @@ class CORE_EXPORT OffscreenCanvas final
               const SkIRect& damage_rect) override;
   bool ShouldAccelerate2dContext() const override;
   CanvasResourceDispatcher* GetOrCreateResourceDispatcher() override;
+  void DiscardResourceDispatcher() override { frame_dispatcher_ = nullptr; }
   UkmParameters GetUkmParameters() override;
 
   // Partial CanvasResourceHost implementation
@@ -169,11 +170,9 @@ class CORE_EXPORT OffscreenCanvas final
                                                ExceptionState&) final;
 
   // CanvasImageSource implementation
-  scoped_refptr<Image> GetSourceImageForCanvas(
-      FlushReason,
-      SourceImageStatus*,
-      const gfx::SizeF&,
-      const AlphaDisposition alpha_disposition = kPremultiplyAlpha) final;
+  scoped_refptr<Image> GetSourceImageForCanvas(FlushReason,
+                                               SourceImageStatus*,
+                                               const gfx::SizeF&) final;
   bool WouldTaintOrigin() const final { return !origin_clean_; }
   gfx::SizeF ElementSize(const gfx::SizeF& default_object_size,
                          const RespectImageOrientationEnum) const final {
@@ -184,8 +183,8 @@ class CORE_EXPORT OffscreenCanvas final
   // overrides CanvasImageSource::IsAccelerated()
   bool IsAccelerated() const final;
 
-  // overrides CanvasRenderingContextHost::EnableAcceleration()
-  bool EnableAcceleration() final;
+  // overrides CanvasRenderingContextHost::EnableAccelerationForCanvas2D()
+  bool EnableAccelerationForCanvas2D() final;
 
   DispatchEventResult HostDispatchEvent(Event* event) override {
     return DispatchEvent(*event);
@@ -195,17 +194,15 @@ class CORE_EXPORT OffscreenCanvas final
   bool IsWebGL2Enabled() const override { return true; }
   bool IsWebGLBlocked() const override { return false; }
 
-  void CheckForGpuContextLost();
-  void SetRestoringGpuContext(bool restoring_gpu_context) {
-    restoring_gpu_context_ = restoring_gpu_context;
-  }
-
   TextDirection GetTextDirection(const ComputedStyle*) override;
   void SetTextDirection(TextDirection direction) {
     text_direction_ = direction;
   }
 
-  FontSelector* GetFontSelector() override;
+  const LayoutLocale* GetLocale() const override;
+  void SetLocale(scoped_refptr<const LayoutLocale> locale);
+
+  UniqueFontSelector* GetFontSelector() override;
 
   void Trace(Visitor*) const override;
 
@@ -272,6 +269,10 @@ class CORE_EXPORT OffscreenCanvas final
   DOMNodeId placeholder_canvas_id_ = kInvalidDOMNodeId;
   std::optional<TextDirection> text_direction_;
 
+  // Required for the TextStyle lang attribute, only non-null if control
+  // was transferred from an HTML canvas.
+  scoped_refptr<const LayoutLocale> locale_ = nullptr;
+
   bool disposing_ = false;
   bool is_neutered_ = false;
   bool origin_clean_ = true;
@@ -297,7 +298,6 @@ class CORE_EXPORT OffscreenCanvas final
   uint32_t client_id_ = 0;
   uint32_t sink_id_ = 0;
 
-  bool restoring_gpu_context_ = false;
   bool transfer_to_gpu_texture_was_invoked_ = false;
 
   NO_UNIQUE_ADDRESS V8ExternalMemoryAccounterBase external_memory_accounter_;

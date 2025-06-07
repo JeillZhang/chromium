@@ -258,8 +258,8 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   // Visibility and LayerTreeFrameSink -------------------------------
 
   // Sets or gets if the LayerTreeHost is visible. When not visible it will:
-  // - Not request a new LayerTreeFrameSink from the client (except
-  //   `kWarmUpCompositor` is enabled and warm-up is explicitly requested).
+  // - Not request a new LayerTreeFrameSink from the client (except the warm-up
+  //   is explicitly requested by `SetShouldWarmUp`).
   // - Stop submitting frames to the display compositor.
   // - Stop producing main frames and committing them.
   // The LayerTreeHost is not visible when first created, so this must be called
@@ -268,10 +268,7 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   bool IsVisible() const;
 
   // Indicates that warm-up is requested to create a new LayerTreeFrameSink
-  // even if the LayerTreeHost is invisible. This is an experimental function
-  // and only used if `kWarmUpCompositor` is enabled. Currently, this will be
-  // requested only from prerendered pages. Please see crbug.com/41496019 for
-  // more details.
+  // even if the LayerTreeHost is invisible.
   void SetShouldWarmUp();
   bool ShouldWarmUp() const;
 
@@ -297,7 +294,7 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   // for instance in the case of RequestAnimationFrame from blink to ensure the
   // main frame update is run on the next tick without preemptively forcing a
   // full commit synchronization or layer updates.
-  void SetNeedsAnimate();
+  void SetNeedsAnimate(bool urgent = false);
 
   // Calls SetNeedsAnimate() if there is no main frame already in progress.
   void SetNeedsAnimateIfNotInsideMainFrame();
@@ -371,6 +368,8 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   void OnDeferCommitsChanged(bool defer_status,
                              PaintHoldingReason reason,
                              std::optional<PaintHoldingCommitTrigger> trigger);
+
+  void SetShouldThrottleFrameRate(bool flag);
 
   // Returns whether there are any outstanding ScopedDeferMainFrameUpdate,
   // though commits may be deferred also when the local_surface_id_from_parent()
@@ -898,7 +897,9 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
                                          ElementListType tree_type) override {}
 
   void QueueImageDecode(const DrawImage& image,
-                        base::OnceCallback<void(bool)> callback);
+                        base::OnceCallback<void(bool)> callback,
+                        bool speculative);
+  bool SpeculativeDecodeRequestInFlight() const;
   void ImageDecodesFinished(const std::vector<std::pair<int, bool>>& results);
 
   void RequestBeginMainFrameNotExpected(bool new_state);
@@ -914,6 +915,7 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
 
   void SetSourceURL(ukm::SourceId source_id, const GURL& url);
   base::ReadOnlySharedMemoryRegion CreateSharedMemoryForSmoothnessUkm();
+  base::ReadOnlySharedMemoryRegion CreateSharedMemoryForDroppedFramesUkm();
 
   void SetRenderFrameObserver(
       std::unique_ptr<RenderFrameMetadataObserver> observer);
@@ -1123,7 +1125,7 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
 
   raw_ptr<RasterDarkModeFilter> dark_mode_filter_;
 
-  std::unordered_map<int, base::OnceCallback<void(bool)>>
+  std::unordered_map<int, std::pair<base::OnceCallback<void(bool)>, bool>>
       pending_image_decodes_;
 
   struct ScrollAnimationState {

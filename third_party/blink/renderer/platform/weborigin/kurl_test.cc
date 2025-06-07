@@ -28,10 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include <array>
 
@@ -912,7 +908,7 @@ TEST(KURLTest, urlStrippedForUseAsReferrerRespectsReferrerScheme) {
 #endif
   SchemeRegistry::RegisterURLSchemeAsAllowedForReferrer(foobar_scheme);
   EXPECT_EQ("foobar://somepage/", foobar_url.StrippedForUseAsReferrer());
-  SchemeRegistry::RemoveURLSchemeAsAllowedForReferrer(foobar_scheme);
+  SchemeRegistry::RemoveURLSchemeAsAllowedForReferrerForTest(foobar_scheme);
 }
 
 TEST(KURLTest, strippedForUseAsReferrer) {

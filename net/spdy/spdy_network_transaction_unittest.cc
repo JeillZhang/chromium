@@ -4253,11 +4253,13 @@ TEST_P(SpdyNetworkTransactionTest, GracefulGoaway) {
                      SecureDnsPolicy::kAllow,
                      /*disable_cert_verification_network_fetches=*/false);
   EXPECT_TRUE(
-      spdy_session_pool->HasAvailableSession(key, /* is_websocket = */ false));
+      spdy_session_pool->HasAvailableSession(key,
+                                             /*enable_ip_based_pooling=*/true,
+                                             /*is_websocket=*/false));
   base::WeakPtr<SpdySession> spdy_session =
-      spdy_session_pool->FindAvailableSession(
-          key, /* enable_ip_based_pooling = */ true,
-          /* is_websocket = */ false, log_);
+      spdy_session_pool->FindAvailableSession(key,
+                                              /*enable_ip_based_pooling=*/true,
+                                              /*is_websocket=*/false, log_);
   EXPECT_TRUE(spdy_session);
 
   // Start second transaction.
@@ -4290,7 +4292,9 @@ TEST_P(SpdyNetworkTransactionTest, GracefulGoaway) {
 
   // Graceful GOAWAY was received, SpdySession should be unavailable.
   EXPECT_FALSE(
-      spdy_session_pool->HasAvailableSession(key, /* is_websocket = */ false));
+      spdy_session_pool->HasAvailableSession(key,
+                                             /*enable_ip_based_pooling=*/true,
+                                             /*is_websocket=*/false));
   spdy_session = spdy_session_pool->FindAvailableSession(
       key, /* enable_ip_based_pooling = */ true,
       /* is_websocket = */ false, log_);
@@ -7037,8 +7041,8 @@ TEST_P(SpdyNetworkTransactionTest, WebSocketOpensNewConnection) {
   request2.url = GURL("wss://www.example.org/");
   request2.traffic_annotation =
       net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS);
-  EXPECT_TRUE(HostPortPair::FromURL(request_.url)
-                  .Equals(HostPortPair::FromURL(request2.url)));
+  EXPECT_EQ(HostPortPair::FromURL(request_.url),
+            HostPortPair::FromURL(request2.url));
   request2.extra_headers.SetHeader("Connection", "Upgrade");
   request2.extra_headers.SetHeader("Upgrade", "websocket");
   request2.extra_headers.SetHeader("Origin", "http://www.example.org");
@@ -7136,8 +7140,8 @@ TEST_P(SpdyNetworkTransactionTest,
   request2.url = GURL("wss://www.example.org/");
   request2.traffic_annotation =
       net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS);
-  EXPECT_TRUE(HostPortPair::FromURL(request_.url)
-                  .Equals(HostPortPair::FromURL(request2.url)));
+  EXPECT_EQ(HostPortPair::FromURL(request_.url),
+            HostPortPair::FromURL(request2.url));
   request2.extra_headers.SetHeader("Connection", "Upgrade");
   request2.extra_headers.SetHeader("Upgrade", "websocket");
   request2.extra_headers.SetHeader("Origin", "http://www.example.org");
@@ -7266,8 +7270,8 @@ TEST_P(SpdyNetworkTransactionTest, WebSocketOverHTTP2) {
   request2.url = GURL("wss://www.example.org/");
   request2.traffic_annotation =
       net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS);
-  EXPECT_TRUE(HostPortPair::FromURL(request_.url)
-                  .Equals(HostPortPair::FromURL(request2.url)));
+  EXPECT_EQ(HostPortPair::FromURL(request_.url),
+            HostPortPair::FromURL(request2.url));
   request2.extra_headers.SetHeader("Origin", "http://www.example.org");
   request2.extra_headers.SetHeader("Sec-WebSocket-Version", "13");
   // The following two headers must be removed by WebSocketHttp2HandshakeStream.
@@ -7409,8 +7413,8 @@ TEST_P(SpdyNetworkTransactionTest,
   request2.url = GURL("wss://www.example.org/");
   request2.traffic_annotation =
       net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS);
-  EXPECT_TRUE(HostPortPair::FromURL(request_.url)
-                  .Equals(HostPortPair::FromURL(request2.url)));
+  EXPECT_EQ(HostPortPair::FromURL(request_.url),
+            HostPortPair::FromURL(request2.url));
   request2.extra_headers.SetHeader("Connection", "Upgrade");
   request2.extra_headers.SetHeader("Upgrade", "websocket");
   request2.extra_headers.SetHeader("Origin", "http://www.example.org");
@@ -7564,7 +7568,7 @@ TEST_P(SpdyNetworkTransactionTest,
                       NetworkAnonymizationKey(), SecureDnsPolicy::kAllow,
                       /*disable_cert_verification_network_fetches=*/false);
   EXPECT_TRUE(helper.session()->spdy_session_pool()->HasAvailableSession(
-      key1, /* is_websocket = */ false));
+      key1, /*enable_ip_based_pooling=*/true, /*is_websocket=*/false));
   base::WeakPtr<SpdySession> spdy_session1 =
       helper.session()->spdy_session_pool()->FindAvailableSession(
           key1, /* enable_ip_based_pooling = */ true,
@@ -7582,7 +7586,9 @@ TEST_P(SpdyNetworkTransactionTest,
                       NetworkAnonymizationKey(), SecureDnsPolicy::kAllow,
                       /*disable_cert_verification_network_fetches=*/false);
   EXPECT_TRUE(helper.session()->spdy_session_pool()->HasAvailableSession(
-      key2, /* is_websocket = */ true));
+      key2, /*enable_ip_based_pooling=*/true, /*is_websocket=*/true));
+  EXPECT_FALSE(helper.session()->spdy_session_pool()->HasAvailableSession(
+      key2, /*enable_ip_based_pooling=*/false, /*is_websocket=*/false));
   base::WeakPtr<SpdySession> spdy_session2 =
       helper.session()->spdy_session_pool()->FindAvailableSession(
           key1, /* enable_ip_based_pooling = */ true,
@@ -7766,8 +7772,8 @@ TEST_P(SpdyNetworkTransactionTest, WebSocketNegotiatesHttp2) {
   request.url = GURL("wss://www.example.org/");
   request.traffic_annotation =
       net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS);
-  EXPECT_TRUE(HostPortPair::FromURL(request_.url)
-                  .Equals(HostPortPair::FromURL(request.url)));
+  EXPECT_EQ(HostPortPair::FromURL(request_.url),
+            HostPortPair::FromURL(request.url));
   request.extra_headers.SetHeader("Connection", "Upgrade");
   request.extra_headers.SetHeader("Upgrade", "websocket");
   request.extra_headers.SetHeader("Origin", "http://www.example.org");
@@ -7902,8 +7908,8 @@ TEST_P(SpdyNetworkTransactionTest, WebSocketHttp11Required) {
   request2.url = GURL("wss://www.example.org/");
   request2.traffic_annotation =
       net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS);
-  EXPECT_TRUE(HostPortPair::FromURL(request_.url)
-                  .Equals(HostPortPair::FromURL(request2.url)));
+  EXPECT_EQ(HostPortPair::FromURL(request_.url),
+            HostPortPair::FromURL(request2.url));
   request2.extra_headers.SetHeader("Origin", "http://www.example.org");
   request2.extra_headers.SetHeader("Sec-WebSocket-Version", "13");
   // The following two headers must be removed by WebSocketHttp2HandshakeStream.
@@ -8122,8 +8128,8 @@ TEST_P(SpdyNetworkTransactionTest, SecureWebSocketOverH2OverH2Proxy) {
   request2.url = GURL("wss://www.example.org/");
   request2.traffic_annotation =
       net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS);
-  EXPECT_TRUE(HostPortPair::FromURL(request_.url)
-                  .Equals(HostPortPair::FromURL(request2.url)));
+  EXPECT_EQ(HostPortPair::FromURL(request_.url),
+            HostPortPair::FromURL(request2.url));
   request2.extra_headers.SetHeader("Origin", "http://www.example.org");
   request2.extra_headers.SetHeader("Sec-WebSocket-Version", "13");
   // The following two headers must be removed by WebSocketHttp2HandshakeStream.

@@ -7,7 +7,6 @@
 
 #include <memory>
 
-#include "base/strings/string_util.h"
 #include "content/public/browser/desktop_media_id.h"
 #include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/web_contents.h"
@@ -25,6 +24,7 @@ std::unique_ptr<content::MediaStreamUI> GetDevicesForDesktopCapture(
     bool capture_audio,
     bool disable_local_echo,
     bool suppress_local_audio_playback,
+    bool restrict_own_audio,
     bool display_notification,
     const std::u16string& application_title,
     bool captured_surface_control_active,

@@ -20,7 +20,6 @@
 #include "base/stl_util.h"
 #include "crypto/openssl_util.h"
 #include "crypto/secure_util.h"
-#include "crypto/symmetric_key.h"
 #include "third_party/boringssl/src/include/openssl/hmac.h"
 
 namespace crypto {
@@ -53,10 +52,6 @@ bool HMAC::Init(const unsigned char* key, size_t key_length) {
   initialized_ = true;
   key_.assign(key, key + key_length);
   return true;
-}
-
-bool HMAC::Init(const SymmetricKey* key) {
-  return Init(key->key());
 }
 
 bool HMAC::Sign(std::string_view data,
@@ -123,6 +118,8 @@ const EVP_MD* EVPMDForHashKind(crypto::hash::HashKind kind) {
       return EVP_sha1();
     case crypto::hash::HashKind::kSha256:
       return EVP_sha256();
+    case crypto::hash::HashKind::kSha384:
+      return EVP_sha384();
     case crypto::hash::HashKind::kSha512:
       return EVP_sha512();
   }

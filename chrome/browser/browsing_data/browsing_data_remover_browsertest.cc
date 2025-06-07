@@ -72,6 +72,7 @@
 #include "media/mojo/mojom/media_types.mojom.h"
 #include "media/mojo/services/video_decode_perf_history.h"
 #include "media/mojo/services/webrtc_video_perf_history.h"
+#include "net/base/features.h"
 #include "net/cookies/cookie_partition_key.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -160,10 +161,6 @@ class BrowsingDataRemoverBrowserTest
 #if BUILDFLAG(ENABLE_LIBRARY_CDMS)
     enabled_features.push_back(media::kExternalClearKeyForTesting);
 #endif
-    // TODO(crbug.com/333756088): WebSQL is disabled everywhere by default as of
-    // M119 (crbug/695592) except on Android WebView. This is enabled for
-    // Android only to indirectly cover WebSQL deletions on WebView.
-    enabled_features.push_back(blink::features::kWebSQLAccess);
     InitFeatureLists(std::move(enabled_features), std::move(disabled_features));
   }
 
@@ -239,7 +236,7 @@ class BrowsingDataRemoverBrowserTest
     EXPECT_FALSE(HasDataForType(type));
   }
 
-  // Test that storage systems like filesystem and websql, where just an access
+  // Test that storage systems like filesystem, where just an access
   // creates an empty store, are counted and deleted correctly.
   void TestEmptySiteData(const std::string& type, TimeEnum delete_begin) {
     EXPECT_EQ(0, GetSiteDataCount());
@@ -391,7 +388,7 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataRemoverBrowserTest, MediaDeviceIdSalt) {
 }
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
-// Test that Sync is paused when cookies are cleared.
+// Test that Sync is not paused when cookies are cleared.
 IN_PROC_BROWSER_TEST_F(DiceBrowsingDataRemoverBrowserTest, SyncToken) {
   Profile* profile = browser()->profile();
   // Set a Gaia cookie.
@@ -405,24 +402,20 @@ IN_PROC_BROWSER_TEST_F(DiceBrowsingDataRemoverBrowserTest, SyncToken) {
       AddAccountToProfile(kSecondaryAccountId, profile, /*is_primary=*/false);
   // Clear cookies.
   RemoveAndWait(content::BrowsingDataRemover::DATA_TYPE_COOKIES);
-  // Check that the Sync account was not removed and Sync was paused.
+  // Check that the primary account was not removed and has valid auth.
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
   EXPECT_TRUE(
       identity_manager->HasAccountWithRefreshToken(primary_account.account_id));
-  EXPECT_EQ(
-      GoogleServiceAuthError::InvalidGaiaCredentialsReason::
-          CREDENTIALS_REJECTED_BY_CLIENT,
-      identity_manager
-          ->GetErrorStateOfRefreshTokenForAccount(primary_account.account_id)
-          .GetInvalidGaiaCredentialsReason());
+  EXPECT_FALSE(
+      identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
+          primary_account.account_id));
   // Check that the secondary token was revoked.
   EXPECT_FALSE(identity_manager->HasAccountWithRefreshToken(
       secondary_account.account_id));
 }
 
-// Test that Sync is not paused when cookies are cleared, if synced data is
-// being deleted.
+// Test that Sync is not paused when cookies are cleared.
 IN_PROC_BROWSER_TEST_F(DiceBrowsingDataRemoverBrowserTest,
                        SyncTokenScopedDeletion) {
   Profile* profile = browser()->profile();
@@ -435,10 +428,6 @@ IN_PROC_BROWSER_TEST_F(DiceBrowsingDataRemoverBrowserTest,
   const char kSecondaryAccountId[] = "secondary_account_id";
   AccountInfo secondary_account =
       AddAccountToProfile(kSecondaryAccountId, profile, /*is_primary=*/false);
-  // Sync data is being deleted.
-  std::unique_ptr<AccountReconcilor::ScopedSyncedDataDeletion> deletion =
-      AccountReconcilorFactory::GetForProfile(profile)
-          ->GetScopedSyncDataDeletion();
   // Clear cookies.
   RemoveAndWait(content::BrowsingDataRemover::DATA_TYPE_COOKIES);
   // Check that the Sync token was not revoked.
@@ -453,14 +442,14 @@ IN_PROC_BROWSER_TEST_F(DiceBrowsingDataRemoverBrowserTest,
       secondary_account.account_id));
 }
 
-// Test that Sync is paused when cookies are cleared if Sync was in error, even
-// if synced data is being deleted.
+// Test that Sync is left in error when cookies are cleared.
 IN_PROC_BROWSER_TEST_F(DiceBrowsingDataRemoverBrowserTest, SyncTokenError) {
   Profile* profile = browser()->profile();
   // Set a Gaia cookie.
   ASSERT_TRUE(SetGaiaCookieForProfile(profile));
   // Set a Sync account with authentication error.
   const char kAccountId[] = "account_id";
+
   AccountInfo primary_account =
       AddAccountToProfile(kAccountId, profile, /*is_primary=*/true);
   auto* identity_manager = IdentityManagerFactory::GetForProfile(profile);
@@ -470,10 +459,6 @@ IN_PROC_BROWSER_TEST_F(DiceBrowsingDataRemoverBrowserTest, SyncTokenError) {
           GoogleServiceAuthError::InvalidGaiaCredentialsReason::
               CREDENTIALS_REJECTED_BY_SERVER));
 
-  // Sync data is being deleted.
-  std::unique_ptr<AccountReconcilor::ScopedSyncedDataDeletion> deletion =
-      AccountReconcilorFactory::GetForProfile(profile)
-          ->GetScopedSyncDataDeletion();
   // Clear cookies.
   RemoveAndWait(content::BrowsingDataRemover::DATA_TYPE_COOKIES);
   // Check that the account was not removed and Sync was paused.
@@ -481,7 +466,7 @@ IN_PROC_BROWSER_TEST_F(DiceBrowsingDataRemoverBrowserTest, SyncTokenError) {
       identity_manager->HasAccountWithRefreshToken(primary_account.account_id));
   EXPECT_EQ(
       GoogleServiceAuthError::InvalidGaiaCredentialsReason::
-          CREDENTIALS_REJECTED_BY_CLIENT,
+          CREDENTIALS_REJECTED_BY_SERVER,
       identity_manager
           ->GetErrorStateOfRefreshTokenForAccount(primary_account.account_id)
           .GetInvalidGaiaCredentialsReason());
@@ -678,30 +663,6 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataRemoverBrowserTest, WebrtcVideoPerfHistory) {
         }));
     run_loop.Run();
   }
-}
-
-// TODO(crbug.com/333756088): WebSQL is disabled everywhere except Android
-// WebView.
-#if !BUILDFLAG(IS_ANDROID)
-#define MAYBE_Database DISABLED_Database
-#else
-#define MAYBE_Database Database
-#endif
-// Verify can modify database after deleting it.
-IN_PROC_BROWSER_TEST_F(BrowsingDataRemoverBrowserTest, MAYBE_Database) {
-  GURL url = embedded_test_server()->GetURL("/simple_database.html");
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(GetBrowser(), url));
-
-  RunScriptAndCheckResult("createTable()", "done");
-  RunScriptAndCheckResult("insertRecord('text')", "done");
-  RunScriptAndCheckResult("getRecords()", "text");
-
-  RemoveAndWait(chrome_browsing_data_remover::DATA_TYPE_SITE_DATA);
-
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(GetBrowser(), url));
-  RunScriptAndCheckResult("createTable()", "done");
-  RunScriptAndCheckResult("insertRecord('text2')", "done");
-  RunScriptAndCheckResult("getRecords()", "text2");
 }
 
 // Verifies that cache deletion finishes successfully. Completes deletion of
@@ -1064,19 +1025,17 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataRemoverStorageBucketsBrowserTest,
   auto* quota_manager_proxy = quota_manager->proxy();
 
   quota_manager_proxy->CreateBucketForTesting(
-      storage_key, "drafts", blink::mojom::StorageType::kTemporary,
-      base::SequencedTaskRunner::GetCurrentDefault(),
+      storage_key, "drafts", base::SequencedTaskRunner::GetCurrentDefault(),
       base::BindOnce(
           [](storage::QuotaErrorOr<storage::BucketInfo> error_or_bucket_info) {
           }));
   quota_manager_proxy->CreateBucketForTesting(
-      storage_key, "inbox", blink::mojom::StorageType::kTemporary,
-      base::SequencedTaskRunner::GetCurrentDefault(),
+      storage_key, "inbox", base::SequencedTaskRunner::GetCurrentDefault(),
       base::BindOnce(
           [](storage::QuotaErrorOr<storage::BucketInfo> error_or_bucket_info) {
           }));
   quota_manager_proxy->CreateBucketForTesting(
-      storage_key, "attachments", blink::mojom::StorageType::kTemporary,
+      storage_key, "attachments",
       base::SequencedTaskRunner::GetCurrentDefault(),
       base::BindOnce(
           [](storage::QuotaErrorOr<storage::BucketInfo> error_or_bucket_info) {
@@ -1085,7 +1044,7 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataRemoverStorageBucketsBrowserTest,
   ClearSiteDataAndWait(origin, storage_key, {"drafts", "attachments"});
 
   quota_manager_proxy->GetBucketsForStorageKey(
-      storage_key, blink::mojom::StorageType::kTemporary,
+      storage_key,
       /*delete_expired*/ false, base::SequencedTaskRunner::GetCurrentDefault(),
       base::BindOnce([](storage::QuotaErrorOr<std::set<storage::BucketInfo>>
                             error_or_buckets) {
@@ -1100,10 +1059,10 @@ const char kImplHistogramPrefix[] = "History.ClearBrowsingData.Duration.Task.";
 // Add data types here that support filtering and only delete data that matches
 // the BrowsingDataFilterBuilder.
 const std::vector<std::string_view> kSupportsOriginFilteringImpl{
-    "AuthCache",           "EmbedderData",     "HttpCache",
-    "NetworkErrorLogging", "PreflightCache",   "ReportingCache",
-    "SharedDictionary",    "StoragePartition", "Synchronous",
-    "TrustTokens",
+    "AuthCache",           "EmbedderData",   "HttpCache",
+    "NetworkErrorLogging", "PrefetchCache",  "PreflightCache",
+    "PrerenderCache",      "ReportingCache", "SharedDictionary",
+    "StoragePartition",    "Synchronous",    "TrustTokens",
 };
 const std::vector<std::string_view> kSupportsOriginFilteringDelegate{
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_WIN)
@@ -1352,42 +1311,6 @@ IN_PROC_BROWSER_TEST_P(BrowsingDataRemoverBrowserTestP,
   TestEmptySiteData("FileSystem", GetParam());
 }
 
-// TODO(crbug.com/333756088): WebSQL is disabled everywhere except Android
-// WebView.
-#if !BUILDFLAG(IS_ANDROID)
-#define MAYBE_WebSqlDeletion DISABLED_WebSqlDeletion
-#else
-#define MAYBE_WebSqlDeletion WebSqlDeletion
-#endif
-IN_PROC_BROWSER_TEST_P(BrowsingDataRemoverBrowserTestP, MAYBE_WebSqlDeletion) {
-  TestSiteData("WebSql", GetParam());
-}
-
-// TODO(crbug.com/333756088): WebSQL is disabled everywhere except Android
-// WebView.
-#if !BUILDFLAG(IS_ANDROID)
-#define MAYBE_WebSqlIncognitoDeletion DISABLED_WebSqlIncognitoDeletion
-#else
-#define MAYBE_WebSqlIncognitoDeletion WebSqlIncognitoDeletion
-#endif
-IN_PROC_BROWSER_TEST_P(BrowsingDataRemoverBrowserTestP,
-                       MAYBE_WebSqlIncognitoDeletion) {
-  UseIncognitoBrowser();
-  TestSiteData("WebSql", GetParam());
-}
-
-// TODO(crbug.com/333756088): WebSQL is disabled everywhere except Android
-// WebView.
-#if !BUILDFLAG(IS_ANDROID)
-#define MAYBE_EmptyWebSqlDeletion DISABLED_EmptyWebSqlDeletion
-#else
-#define MAYBE_EmptyWebSqlDeletion EmptyWebSqlDeletion
-#endif
-IN_PROC_BROWSER_TEST_P(BrowsingDataRemoverBrowserTestP,
-                       MAYBE_EmptyWebSqlDeletion) {
-  TestEmptySiteData("WebSql", GetParam());
-}
-
 IN_PROC_BROWSER_TEST_P(BrowsingDataRemoverBrowserTestP, IndexedDbDeletion) {
   TestSiteData("IndexedDb", GetParam());
 }
@@ -1571,11 +1494,6 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataRemoverBrowserTest,
 const std::vector<std::string> kStorageTypes{
     "Cookie",    "LocalStorage",  "FileSystem",   "SessionStorage",
     "IndexedDb", "ServiceWorker", "CacheStorage", "MediaLicense",
-// TODO(crbug.com/333756088): WebSQL is disabled everywhere except Android
-// WebView.
-#if BUILDFLAG(IS_ANDROID)
-    "WebSql",
-#endif
 };
 
 // Test that storage doesn't leave any traces on disk.
@@ -1648,11 +1566,6 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataRemoverBrowserTest, StorageRemovedFromDisk) {
 const std::vector<std::string> kSessionOnlyStorageTestTypes{
     "Cookie",    "LocalStorage",  "FileSystem",   "SessionStorage",
     "IndexedDb", "ServiceWorker", "CacheStorage", "MediaLicense",
-// TODO(crbug.com/333756088): WebSQL is disabled everywhere except Android
-// WebView.
-#if BUILDFLAG(IS_ANDROID)
-    "WebSql",
-#endif
 };
 
 // Test that storage gets deleted if marked as SessionOnly.
@@ -1763,7 +1676,7 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataRemoverBrowserTest,
                   GURL(kSecondaryUrl)),  // https://[*.]testsite.com
               content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW),
               content_settings::ProviderType::kPrefProvider,
-              /*incognito=*/false, expected_metadata)));
+              /*incognito=*/false, expected_metadata.Clone())));
   EXPECT_THAT(
       settings_map->GetSettingsForOneType(
           ContentSettingsType::TOP_LEVEL_STORAGE_ACCESS),
@@ -1776,7 +1689,7 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataRemoverBrowserTest,
                   GURL(kSecondaryUrl)),
               content_settings::ContentSettingToValue(CONTENT_SETTING_ALLOW),
               content_settings::ProviderType::kPrefProvider,
-              /*incognito=*/false, expected_metadata)));
+              /*incognito=*/false, expected_metadata.Clone())));
 
   // Remove Related Website Sets storage grants.
   std::unique_ptr<BrowsingDataFilterBuilder> filter_builder =

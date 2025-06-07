@@ -23,6 +23,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/browser/extension_action.h"
+#include "extensions/browser/extension_host.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/test/result_catcher.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -97,7 +98,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionContextMenuApiTestWithContextType,
     // Tell the extension to update the page action state.
     ResultCatcher catcher;
     ASSERT_TRUE(ui_test_utils::NavigateToURL(
-        browser(), extension->GetResourceURL("popup.html")));
+        browser(), extension->ResolveExtensionURL("popup.html")));
     ASSERT_TRUE(catcher.GetNextResult());
   }
 
@@ -105,7 +106,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionContextMenuApiTestWithContextType,
     // Tell the extension to update the page action state again.
     ResultCatcher catcher;
     ASSERT_TRUE(ui_test_utils::NavigateToURL(
-        browser(), extension->GetResourceURL("popup2.html")));
+        browser(), extension->ResolveExtensionURL("popup2.html")));
     ASSERT_TRUE(catcher.GetNextResult());
   }
 }

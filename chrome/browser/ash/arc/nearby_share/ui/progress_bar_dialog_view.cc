@@ -14,6 +14,7 @@
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/color_palette.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/bubble/bubble_border.h"
@@ -44,7 +45,7 @@ ProgressBarDialogView::ProgressBarDialogView(bool is_multiple_files)
   auto border = std::make_unique<views::BubbleBorder>(
       views::BubbleBorder::NONE, views::BubbleBorder::STANDARD_SHADOW);
   border->SetColor(ash::kColorAshDialogBackgroundColor);
-  border->SetCornerRadius(kCornerRadius);
+  border->set_rounded_corners(gfx::RoundedCornersF(kCornerRadius));
   SetBackground(std::make_unique<views::BubbleBackground>(border.get()));
   SetBorder(std::move(border));
 
@@ -58,7 +59,7 @@ ProgressBarDialogView::ProgressBarDialogView(bool is_multiple_files)
   message_label_->SetMultiLine(true);
   message_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   message_label_->SetVerticalAlignment(gfx::ALIGN_TOP);
-  AddChildView(message_label_.get());
+  AddChildViewRaw(message_label_.get());
 
   progress_bar_ = AddChildView(std::make_unique<views::ProgressBar>());
   progress_bar_->SetPreferredHeight(kProgressBarHeight);

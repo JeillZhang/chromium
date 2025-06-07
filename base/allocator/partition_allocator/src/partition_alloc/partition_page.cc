@@ -4,17 +4,16 @@
 
 #include "partition_alloc/partition_page.h"
 
-#include <algorithm>
 #include <cstdint>
 
 #include "partition_alloc/address_pool_manager.h"
 #include "partition_alloc/buildflags.h"
-#include "partition_alloc/freeslot_bitmap.h"
 #include "partition_alloc/page_allocator.h"
 #include "partition_alloc/page_allocator_constants.h"
 #include "partition_alloc/partition_address_space.h"
 #include "partition_alloc/partition_alloc_base/bits.h"
 #include "partition_alloc/partition_alloc_base/compiler_specific.h"
+#include "partition_alloc/partition_alloc_base/cxx_wrapper/algorithm.h"
 #include "partition_alloc/partition_alloc_base/numerics/safe_conversions.h"
 #include "partition_alloc/partition_alloc_check.h"
 #include "partition_alloc/partition_alloc_constants.h"
@@ -31,7 +30,7 @@ namespace {
 
 void UnmapNow(uintptr_t reservation_start,
               size_t reservation_size,
-              pool_handle pool);
+              PartitionRoot* root);
 
 PA_ALWAYS_INLINE void PartitionDirectUnmap(
     SlotSpanMetadata<MetadataKind::kReadOnly>* slot_span) {
@@ -79,7 +78,7 @@ PA_ALWAYS_INLINE void PartitionDirectUnmap(
   // while releasing the address space.
   ScopedUnlockGuard unlock{PartitionRootLock(root)};
   ScopedSyscallTimer timer{root};
-  UnmapNow(reservation_start, reservation_size, root->ChoosePool());
+  UnmapNow(reservation_start, reservation_size, root);
 }
 
 }  // namespace
@@ -217,9 +216,7 @@ void SlotSpanMetadata<MetadataKind::kWritable>::FreeSlowPath(
     }
 
 #if PA_BUILDFLAG(DCHECKS_ARE_ON)
-    const PartitionFreelistDispatcher* freelist_dispatcher =
-        PartitionRoot::FromSlotSpanMetadata(this)->get_freelist_dispatcher();
-    freelist_dispatcher->CheckFreeList(freelist_head, bucket->slot_size);
+    freelist_head->CheckFreeList(bucket->slot_size);
 #endif  // PA_BUILDFLAG(DCHECKS_ARE_ON)
 
     // If it's the current active slot span, change it. We bounce the slot span
@@ -258,11 +255,6 @@ void SlotSpanMetadata<MetadataKind::kWritable>::Decommit(PartitionRoot* root) {
   root->DecommitSystemPagesForData(
       slot_span_start, size_to_decommit,
       PageAccessibilityDisposition::kAllowKeepForPerf);
-
-#if PA_BUILDFLAG(USE_FREESLOT_BITMAP)
-  FreeSlotBitmapReset(slot_span_start, slot_span_start + size_to_decommit,
-                      bucket->slot_size);
-#endif
 
   // We actually leave the decommitted slot span in the active list. We'll sweep
   // it on to the decommitted list when we next walk the active list.
@@ -303,11 +295,8 @@ void SlotSpanMetadata<MetadataKind::kWritable>::SortFreelist(
   size_t num_free_slots = 0;
   size_t slot_size = bucket->slot_size;
 
-  const PartitionFreelistDispatcher* freelist_dispatcher =
-      PartitionRoot::FromSlotSpanMetadata(this)->get_freelist_dispatcher();
-
-  for (PartitionFreelistEntry* head = freelist_head; head;
-       head = freelist_dispatcher->GetNext(head, slot_size)) {
+  for (FreelistEntry* head = freelist_head; head;
+       head = head->GetNext(slot_size)) {
     ++num_free_slots;
     size_t offset_in_slot_span = SlotStartPtr2Addr(head) - slot_span_start;
     size_t slot_number = bucket->GetSlotNumber(offset_in_slot_span);
@@ -318,18 +307,18 @@ void SlotSpanMetadata<MetadataKind::kWritable>::SortFreelist(
 
   // Empty or single-element list is always sorted.
   if (num_free_slots > 1) {
-    PartitionFreelistEntry* back = nullptr;
-    PartitionFreelistEntry* head = nullptr;
+    FreelistEntry* back = nullptr;
+    FreelistEntry* head = nullptr;
 
     for (size_t slot_number = 0; slot_number < num_provisioned_slots;
          slot_number++) {
       if (free_slots[slot_number]) {
         uintptr_t slot_start = slot_span_start + (slot_size * slot_number);
-        auto* entry = freelist_dispatcher->EmplaceAndInitNull(slot_start);
+        auto* entry = FreelistEntry::EmplaceAndInitNull(slot_start);
         if (!head) {
           head = entry;
         } else {
-          freelist_dispatcher->SetNext(back, entry);
+          back->SetNext(entry);
         }
 
         back = entry;
@@ -352,8 +341,10 @@ namespace {
 
 void UnmapNow(uintptr_t reservation_start,
               size_t reservation_size,
-              pool_handle pool) {
+              PartitionRoot* root) {
   PA_DCHECK(reservation_start && reservation_size > 0);
+  pool_handle pool = root->ChoosePool();
+
 #if PA_BUILDFLAG(DCHECKS_ARE_ON)
   // When ENABLE_BACKUP_REF_PTR_SUPPORT is off, BRP pool isn't used.
 #if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
@@ -395,21 +386,13 @@ void UnmapNow(uintptr_t reservation_start,
   }
 #endif  // PA_BUILDFLAG(DCHECKS_ARE_ON)
 
-  PA_DCHECK((reservation_start & kSuperPageOffsetMask) == 0);
-  uintptr_t reservation_end = reservation_start + reservation_size;
-  auto* offset_ptr = ReservationOffsetPointer(reservation_start);
   // Reset the offset table entries for the given memory before unreserving
   // it. Since the memory is not unreserved and not available for other
   // threads, the table entries for the memory are not modified by other
   // threads either. So we can update the table entries without race
   // condition.
-  uint16_t i = 0;
-  for (uintptr_t address = reservation_start; address < reservation_end;
-       address += kSuperPageSize) {
-    PA_DCHECK(offset_ptr < GetReservationOffsetTableEnd(address));
-    PA_DCHECK(*offset_ptr == i++);
-    *offset_ptr++ = kOffsetTagNotAllocated;
-  }
+  root->GetReservationOffsetTable().SetNotAllocatedTag(reservation_start,
+                                                       reservation_size);
 
 #if PA_CONFIG(ENABLE_SHADOW_METADATA)
   // UnmapShadowMetadata must be done before unreserving memory, because

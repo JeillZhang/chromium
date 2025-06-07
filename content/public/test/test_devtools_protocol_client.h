@@ -73,14 +73,18 @@ class TestDevToolsProtocolClient : public DevToolsAgentHostClient {
       const std::string& notification,
       const NotificationMatcher& matcher);
 
+  base::Value::Dict WaitForNotification(const std::string& notification,
+                                        bool allow_existing);
+
  protected:
+  void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
+                               base::span<const uint8_t> message) override;
+
   bool HasExistingNotification() const { return !notifications_.empty(); }
   bool HasExistingNotification(const std::string& notification) const;
   bool HasExistingNotificationMatching(
       base::FunctionRef<bool(const base::Value::Dict&)> pred) const;
 
-  base::Value::Dict WaitForNotification(const std::string& notification,
-                                        bool allow_existing);
 
   base::Value::Dict WaitForNotification(const std::string& notification) {
     return WaitForNotification(notification, false);
@@ -122,8 +126,6 @@ class TestDevToolsProtocolClient : public DevToolsAgentHostClient {
   void WaitForResponse();
   void RunLoopUpdatingQuitClosure();
 
-  void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
-                               base::span<const uint8_t> message) override;
   void AgentHostClosed(DevToolsAgentHost* agent_host) override;
   std::optional<url::Origin> GetNavigationInitiatorOrigin() override;
   bool AllowUnsafeOperations() override;

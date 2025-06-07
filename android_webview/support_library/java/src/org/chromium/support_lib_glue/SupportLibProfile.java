@@ -7,6 +7,7 @@ package org.chromium.support_lib_glue;
 import static org.chromium.support_lib_glue.SupportLibWebViewChromiumFactory.recordApiCall;
 
 import android.os.CancellationSignal;
+import android.os.SystemClock;
 import android.webkit.CookieManager;
 import android.webkit.GeolocationPermissions;
 import android.webkit.ServiceWorkerController;
@@ -15,13 +16,14 @@ import android.webkit.WebStorage;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.android.webview.chromium.PrefetchException;
-import com.android.webview.chromium.PrefetchNetworkException;
 import com.android.webview.chromium.PrefetchOperationCallback;
+import com.android.webview.chromium.PrefetchOperationStatusCode;
+import com.android.webview.chromium.PrefetchParams;
 import com.android.webview.chromium.Profile;
 import com.android.webview.chromium.SpeculativeLoadingConfig;
 
 import org.chromium.android_webview.common.Lifetime;
+import org.chromium.base.ThreadUtils;
 import org.chromium.support_lib_boundary.PrefetchOperationCallbackBoundaryInterface;
 import org.chromium.support_lib_boundary.ProfileBoundaryInterface;
 import org.chromium.support_lib_boundary.SpeculativeLoadingConfigBoundaryInterface;
@@ -31,6 +33,7 @@ import org.chromium.support_lib_glue.SupportLibWebViewChromiumFactory.ApiCall;
 
 import java.lang.reflect.InvocationHandler;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 /** The support-lib glue implementation for Profile, delegates all the calls to {@link Profile}. */
 @Lifetime.Profile
@@ -83,8 +86,13 @@ public class SupportLibProfile implements ProfileBoundaryInterface {
             Executor callbackExecutor,
             /* PrefetchOperationCallback */ InvocationHandler callback) {
         recordApiCall(ApiCall.PREFETCH_URL);
-        setCancelListener(cancellationSignal, url);
-        mProfileImpl.prefetchUrl(url, null, callbackExecutor, createOperationCallback(callback));
+        prefetchUrlInternal(
+                SystemClock.uptimeMillis(),
+                url,
+                null,
+                cancellationSignal,
+                callbackExecutor,
+                createOperationCallback(callback));
     }
 
     @Override
@@ -95,28 +103,56 @@ public class SupportLibProfile implements ProfileBoundaryInterface {
             /* SpeculativeLoadingParameters */ InvocationHandler speculativeLoadingParams,
             /* PrefetchOperationCallback */ InvocationHandler callback) {
         recordApiCall(ApiCall.PREFETCH_URL_WITH_PARAMS);
+        long apiCallTriggerTimeMs = SystemClock.uptimeMillis();
         SpeculativeLoadingParametersBoundaryInterface speculativeLoadingParameters =
                 BoundaryInterfaceReflectionUtil.castToSuppLibClass(
                         SpeculativeLoadingParametersBoundaryInterface.class,
                         speculativeLoadingParams);
 
-        setCancelListener(cancellationSignal, url);
-
-        mProfileImpl.prefetchUrl(
-                url,
+        assert speculativeLoadingParameters != null;
+        PrefetchParams prefetchParams =
                 SupportLibSpeculativeLoadingParametersAdapter
                         .fromSpeculativeLoadingParametersBoundaryInterface(
-                                speculativeLoadingParameters),
+                                speculativeLoadingParameters);
+        prefetchUrlInternal(
+                apiCallTriggerTimeMs,
+                url,
+                prefetchParams,
+                cancellationSignal,
                 callbackExecutor,
                 createOperationCallback(callback));
     }
 
-    public void setCancelListener(CancellationSignal cancellationSignal, String url) {
+    private void prefetchUrlInternal(
+            long apiCallTriggerTimeMs,
+            String url,
+            @Nullable PrefetchParams prefetchParams,
+            @Nullable CancellationSignal cancellationSignal,
+            Executor callbackExecutor,
+            PrefetchOperationCallback callback) {
+        if (ThreadUtils.runningOnUiThread()) {
+            int prefetchKey =
+                    mProfileImpl.prefetchUrl(url, prefetchParams, callbackExecutor, callback);
+            setCancelListener(cancellationSignal, prefetchKey);
+        } else {
+            Consumer<Integer> prefetchKeyListener =
+                    prefetchKey -> setCancelListener(cancellationSignal, prefetchKey);
+            mProfileImpl.prefetchUrlAsync(
+                    apiCallTriggerTimeMs,
+                    url,
+                    prefetchParams,
+                    callbackExecutor,
+                    callback,
+                    prefetchKeyListener);
+        }
+    }
+
+    public void setCancelListener(CancellationSignal cancellationSignal, int prefetchKey) {
         if (cancellationSignal != null) {
             cancellationSignal.setOnCancelListener(
                     () -> {
                         recordApiCall(ApiCall.CANCEL_PREFETCH);
-                        mProfileImpl.cancelPrefetch(url);
+                        mProfileImpl.cancelPrefetch(prefetchKey);
                     });
         }
     }
@@ -156,14 +192,38 @@ public class SupportLibProfile implements ProfileBoundaryInterface {
             }
 
             @Override
-            public void onError(PrefetchException prefetchException) {
-                operationCallback.onFailure(
-                        BoundaryInterfaceReflectionUtil.createInvocationHandlerFor(
-                                prefetchException instanceof PrefetchNetworkException
-                                        ? new SupportLibPrefetchNetworkException(
-                                                (PrefetchNetworkException) prefetchException)
-                                        : new SupportLibPrefetchException(prefetchException)));
+            public void onError(
+                    @PrefetchOperationStatusCode int errorCode,
+                    String message,
+                    int networkErrorCode) {
+                mapFailure(operationCallback, errorCode, message, networkErrorCode);
             }
         };
+    }
+
+    private void mapFailure(
+            PrefetchOperationCallbackBoundaryInterface callback,
+            @PrefetchOperationStatusCode int errorCode,
+            String message,
+            int networkErrorCode) {
+        int type =
+                switch (errorCode) {
+                    case PrefetchOperationStatusCode
+                            .SERVER_FAILURE -> PrefetchOperationCallbackBoundaryInterface
+                            .PrefetchExceptionTypeBoundaryInterface.NETWORK;
+                    case PrefetchOperationStatusCode
+                            .DUPLICATE_REQUEST -> PrefetchOperationCallbackBoundaryInterface
+                            .PrefetchExceptionTypeBoundaryInterface.DUPLICATE;
+                    default -> PrefetchOperationCallbackBoundaryInterface
+                            .PrefetchExceptionTypeBoundaryInterface.GENERIC;
+                };
+        callback.onFailure(type, message, networkErrorCode);
+    }
+
+    @Override
+    public void warmUpRendererProcess() {
+        assert ThreadUtils.runningOnUiThread();
+        recordApiCall(ApiCall.PROFILE_WARM_UP_RENDERER_PROCESS);
+        mProfileImpl.warmUpRendererProcess();
     }
 }

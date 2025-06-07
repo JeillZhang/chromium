@@ -20,7 +20,6 @@
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/enterprise/connectors/connectors_service.h"
 #include "chrome/browser/enterprise/identifiers/profile_id_service_factory.h"
-#include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/reporting_util.h"
@@ -36,12 +35,10 @@
 #include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "content/public/browser/browser_context.h"
-#include "extensions/browser/event_router.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/policy/core/user_cloud_policy_manager_ash.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#include "chrome/browser/browser_process_platform_part_chromeos.h"
 #include "chromeos/components/mgs/managed_guest_session_utils.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
@@ -319,11 +316,23 @@ bool RealtimeReportingClient::ShouldIncludeDeviceInfo(bool per_profile) {
   return IncludeDeviceInfo(Profile::FromBrowserContext(context_), per_profile);
 }
 
+base::Value::Dict RealtimeReportingClient::ReportErrorDetails(
+    const policy::CloudPolicyClient::Result& upload_result) {
+  base::Value::Dict event_wrapper = base::Value::Dict();
+  event_wrapper.Set("uploaded_successfully", upload_result.IsSuccess());
+  if (!upload_result.IsSuccess()) {
+    event_wrapper.Set("error_code", upload_result.GetNetError());
+    event_wrapper.Set("error_message", upload_result.GetResponse().Clone());
+  }
+  return event_wrapper;
+}
+
 void RealtimeReportingClient::UploadCallbackDeprecated(
     base::Value::Dict event_wrapper,
     bool per_profile,
     policy::CloudPolicyClient* client,
-    EnterpriseReportingEventType eventType,
+    EnterpriseReportingEventType event_type,
+    base::TimeTicks upload_started_at,
     policy::CloudPolicyClient::Result upload_result) {
   // TODO(crbug.com/256553070): Do not crash if the client is unregistered.
   CHECK(!upload_result.IsClientNotRegisteredError());
@@ -337,17 +346,27 @@ void RealtimeReportingClient::UploadCallbackDeprecated(
             BuildDeviceDictionary(client->dm_token(), client->client_id()));
   }
 #endif
-  event_wrapper.Set("uploaded_successfully", upload_result.IsSuccess());
+  base::Value::Dict error_details = ReportErrorDetails(upload_result);
+  event_wrapper.Merge(std::move(error_details));
 
   safe_browsing::WebUIInfoSingleton::GetInstance()->AddToReportingEvents(
       std::move(event_wrapper));
 
   if (upload_result.IsSuccess()) {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadSuccess",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetSuccessfulUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
+
   } else {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadFailure",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetFailedUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
   }
 }
 
@@ -355,23 +374,34 @@ void RealtimeReportingClient::UploadCallback(
     ::chrome::cros::reporting::proto::UploadEventsRequest request,
     bool per_profile,
     policy::CloudPolicyClient* client,
-    EnterpriseReportingEventType eventType,
+    EnterpriseReportingEventType event_type,
+    base::TimeTicks upload_started_at,
     policy::CloudPolicyClient::Result upload_result) {
   base::Value::Dict event_wrapper = base::Value::Dict();
-  event_wrapper.Set("uploaded_successfully", upload_result.IsSuccess());
+  base::Value::Dict error_details = ReportErrorDetails(upload_result);
+  event_wrapper.Merge(std::move(error_details));
   event_wrapper.Set("upload_request",
                     base::EscapeNonASCII(request.SerializeAsString()));
-  event_wrapper.Set("event_type", static_cast<int>(eventType));
+  event_wrapper.Set("event_type", static_cast<int>(event_type));
 
   safe_browsing::WebUIInfoSingleton::GetInstance()->AddToReportingEvents(
       std::move(event_wrapper));
 
   if (upload_result.IsSuccess()) {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadSuccess",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetSuccessfulUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
+
   } else {
     base::UmaHistogramEnumeration("Enterprise.ReportingEventUploadFailure",
-                                  eventType);
+                                  event_type);
+    base::UmaHistogramCustomTimes(
+        GetFailedUploadDurationUmaMetricName(event_type),
+        base::TimeTicks::Now() - upload_started_at, base::Milliseconds(1),
+        base::Minutes(5), 50);
   }
 }
 
@@ -403,7 +433,9 @@ void RealtimeReportingClient::RemoveDmTokenFromRejectedSet(
 void RealtimeReportingClient::OnClientError(policy::CloudPolicyClient* client) {
   base::Value::Dict error_value;
   error_value.Set("error",
-                  "An event got an error status and hasn't been reported");
+                  "An event got an error status and hasn't been reported. Find "
+                  "details below in error_message and error_code.");
+
   error_value.Set("status", client->last_dm_status());
   safe_browsing::WebUIInfoSingleton::GetInstance()->AddToReportingEvents(
       error_value);

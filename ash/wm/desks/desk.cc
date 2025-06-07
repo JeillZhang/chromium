@@ -28,6 +28,7 @@
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
 #include "base/containers/flat_set.h"
+#include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
@@ -296,7 +297,7 @@ void Desk::OnRootWindowAdded(aura::Window* root) {
 
   // No windows should be added to the desk container on |root| prior to
   // tracking it by the desk.
-  aura::Window* desk_container = root->GetChildById(container_id_);
+  aura::Window* desk_container = GetDeskContainerForRoot(root);
   DCHECK(desk_container->children().empty());
   auto container_observer =
       std::make_unique<DeskContainerObserver>(this, desk_container);
@@ -495,7 +496,7 @@ void Desk::PrepareForActivationAnimation() {
   }
 
   for (aura::Window* root : Shell::GetAllRootWindows()) {
-    auto* container = root->GetChildById(container_id_);
+    auto* container = GetDeskContainerForRoot(root);
     container->layer()->SetOpacity(0);
     container->Show();
   }
@@ -510,8 +511,9 @@ void Desk::Activate(bool update_window_activation) {
   };
 
   if (!MaybeResetContainersOpacities()) {
-    for (aura::Window* root : Shell::GetAllRootWindows())
-      root->GetChildById(container_id_)->Show();
+    for (aura::Window* root : Shell::GetAllRootWindows()) {
+      GetDeskContainerForRoot(root)->Show();
+    }
   }
 
   is_active_ = true;
@@ -589,8 +591,9 @@ void Desk::Deactivate(bool update_window_activation) {
   auto* active_window = window_util::GetActiveWindow();
 
   // Hide the associated containers on all roots.
-  for (aura::Window* root : Shell::GetAllRootWindows())
-    root->GetChildById(container_id_)->Hide();
+  for (aura::Window* root : Shell::GetAllRootWindows()) {
+    GetDeskContainerForRoot(root)->Hide();
+  }
 
   is_active_ = false;
   last_day_visited_ = desks_restore_util::GetDaysFromLocalEpoch();
@@ -739,7 +742,6 @@ void Desk::MoveWindowToDesk(aura::Window* window,
 
 aura::Window* Desk::GetDeskContainerForRoot(aura::Window* root) const {
   DCHECK(root);
-
   return root->GetChildById(container_id_);
 }
 
@@ -1043,7 +1045,7 @@ bool Desk::MaybeResetContainersOpacities() {
     return false;
 
   for (aura::Window* root : Shell::GetAllRootWindows()) {
-    auto* container = root->GetChildById(container_id_);
+    auto* container = GetDeskContainerForRoot(root);
     container->layer()->SetOpacity(1);
   }
   started_activation_animation_ = false;

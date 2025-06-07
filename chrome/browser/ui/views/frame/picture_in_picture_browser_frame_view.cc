@@ -21,7 +21,6 @@
 #include "chrome/browser/ui/views/overlay/overlay_window_image_button.h"
 #include "chrome/browser/ui/views/page_info/page_info_bubble_view.h"
 #include "chrome/grit/generated_resources.h"
-#include "chromeos/ui/frame/frame_utils.h"
 #include "components/omnibox/browser/location_bar_model_impl.h"
 #include "components/vector_icons/vector_icons.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
@@ -62,17 +61,15 @@
 #include "ui/aura/window.h"
 #endif
 
-#if BUILDFLAG(IS_LINUX)
-#include "chrome/browser/themes/theme_service.h"
-#include "chrome/browser/themes/theme_service_factory.h"
-#include "chrome/browser/ui/views/frame/browser_frame_view_paint_utils_linux.h"
-#include "chrome/browser/ui/views/frame/desktop_browser_frame_aura_linux.h"
-#include "ui/linux/linux_ui.h"
-#endif
-
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/common/constants.h"
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+
+// Windows, Mac and CrOS do not clip child widgets to their parents, so we
+// don't have to worry about resizing quite as much.
+#if BUILDFLAG(IS_LINUX)
+#define PLATFORM_CLIPS_CHILD_WINDOWS
+#endif
 
 namespace {
 
@@ -83,14 +80,7 @@ constexpr int kContentSettingIconSize = 16;
 // The height of the controls bar at the top of the window.
 constexpr int kTopControlsHeight = 34;
 
-#if BUILDFLAG(IS_LINUX)
-// Frame border when window shadow is not drawn.
-constexpr int kFrameBorderThickness = 4;
-#endif
-
-#if !BUILDFLAG(IS_CHROMEOS)
 constexpr int kResizeBorder = 10;
-#endif
 constexpr int kResizeAreaCornerSize = 16;
 
 // The time duration that the top bar animation will take in total.
@@ -176,22 +166,8 @@ class WindowEventObserver : public ui::EventObserver {
     gfx::Point point = event_monitor_->GetLastMouseLocation();
     views::View::ConvertPointFromScreen(pip_browser_frame_view_, &point);
 
-    gfx::Rect input_bounds = pip_browser_frame_view_->GetLocalBounds();
-
-#if BUILDFLAG(IS_LINUX)
-    // Calculate input bounds for Linux. This is needed because the input bounds
-    // is not necessary the same as the local bounds on Linux.
-    if (pip_browser_frame_view_->ShouldDrawFrameShadow()) {
-      gfx::Insets insets =
-          pip_browser_frame_view_->RestoredMirroredFrameBorderInsets();
-      if (pip_browser_frame_view_->frame()->tiled()) {
-        insets = gfx::Insets();
-      }
-      input_bounds.Inset(insets - pip_browser_frame_view_->GetInputInsets());
-    }
-#endif
-
-    return input_bounds.Contains(point);
+    gfx::Rect hit_region = pip_browser_frame_view_->GetHitRegion();
+    return hit_region.Contains(point);
   }
 
   raw_ptr<PictureInPictureBrowserFrameView> pip_browser_frame_view_;
@@ -371,8 +347,14 @@ void PictureInPictureBrowserFrameView::ChildDialogObserverHelper::
   gfx::Rect adjusted_bounds = original_bounds;
   if (!child_dialog->IsModal()) {
     // Non-modal dialogs set their bounds directly.  Expand the pip window to
-    // include them, and that's it.
+    // include them, and that's it if we're on a platform that clips child
+    // windows.  If child windows can extend past their parents, then just leave
+    // it all as is.
+#if defined(PLATFORM_CLIPS_CHILD_WINDOWS)
     adjusted_bounds.Union(dialog_bounds);
+#else
+    return;
+#endif
   } else {
     // Modal dialogs will be resized / moved to use the available space, so we
     // only need to make sure that the pip window is big enough, accounting for
@@ -484,6 +466,9 @@ PictureInPictureBrowserFrameView::PictureInPictureBrowserFrameView(
                    .SetCrossAxisAlignment(views::LayoutAlignment::kCenter)
                    .Build());
 
+  top_bar_container_view_->SetBackground(
+      views::CreateSolidBackground(kColorPipWindowTopBarBackground));
+
   // Creates the window icon.
   const gfx::FontList& font_list = views::TypographyProvider::Get().GetFont(
       CONTEXT_OMNIBOX_PRIMARY, views::style::STYLE_PRIMARY);
@@ -522,6 +507,9 @@ PictureInPictureBrowserFrameView::PictureInPictureBrowserFrameView(
                                        views::MinimumFlexSizeRule::kScaleToZero,
                                        views::MaximumFlexSizeRule::kUnbounded))
           .Build());
+
+  window_title_->SetBackgroundColor(kColorPipWindowTopBarBackground);
+  window_title_->SetEnabledColor(kColorPipWindowForeground);
 
   // Creates a container view for the top right buttons to handle the button
   // animations.
@@ -617,26 +605,6 @@ PictureInPictureBrowserFrameView::PictureInPictureBrowserFrameView(
     auto_pip_setting_overlay_ =
         AddChildView(std::move(auto_pip_setting_overlay));
   }
-
-#if BUILDFLAG(IS_LINUX)
-  auto* profile = browser_view->browser()->profile();
-  auto* linux_ui_theme = ui::LinuxUiTheme::GetForProfile(profile);
-  auto* theme_service_factory = ThemeServiceFactory::GetForProfile(profile);
-  if (linux_ui_theme && theme_service_factory->UsingSystemTheme()) {
-    bool solid_frame = !static_cast<DesktopBrowserFrameAuraLinux*>(
-                            frame->native_browser_frame())
-                            ->ShouldDrawRestoredFrameShadow();
-
-    // This may return null, but that's handled below.
-    window_frame_provider_ =
-        linux_ui_theme->GetWindowFrameProvider(solid_frame, /*tiled=*/false);
-  }
-
-  // Only one of window_frame_provider_ and frame_background_ will be used.
-  if (!window_frame_provider_) {
-    frame_background_ = std::make_unique<views::FrameBackground>();
-  }
-#endif
 }
 
 PictureInPictureBrowserFrameView::~PictureInPictureBrowserFrameView() {
@@ -834,19 +802,9 @@ gfx::Size PictureInPictureBrowserFrameView::GetMaximumSize() const {
 
 void PictureInPictureBrowserFrameView::OnThemeChanged() {
   const auto* color_provider = GetColorProvider();
-  window_title_->SetBackgroundColor(
-      color_provider->GetColor(kColorPipWindowTopBarBackground));
-  window_title_->SetEnabledColor(
-      color_provider->GetColor(kColorPipWindowForeground));
   for (ContentSettingImageView* view : content_setting_views_) {
     view->SetIconColor(color_provider->GetColor(kColorPipWindowForeground));
   }
-
-#if !BUILDFLAG(IS_LINUX)
-  // On Linux the top bar background will be drawn in OnPaint().
-  top_bar_container_view_->SetBackground(views::CreateSolidBackground(
-      color_provider->GetColor(kColorPipWindowTopBarBackground)));
-#endif
 
   BrowserNonClientFrameView::OnThemeChanged();
 }
@@ -893,7 +851,8 @@ void PictureInPictureBrowserFrameView::AddedToWidget() {
 
   // TODO(crbug.com/40279642): Don't force dark mode once we support a
   // light mode window.
-  GetWidget()->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kDark);
+  GetWidget()->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kDark,
+                                    /*background_color=*/std::nullopt);
 
   // If the AutoPiP setting overlay is set, then post a task to show it.  Don't
   // do this here, since not all observers might have found out about the new
@@ -930,40 +889,6 @@ void PictureInPictureBrowserFrameView::RemovedFromWidget() {
 
   BrowserNonClientFrameView::RemovedFromWidget();
 }
-
-#if BUILDFLAG(IS_LINUX)
-gfx::Insets
-PictureInPictureBrowserFrameView::RestoredMirroredFrameBorderInsets() const {
-  auto border = FrameBorderInsets();
-  return base::i18n::IsRTL() ? gfx::Insets::TLBR(border.top(), border.right(),
-                                                 border.bottom(), border.left())
-                             : border;
-}
-
-gfx::Insets PictureInPictureBrowserFrameView::GetInputInsets() const {
-  return gfx::Insets(ShouldDrawFrameShadow() ? kResizeBorder : 0);
-}
-
-SkRRect PictureInPictureBrowserFrameView::GetRestoredClipRegion() const {
-  gfx::RectF bounds_dip(GetLocalBounds());
-  if (ShouldDrawFrameShadow()) {
-    gfx::InsetsF border(RestoredMirroredFrameBorderInsets());
-    bounds_dip.Inset(border);
-  }
-
-  float radius_dip = 0;
-  if (window_frame_provider_) {
-    radius_dip = window_frame_provider_->GetTopCornerRadiusDip();
-  } else {
-    radius_dip = ChromeLayoutProvider::Get()->GetCornerRadiusMetric(
-        views::Emphasis::kHigh);
-  }
-  SkVector radii[4]{{radius_dip, radius_dip}, {radius_dip, radius_dip}, {}, {}};
-  SkRRect clip;
-  clip.setRectRadii(gfx::RectFToSkRect(bounds_dip), radii);
-  return clip;
-}
-#endif
 
 void PictureInPictureBrowserFrameView::SetFrameBounds(const gfx::Rect& bounds) {
   if (!base::FeatureList::IsEnabled(
@@ -1219,40 +1144,11 @@ void PictureInPictureBrowserFrameView::AnimationProgressed(
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// views::View implementations:
-
-void PictureInPictureBrowserFrameView::OnPaint(gfx::Canvas* canvas) {
-#if BUILDFLAG(IS_LINUX)
-  // Draw the PiP window frame borders and shadows, including the top bar
-  // background.
-  if (window_frame_provider_) {
-    window_frame_provider_->PaintWindowFrame(
-        canvas, GetLocalBounds(), GetTopAreaHeight(), ShouldPaintAsActive(),
-        GetInputInsets());
-  } else {
-    DCHECK(frame_background_);
-    frame_background_->set_frame_color(
-        GetColorProvider()->GetColor(kColorPipWindowTopBarBackground));
-    frame_background_->set_use_custom_frame(frame()->UseCustomFrame());
-    frame_background_->set_is_active(ShouldPaintAsActive());
-    frame_background_->set_theme_image(GetFrameImage());
-
-    frame_background_->set_theme_image_inset(
-        browser_view()->GetThemeOffsetFromBrowserView());
-    frame_background_->set_theme_overlay_image(GetFrameOverlayImage());
-    frame_background_->set_top_area_height(GetTopAreaHeight());
-    PaintRestoredFrameBorderLinux(
-        *canvas, *this, frame_background_.get(), GetRestoredClipRegion(),
-        ShouldDrawFrameShadow(), ShouldPaintAsActive(),
-        RestoredMirroredFrameBorderInsets(), GetShadowValues(),
-        frame()->tiled());
-  }
-#endif
-  BrowserNonClientFrameView::OnPaint(canvas);
-}
-
-///////////////////////////////////////////////////////////////////////////////
 // PictureInPictureBrowserFrameView implementations:
+
+gfx::Rect PictureInPictureBrowserFrameView::GetHitRegion() const {
+  return GetLocalBounds();
+}
 
 gfx::Rect PictureInPictureBrowserFrameView::ConvertTopBarControlViewBounds(
     views::View* control_view,
@@ -1376,32 +1272,12 @@ void PictureInPictureBrowserFrameView::UpdateTopBarView(bool render_active) {
   }
 }
 
-gfx::Insets PictureInPictureBrowserFrameView::FrameBorderInsets() const {
-#if BUILDFLAG(IS_LINUX)
-  if (window_frame_provider_) {
-    const auto insets = window_frame_provider_->GetFrameThicknessDip();
-    const bool tiled = frame()->tiled();
-
-    // If edges of the window are tiled and snapped to the edges of the desktop,
-    // window_frame_provider_ will skip drawing.
-    return tiled ? gfx::Insets() : insets;
-  }
-  return GetRestoredFrameBorderInsetsLinux(ShouldDrawFrameShadow(),
-                                           gfx::Insets(kFrameBorderThickness),
-                                           GetShadowValues(), kResizeBorder);
-#else
-  return gfx::Insets();
-#endif
+gfx::Insets PictureInPictureBrowserFrameView::ResizeBorderInsets() const {
+  return gfx::Insets(kResizeBorder);
 }
 
-gfx::Insets PictureInPictureBrowserFrameView::ResizeBorderInsets() const {
-#if BUILDFLAG(IS_LINUX)
-  return FrameBorderInsets();
-#elif !BUILDFLAG(IS_CHROMEOS)
-  return gfx::Insets(kResizeBorder);
-#else
+gfx::Insets PictureInPictureBrowserFrameView::FrameBorderInsets() const {
   return gfx::Insets();
-#endif
 }
 
 int PictureInPictureBrowserFrameView::GetTopAreaHeight() const {
@@ -1416,25 +1292,11 @@ gfx::Size PictureInPictureBrowserFrameView::GetNonClientViewAreaSize() const {
                    top_height + border_thickness.bottom());
 }
 
-#if BUILDFLAG(IS_LINUX)
-bool PictureInPictureBrowserFrameView::ShouldDrawFrameShadow() const {
-  return static_cast<DesktopBrowserFrameAuraLinux*>(
-             frame()->native_browser_frame())
-      ->ShouldDrawRestoredFrameShadow();
-}
-
-// static
-gfx::ShadowValues PictureInPictureBrowserFrameView::GetShadowValues() {
-  int elevation = ChromeLayoutProvider::Get()->GetShadowElevationMetric(
-      views::Emphasis::kMaximum);
-  return gfx::ShadowValue::MakeMdShadowValues(elevation);
-}
-#endif
-
 #if BUILDFLAG(IS_WIN)
 gfx::Insets PictureInPictureBrowserFrameView::GetClientAreaInsets(
     HMONITOR monitor) const {
-  const int frame_thickness = ui::GetFrameThickness(monitor);
+  const int frame_thickness = ui::GetResizableFrameThicknessFromMonitorInPixels(
+      monitor, /*has_caption=*/true);
   return gfx::Insets::TLBR(0, frame_thickness, frame_thickness,
                            frame_thickness);
 }

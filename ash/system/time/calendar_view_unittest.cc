@@ -355,7 +355,6 @@ class CalendarViewTest : public AshTestBase {
   std::unique_ptr<views::Widget> widget_;
   // Owned by `widget_`.
   raw_ptr<CalendarView> calendar_view_ = nullptr;
-  std::unique_ptr<CalendarEventListView> event_list_view_;
   static base::Time fake_time_;
 };
 
@@ -793,8 +792,6 @@ class DateCellFocusChangeListener : public views::FocusChangeListener {
   bool found() const { return found_; }
 
   // views::FocusChangeListener:
-  void OnWillChangeFocus(views::View* focused_before,
-                         views::View* focused_now) override {}
   void OnDidChangeFocus(views::View* focused_before,
                         views::View* focused_now) override {
     if (found_) {
@@ -920,7 +917,7 @@ TEST_F(CalendarViewTest, FocusReturnsToTodaysDate) {
 }
 
 TEST_F(CalendarViewTest, OpenListAndCloseListFireAccessibilityEvents) {
-  views::test::AXEventCounter counter(views::AXEventManager::Get());
+  views::test::AXEventCounter counter(views::AXUpdateNotifier::Get());
   CreateCalendarView();
   auto* focus_manager = calendar_view()->GetFocusManager();
   const auto* todays_date_cell_view = focus_manager->GetFocusedView();
@@ -1292,8 +1289,7 @@ TEST_F(CalendarViewTest, OnSessionBlocked) {
 }
 
 // Tests multiple scenarios that should record the metric when scrolling.
-// TODO(crbug.com/333283676): Re-enable once the test failure is fixed.
-TEST_F(CalendarViewTest, DISABLED_RecordDwellTimeMetricWhenScrolling) {
+TEST_F(CalendarViewTest, RecordDwellTimeMetricWhenScrolling) {
   base::HistogramTester histogram_tester;
   CreateCalendarView();
 
@@ -1317,9 +1313,12 @@ TEST_F(CalendarViewTest, DISABLED_RecordDwellTimeMetricWhenScrolling) {
 
   // Opening and closing the CalendarEventListView through a date cell within
   // the current month does not record the metric.
-  auto* first_of_month_date_cell =
-      GetDateCell(/*month=*/current_month(), /*day=*/u"1");
-  ClickDateCell(first_of_month_date_cell);
+  //
+  // A specific date (today's date) is used here to avoid test flakiness. For
+  // more details, see https://crrev.com/c/6586142/5..6//COMMIT_MSG#b15.
+  auto* todays_date_cell =
+      calendar_view()->calendar_view_controller()->todays_date_cell_view();
+  ClickDateCell(todays_date_cell);
   CloseEventList();
   histogram_tester.ExpectTotalCount("Ash.Calendar.MonthDwellTime",
                                     /*expected_count=*/6);

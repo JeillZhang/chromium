@@ -9,6 +9,7 @@
 #include <string>
 
 #include "chrome/browser/ai/ai_context_bound_object.h"
+#include "chrome/browser/ai/ai_on_device_session.h"
 #include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "components/optimization_guide/proto/features/writing_assistance_api.pb.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -19,6 +20,8 @@
 
 // The implementation of `blink::mojom::AIWriter`, which exposes the single
 // stream-based `Write()` API.
+// TODO(crbug.com/402442890): Refactor Writing Assistance APIs to reduce
+// duplicated code.
 class AIWriter : public AIContextBoundObject, public blink::mojom::AIWriter {
  public:
   AIWriter(
@@ -39,17 +42,36 @@ class AIWriter : public AIContextBoundObject, public blink::mojom::AIWriter {
              const std::optional<std::string>& context,
              mojo::PendingRemote<blink::mojom::ModelStreamingResponder>
                  pending_responder) override;
+  void MeasureUsage(const std::string& input,
+                    const std::string& context,
+                    MeasureUsageCallback callback) override;
+
+  // AIContextBoundObject:
+  void SetPriority(on_device_model::mojom::Priority priority) override;
 
  private:
+  void DidGetExecutionInputSizeForWrite(
+      mojo::RemoteSetElementId responder_id,
+      const optimization_guide::proto::WritingAssistanceApiRequest& request,
+      std::optional<uint32_t> result);
+
+  void DidGetExecutionInputSizeInTokensForMeasure(
+      MeasureUsageCallback callback,
+      std::optional<uint32_t> result);
+
   void ModelExecutionCallback(
       mojo::RemoteSetElementId responder_id,
       optimization_guide::OptimizationGuideModelStreamingExecutionResult
           result);
 
-  // The underlying session provided by optimization guide component.
-  std::unique_ptr<optimization_guide::OptimizationGuideModelExecutor::Session>
-      session_;
+  optimization_guide::proto::WritingAssistanceApiRequest BuildRequest(
+      const std::string& input,
+      const std::string& context);
+
+  AIOnDeviceSession session_wrapper_;
+
   const blink::mojom::AIWriterCreateOptionsPtr options_;
+
   // The `RemoteSet` storing all the responders, each of them corresponds to one
   // `Execute()` call.
   mojo::RemoteSet<blink::mojom::ModelStreamingResponder> responder_set_;

@@ -14,7 +14,6 @@
 #include "base/check_is_test.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
-#include "base/functional/overloaded.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
 #include "base/path_service.h"
@@ -51,6 +50,7 @@
 #include "device_local_account_extension_tracker.h"
 #include "device_local_account_policy_store.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace policy {
 
@@ -115,6 +115,7 @@ bool IsExtensionTracked(DeviceLocalAccountType account_type) {
       return true;
     case DeviceLocalAccountType::kWebKioskApp:
     case DeviceLocalAccountType::kKioskIsolatedWebApp:
+    case DeviceLocalAccountType::kArcvmKioskApp:
       return false;
   }
   NOTREACHED();
@@ -176,12 +177,12 @@ DeviceLocalAccountPolicyBroker::~DeviceLocalAccountPolicyBroker() {
   external_data_manager_->SetPolicyStore(nullptr);
   external_data_manager_->Disconnect();
 
-  std::visit(base::Overloaded{[](AffiliatedCloudPolicyInvalidator*) {
-                                // Do nothing.
-                              },
-                              [](CloudPolicyInvalidator* invalidator) {
-                                invalidator->Shutdown();
-                              }},
+  std::visit(absl::Overload{[](AffiliatedCloudPolicyInvalidator*) {
+                              // Do nothing.
+                            },
+                            [](CloudPolicyInvalidator* invalidator) {
+                              invalidator->Shutdown();
+                            }},
              invalidation::UniquePointerVariantToPointer(invalidator_));
 }
 
@@ -222,7 +223,7 @@ void DeviceLocalAccountPolicyBroker::ConnectIfPossible(
   core_.StartRefreshScheduler();
   UpdateRefreshDelay();
   std::visit(
-      base::Overloaded{
+      absl::Overload{
           [this](AffiliatedInvalidationServiceProvider* service_provider) {
             invalidator_ = std::make_unique<AffiliatedCloudPolicyInvalidator>(
                 PolicyInvalidationScope::kDeviceLocalAccount, &core_,
@@ -267,6 +268,7 @@ void DeviceLocalAccountPolicyBroker::OnStoreLoaded(CloudPolicyStore* store) {
 }
 
 void DeviceLocalAccountPolicyBroker::OnStoreError(CloudPolicyStore* store) {
+  LOG(ERROR) << "Failed to store the policy for " << account_id_;
   policy_update_callback_.Run();
 }
 

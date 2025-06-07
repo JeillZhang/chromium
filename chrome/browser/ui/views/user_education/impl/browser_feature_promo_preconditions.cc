@@ -10,6 +10,8 @@
 #include "chrome/browser/search_engine_choice/search_engine_choice_dialog_service.h"
 #include "chrome/browser/search_engine_choice/search_engine_choice_dialog_service_factory.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
+#include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
@@ -22,7 +24,6 @@
 #include "components/user_education/common/feature_promo/feature_promo_precondition.h"
 #include "components/user_education/common/feature_promo/feature_promo_result.h"
 #include "components/user_education/common/feature_promo/impl/common_preconditions.h"
-#include "components/user_education/common/feature_promo/impl/precondition_data.h"
 #include "components/user_education/common/user_education_features.h"
 #include "components/user_education/webui/help_bubble_handler.h"
 #include "components/user_education/webui/tracked_element_webui.h"
@@ -32,6 +33,8 @@
 #include "ui/views/widget/widget.h"
 
 DEFINE_FEATURE_PROMO_PRECONDITION_IDENTIFIER_VALUE(kWindowActivePrecondition);
+DEFINE_FEATURE_PROMO_PRECONDITION_IDENTIFIER_VALUE(
+    kContentNotFullscreenPrecondition);
 DEFINE_FEATURE_PROMO_PRECONDITION_IDENTIFIER_VALUE(kOmniboxNotOpenPrecondition);
 DEFINE_FEATURE_PROMO_PRECONDITION_IDENTIFIER_VALUE(
     kToolbarNotCollapsedPrecondition);
@@ -47,13 +50,13 @@ WindowActivePrecondition::WindowActivePrecondition()
 WindowActivePrecondition::~WindowActivePrecondition() = default;
 
 user_education::FeaturePromoResult WindowActivePrecondition::CheckPrecondition(
-    ComputedData& data) const {
+    ui::UnownedTypedDataCollection& data) const {
   if (user_education::FeaturePromoControllerCommon::
           active_window_check_blocked()) {
     return user_education::FeaturePromoResult::Success();
   }
   auto& element_ref =
-      data.Get(user_education::AnchorElementPrecondition::kAnchorElement);
+      data[user_education::AnchorElementPrecondition::kAnchorElement];
   views::Widget* widget = nullptr;
   if (auto* const view_el = element_ref.get_as<views::TrackedElementViews>()) {
     widget = view_el->view()->GetWidget();
@@ -63,9 +66,35 @@ user_education::FeaturePromoResult WindowActivePrecondition::CheckPrecondition(
     widget = views::Widget::GetWidgetForNativeWindow(
         contents->GetTopLevelNativeWindow());
   }
-  return widget && widget->GetPrimaryWindowWidget()->ShouldPaintAsActive()
+  if (widget) {
+    // For some reason sometimes primary can be null;
+    // see https://crbug.com/400921315
+    if (auto* const primary = widget->GetPrimaryWindowWidget()) {
+      widget = primary;
+    }
+  }
+  return widget && widget->ShouldPaintAsActive()
              ? user_education::FeaturePromoResult::Success()
-             : user_education::FeaturePromoResult::kBlockedByUi;
+             : user_education::FeaturePromoResult::kAnchorSurfaceNotActive;
+}
+
+ContentNotFullscreenPrecondition::ContentNotFullscreenPrecondition(
+    Browser& browser)
+    : FeaturePromoPreconditionBase(kContentNotFullscreenPrecondition,
+                                   "Content is not fullscreen"),
+      browser_(browser) {}
+ContentNotFullscreenPrecondition::~ContentNotFullscreenPrecondition() = default;
+
+user_education::FeaturePromoResult
+ContentNotFullscreenPrecondition::CheckPrecondition(
+    ui::UnownedTypedDataCollection& data) const {
+  auto* const fullscreen_controller =
+      browser_->exclusive_access_manager()->fullscreen_controller();
+  if (fullscreen_controller->IsWindowFullscreenForTabOrPending() ||
+      fullscreen_controller->IsExtensionFullscreenOrPending()) {
+    return user_education::FeaturePromoResult::kBlockedByUi;
+  }
+  return user_education::FeaturePromoResult::Success();
 }
 
 OmniboxNotOpenPrecondition::OmniboxNotOpenPrecondition(
@@ -76,7 +105,8 @@ OmniboxNotOpenPrecondition::OmniboxNotOpenPrecondition(
 OmniboxNotOpenPrecondition::~OmniboxNotOpenPrecondition() = default;
 
 user_education::FeaturePromoResult
-OmniboxNotOpenPrecondition::CheckPrecondition(ComputedData&) const {
+OmniboxNotOpenPrecondition::CheckPrecondition(
+    ui::UnownedTypedDataCollection&) const {
   const OmniboxPopupView* const popup = browser_view_->GetLocationBarView()
                                             ->GetOmniboxView()
                                             ->model()
@@ -94,11 +124,12 @@ ToolbarNotCollapsedPrecondition::ToolbarNotCollapsedPrecondition(
 ToolbarNotCollapsedPrecondition::~ToolbarNotCollapsedPrecondition() = default;
 
 user_education::FeaturePromoResult
-ToolbarNotCollapsedPrecondition::CheckPrecondition(ComputedData&) const {
+ToolbarNotCollapsedPrecondition::CheckPrecondition(
+    ui::UnownedTypedDataCollection&) const {
   if (const auto* const controller =
           browser_view_->toolbar()->toolbar_controller()) {
     if (controller->InOverflowMode()) {
-      return user_education::FeaturePromoResult::kBlockedByUi;
+      return user_education::FeaturePromoResult::kWindowTooSmall;
     }
   }
   return user_education::FeaturePromoResult::Success();
@@ -112,10 +143,11 @@ BrowserNotClosingPrecondition::BrowserNotClosingPrecondition(
 BrowserNotClosingPrecondition::~BrowserNotClosingPrecondition() = default;
 
 user_education::FeaturePromoResult
-BrowserNotClosingPrecondition::CheckPrecondition(ComputedData&) const {
+BrowserNotClosingPrecondition::CheckPrecondition(
+    ui::UnownedTypedDataCollection&) const {
   if (browser_view_->browser()->IsBrowserClosing() ||
       browser_view_->GetWidget()->IsClosed()) {
-    return user_education::FeaturePromoResult::kBlockedByUi;
+    return user_education::FeaturePromoResult::kBlockedByContext;
   }
   return user_education::FeaturePromoResult::Success();
 }
@@ -129,7 +161,8 @@ NoCriticalNoticeShowingPrecondition::~NoCriticalNoticeShowingPrecondition() =
     default;
 
 user_education::FeaturePromoResult
-NoCriticalNoticeShowingPrecondition::CheckPrecondition(ComputedData&) const {
+NoCriticalNoticeShowingPrecondition::CheckPrecondition(
+    ui::UnownedTypedDataCollection&) const {
   // Turn off IPH while a required privacy interstitial is visible or pending.
   auto* const privacy_sandbox_service =
       PrivacySandboxServiceFactory::GetForProfile(browser_view_->GetProfile());
@@ -157,9 +190,8 @@ NoCriticalNoticeShowingPrecondition::CheckPrecondition(ComputedData&) const {
 UserNotActivePrecondition::UserNotActivePrecondition(
     BrowserView& browser_view,
     const user_education::UserEducationTimeProvider& time_provider)
-    : FeaturePromoPreconditionBase(
-          kUserNotActivePrecondition,
-          "The user is not actively trying sending input"),
+    : FeaturePromoPreconditionBase(kUserNotActivePrecondition,
+                                   "The user is not actively sending input"),
       browser_view_(browser_view),
       time_provider_(time_provider) {
   if (browser_view.GetWidget()) {
@@ -178,39 +210,28 @@ void UserNotActivePrecondition::CreateEventMonitor() {
   // watching events at all.
   event_monitor_ = views::EventMonitor::CreateWindowMonitor(
       this, browser_view_->GetWidget()->GetTopLevelWidget()->GetNativeWindow(),
-      {ui::EventType::kKeyPressed, ui::EventType::kKeyReleased,
-       ui::EventType::kMousePressed, ui::EventType::kMouseReleased,
-       ui::EventType::kTouchPressed, ui::EventType::kTouchReleased,
-       ui::EventType::kGestureBegin, ui::EventType::kGestureEnd,
-       ui::EventType::kMouseMoved});
+      {ui::EventType::kKeyPressed, ui::EventType::kKeyReleased});
 }
 
 void UserNotActivePrecondition::OnEvent(const ui::Event& event) {
-  if (event.type() == ui::EventType::kMouseMoved) {
-    // For mouse moves, do not set the delay timer unless the mouse is being
-    // moved in the top container (toolbar, tabstrip, etc.). Other mouse moves
-    // are not significant enough to warrant delaying an IPH.
-    bool in_top_container = false;
-    if (auto* const top_container =
-            views::ElementTrackerViews::GetInstance()->GetFirstMatchingView(
-                kTopContainerElementId, browser_view_->GetElementContext())) {
-      in_top_container = top_container->GetBoundsInScreen().Contains(
-          event.AsMouseEvent()->root_location());
-    }
-    if (!in_top_container) {
-      return;
-    }
-  }
   // Delay heavyweight IPH for the prescribed amount of time.
   last_active_time_ = time_provider_->GetCurrentTime();
 }
 
 user_education::FeaturePromoResult UserNotActivePrecondition::CheckPrecondition(
-    ComputedData&) const {
-  const auto elapsed = time_provider_->GetCurrentTime() - last_active_time_;
-  return elapsed < user_education::features::GetIdleTimeBeforeHeavyweightPromo()
-             ? user_education::FeaturePromoResult::kBlockedByUi
-             : user_education::FeaturePromoResult::Success();
+    ui::UnownedTypedDataCollection&) const {
+  // Only do check if min idle time is nonzero and positive; otherwise this is a
+  // no-op. Explicitly verify this in case of non-monotonic clock weirdness.
+  const auto min_idle_time =
+      user_education::features::GetIdleTimeBeforeHeavyweightPromo();
+  if (min_idle_time.is_positive()) {
+    const auto elapsed = time_provider_->GetCurrentTime() - last_active_time_;
+    return elapsed < min_idle_time
+               ? user_education::FeaturePromoResult::kBlockedByUserActivity
+               : user_education::FeaturePromoResult::Success();
+  } else {
+    return user_education::FeaturePromoResult::Success();
+  }
 }
 
 void UserNotActivePrecondition::OnViewAddedToWidget(

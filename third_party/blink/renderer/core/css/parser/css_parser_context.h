@@ -6,7 +6,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_PARSER_CSS_PARSER_CONTEXT_H_
 
 #include "base/auto_reset.h"
-#include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/css_resource_fetch_restriction.h"
@@ -14,7 +13,6 @@
 #include "third_party/blink/renderer/core/frame/web_feature_forward.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/referrer.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_encoding.h"
@@ -125,6 +123,12 @@ class CORE_EXPORT CSSParserContext final
   const DOMWrapperWorld* JavascriptWorld() const { return world_.Get(); }
 
   bool IsForMarkupSanitization() const;
+
+  // Returns true if we are in a parsing mode where the result will be used in
+  // an element context. This function is used to fail parsing of functions such
+  // as sibling-index() which do not make sense in @page or @font-face
+  // descriptors, for instance.
+  bool InElementContext() const;
 
   // Overrides |mode_| of a CSSParserContext within the scope, allowing us to
   // switching parsing mode while parsing different parts of a style sheet.

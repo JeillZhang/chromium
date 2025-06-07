@@ -233,8 +233,9 @@ WebViewEvents.prototype.setupWebRequestEvents = function() {
     var eventSchema = WebRequestSchema.events[i];
 
     // Skip "onActionIgnored" which is not relevant for webviews.
-    if (eventSchema.name === 'onActionIgnored')
+    if (eventSchema.name === 'onActionIgnored') {
       continue;
+    }
 
     var webRequestEvent = createWebRequestEvent(eventSchema);
     $Object.defineProperty(
@@ -267,9 +268,10 @@ WebViewEvents.prototype.handleLoadAbortEvent = function(event, eventName) {
     window.console.warn(tagLogMessage(
         this.view.getLogTag(),
         $String.replace(
+        $String.replace(
             $String.replace(
                 WebViewConstants.WARNING_MSG_LOAD_ABORTED, '%1', event.code),
-            '%2', event.reason)));
+            '%2', event.reason), '%3', event.url)));
   }
 };
 

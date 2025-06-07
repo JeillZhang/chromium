@@ -59,7 +59,7 @@ ApiKeyCache& InitializeApiKeyCacheInstance() {
   // is not feasible to check that `g_api_key_cache_instance` is null in
   // tests.
   if (g_api_key_cache_instance) {
-    CHECK_IS_TEST(base::NotFatalUntil::M133);
+    CHECK_IS_TEST();
   }
   return GetApiKeyCacheInstance();
 }
@@ -113,6 +113,13 @@ const std::string& GetFresnelAPIKey() {
 
 const std::string& GetBocaAPIKey() {
   return GetApiKeyCacheInstance().api_key_boca();
+}
+
+const std::string& GetCrosSystemGeoAPIKey() {
+  return GetApiKeyCacheInstance().api_key_cros_system_geo();
+}
+const std::string& GetCrosChromeGeoAPIKey() {
+  return GetApiKeyCacheInstance().api_key_cros_chrome_geo();
 }
 #endif
 

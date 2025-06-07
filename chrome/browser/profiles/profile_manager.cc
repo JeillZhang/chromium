@@ -17,6 +17,7 @@
 
 #include "base/command_line.h"
 #include "base/containers/contains.h"
+#include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
@@ -30,7 +31,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
 #include "base/observer_list.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -47,7 +47,6 @@
 #include "chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_lifetime_manager_factory.h"
 #include "chrome/browser/buildflags.h"
-#include "chrome/browser/contextual_cueing/contextual_cueing_service_factory.h"
 #include "chrome/browser/extensions/chrome_content_browser_client_extensions_part.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/navigation_predictor/navigation_predictor_keyed_service_factory.h"
@@ -98,6 +97,7 @@
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/primary_account_mutator.h"
+#include "components/signin/public/identity_manager/tribool.h"
 #include "components/supervised_user/core/browser/child_account_service.h"
 #include "components/supervised_user/core/browser/supervised_user_service.h"
 #include "components/supervised_user/core/common/pref_names.h"
@@ -116,8 +116,8 @@
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/browser/extensions/extension_service.h"
 #include "extensions/browser/api/management/management_api.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest.h"
@@ -1192,11 +1192,6 @@ void ProfileManager::InitProfileUserPrefs(Profile* profile) {
     profile->GetPrefs()->SetString(prefs::kSupervisedUserId,
                                    supervised_user_id);
   }
-#if !BUILDFLAG(IS_ANDROID)
-  if (profile->IsNewProfile()) {
-    profile->GetPrefs()->SetBoolean(prefs::kHasSeenWelcomePage, false);
-  }
-#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 void ProfileManager::RegisterTestingProfile(std::unique_ptr<Profile> profile,
@@ -1461,15 +1456,13 @@ void ProfileManager::DoFinalInitForServices(Profile* profile,
       extensions_enabled);
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  // Set the block extensions bit on the ExtensionService. There likely are no
+  // Set the block extensions bit on the ExtensionRegistrar. There likely are no
   // blockable extensions to block.
   ProfileAttributesEntry* entry =
       GetProfileAttributesStorage().GetProfileAttributesWithPath(
           profile->GetPath());
   if (entry && entry->IsSigninRequired()) {
-    extensions::ExtensionSystem::Get(profile)
-        ->extension_service()
-        ->BlockAllExtensions();
+    extensions::ExtensionRegistrar::Get(profile)->BlockAllExtensions();
   }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
@@ -1493,7 +1486,6 @@ void ProfileManager::DoFinalInitForServices(Profile* profile,
   // extension::ManagementPolicy) and InitProfileUserPrefs (for setting the
   // initializing the supervised flag if necessary).
   ChildAccountServiceFactory::GetForProfile(profile)->Init();
-  SupervisedUserServiceFactory::GetForProfile(profile)->Init();
   ListFamilyMembersServiceFactory::GetForProfile(profile)->Init();
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   // After the ManagementPolicy has been set, update it for the Supervised User
@@ -1510,10 +1502,6 @@ void ProfileManager::DoFinalInitForServices(Profile* profile,
 
   // Ensure PreloadingModelKeyedService is started.
   PreloadingModelKeyedServiceFactory::GetForProfile(profile);
-
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-  contextual_cueing::ContextualCueingServiceFactory::GetForProfile(profile);
-#endif
 
   IdentityManagerFactory::GetForProfile(profile)->OnNetworkInitialized();
   AccountReconcilorFactory::GetForProfile(profile);
@@ -1761,7 +1749,7 @@ void ProfileManager::OnProfileCreationFinished(Profile* profile,
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   auto iter = profiles_info_.find(profile->GetPath());
-  CHECK(iter != profiles_info_.end(), base::NotFatalUntil::M130);
+  CHECK(iter != profiles_info_.end());
   ProfileInfo* info = iter->second.get();
 
   if (create_mode == Profile::CreateMode::kSynchronous) {
@@ -2046,8 +2034,14 @@ void ProfileManager::SetProfileAsLastUsed(Profile* last_active) {
       identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin)) {
     CoreAccountInfo account_info =
         identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin);
+    AccountInfo extended_info =
+        identity_manager->FindExtendedAccountInfo(account_info);
+    signin::Tribool is_managed =
+        extended_info.hosted_domain.empty()
+            ? signin::Tribool::kUnknown
+            : signin::TriboolFromBool(extended_info.IsManaged());
     active_primary_accounts_metrics_recorder->MarkAccountAsActiveNow(
-        account_info.gaia);
+        account_info.gaia, is_managed);
   }
 
   // Don't remember ephemeral profiles as last because they are not going to

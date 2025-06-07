@@ -8,40 +8,43 @@ import android.content.res.Resources;
 import android.graphics.Rect;
 import android.view.View;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 
 import org.chromium.base.CallbackUtils;
 import org.chromium.base.TraceEvent;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.widget.highlight.ViewHighlighter.HighlightParams;
 import org.chromium.components.browser_ui.widget.textbubble.TextBubble;
 import org.chromium.ui.widget.AnchoredPopupWindow;
 import org.chromium.ui.widget.ViewRectProvider;
 
 /** Builder for (@see IphCommand.java). Use this instead of constructing an IphCommand directly. */
+@NullMarked
 public class IphCommandBuilder {
 
-    private String mContentString;
-    private String mAccessibilityText;
-    private Resources mResources;
+    private @Nullable String mContentString;
+    private @Nullable String mAccessibilityText;
+    private final Resources mResources;
     private final String mFeatureName;
     private boolean mDismissOnTouch = true;
     private long mDismissOnTouchTimeout = TextBubble.NO_TIMEOUT;
     @StringRes private int mStringId;
-    private Object[] mStringArgs;
+    private Object @Nullable [] mStringArgs;
     @StringRes private int mAccessibilityStringId;
-    private Object[] mAccessibilityStringArgs;
-    private View mAnchorView;
-    private Runnable mOnShowCallback;
-    private Runnable mOnBlockedCallback;
-    private Runnable mOnDismissCallback;
-    private Rect mInsetRect;
+    private Object @Nullable [] mAccessibilityStringArgs;
+    private @Nullable View mAnchorView;
+    private @Nullable Runnable mOnShowCallback;
+    private @Nullable Runnable mOnBlockedCallback;
+    private @Nullable Runnable mOnDismissCallback;
+    private @Nullable Rect mInsetRect;
     private long mAutoDismissTimeout = TextBubble.NO_TIMEOUT;
-    private ViewRectProvider mViewRectProvider;
-    @Nullable private HighlightParams mHighlightParams;
-    private Rect mAnchorRect;
+    private @Nullable ViewRectProvider mViewRectProvider;
+    private @Nullable HighlightParams mHighlightParams;
+    private @Nullable Rect mAnchorRect;
     private boolean mRemoveArrow;
     private boolean mShowTextBubble = true;
+    private boolean mEnableSnoozeMode;
 
     @AnchoredPopupWindow.VerticalOrientation
     private int mPreferredVerticalOrientation =
@@ -249,6 +252,17 @@ public class IphCommandBuilder {
     }
 
     /**
+     * @param enableSnoozeMode Whether snooze mode is on. In snooze mode, the IPH will be fully
+     *     dismissed by an inside touch, but will be snoozed by any other dismiss. The snooze
+     *     interval and the max limit are defined in the feature definition. See
+     *     components/feature_engagement/README.md#SnoozeParams.
+     */
+    public IphCommandBuilder setEnableSnoozeMode(boolean enableSnoozeMode) {
+        mEnableSnoozeMode = enableSnoozeMode;
+        return this;
+    }
+
+    /**
      * @return an (@see IphCommand) containing the accumulated state of this builder.
      */
     public IphCommand build() {
@@ -286,7 +300,8 @@ public class IphCommandBuilder {
                     mRemoveArrow,
                     mShowTextBubble,
                     mPreferredVerticalOrientation,
-                    mInsetRect);
+                    mInsetRect,
+                    mEnableSnoozeMode);
         }
     }
 }

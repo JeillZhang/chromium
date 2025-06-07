@@ -8,7 +8,9 @@
 #include <optional>
 #include <string>
 
+#include "base/memory/scoped_refptr.h"
 #include "base/types/optional_ref.h"
+#include "base/values.h"
 #include "components/permissions/object_permission_context_base.h"
 #include "third_party/blink/public/mojom/webid/federated_auth_request.mojom-forward.h"
 #include "url/origin.h"
@@ -22,7 +24,6 @@ class Origin;
 }
 
 namespace blink::common::webid {
-struct LoginStatusAccount;
 struct LoginStatusOptions;
 }  // namespace blink::common::webid
 
@@ -44,10 +45,11 @@ class FederatedIdentityIdentityProviderSigninStatusContext
   std::optional<bool> GetSigninStatus(const url::Origin& identity_provider);
 
   // Returns the stored profile information for the passed-in
-  // `identity_provider`. If the signin status is false or no profile
-  // information was stored, returns an empty vector.
-  std::vector<blink::common::webid::LoginStatusAccount> GetAccountProfiles(
-      const url::Origin& identity_provider);
+  // `identity_provider`. If the signin status is false, no profile
+  // information was stored, or the stored accounts have expired, this returns
+  // an empty List. The consumer must validate that the accounts contain all
+  // required fields.
+  base::Value::List GetAccounts(const url::Origin& identity_provider);
 
   void SetSigninStatus(
       const url::Origin& identity_provider,

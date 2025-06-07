@@ -22,7 +22,7 @@
 #include "ui/base/layout.h"
 #include "ui/base/mojom/menu_source_type.mojom.h"
 #include "ui/gfx/geometry/rect_conversions.h"
-#include "ui/views/accessibility/ax_event_manager.h"
+#include "ui/views/accessibility/ax_update_notifier.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/accessibility/view_ax_platform_node_delegate.h"
 #include "ui/views/view.h"
@@ -52,7 +52,7 @@ AXVirtualView* AXVirtualView::GetFromId(int32_t id) {
 
 AXVirtualView::AXVirtualView() : ViewAccessibility(nullptr) {
   GetIdMap()[ViewAccessibility::GetUniqueId()] = this;
-  ax_platform_node_ = ui::AXPlatformNode::Create(this);
+  ax_platform_node_ = ui::AXPlatformNode::Create(*this);
   DCHECK(ax_platform_node_);
   SetClassName(GetViewClassName());
 }
@@ -62,12 +62,6 @@ AXVirtualView::~AXVirtualView() {
   DCHECK(!parent_view_ || !virtual_parent_view_)
       << "Either |parent_view_| or |virtual_parent_view_| could be set but "
          "not both.";
-
-  if (ax_platform_node_) {
-    // Clear ax_platform_node_ and return another raw_ptr instance that is
-    // allowed to dangle.
-    ax_platform_node_.ExtractAsDangling()->Destroy();
-  }
 
 #if defined(USE_AURA)
   if (ax_aura_obj_cache_) {
@@ -246,7 +240,11 @@ void AXVirtualView::NotifyEvent(ax::mojom::Event event_type,
   ax_platform_node_->NotifyAccessibilityEvent(event_type);
 
   // This is used on platforms that don't have a native accessibility API.
-  AXEventManager::Get()->NotifyVirtualViewEvent(this, event_type);
+  AXUpdateNotifier::Get()->NotifyVirtualViewEvent(this, event_type);
+}
+
+void AXVirtualView::NotifyDataChanged() {
+  AXUpdateNotifier::Get()->NotifyVirtualViewDataChanged(this);
 }
 
 // ui::AXPlatformNodeDelegate
@@ -315,7 +313,7 @@ gfx::NativeViewAccessible AXVirtualView::GetParent() const {
   }
 
   // This virtual view hasn't been added to a parent view yet.
-  return nullptr;
+  return gfx::NativeViewAccessible();
 }
 
 gfx::Rect AXVirtualView::GetBoundsRect(
@@ -353,7 +351,7 @@ gfx::NativeViewAccessible AXVirtualView::HitTestSync(
     int screen_physical_pixel_x,
     int screen_physical_pixel_y) const {
   if (GetData().IsInvisible()) {
-    return nullptr;
+    return gfx::NativeViewAccessible();
   }
 
   // Check if the point is within any of the virtual children of this view.
@@ -381,20 +379,20 @@ gfx::NativeViewAccessible AXVirtualView::HitTestSync(
     return GetNativeObject();
   }
 
-  return nullptr;
+  return gfx::NativeViewAccessible();
 }
 
 gfx::NativeViewAccessible AXVirtualView::GetFocus() const {
   View* owner_view = GetOwnerView();
   if (owner_view) {
     if (!(owner_view->HasFocus())) {
-      return nullptr;
+      return gfx::NativeViewAccessible();
     }
     return owner_view->GetViewAccessibility().GetFocusedDescendant();
   }
 
   // This virtual view hasn't been added to a parent view yet.
-  return nullptr;
+  return gfx::NativeViewAccessible();
 }
 
 ui::AXPlatformNode* AXVirtualView::GetFromNodeID(int32_t id) {

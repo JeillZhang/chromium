@@ -152,9 +152,8 @@ public class OMADownloadHandler extends BroadcastReceiver {
 
     private final Context mContext;
     private final SharedPreferencesManager mSharedPrefs;
-    private final LongSparseArray<DownloadItem> mSystemDownloadIdMap =
-            new LongSparseArray<DownloadItem>();
-    private final LongSparseArray<OMAInfo> mPendingOMADownloads = new LongSparseArray<OMAInfo>();
+    private final LongSparseArray<DownloadItem> mSystemDownloadIdMap = new LongSparseArray<>();
+    private final LongSparseArray<OMAInfo> mPendingOMADownloads = new LongSparseArray<>();
     private final ObserverList<TestObserver> mObservers = new ObserverList<>();
 
     /**
@@ -168,7 +167,7 @@ public class OMADownloadHandler extends BroadcastReceiver {
 
         OMAInfo() {
             mDescription = new HashMap<String, String>();
-            mTypes = new ArrayList<String>();
+            mTypes = new ArrayList<>();
         }
 
         /**
@@ -321,11 +320,7 @@ public class OMADownloadHandler extends BroadcastReceiver {
             try {
                 ParcelFileDescriptor fd = null;
                 if (isContentUri) {
-                    int fileDescriptor =
-                            ContentUriUtils.openContentUri(mDownloadInfo.getFilePath(), "r");
-                    if (fileDescriptor > 0) {
-                        fd = ParcelFileDescriptor.fromFd(fileDescriptor);
-                    }
+                    fd = ContentUriUtils.openContentUri(mDownloadInfo.getFilePath(), "r");
                 } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
                     fd = manager.openDownloadedFile(mDownloadId);
                 } else {
@@ -683,7 +678,7 @@ public class OMADownloadHandler extends BroadcastReceiver {
             OMAInfo info = new OMAInfo();
             StringBuilder sb = null;
             List<String> attributeList =
-                    new ArrayList<String>(
+                    new ArrayList<>(
                             Arrays.asList(
                                     OMA_TYPE,
                                     OMA_SIZE,

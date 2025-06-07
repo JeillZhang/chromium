@@ -4,8 +4,6 @@
 
 package org.chromium.chrome.browser.keyboard_accessory;
 
-import android.content.Context;
-
 import androidx.annotation.Nullable;
 
 import org.jni_zero.CalledByNative;
@@ -18,6 +16,7 @@ import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.chrome.browser.keyboard_accessory.data.PropertyProvider;
 import org.chromium.components.autofill.AutofillDelegate;
 import org.chromium.components.autofill.AutofillSuggestion;
+import org.chromium.components.autofill.AutofillSuggestion.Payload;
 import org.chromium.components.autofill.SuggestionType;
 import org.chromium.ui.DropdownItem;
 import org.chromium.ui.base.WindowAndroid;
@@ -31,7 +30,6 @@ public class AutofillKeyboardAccessoryViewBridge implements AutofillDelegate {
     private long mNativeAutofillKeyboardAccessory;
     private @Nullable ObservableSupplier<ManualFillingComponent> mManualFillingComponentSupplier;
     private @Nullable ManualFillingComponent mManualFillingComponent;
-    private @Nullable Context mContext;
     private final PropertyProvider<List<AutofillSuggestion>> mChipProvider =
             new PropertyProvider<>(AccessoryAction.AUTOFILL_SUGGESTION);
     private final Callback<ManualFillingComponent> mFillingComponentObserver =
@@ -93,9 +91,6 @@ public class AutofillKeyboardAccessoryViewBridge implements AutofillDelegate {
      */
     @CalledByNative
     private void init(long nativeAutofillKeyboardAccessory, WindowAndroid windowAndroid) {
-        mContext = windowAndroid.getActivity().get();
-        assert mContext != null;
-
         mManualFillingComponentSupplier = ManualFillingComponentSupplier.from(windowAndroid);
         if (mManualFillingComponentSupplier != null) {
             ManualFillingComponent currentFillingComponent =
@@ -120,7 +115,6 @@ public class AutofillKeyboardAccessoryViewBridge implements AutofillDelegate {
             mManualFillingComponentSupplier.removeObserver(mFillingComponentObserver);
         }
         dismissed();
-        mContext = null;
     }
 
     /**
@@ -178,21 +172,20 @@ public class AutofillKeyboardAccessoryViewBridge implements AutofillDelegate {
             @JniType("std::string") String featureForIph,
             @JniType("std::u16string") String iphDescriptionText,
             GURL customIconUrl,
-            boolean applyDeactivatedStyle) {
+            boolean applyDeactivatedStyle,
+            @Nullable Payload payload) {
         int drawableId = iconId == 0 ? DropdownItem.NO_ICON : iconId;
         return new AutofillSuggestion.Builder()
                 .setLabel(label)
                 .setSubLabel(sublabel)
                 .setIconId(drawableId)
-                .setIsIconAtStart(false)
                 .setSuggestionType(suggestionType)
                 .setIsDeletable(isDeletable)
-                .setIsMultiLineLabel(false)
-                .setIsBoldLabel(false)
                 .setFeatureForIph(featureForIph)
                 .setIphDescriptionText(iphDescriptionText)
                 .setCustomIconUrl(customIconUrl)
                 .setApplyDeactivatedStyle(applyDeactivatedStyle)
+                .setPayload(payload)
                 .build();
     }
 

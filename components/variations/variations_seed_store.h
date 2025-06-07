@@ -170,11 +170,12 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsSeedStore {
   void RecordLastFetchTime(base::Time fetch_time);
 
   // Loads the last server-provided seed date (for the latest seed) that was
-  // persisted to the local state. (See GetTimeForStudyDateChecks.)
+  // persisted to the local state.
+  // (See VariationsSeedStore::GetTimeForStudyDateChecks().)
   base::Time GetLatestTimeForStudyDateChecks() const;
 
   // Loads the last server-provided safe seed date of when the seed to be used
-  // was fetched. (See GetTimeForStudyDateChecks.)
+  // was fetched. (See VariationsSeedStore::GetTimeForStudyDateChecks().)
   base::Time GetSafeSeedTimeForStudyDateChecks() const;
 
   // Returns the time to use when determining whether a client should
@@ -196,6 +197,9 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsSeedStore {
   // Updates |kVariationsSeedDate| and logs when previous date was from a
   // different day.
   void UpdateSeedDateAndLogDayChange(base::Time server_date_fetched);
+
+  // Creates a histogram for the result of the update of the seed date.
+  void LogSeedDayChange(base::Time server_date_fetched);
 
   // Returns the serial number of the most recently received seed, or an empty
   // string if there is no seed (or if it could not be read).
@@ -323,12 +327,15 @@ class COMPONENT_EXPORT(VARIATIONS) VariationsSeedStore {
                                             std::string* base64_seed_signature);
 
   // Reads the variations seed data from prefs into |seed_data|, and returns the
-  // result of the load. The value stored into |seed_data| should only be used
-  // if the result is SUCCESS. Reads either the latest or the safe seed,
-  // according to the specified |seed_type|.
+  // result of the load. If a pointer for the signature is provided, the
+  // signature will be read and stored into |base64_seed_signature|. The value
+  // stored into |seed_data| should only be used if the result is SUCCESS. Reads
+  // either the latest or the safe seed, according to the specified |seed_type|.
   // Side-effect: If the read fails, clears the prefs associated with the seed.
-  [[nodiscard]] LoadSeedResult ReadSeedData(SeedType seed_type,
-                                            std::string* seed_data);
+  [[nodiscard]] LoadSeedResult ReadSeedData(
+      SeedType seed_type,
+      std::string* seed_data,
+      std::string* base64_seed_signature = nullptr);
 
   // Resolves a |delta_bytes| against the latest seed.
   // Returns success or an error, populating |seed_bytes| on success.

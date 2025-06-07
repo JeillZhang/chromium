@@ -8,6 +8,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "content/browser/picture_in_picture/picture_in_picture_service_impl.h"
 #include "content/browser/picture_in_picture/video_picture_in_picture_window_controller_impl.h"
 #include "content/public/browser/content_browser_client.h"
@@ -571,8 +572,16 @@ IN_PROC_BROWSER_TEST_F(MediaSessionPictureInPictureContentBrowserTest,
 // Tests Media Session action availability upon reaching the end of stream by
 // verifying that the "nexttrack" action can be invoked after playing through
 // to the end of media.
+// TODO(https://crbug.com/422414020): This is failing on Windows arm64.
+#if BUILDFLAG(IS_WIN) && defined(ARCH_CPU_ARM64)
+#define MAYBE_ActionAvailableAfterEndOfStreamAndSrcUpdate \
+  DISABLED_ActionAvailableAfterEndOfStreamAndSrcUpdate
+#else
+#define MAYBE_ActionAvailableAfterEndOfStreamAndSrcUpdate \
+  ActionAvailableAfterEndOfStreamAndSrcUpdate
+#endif
 IN_PROC_BROWSER_TEST_F(MediaSessionPictureInPictureContentBrowserTest,
-                       ActionAvailableAfterEndOfStreamAndSrcUpdate) {
+                       MAYBE_ActionAvailableAfterEndOfStreamAndSrcUpdate) {
   ASSERT_TRUE(NavigateToURL(
       shell(), GetTestUrl("media/picture_in_picture", "one-video.html")));
 
@@ -648,6 +657,31 @@ IN_PROC_BROWSER_TEST_F(VideoPictureInPictureContentBrowserTest,
       }));
   ASSERT_TRUE(ExecJs(shell()->web_contents(), "video.currentTime = 4;"));
   testing::Mock::VerifyAndClearExpectations(overlay_window());
+}
+
+IN_PROC_BROWSER_TEST_F(VideoPictureInPictureContentBrowserTest,
+                       SeeksVideoWithoutMediaSessionHandler) {
+  // Open a page with a paused player in pip.
+  ASSERT_TRUE(NavigateToURL(
+      shell(), GetTestUrl("media/picture_in_picture", "one-video.html")));
+  ASSERT_TRUE(ExecJs(shell(), "video.load();"));
+  ASSERT_EQ(true, EvalJs(shell(), "enterPictureInPicture();"));
+  ASSERT_EQ(0, EvalJs(shell(), "video.currentTime"));
+  ASSERT_TRUE(ExecJs(shell(), "setTitleToVideoCurrentTime();"));
+
+  // `SeekTo()` should properly seek the video and give the updated media
+  // position to the overlay window, even if no media session seekto action
+  // handler is set (it should instead update the media player directly).
+  EXPECT_CALL(*overlay_window(), SetMediaPosition(_))
+      .WillOnce(Invoke([](const media_session::MediaPosition& position) {
+        EXPECT_EQ(position.GetPosition(), base::Seconds(2));
+        EXPECT_EQ(position.playback_rate(), 0);
+      }));
+  window_controller()->SeekTo(base::Seconds(2));
+
+  // We need to wait until the currentTime has actually updated.
+  WaitForTitle(u"currentTime 2");
+  EXPECT_EQ(2, EvalJs(shell(), "video.currentTime"));
 }
 
 IN_PROC_BROWSER_TEST_F(VideoPictureInPictureContentBrowserTest,

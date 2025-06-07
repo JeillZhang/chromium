@@ -44,6 +44,8 @@ source_set("base") {
   }
 
   sources = [
+    "agtm.cc",
+    "agtm.h",
     "amplitude_peak_detector.cc",
     "amplitude_peak_detector.h",
     "android_overlay_config.cc",
@@ -250,10 +252,6 @@ source_set("base") {
     "media_tracks.h",
     "media_types.cc",
     "media_types.h",
-    "media_url_demuxer.cc",
-    "media_url_demuxer.h",
-    "media_url_params.cc",
-    "media_url_params.h",
     "media_util.cc",
     "media_util.h",
     "memory_dump_provider_proxy.cc",
@@ -272,6 +270,8 @@ source_set("base") {
     "output_device_info.h",
     "overlay_info.cc",
     "overlay_info.h",
+    "picture_in_picture_events_info.cc",
+    "picture_in_picture_events_info.h",
     "pipeline.h",
     "pipeline_impl.cc",
     "pipeline_impl.h",
@@ -506,6 +506,7 @@ if (is_android) {
   java_cpp_enum("java_enums") {
     sources = [
       "audio_parameters.h",
+      "channel_layout.h",
       "container_names.h",
       "encryption_scheme.h",
       "video_codecs.h",
@@ -577,6 +578,7 @@ static_library("test_support") {
 source_set("unit_tests") {
   testonly = true
   sources = [
+    "agtm_unittest.cc",
     "amplitude_peak_detector_unittest.cc",
     "audio_block_fifo_unittest.cc",
     "audio_buffer_converter_unittest.cc",
@@ -624,7 +626,6 @@ source_set("unit_tests") {
     "limiting_audio_queue_unittest.cc",
     "media_log_unittest.cc",
     "media_serializers_unittest.cc",
-    "media_url_demuxer_unittest.cc",
     "mime_util_unittest.cc",
     "multi_channel_resampler_unittest.cc",
     "null_video_sink_unittest.cc",
@@ -665,6 +666,7 @@ source_set("unit_tests") {
   deps = [
     "//base/test:test_support",
     "//components/viz/common",
+    "//gpu:test_support",
     "//gpu/command_buffer/common",
     "//media:test_support",
     "//net",

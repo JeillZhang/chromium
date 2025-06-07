@@ -21,6 +21,7 @@ import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.components.dom_distiller.core.DistilledPagePrefs;
 import org.chromium.dom_distiller.mojom.FontFamily;
@@ -115,8 +116,7 @@ public class DistilledPagePrefsView extends LinearLayout
             getResources().getString(R.string.monospace)
         };
         ArrayAdapter<CharSequence> adapter =
-                new ArrayAdapter<CharSequence>(
-                        getContext(), android.R.layout.simple_spinner_item, fonts) {
+                new ArrayAdapter<>(getContext(), android.R.layout.simple_spinner_item, fonts) {
                     @Override
                     public View getView(int position, View convertView, ViewGroup parent) {
                         View view = super.getView(position, convertView, parent);
@@ -154,6 +154,7 @@ public class DistilledPagePrefsView extends LinearLayout
                     public void onItemSelected(
                             AdapterView<?> parent, View view, int family, long id) {
                         if (FontFamily.isKnownValue(family)) {
+                            RecordUserAction.record("DomDistiller.Android.FontFamilyChanged");
                             mDistilledPagePrefs.setFontFamily(family);
                         }
                     }
@@ -234,6 +235,7 @@ public class DistilledPagePrefsView extends LinearLayout
         float newValue = (progress / 20f + .5f);
         setFontScaleTextView(newValue);
         if (fromUser) {
+            RecordUserAction.record("DomDistiller.Android.FontScalingChanged");
             mDistilledPagePrefs.setFontScaling(newValue);
         }
     }
@@ -252,6 +254,7 @@ public class DistilledPagePrefsView extends LinearLayout
                 new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
+                        RecordUserAction.record("DomDistiller.Android.ThemeChanged");
                         mDistilledPagePrefs.setTheme(theme);
                     }
                 });

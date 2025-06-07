@@ -7,20 +7,32 @@
 
 #import <Foundation/Foundation.h>
 
+#import "base/functional/callback_forward.h"
 #import "base/ios/block_types.h"
 #import "components/policy/core/browser/signin/profile_separation_policies.h"
+#import "components/sync/base/data_type.h"
+#import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_performer_base_delegate.h"
 #import "ios/chrome/browser/signin/model/constants.h"
 
+class Browser;
+@protocol SystemIdentity;
 @class UIViewController;
 
-// Handles completion of AuthenticationFlowPerformer steps.
-@protocol AuthenticationFlowPerformerDelegate <NSObject>
+// Handles completion of AuthenticationFlowPerformerBase steps.
+@protocol AuthenticationFlowPerformerDelegate <
+    AuthenticationFlowPerformerBaseDelegate>
 
-// Indicates that a profile was signed out.
-- (void)didSignOut;
+// Called after `-[AuthenticationFlowPerformerBase
+// fetchUnsyncedDataWithSyncService:]`, to return the list of data types
+// unsynced in the current profile.
+- (void)didFetchUnsyncedDataWithUnsyncedDataTypes:
+    (syncer::DataTypeSet)unsyncedDataTypes;
 
-// Indicates that browsing data finished clearing.
-- (void)didClearData;
+// Called once the user accepts or refuses to leave the primary account.
+// See `-[AuthenticationFlowPerformerBase
+// showLeavingPrimaryAccountConfirmationWithBaseViewController:browser:
+// anchorView:anchorRect:]`.
+- (void)didAcceptToLeavePrimaryAccount:(BOOL)acceptToContinue;
 
 // Indicates that the identity managed status was fetched.
 - (void)didFetchManagedStatus:(NSString*)hostedDomain;
@@ -35,21 +47,20 @@
         profileSeparationDataMigrationSettings;
 
 // Indicates that the user accepted signing in to a managed account.
-- (void)didAcceptManagedConfirmation:(BOOL)keepBrowsingDataSeparate;
+// If `browsingDataSeparate` is `YES`, the managed account gets signed in to
+// a new empty work profile. This must only be specified if
+// AreSeparateProfilesForManagedAccountsEnabled() is true.
+// If `browsingDataSeparate` is `NO`, the account gets signed in to the
+// current profile. If AreSeparateProfilesForManagedAccountsEnabled() is true,
+// this involves converting the current profile into a work profile.
+- (void)didAcceptManagedConfirmationWithBrowsingDataSeparate:
+    (BOOL)browsingDataSeparate;
 
 // Indicates that the user cancelled signing in to a managed account.
 - (void)didCancelManagedConfirmation;
 
-// Indicates the account of the user was registered for user policy. `dmToken`
-// is empty when registration failed.
-- (void)didRegisterForUserPolicyWithDMToken:(NSString*)dmToken
-                                   clientID:(NSString*)clientID
-                         userAffiliationIDs:
-                             (NSArray<NSString*>*)userAffiliationIDs;
-
-// Indicates that user policies were fetched. `success` is true when the fetch
-// was successful.
-- (void)didFetchUserPolicyWithSuccess:(BOOL)success;
+// Indicates that switching to a different profile failed.
+- (void)didFailToSwitchToProfile;
 
 // Indicates that the personal profile was converted to a managed one.
 - (void)didMakePersonalProfileManaged;

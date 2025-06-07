@@ -13,6 +13,7 @@
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/platform/fonts/simple_font_data.h"
 #include "third_party/blink/renderer/platform/geometry/layout_unit.h"
+#include "third_party/blink/renderer/platform/geometry/skia_geometry_utils.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context_state_saver.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_shader.h"
 #include "third_party/blink/renderer/platform/graphics/styled_stroke_data.h"
@@ -92,8 +93,7 @@ void DrawDocumentMarker(GraphicsContext& context,
                         float zoom,
                         PaintRecord marker) {
   // Position already includes zoom and device scale factor.
-  SkScalar origin_x = WebCoreFloatToSkScalar(pt.x());
-  SkScalar origin_y = WebCoreFloatToSkScalar(pt.y());
+  const gfx::PointF origin = ClampNonFiniteToZero(pt);
 
 #if BUILDFLAG(IS_APPLE)
   // Make sure to draw only complete dots, and finish inside the marked text.
@@ -114,7 +114,7 @@ void DrawDocumentMarker(GraphicsContext& context,
   // shader local matrix depends solely on zoom => Skia can reuse the same
   // cached tile for all markers at a given zoom level.
   GraphicsContextStateSaver saver(context);
-  context.Translate(origin_x, origin_y);
+  context.Translate(origin.x(), origin.y());
   context.DrawRect(rect, flags, AutoDarkMode::Disabled());
 }
 

@@ -5,25 +5,34 @@
 package org.chromium.chrome.browser.ssl;
 
 import android.content.Context;
+import android.graphics.PorterDuff;
+import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.preference.Preference;
 
+import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.safe_browsing.SafeBrowsingBridge;
+import org.chromium.chrome.browser.safe_browsing.AdvancedProtectionStatusManagerAndroidBridge;
 import org.chromium.chrome.browser.settings.ChromeBaseSettingsFragment;
 import org.chromium.chrome.browser.settings.ChromeManagedPreferenceDelegate;
+import org.chromium.components.browser_ui.settings.ChromeBasePreference;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
+import org.chromium.components.permissions.OsAdditionalSecurityPermissionUtil;
 
 /**
  * Fragment to manage HTTPS-First Mode preference. It consists of a toggle switch and, if the switch
  * is enabled, an HttpsFirstModeVariantPreference.
  */
+@NullMarked
 public class HttpsFirstModeSettingsFragment extends ChromeBaseSettingsFragment {
     // Must match keys in https_first_mode_settings.xml.
     @VisibleForTesting static final String PREF_HTTPS_FIRST_MODE_SWITCH = "https_first_mode_switch";
@@ -31,10 +40,13 @@ public class HttpsFirstModeSettingsFragment extends ChromeBaseSettingsFragment {
     @VisibleForTesting
     static final String PREF_HTTPS_FIRST_MODE_VARIANT = "https_first_mode_variant";
 
+    @VisibleForTesting
+    static final String PREF_ENFORCED_BY_ADVANCED_PROTECTION =
+            "enforced_by_advanced_protection_warning";
+
     private ChromeSwitchPreference mHttpsFirstModeSwitch;
     private HttpsFirstModeVariantPreference mHttpsFirstModeVariantPreference;
     private HttpsFirstModeBridge mHttpsFirstModeBridge;
-    private SafeBrowsingBridge mSafeBrowsingBridge;
     private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
 
     @Override
@@ -42,11 +54,11 @@ public class HttpsFirstModeSettingsFragment extends ChromeBaseSettingsFragment {
         return mPageTitle;
     }
 
+    @Initializer
     @Override
-    public void setProfile(@NonNull Profile profile) {
+    public void setProfile(Profile profile) {
         super.setProfile(profile);
         mHttpsFirstModeBridge = new HttpsFirstModeBridge(profile);
-        mSafeBrowsingBridge = new SafeBrowsingBridge(profile);
     }
 
     /**
@@ -70,11 +82,12 @@ public class HttpsFirstModeSettingsFragment extends ChromeBaseSettingsFragment {
      * @return Whether the HTTPS-First Mode setting is enforced and not modifiable by the user.
      */
     public boolean isSettingEnforced() {
-        return mHttpsFirstModeBridge.isManaged() || mSafeBrowsingBridge.isUnderAdvancedProtection();
+        return mHttpsFirstModeBridge.isManaged()
+                || AdvancedProtectionStatusManagerAndroidBridge.isUnderAdvancedProtection();
     }
 
     @Override
-    public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
+    public void onCreatePreferences(@Nullable Bundle savedInstanceState, @Nullable String rootKey) {
         mPageTitle.set(getString(R.string.settings_https_first_mode_title));
         SettingsUtils.addPreferencesFromResource(this, R.xml.https_first_mode_settings);
 
@@ -103,7 +116,7 @@ public class HttpsFirstModeSettingsFragment extends ChromeBaseSettingsFragment {
                     return true;
                 });
         // Override switch description if the preference is force-enabled by Advanced Protection.
-        if (mSafeBrowsingBridge.isUnderAdvancedProtection()) {
+        if (AdvancedProtectionStatusManagerAndroidBridge.isUnderAdvancedProtection()) {
             mHttpsFirstModeSwitch.setSummary(
                     getString(
                             R.string
@@ -136,11 +149,50 @@ public class HttpsFirstModeSettingsFragment extends ChromeBaseSettingsFragment {
         if (isSettingEnforced() && !enabled) {
             mHttpsFirstModeVariantPreference.setVisible(false);
         }
+
+        maybeAddEnforcedByAdvancedProtectionWarning();
+    }
+
+    private void maybeAddEnforcedByAdvancedProtectionWarning() {
+        var existingWarning = findPreference(PREF_ENFORCED_BY_ADVANCED_PROTECTION);
+        if (existingWarning != null) {
+            getPreferenceScreen().removePreference(existingWarning);
+        }
+
+        var additionalSecurityProvider = OsAdditionalSecurityPermissionUtil.getProviderInstance();
+        if (!AdvancedProtectionStatusManagerAndroidBridge.isUnderAdvancedProtection()
+                || additionalSecurityProvider == null) {
+            return;
+        }
+
+        Context context = getPreferenceManager().getContext();
+        ChromeBasePreference preference = new ChromeBasePreference(context, null);
+        preference.setKey(PREF_ENFORCED_BY_ADVANCED_PROTECTION);
+        int titleId =
+                additionalSecurityProvider
+                        .getHttpsFirstModeEnforcedByAndroidAdvancedProtectionWarningResourceId();
+        if (titleId != 0) {
+            preference.setTitle(context.getString(titleId));
+        }
+        int iconId = additionalSecurityProvider.getAdvancedProtectionIconResourceId();
+        if (iconId != 0) {
+            Drawable icon = ApiCompatibilityUtils.getDrawable(context.getResources(), iconId);
+            icon.mutate();
+            int disabledColor = SemanticColorUtils.getDefaultControlColorActive(context);
+            icon.setColorFilter(disabledColor, PorterDuff.Mode.SRC_IN);
+            preference.setIcon(icon);
+        }
+        getPreferenceScreen().addPreference(preference);
     }
 
     @Override
-    public void onResume() {
-        super.onResume();
+    public void onStart() {
+        super.onStart();
         loadPreferenceState();
+    }
+
+    @Override
+    public @AnimationType int getAnimationType() {
+        return AnimationType.PROPERTY;
     }
 }

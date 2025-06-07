@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ash/policy/remote_commands/crd/crd_admin_session_controller.h"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -19,24 +20,28 @@
 #include "base/run_loop.h"
 #include "base/strings/to_string.h"
 #include "base/test/run_until.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "chrome/browser/ash/policy/remote_commands/crd/crd_remote_command_utils.h"
+#include "chrome/browser/ash/policy/remote_commands/crd/public/crd_session_result_codes.h"
+#include "chrome/browser/ash/policy/remote_commands/crd/start_crd_session_job_delegate.h"
 #include "chrome/browser/ui/ash/login/mock_login_display_host.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
+#include "chromeos/ash/components/dbus/cryptohome/UserDataAuth.pb.h"
+#include "chromeos/ash/components/dbus/userdataauth/fake_userdataauth_client.h"
+#include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
 #include "chromeos/crosapi/mojom/remoting.mojom.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/session_manager/core/session_manager.h"
 #include "content/public/test/browser_task_environment.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "remoting/host/chromeos/features.h"
+#include "remoting/base/errors.h"
+#include "remoting/host/chromeos/chromeos_enterprise_params.h"
 #include "remoting/host/mojom/remote_support.mojom.h"
-#include "remoting/protocol/errors.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -51,17 +56,17 @@ using StartSupportSessionCallback =
     crosapi::mojom::Remoting::StartSupportSessionCallback;
 
 using base::test::TestFuture;
+using remoting::ErrorCode;
 using remoting::SessionId;
-using remoting::features::kEnableCrdAdminRemoteAccessV2;
 using remoting::mojom::StartSupportSessionResponse;
 using remoting::mojom::StartSupportSessionResponsePtr;
 using remoting::mojom::SupportHostObserver;
 using remoting::mojom::SupportSessionParamsPtr;
-using remoting::protocol::ErrorCode;
 using ::testing::Eq;
 
 constexpr char kTestUserName[] = "test-username";
 const SessionId kValidSessionId{678};
+const base::TimeDelta kAutoAcceptTimeout = base::Seconds(30);
 
 // Returns a valid response that can be sent to a `StartSupportSessionCallback`.
 StartSupportSessionResponsePtr AnyResponse() {
@@ -330,10 +335,8 @@ class CrdAdminSessionControllerTest : public ash::AshTestBase {
   }
 
   void InitWithNoReconnectableSession(CrdAdminSessionController& controller) {
-    if (base::FeatureList::IsEnabled(kEnableCrdAdminRemoteAccessV2)) {
-      EXPECT_CALL(remoting_service(), GetReconnectableSessionId)
-          .WillOnce(ReplyWithSessionId(std::nullopt));
-    }
+    EXPECT_CALL(remoting_service(), GetReconnectableSessionId)
+        .WillOnce(ReplyWithSessionId(std::nullopt));
 
     Init(controller);
 
@@ -379,16 +382,6 @@ class CrdAdminSessionControllerTest : public ash::AshTestBase {
     observer_.reset();
   }
 
-  void DisableFeature(const base::Feature& feature) {
-    feature_.Reset();
-    feature_.InitAndDisableFeature(feature);
-  }
-
-  void EnableFeature(const base::Feature& feature) {
-    feature_.Reset();
-    feature_.InitAndEnableFeature(feature);
-  }
-
   bool GetPref(const char* pref_name) {
     return local_state().GetBoolean(pref_name);
   }
@@ -426,14 +419,38 @@ class CrdAdminSessionControllerTest : public ash::AshTestBase {
     session_finish_result_.Clear();
   }
 
+  void FinishLockAccountRecoveryRequestWithSuccess() {
+    ash::FakeUserDataAuthClient::TestApi::Get()->SetNextOperationError(
+        ash::FakeUserDataAuthClient::Operation::kLockFactorUntilReboot,
+        cryptohome::ErrorWrapper::CreateFromErrorCodeOnly(
+            ::user_data_auth::CRYPTOHOME_ERROR_NOT_SET));
+  }
+
+  void FinishLockAccountRecoveryRequestWithError() {
+    ash::FakeUserDataAuthClient::TestApi::Get()->SetNextOperationError(
+        ash::FakeUserDataAuthClient::Operation::kLockFactorUntilReboot,
+        cryptohome::ErrorWrapper::CreateFromErrorCodeOnly(
+            ::user_data_auth::CRYPTOHOME_ERROR_NOT_IMPLEMENTED));
+  }
+
+  bool AccountRecoveryOperationIsCalled() {
+    return ash::FakeUserDataAuthClient::Get()
+        ->WasCalled<
+            ash::FakeUserDataAuthClient::Operation::kLockFactorUntilReboot>();
+  }
+
  protected:
   void SetUp() override {
+    ash::UserDataAuthClient::InitializeFake();
+
     AshTestBase::SetUp();
     RecreateSessionController();
     session_controller().SetOAuthTokenForTesting("test-oauth-token");
   }
 
   void TearDown() override {
+    ash::UserDataAuthClient::Shutdown();
+
     session_controller_->Shutdown();
     AshTestBase::TearDown();
   }
@@ -447,7 +464,6 @@ class CrdAdminSessionControllerTest : public ash::AshTestBase {
   testing::StrictMock<RemotingServiceMock> remoting_service_;
   SecurityCurtainControllerFake curtain_controller_fake_;
   std::optional<CrdAdminSessionController> session_controller_;
-  base::test::ScopedFeatureList feature_;
 };
 
 // Fixture for tests parameterized over boolean values.
@@ -488,6 +504,42 @@ TEST_F(CrdAdminSessionControllerTest, ShouldPassUserNameToRemotingService) {
   EXPECT_EQ(actual_parameters->user_name, "<the-user-name>");
 }
 
+TEST_F(CrdAdminSessionControllerTest,
+       ShouldPassAutoAcceptTimeoutToRemotingService) {
+  InitWithNoReconnectableSession(session_controller());
+  SessionParameters parameters;
+  parameters.connection_auto_accept_timeout = kAutoAcceptTimeout;
+
+  remoting::ChromeOsEnterpriseParams actual_parameters;
+  EXPECT_CALL(remoting_service(), StartSession)
+      .WillOnce(SaveParamAndInvokeCallback(&actual_parameters));
+
+  delegate().StartCrdHostAndGetCode(parameters, success_callback(),
+                                    error_callback(),
+                                    session_finished_callback());
+
+  EXPECT_EQ(actual_parameters.connection_auto_accept_timeout,
+            kAutoAcceptTimeout);
+}
+
+TEST_F(CrdAdminSessionControllerTest,
+       ShouldNotPassAutoAcceptTimeoutIfUnsetToRemotingService) {
+  InitWithNoReconnectableSession(session_controller());
+  SessionParameters parameters;
+  parameters.connection_auto_accept_timeout = std::nullopt;
+
+  remoting::ChromeOsEnterpriseParams actual_parameters;
+  EXPECT_CALL(remoting_service(), StartSession)
+      .WillOnce(SaveParamAndInvokeCallback(&actual_parameters));
+
+  delegate().StartCrdHostAndGetCode(parameters, success_callback(),
+                                    error_callback(),
+                                    session_finished_callback());
+
+  EXPECT_EQ(actual_parameters.connection_auto_accept_timeout,
+            base::TimeDelta());
+}
+
 TEST_P(CrdAdminSessionControllerTestWithBoolParams,
        ShouldPassShowConfirmationDialogToRemotingService) {
   InitWithNoReconnectableSession(session_controller());
@@ -504,6 +556,7 @@ TEST_P(CrdAdminSessionControllerTestWithBoolParams,
 
   EXPECT_NE(actual_parameters.suppress_notifications, GetParam());
   EXPECT_NE(actual_parameters.suppress_user_dialogs, GetParam());
+  EXPECT_EQ(actual_parameters.connection_dialog_required, GetParam());
 }
 
 TEST_P(CrdAdminSessionControllerTestWithBoolParams,
@@ -537,6 +590,44 @@ TEST_F(CrdAdminSessionControllerTest, ShouldPassAdminEmailToRemotingService) {
                                     session_finished_callback());
 
   EXPECT_EQ(actual_parameters->authorized_helper, "the.admin@email.com");
+}
+
+TEST_F(CrdAdminSessionControllerTest,
+       ShouldPassEnterpriseAdminRequestOriginToRemotingService) {
+  InitWithNoReconnectableSession(session_controller());
+  SessionParameters parameters;
+  parameters.request_origin =
+      StartCrdSessionJobDelegate::RequestOrigin::kEnterpriseAdmin;
+
+  remoting::ChromeOsEnterpriseParams actual_parameters;
+  EXPECT_CALL(remoting_service(), StartSession)
+      .WillOnce(SaveParamAndInvokeCallback(&actual_parameters));
+
+  delegate().StartCrdHostAndGetCode(parameters, success_callback(),
+                                    error_callback(),
+                                    session_finished_callback());
+
+  EXPECT_EQ(actual_parameters.request_origin,
+            remoting::ChromeOsEnterpriseRequestOrigin::kEnterpriseAdmin);
+}
+
+TEST_F(CrdAdminSessionControllerTest,
+       ShouldPassClassManagementRequestOriginToRemotingService) {
+  InitWithNoReconnectableSession(session_controller());
+  SessionParameters parameters;
+  parameters.request_origin =
+      StartCrdSessionJobDelegate::RequestOrigin::kClassManagement;
+
+  remoting::ChromeOsEnterpriseParams actual_parameters;
+  EXPECT_CALL(remoting_service(), StartSession)
+      .WillOnce(SaveParamAndInvokeCallback(&actual_parameters));
+
+  delegate().StartCrdHostAndGetCode(parameters, success_callback(),
+                                    error_callback(),
+                                    session_finished_callback());
+
+  EXPECT_EQ(actual_parameters.request_origin,
+            remoting::ChromeOsEnterpriseRequestOrigin::kClassManagement);
 }
 
 TEST_P(CrdAdminSessionControllerTestWithBoolParams,
@@ -605,6 +696,40 @@ TEST_P(CrdAdminSessionControllerTestWithBoolParams,
                                     session_finished_callback());
 
   EXPECT_EQ(actual_parameters.allow_file_transfer, GetParam());
+}
+
+TEST_P(CrdAdminSessionControllerTestWithBoolParams,
+       ShouldPassAllowRemoteInputToRemotingService) {
+  InitWithNoReconnectableSession(session_controller());
+  SessionParameters parameters;
+  parameters.allow_remote_input = GetParam();
+
+  remoting::ChromeOsEnterpriseParams actual_parameters;
+  EXPECT_CALL(remoting_service(), StartSession)
+      .WillOnce(SaveParamAndInvokeCallback(&actual_parameters));
+
+  delegate().StartCrdHostAndGetCode(parameters, success_callback(),
+                                    error_callback(),
+                                    session_finished_callback());
+
+  EXPECT_EQ(actual_parameters.allow_remote_input, GetParam());
+}
+
+TEST_P(CrdAdminSessionControllerTestWithBoolParams,
+       ShouldPassAllowClipboardSyncToRemotingService) {
+  InitWithNoReconnectableSession(session_controller());
+  SessionParameters parameters;
+  parameters.allow_clipboard_sync = GetParam();
+
+  remoting::ChromeOsEnterpriseParams actual_parameters;
+  EXPECT_CALL(remoting_service(), StartSession)
+      .WillOnce(SaveParamAndInvokeCallback(&actual_parameters));
+
+  delegate().StartCrdHostAndGetCode(parameters, success_callback(),
+                                    error_callback(),
+                                    session_finished_callback());
+
+  EXPECT_EQ(actual_parameters.allow_clipboard_sync, GetParam());
 }
 
 TEST_F(CrdAdminSessionControllerTest,
@@ -830,8 +955,8 @@ TEST_F(
   InitWithNoReconnectableSession(session_controller());
   SupportHostObserver& observer = StartCrdHostAndBindObserver();
 
-  observer.OnHostStateError(static_cast<int64_t>(
-      remoting::protocol::ErrorCode::DISALLOWED_BY_POLICY));
+  observer.OnHostStateError(
+      static_cast<int64_t>(remoting::ErrorCode::DISALLOWED_BY_POLICY));
 
   Response response = WaitForResponse();
   ASSERT_TRUE(response.HasError());
@@ -906,7 +1031,6 @@ TEST_F(CrdAdminSessionControllerTest,
 }
 
 TEST_F(CrdAdminSessionControllerTest, ShouldBlockLateIncomingConnections) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
   InitWithNoReconnectableSession(session_controller());
   SupportHostObserver& observer = StartCrdHostAndBindObserver();
 
@@ -921,7 +1045,6 @@ TEST_F(CrdAdminSessionControllerTest, ShouldBlockLateIncomingConnections) {
 }
 
 TEST_F(CrdAdminSessionControllerTest, ShouldAcceptFastIncomingConnections) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
   InitWithNoReconnectableSession(session_controller());
   SupportHostObserver& observer = StartCrdHostAndBindObserver();
 
@@ -937,6 +1060,60 @@ TEST_F(CrdAdminSessionControllerTest, ShouldAcceptFastIncomingConnections) {
   // Make sure we do not kill the session once the 10 minutes mark hit.
   task_environment()->FastForwardBy(base::Minutes(1));
   ASSERT_TRUE(delegate().HasActiveSession());
+}
+
+TEST_F(CrdAdminSessionControllerTest,
+       ShouldNotBlockAccountRecoveryBeforeCrdHostSessionIsConnected) {
+  InitWithNoReconnectableSession(session_controller());
+  SupportHostObserver& observer = StartCrdHostAndBindObserver();
+
+  observer.OnHostStateReceivedAccessCode("access-code", base::Days(1));
+  observer.OnHostStateStarting();
+  observer.OnHostStateConnecting();
+  observer.OnHostStateDisconnected(std::nullopt);
+  observer.OnHostStateError(1);
+  observer.OnPolicyError();
+  observer.OnInvalidDomainError();
+  FlushForTesting(observer);
+
+  EXPECT_FALSE(AccountRecoveryOperationIsCalled());
+}
+
+TEST_F(CrdAdminSessionControllerTest,
+       ShouldBlockAccountRecoveryOnCrdHostSessionIsConnected) {
+  InitWithNoReconnectableSession(session_controller());
+  SupportHostObserver& observer = StartCrdHostAndBindObserver();
+
+  observer.OnHostStateConnected("remote-user");
+  FlushForTesting(observer);
+
+  EXPECT_TRUE(AccountRecoveryOperationIsCalled());
+}
+
+TEST_F(CrdAdminSessionControllerTest,
+       ShouldNotTerminateIfBlockingAccountRecoverySucceeds) {
+  FinishLockAccountRecoveryRequestWithSuccess();
+  InitWithNoReconnectableSession(session_controller());
+  SupportHostObserver& observer = StartCrdHostAndBindObserver();
+
+  observer.OnHostStateConnected("remote-user");
+  FlushForTesting(observer);
+
+  EXPECT_TRUE(AccountRecoveryOperationIsCalled());
+  ASSERT_TRUE(delegate().HasActiveSession());
+}
+
+TEST_F(CrdAdminSessionControllerTest,
+       ShouldTerminateSessionIfBlockingAccountRecoveryFails) {
+  FinishLockAccountRecoveryRequestWithError();
+  InitWithNoReconnectableSession(session_controller());
+  SupportHostObserver& observer = StartCrdHostAndBindObserver();
+
+  observer.OnHostStateConnected("remote-user");
+  FlushForTesting(observer);
+
+  EXPECT_TRUE(AccountRecoveryOperationIsCalled());
+  ASSERT_FALSE(delegate().HasActiveSession());
 }
 
 // Fixture for all tests related to reconnecting to an existing session.
@@ -997,7 +1174,6 @@ class CrdAdminSessionControllerReconnectTest
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldNotCurtainOffAnUncurtainedSession) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
   InitWithNoReconnectableSession(session_controller());
 
   StartCrdHost(/*is_curtained=*/false);
@@ -1007,7 +1183,6 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldCurtainOffCurtainedSession) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
   InitWithNoReconnectableSession(session_controller());
 
   StartCrdHost(/*is_curtained=*/true);
@@ -1017,7 +1192,6 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldUncurtainAndForceTerminateWhenCurtainedSessionEnds) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
   InitWithNoReconnectableSession(session_controller());
 
   SimulateCrdSessionWithClient(/*is_curtained=*/true);
@@ -1029,8 +1203,6 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldResumeReconnectableSessionDuringInitIfAvailable) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
-
   const SessionId kSessionId{123};
   const std::string kOAuthToken = "oauth-token-for-reconnect";
 
@@ -1059,8 +1231,6 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldHandleOauthTokenFailureWhileReconnecting) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
-
   session_controller().FailOAuthTokenFetchForTesting();
 
   // First we should query for the reconnectable session id.
@@ -1077,8 +1247,6 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldNotResumeReconnectableSessionIfUnavailable) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
-
   // First we return nullopt when we query for the reconnectable session id.
   EXPECT_CALL(remoting_service(), GetReconnectableSessionId)
       .WillOnce(ReplyWithSessionId(std::nullopt));
@@ -1093,19 +1261,7 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 }
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
-       ShouldNotTryToResumeReconnectableSessionIfFeatureIsDisabled) {
-  DisableFeature(kEnableCrdAdminRemoteAccessV2);
-
-  EXPECT_NO_CALLS(remoting_service(), GetReconnectableSessionId);
-  EXPECT_NO_CALLS(remoting_service(), ReconnectToSession);
-
-  Init(session_controller());
-}
-
-TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldNotCurtainOffIfThereIsNoReconnectableSession) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
-
   InitWithNoReconnectableSession(session_controller());
 
   EXPECT_FALSE(curtain_controller().IsEnabled());
@@ -1113,8 +1269,6 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldCurtainOffIfThereIsAReconnectableSession) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
-
   InitWithReconnectableSession(session_controller());
 
   EXPECT_TRUE(curtain_controller().IsEnabled());
@@ -1122,14 +1276,12 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldUncurtainAndTerminateSessionIfCrdHostFails) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
-
   SupportHostObserver& observer =
       InitWithReconnectableSession(session_controller());
   ASSERT_TRUE(curtain_controller().IsEnabled());
 
-  observer.OnHostStateError(static_cast<int64_t>(
-      remoting::protocol::ErrorCode::AUTHENTICATION_FAILED));
+  observer.OnHostStateError(
+      static_cast<int64_t>(remoting::ErrorCode::AUTHENTICATION_FAILED));
   FlushForTesting(observer);
 
   EXPECT_FALSE(curtain_controller().IsEnabled());
@@ -1138,8 +1290,6 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldUncurtainAndTerminateSessionIfRemoteAdminDisconnects) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
-
   SupportHostObserver& observer =
       InitWithReconnectableSession(session_controller());
   ASSERT_TRUE(curtain_controller().IsEnabled());
@@ -1156,8 +1306,6 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldUncurtainAndTerminateSessionIfRemoteAdminNeverReconnects) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
-
   InitWithReconnectableSession(session_controller());
   ASSERT_TRUE(curtain_controller().IsEnabled());
 
@@ -1169,8 +1317,6 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        ShouldUncurtainAndTerminateSessionIfFetchingOAuthTokenFails) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
-
   EXPECT_CALL(remoting_service(), GetReconnectableSessionId)
       .WillOnce(ReplyWithSessionId(kValidSessionId));
 
@@ -1186,7 +1332,6 @@ TEST_F(CrdAdminSessionControllerReconnectTest,
 
 TEST_F(CrdAdminSessionControllerReconnectTest,
        CurtainedSessionShouldDisableInputDevices) {
-  EnableFeature(kEnableCrdAdminRemoteAccessV2);
   InitWithNoReconnectableSession(session_controller());
 
   StartCrdHost(/*is_curtained=*/true);
@@ -1199,8 +1344,6 @@ class CrdAdminSessionControllerNotificationTest
     : public CrdAdminSessionControllerReconnectTest {
  public:
   void SetUp() override {
-    EnableFeature(kEnableCrdAdminRemoteAccessV2);
-
     CrdAdminSessionControllerReconnectTest::SetUp();
 
     InitWithNoReconnectableSession(session_controller());
@@ -1214,18 +1357,6 @@ class CrdAdminSessionControllerNotificationTest
     SimulateLoginScreenIsVisible();
   }
 };
-
-TEST_F(CrdAdminSessionControllerNotificationTest,
-       ShouldNotShowActivityNotificationIfDisabledByFeature) {
-  DisableFeature(kEnableCrdAdminRemoteAccessV2);
-  // Ensure disabling the feature takes effect.
-  SimulateChromeRestart();
-
-  SimulateCrdSessionWithClient(/*is_curtained=*/true);
-
-  EXPECT_NO_CALLS(login_display_host(), ShowRemoteActivityNotificationScreen);
-  SimulateChromeRestart();
-}
 
 TEST_F(CrdAdminSessionControllerNotificationTest,
        ShouldShowActivityNotificationIfThePreviousSessionWasCurtained) {

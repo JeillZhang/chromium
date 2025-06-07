@@ -6,6 +6,7 @@
 
 #import "base/apple/bundle_locations.h"
 #import "base/files/file_util.h"
+#import "base/functional/bind.h"
 #import "base/functional/callback.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/path_service.h"
@@ -13,19 +14,20 @@
 #import "base/task/thread_pool.h"
 #import "base/time/default_clock.h"
 #import "components/component_updater/pref_names.h"
-#import "components/optimization_guide/core/command_line_top_host_provider.h"
-#import "components/optimization_guide/core/hints_processing_util.h"
+#import "components/optimization_guide/core/hints/command_line_top_host_provider.h"
+#import "components/optimization_guide/core/hints/hints_processing_util.h"
+#import "components/optimization_guide/core/hints/optimization_guide_navigation_data.h"
+#import "components/optimization_guide/core/hints/optimization_guide_store.h"
+#import "components/optimization_guide/core/hints/top_host_provider.h"
 #import "components/optimization_guide/core/model_execution/model_execution_manager.h"
 #import "components/optimization_guide/core/model_execution/on_device_model_service_controller.h"
 #import "components/optimization_guide/core/optimization_guide_constants.h"
 #import "components/optimization_guide/core/optimization_guide_features.h"
 #import "components/optimization_guide/core/optimization_guide_logger.h"
-#import "components/optimization_guide/core/optimization_guide_navigation_data.h"
-#import "components/optimization_guide/core/optimization_guide_store.h"
 #import "components/optimization_guide/core/optimization_guide_util.h"
 #import "components/optimization_guide/core/prediction_manager.h"
-#import "components/optimization_guide/core/top_host_provider.h"
 #import "components/prefs/pref_service.h"
+#import "components/services/unzip/in_process_unzipper.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
 #import "components/variations/synthetic_trials.h"
 #import "ios/chrome/browser/metrics/model/ios_chrome_metrics_service_accessor.h"
@@ -40,6 +42,7 @@
 #import "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
+#import "components/optimization_guide/core/model_execution/on_device_asset_manager.h"
 #import "components/optimization_guide/core/model_execution/on_device_model_component.h"
 #import "ios/chrome/browser/optimization_guide/model/on_device_model_service_controller_ios.h"
 #endif  // BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
@@ -147,8 +150,7 @@ OptimizationGuideService::OptimizationGuideService(
                   profile_path.Append(
                       optimization_guide::kOptimizationGuideHintStore),
                   base::ThreadPool::CreateSequencedTaskRunner(
-                      {base::MayBlock(), base::TaskPriority::BEST_EFFORT}),
-                  pref_service)
+                      {base::MayBlock(), base::TaskPriority::BEST_EFFORT}))
             : nullptr;
     hint_store = hint_store_ ? hint_store_->AsWeakPtr() : nullptr;
   }
@@ -169,13 +171,14 @@ OptimizationGuideService::OptimizationGuideService(
             base::BindRepeating([]() {
               return GetApplicationContext()->GetLocalState()->GetBoolean(
                   ::prefs::kComponentUpdatesEnabled);
-            }));
+            }),
+            base::BindRepeating(&unzip::LaunchInProcessUnzipper));
   }
 
   if (!off_the_record_) {
+#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
     PrefService* local_state = GetApplicationContext()->GetLocalState();
 
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
     // Create and startup the on-device model's state manager.
     on_device_model_state_manager_ =
         optimization_guide::OnDeviceModelComponentStateManager::CreateOrGet(
@@ -193,17 +196,20 @@ OptimizationGuideService::OptimizationGuideService(
         on_device_model_service_controller =
             GetApplicationContext()->GetOnDeviceModelServiceController(
                 on_device_model_state_manager_->GetWeakPtr());
+    on_device_asset_manager_ =
+        std::make_unique<optimization_guide::OnDeviceAssetManager>(
+            local_state, on_device_model_service_controller->GetWeakPtr(),
+            on_device_model_state_manager_->GetWeakPtr(), this);
     model_execution_manager_ =
         std::make_unique<optimization_guide::ModelExecutionManager>(
-            url_loader_factory, local_state, identity_manager,
-            std::move(on_device_model_service_controller), this,
-            on_device_model_state_manager_->GetWeakPtr(),
+            url_loader_factory, identity_manager,
+            std::move(on_device_model_service_controller),
             optimization_guide_logger_.get(), nullptr);
 #else   // BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
     model_execution_manager_ =
         std::make_unique<optimization_guide::ModelExecutionManager>(
-            url_loader_factory, local_state, identity_manager, nullptr, this,
-            nullptr, optimization_guide_logger_.get(), nullptr);
+            url_loader_factory, identity_manager, nullptr,
+            optimization_guide_logger_.get(), nullptr);
 #endif  // BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
   }
 

@@ -5,16 +5,17 @@ import 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js'
 
 import type {CrIconButtonElement} from '//resources/cr_elements/cr_icon_button/cr_icon_button.js';
 import type {AppElement} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
-import {LINK_TOGGLE_BUTTON_ID, PauseActionSource, ToolbarEvent} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
-import {assertEquals, assertFalse, assertTrue} from 'chrome-untrusted://webui-test/chai_assert.js';
+import {LINK_TOGGLE_BUTTON_ID, SpeechBrowserProxyImpl, SpeechController, ToolbarEvent} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
+import {assertFalse, assertTrue} from 'chrome-untrusted://webui-test/chai_assert.js';
 import {microtasksFinished} from 'chrome-untrusted://webui-test/test_util.js';
 
-import {createApp, createSpeechSynthesisVoice, emitEvent} from './common.js';
-import {FakeSpeechSynthesis} from './fake_speech_synthesis.js';
+import {createApp, emitEvent, setupBasicSpeech} from './common.js';
+import {TestSpeechBrowserProxy} from './test_speech_browser_proxy.js';
 
 suite('LinksToggledIntegration', () => {
   let app: AppElement;
   let linksToggleButton: CrIconButtonElement|null;
+  let speechController: SpeechController;
 
   // root htmlTag='#document' id=1
   // ++link htmlTag='a' url='http://www.google.com' id=2
@@ -59,9 +60,8 @@ suite('LinksToggledIntegration', () => {
     ],
   };
 
-  function assertContainerHasLinks(hasLinks: boolean) {
-    const innerHTML = app.$.container.innerHTML;
-    assertEquals(hasLinks, innerHTML.includes('a href'));
+  function hasLinks() {
+    return !!(app.$.container.querySelector('a[href]'));
   }
 
   setup(async () => {
@@ -71,29 +71,22 @@ suite('LinksToggledIntegration', () => {
     // ReadAnythingAppController, onConnected creates mojo pipes to connect to
     // the rest of the Read Anything feature, which we are not testing here.
     chrome.readingMode.onConnected = () => {};
+    const speech = new TestSpeechBrowserProxy();
+    SpeechBrowserProxyImpl.setInstance(speech);
+    speechController = new SpeechController();
+    SpeechController.setInstance(speechController);
 
     app = await createApp();
     linksToggleButton =
-        app.$.toolbar.shadowRoot!.querySelector<CrIconButtonElement>(
+        app.$.toolbar.shadowRoot.querySelector<CrIconButtonElement>(
             '#' + LINK_TOGGLE_BUTTON_ID);
     assertTrue(!!linksToggleButton);
     chrome.readingMode.setContentForTesting(axTree, [3, 5]);
-    await microtasksFinished();
-
-    const speechSynthesis = new FakeSpeechSynthesis();
-    // Read only the first sentence and then stop. This ensures we can check
-    // the state of links and highlights while playing. Otherwise, speech may
-    // finish before we can check that.
-    speechSynthesis.setMaxSegments(1);
-    app.synth = speechSynthesis;
-    app.enabledLangs = ['en-US'];
-    const selectedVoice =
-        createSpeechSynthesisVoice({lang: 'en-US', name: 'Google Kristi'});
-    return emitEvent(app, ToolbarEvent.VOICE, {detail: {selectedVoice}});
+    setupBasicSpeech(speech);
   });
 
   test('container has links by default', () => {
-    assertContainerHasLinks(true);
+    assertTrue(hasLinks());
   });
 
   test('container has no highlight by default', () => {
@@ -102,24 +95,25 @@ suite('LinksToggledIntegration', () => {
     assertFalse(!!currentHighlight);
   });
 
-  test('on first toggle, links are disabled', () => {
+  test('on first toggle, links are disabled', async () => {
     linksToggleButton!.click();
-    assertContainerHasLinks(false);
+    await microtasksFinished();
+    assertFalse(hasLinks());
   });
 
-  test('on next toggle, links are enabled', () => {
+  test('on next toggle, links are enabled', async () => {
     linksToggleButton!.click();
-    assertContainerHasLinks(true);
+    await microtasksFinished();
+    assertTrue(hasLinks());
   });
 
   suite('after speech starts', () => {
     setup(() => {
-      app.playSpeech();
-      return microtasksFinished();
+      emitEvent(app, ToolbarEvent.PLAY_PAUSE);
     });
 
     test('container does not have links', () => {
-      assertContainerHasLinks(false);
+      assertFalse(hasLinks());
     });
 
     test('container has highlight', () => {
@@ -128,30 +122,24 @@ suite('LinksToggledIntegration', () => {
       assertTrue(!!currentHighlight);
     });
 
-    suite('and after speech finishes', () => {
-      setup(async () => {
-        for (let i = 0; i < axTree.nodes.length + 1; i++) {
-          await emitEvent(app, ToolbarEvent.NEXT_GRANULARITY);
-        }
-        return microtasksFinished();
-      });
 
-      test('container has links again', () => {
-        assertContainerHasLinks(true);
-      });
+    test('and after speech finishes, container has links again', async () => {
+      for (let i = 0; i < axTree.nodes.length + 1; i++) {
+        emitEvent(app, ToolbarEvent.NEXT_GRANULARITY);
+      }
+      await microtasksFinished();
+      assertTrue(hasLinks());
     });
   });
 
   suite('after speech pauses', () => {
-    setup(async () => {
-      app.playSpeech();
-      await microtasksFinished();
-      app.stopSpeech(PauseActionSource.BUTTON_CLICK);
-      return microtasksFinished();
+    setup(() => {
+      emitEvent(app, ToolbarEvent.PLAY_PAUSE);
+      emitEvent(app, ToolbarEvent.PLAY_PAUSE);
     });
 
     test('container has links again', () => {
-      assertContainerHasLinks(true);
+      assertTrue(hasLinks());
     });
 
     test('container still has highlight', () => {
@@ -168,21 +156,19 @@ suite('LinksToggledIntegration', () => {
       if (chrome.readingMode.linksEnabled) {
         linksToggleButton!.click();
       }
-      return microtasksFinished();
     });
 
     test('container does not have links', () => {
-      assertContainerHasLinks(false);
+      assertFalse(hasLinks());
     });
 
     suite('after speech starts', () => {
       setup(() => {
-        app.playSpeech();
-        return microtasksFinished();
+        emitEvent(app, ToolbarEvent.PLAY_PAUSE);
       });
 
       test('container does not have links', () => {
-        assertContainerHasLinks(false);
+        assertFalse(hasLinks());
       });
 
       test('container has highlight', () => {
@@ -193,15 +179,13 @@ suite('LinksToggledIntegration', () => {
     });
 
     suite('after speech pauses', () => {
-      setup(async () => {
-        app.playSpeech();
-        await microtasksFinished();
-        app.stopSpeech(PauseActionSource.BUTTON_CLICK);
-        return microtasksFinished();
+      setup(() => {
+        emitEvent(app, ToolbarEvent.PLAY_PAUSE);
+        emitEvent(app, ToolbarEvent.PLAY_PAUSE);
       });
 
       test('container does not have links', () => {
-        assertContainerHasLinks(false);
+        assertFalse(hasLinks());
       });
 
       test('container still has highlight', () => {

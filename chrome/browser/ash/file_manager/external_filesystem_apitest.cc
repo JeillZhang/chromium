@@ -17,6 +17,7 @@
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/drivefs_test_support.h"
 #include "chrome/browser/ash/extensions/file_manager/event_router.h"
 #include "chrome/browser/ash/extensions/file_manager/event_router_factory.h"
@@ -439,7 +440,8 @@ class DriveFileSystemExtensionApiTest : public FileSystemExtensionApiTestBase {
     fake_drivefs_helper_ = std::make_unique<drive::FakeDriveFsHelper>(
         profile, drivefs_mount_point.DirName());
     return new drive::DriveIntegrationService(
-        profile, "", test_cache_root_.GetPath(),
+        g_browser_process->local_state(), profile, "",
+        test_cache_root_.GetPath(),
         fake_drivefs_helper_->CreateFakeDriveFsListenerFactory());
   }
 
@@ -547,7 +549,7 @@ class MultiProfileDriveFileSystemExtensionApiTest
     const auto& drivefs_helper = fake_drivefs_helpers_[profile] =
         std::make_unique<drive::FakeDriveFsHelper>(profile, drivefs_dir);
     return new drive::DriveIntegrationService(
-        profile, std::string(), cache_dir,
+        g_browser_process->local_state(), profile, std::string(), cache_dir,
         drivefs_helper->CreateFakeDriveFsListenerFactory());
   }
 
@@ -616,7 +618,8 @@ class LocalAndDriveFileSystemExtensionApiTest
     fake_drivefs_helper_ = std::make_unique<drive::FakeDriveFsHelper>(
         profile, drivefs_mount_point.DirName());
     return new drive::DriveIntegrationService(
-        profile, "", test_cache_root_.GetPath(),
+        g_browser_process->local_state(), profile, "",
+        test_cache_root_.GetPath(),
         fake_drivefs_helper_->CreateFakeDriveFsListenerFactory());
   }
 
@@ -671,7 +674,9 @@ constexpr char kAppLaunchMetric[] = "Apps.DefaultAppLaunch.FromFileManager";
 
 // Check the interception of ExecuteTask calls to replace Gallery for PNGs. The
 // Media App should always be used in this case.
-IN_PROC_BROWSER_TEST_F(FileSystemExtensionApiTestWithApps, OpenGalleryForPng) {
+// TODO(crbug.com/402514601): Test is flaky.
+IN_PROC_BROWSER_TEST_F(FileSystemExtensionApiTestWithApps,
+                       DISABLED_OpenGalleryForPng) {
   base::HistogramTester histogram_tester;
   EXPECT_TRUE(RunBackgroundPageTestCase("open_gallery",
                                         "testPngOpensGalleryReturnsOpened"))

@@ -34,6 +34,7 @@
 #include "components/policy/policy_constants.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/base/oauth_token_getter.h"
+#include "remoting/host/chromeos/chromeos_enterprise_params.h"
 #include "remoting/host/chromoting_host_context.h"
 #include "remoting/host/it2me/it2me_constants.h"
 #include "remoting/host/it2me/it2me_helpers.h"
@@ -45,7 +46,6 @@
 #include "remoting/host/setup/test_util.h"
 #include "remoting/protocol/errors.h"
 #include "remoting/protocol/ice_config.h"
-#include "remoting/signaling/log_to_server.h"
 #include "services/network/test/test_shared_url_loader_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -212,7 +212,6 @@ void MockIt2MeHost::Disconnect() {
     return;
   }
 
-  log_to_server_.reset();
   register_request_.reset();
   signal_strategy_.reset();
   session_policies_finalized_ = false;
@@ -226,7 +225,6 @@ void MockIt2MeHost::CreateConnectionContextOnNetworkThread(
     CreateDeferredConnectContext create_connection_context) {
   DCHECK(host_context()->network_task_runner()->BelongsToCurrentThread());
   auto context = std::move(create_connection_context).Run(host_context());
-  log_to_server_ = std::move(context->log_to_server);
   register_request_ = std::move(context->register_request);
   signal_strategy_ = std::move(context->signal_strategy);
   signaling_token_getter_ = std::move(context->signaling_token_getter);
@@ -712,6 +710,10 @@ TEST_F(It2MeNativeMessagingHostTest,
   params.suppress_notifications = true;
   params.terminate_upon_input = true;
   params.curtain_local_user_session = true;
+  params.allow_remote_input = false;
+  params.allow_clipboard_sync = false;
+  params.connection_auto_accept_timeout = base::Hours(8);
+  params.request_origin = ChromeOsEnterpriseRequestOrigin::kEnterpriseAdmin;
   connect_message.Merge(params.ToDict());
   WriteMessageToInputPipe(connect_message);
   VerifyConnectResponses(next_id);
@@ -721,6 +723,12 @@ TEST_F(It2MeNativeMessagingHostTest,
   ASSERT_TRUE(get_chrome_os_enterprise_params()->suppress_notifications);
   ASSERT_TRUE(get_chrome_os_enterprise_params()->terminate_upon_input);
   ASSERT_TRUE(get_chrome_os_enterprise_params()->curtain_local_user_session);
+  ASSERT_FALSE(get_chrome_os_enterprise_params()->allow_remote_input);
+  ASSERT_FALSE(get_chrome_os_enterprise_params()->allow_clipboard_sync);
+  ASSERT_EQ(get_chrome_os_enterprise_params()->connection_auto_accept_timeout,
+            base::Hours(8));
+  ASSERT_EQ(get_chrome_os_enterprise_params()->request_origin,
+            ChromeOsEnterpriseRequestOrigin::kEnterpriseAdmin);
 #else
   ASSERT_FALSE(get_chrome_os_enterprise_params().has_value());
 #endif

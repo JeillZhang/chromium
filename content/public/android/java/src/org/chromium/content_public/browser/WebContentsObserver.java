@@ -5,7 +5,6 @@
 package org.chromium.content_public.browser;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.NonNull;
 
 import org.chromium.base.TerminationStatus;
 import org.chromium.blink.mojom.ViewportFit;
@@ -48,7 +47,7 @@ public abstract class WebContentsObserver {
 
     private @Nullable WebContents mWebContents;
 
-    public WebContentsObserver(@NonNull WebContents webContents) {
+    public WebContentsObserver(@Nullable WebContents webContents) {
         observe(webContents);
     }
 
@@ -67,6 +66,13 @@ public abstract class WebContentsObserver {
 
     /** Called when a RenderFrame for renderFrameHost is deleted in the renderer process. */
     public void renderFrameDeleted(GlobalRenderFrameHostId id) {}
+
+    /**
+     * Called when a new Page has been committed as the primary page.
+     *
+     * @param page The Page that is now the primary page.
+     */
+    public void primaryPageChanged(Page page) {}
 
     public void primaryMainFrameRenderProcessGone(@TerminationStatus int terminationStatus) {}
 
@@ -154,12 +160,15 @@ public abstract class WebContentsObserver {
 
     /**
      * Notifies that a load has finished for the primary main frame.
+     *
+     * @param page The Page that has finished loading.
      * @param rfhId Identifier of the navigating frame.
      * @param url The validated URL that is being navigated to.
      * @param isKnownValid Whether the URL is known to be valid.
      * @param rfhLifecycleState The lifecycle state of the associated frame.
      */
     public void didFinishLoadInPrimaryMainFrame(
+            Page page,
             GlobalRenderFrameHostId rfhId,
             GURL url,
             boolean isKnownValid,
@@ -167,14 +176,24 @@ public abstract class WebContentsObserver {
 
     /**
      * Notifies that the document has finished loading for the primary main frame.
+     *
+     * @param page The Page whose document has finished loading.
      * @param rfhId Identifier of the navigating frame.
      * @param rfhLifecycleState The lifecycle state of the associated frame.
      */
     public void documentLoadedInPrimaryMainFrame(
-            GlobalRenderFrameHostId rfhId, @LifecycleState int rfhLifecycleState) {}
+            Page page, GlobalRenderFrameHostId rfhId, @LifecycleState int rfhLifecycleState) {}
+
+    /**
+     * Notifies that the first contentful paint happened on the primary main frame.
+     *
+     * @param page The Page where the first contentful paint happened.
+     */
+    public void firstContentfulPaintInPrimaryMainFrame(Page page) {}
 
     /**
      * Notifies that a navigation entry has been committed.
+     *
      * @param details Details of committed navigation entry.
      */
     public void navigationEntryCommitted(LoadCommittedDetails details) {}

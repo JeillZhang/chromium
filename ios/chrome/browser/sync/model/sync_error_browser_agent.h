@@ -7,6 +7,7 @@
 
 #import "base/memory/raw_ptr.h"
 #import "base/scoped_multi_source_observation.h"
+#import "components/password_manager/core/browser/password_form_cache.h"
 #import "ios/chrome/browser/shared/model/browser/browser_observer.h"
 #import "ios/chrome/browser/shared/model/browser/browser_user_data.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list_observer.h"
@@ -14,15 +15,21 @@
 #import "ios/web/public/web_state_observer.h"
 
 class Browser;
-@protocol SigninPresenter;
+@protocol ReSigninPresenter;
 @class SyncErrorBrowserAgentProfileStateObserver;
 @protocol SyncPresenter;
 
+namespace password_manager {
+class PasswordFormManager;
+}  // namespace password_manager
+
 // Browser agent that is responsible for displaying sync errors.
-class SyncErrorBrowserAgent : public BrowserObserver,
-                              public WebStateListObserver,
-                              public web::WebStateObserver,
-                              public BrowserUserData<SyncErrorBrowserAgent> {
+class SyncErrorBrowserAgent
+    : public BrowserObserver,
+      public WebStateListObserver,
+      public web::WebStateObserver,
+      public BrowserUserData<SyncErrorBrowserAgent>,
+      public password_manager::PasswordFormManagerObserver {
  public:
   SyncErrorBrowserAgent(const SyncErrorBrowserAgent&) = delete;
   SyncErrorBrowserAgent& operator=(const SyncErrorBrowserAgent&) = delete;
@@ -30,7 +37,7 @@ class SyncErrorBrowserAgent : public BrowserObserver,
   ~SyncErrorBrowserAgent() override;
 
   // Sets the UI providers to present sign in and sync UI when needed.
-  void SetUIProviders(id<SigninPresenter> signin_presenter_provider,
+  void SetUIProviders(id<ReSigninPresenter> signin_presenter_provider,
                       id<SyncPresenter> sync_presenter_provider);
 
   // Clears the UI providers.
@@ -41,7 +48,6 @@ class SyncErrorBrowserAgent : public BrowserObserver,
 
  private:
   friend class BrowserUserData<SyncErrorBrowserAgent>;
-  BROWSER_USER_DATA_KEY_DECL();
 
   explicit SyncErrorBrowserAgent(Browser* browser);
 
@@ -57,27 +63,36 @@ class SyncErrorBrowserAgent : public BrowserObserver,
   void WebStateDestroyed(web::WebState* web_state) override;
   void WebStateRealized(web::WebState* web_state) override;
 
+  // password_manager::PasswordFormManagerObserver methods
+  void OnPasswordFormParsed(
+      password_manager::PasswordFormManager* form_manager) override;
+
   // Helper method.
   void CreateReSignInInfoBarDelegate(web::WebState* web_state);
 
   // Triggers Infobar on all web states, if needed.
   void TriggerInfobarOnAllWebStatesIfNeeded();
 
+  // Helper methods for adding and removing `PasswordFormManagerObserver` for
+  // given `web_state`.
+  void AddPasswordFormManagerObserver(web::WebState* web_state);
+  void RemovePasswordFormManagerObserver(web::WebState* web_state);
+
   // Returns the state of the Browser
   ProfileIOS* GetProfile();
-
-  raw_ptr<Browser> browser_ = nullptr;
 
   // To observe unrealized WebStates.
   base::ScopedMultiSourceObservation<web::WebState, web::WebStateObserver>
       web_state_observations_{this};
 
   // Provider to a SignIn presenter
-  __weak id<SigninPresenter> signin_presenter_provider_;
+  __weak id<ReSigninPresenter> resignin_presenter_provider_;
   // Provider to a Sync presenter
   __weak id<SyncPresenter> sync_presenter_provider_;
   // Used to observe the ProfileState.
   __strong SyncErrorBrowserAgentProfileStateObserver* profile_state_observer_;
+
+  base::WeakPtrFactory<SyncErrorBrowserAgent> weak_ptr_factory_{this};
 };
 
 #endif  // IOS_CHROME_BROWSER_SYNC_MODEL_SYNC_ERROR_BROWSER_AGENT_H_

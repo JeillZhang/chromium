@@ -8,6 +8,7 @@
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/timer/elapsed_timer.h"
 #include "build/build_config.h"
@@ -224,11 +225,6 @@ IN_PROC_BROWSER_TEST_F(OmniboxPrerenderBrowserTest, DisableNetworkPrediction) {
 class PrerenderOmniboxSearchSuggestionBrowserTest
     : public OmniboxPrerenderBrowserTest {
  public:
-  PrerenderOmniboxSearchSuggestionBrowserTest() {
-    feature_list_.InitAndEnableFeature(
-        features::kSupportSearchSuggestionForPrerender2);
-  }
-
   void SetUp() override {
     prerender_helper().RegisterServerRequestMonitor(&search_engine_server_);
     PlatformBrowserTest::SetUp();
@@ -289,26 +285,16 @@ class PrerenderOmniboxSearchSuggestionBrowserTest
     ASSERT_TRUE(prerender_manager_);
   }
 
-  void NavigateToPrerenderedResult(const GURL& expected_prerender_url) {
-    content::TestNavigationObserver observer(GetActiveWebContents());
-    GetActiveWebContents()->OpenURL(
-        content::OpenURLParams(
-            expected_prerender_url, content::Referrer(),
-            WindowOpenDisposition::CURRENT_TAB,
-            ui::PageTransitionFromInt(ui::PAGE_TRANSITION_GENERATED |
-                                      ui::PAGE_TRANSITION_FROM_ADDRESS_BAR),
-            /*is_renderer_initiated=*/false),
-        /*navigation_handle_callback=*/{});
-    observer.Wait();
-  }
-
   void PrerenderAndActivate(const std::string& search_terms) {
     PrerenderQuery(search_terms);
     GURL prerendered_url =
         GetSearchSuggestionUrl(search_terms, /*with_parameter=*/false);
     prerender_helper().WaitForPrerenderLoadCompletion(*GetActiveWebContents(),
                                                       prerendered_url);
-    NavigateToPrerenderedResult(prerendered_url);
+    prerender_helper().NavigatePrimaryPage(
+        prerendered_url,
+        ui::PageTransitionFromInt(ui::PAGE_TRANSITION_GENERATED |
+                                  ui::PAGE_TRANSITION_FROM_ADDRESS_BAR));
     EXPECT_EQ(GetActiveWebContents()->GetLastCommittedURL(), prerendered_url);
   }
 
@@ -354,7 +340,6 @@ class PrerenderOmniboxSearchSuggestionBrowserTest
   net::test_server::EmbeddedTestServer search_engine_server_{
       net::test_server::EmbeddedTestServer::TYPE_HTTPS};
   std::string prerender_page_target_ = "/title1.html";
-  base::test::ScopedFeatureList feature_list_;
 };
 
 class PrerenderOmniboxSearchSuggestionExpiryBrowserTest
@@ -362,8 +347,7 @@ class PrerenderOmniboxSearchSuggestionExpiryBrowserTest
  public:
   PrerenderOmniboxSearchSuggestionExpiryBrowserTest() {
     feature_list_.InitWithFeaturesAndParameters(
-        {{features::kSupportSearchSuggestionForPrerender2, {{}}},
-         {kSearchPrefetchServicePrefetching,
+        {{kSearchPrefetchServicePrefetching,
           {{"device_memory_threshold_MB", "0"}}}},
         {});
   }

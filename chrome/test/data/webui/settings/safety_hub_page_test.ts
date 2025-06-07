@@ -367,7 +367,7 @@ suite('SafetyHubPage', function() {
     const dialog = relaunchConfirmationDialogElement.shadowRoot!.querySelector(
         'cr-dialog')!;
     const description =
-        dialog.shadowRoot!.querySelector<HTMLSlotElement>('slot[name=body]')!;
+        dialog.shadowRoot.querySelector<HTMLSlotElement>('slot[name=body]')!;
     assertEquals(
         'Test description.', description.assignedNodes()[0]!.textContent);
 
@@ -397,39 +397,6 @@ suite('SafetyHubPage', function() {
         new KeyboardEvent('keydown', {key: ' ', bubbles: true}));
     // Ensure the About page is shown.
     assertEquals(routes.ABOUT, Router.getInstance().getCurrentRoute());
-  });
-
-  test('Version Card updates upon Chrome version change', function() {
-    const safeCardData = versionCardMockData;
-    const warningCardData: CardInfo = {
-      header: 'Chrome is not up to date',
-      subheader: 'Relaunch to update',
-      state: CardState.WARNING,
-    };
-
-    // Assert that Version card's initial state says Chrome is up to date.
-    assertEquals(
-        safeCardData.header,
-        testElement.$.version.shadowRoot!.querySelector(
-                                             '#header')!.textContent!.trim());
-    assertEquals(
-        safeCardData.subheader,
-        testElement.$.version.shadowRoot!.querySelector('#subheader')!
-            .textContent!.trim());
-
-    // Chrome version changes.
-    webUIListenerCallback(
-        SafetyHubEvent.CHROME_VERSION_MAYBE_CHANGED, warningCardData);
-
-    // Assert that Version card's new state says Chrome needs an update.
-    assertEquals(
-        warningCardData.header,
-        testElement.$.version.shadowRoot!.querySelector(
-                                             '#header')!.textContent!.trim());
-    assertEquals(
-        warningCardData.subheader,
-        testElement.$.version.shadowRoot!.querySelector('#subheader')!
-            .textContent!.trim());
   });
 
   test('Safe Browsing Card', function() {

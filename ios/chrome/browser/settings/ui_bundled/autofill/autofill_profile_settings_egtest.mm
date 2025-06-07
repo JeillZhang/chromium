@@ -8,11 +8,13 @@
 #import "base/test/ios/wait_util.h"
 #import "components/autofill/core/common/autofill_features.h"
 #import "components/autofill/ios/common/features.h"
+#import "components/policy/policy_constants.h"
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/autofill/ui_bundled/address_editor/autofill_constants.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
+#import "ios/chrome/browser/policy/model/policy_earl_grey_utils.h"
 #import "ios/chrome/browser/settings/ui_bundled/autofill/autofill_settings_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/settings_root_table_constants.h"
 #import "ios/chrome/browser/shared/ui/elements/activity_overlay_egtest_util.h"
@@ -34,7 +36,9 @@ using chrome_test_util::NavigationBarDoneButton;
 using chrome_test_util::SettingsDoneButton;
 using chrome_test_util::SettingsMenuBackButton;
 using chrome_test_util::SettingsToolbarAddButton;
+using chrome_test_util::SettingsToolbarEditButton;
 using chrome_test_util::TabGridEditButton;
+using policy_test_utils::SetPolicy;
 
 namespace {
 
@@ -65,6 +69,7 @@ const DisplayStringIDToExpectedResult kExpectedFields[] = {
     {IDS_IOS_AUTOFILL_EMAIL, @"johndoe@hades.com"}};
 
 NSString* const kProfileLabel = @"John H. Doe, 666 Erebus St.";
+NSString* const kHomeProfileLabel = @"John H. Doe, 666 Erebus St., Home";
 
 // Expectation of how user-typed country names should be canonicalized.
 struct UserTypedCountryExpectedResultPair {
@@ -134,11 +139,6 @@ id<GREYMatcher> AddressesAndMoreNavBarTitle() {
       grey_ancestor(grey_kindOfClass([UINavigationBar class])), nil);
 }
 
-// Matcher for the toolbar's edit button.
-id<GREYMatcher> SettingsToolbarEditButton() {
-  return grey_accessibilityID(kSettingsToolbarEditButtonId);
-}
-
 // Matcher for the toolbar's done button.
 id<GREYMatcher> SettingsToolbarDoneButton() {
   return grey_accessibilityID(kSettingsToolbarEditDoneButtonId);
@@ -160,10 +160,18 @@ id<GREYMatcher> SettingsToolbarDoneButton() {
 - (AppLaunchConfiguration)appConfigurationForTestCase {
   AppLaunchConfiguration config = [super appConfigurationForTestCase];
 
-  if ([self isRunningTest:@selector(testBottomToolbarAddButtonVisibility)]) {
+  if ([self isRunningTest:@selector(testBottomToolbarAddButtonVisibility)] ||
+      [self isRunningTest:@selector(testToggleToolbarAddButtonBySwitch)] ||
+      [self isRunningTest:@selector(testToggleToolbarAddButtonByPolicy)]) {
     config.features_enabled.push_back(kAddAddressManually);
     config.features_enabled.push_back(
         kAutofillDynamicallyLoadsFieldsForAddressInput);
+  }
+  if ([self isRunningTest:@selector
+            (testSwipeToDeleteBlockedForHomeWorkProfile)] ||
+      [self isRunningTest:@selector(testHomeWorkProfileEditPage)]) {
+    config.features_enabled.push_back(
+        autofill::features::kAutofillEnableSupportForHomeAndWork);
   }
 
   return config;
@@ -298,15 +306,29 @@ id<GREYMatcher> SettingsToolbarDoneButton() {
       performAction:grey_tap()];
   [ChromeEarlGrey verifyAccessibilityForCurrentScreen];
 
-  // Leave edit mode.
-  [[EarlGrey selectElementWithMatcher:NavigationBarCancelButton()]
-      performAction:grey_tap()];
-
   // Go back to the list view page.
   [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton(0)]
       performAction:grey_tap()];
 
   [self exitSettingsMenu];
+}
+
+// Test that the edit mode for Home and Work profiles is not accessible.
+- (void)testHomeWorkProfileEditPage {
+  [SigninEarlGrey signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
+  [AutofillAppInterface saveExampleHomeWorkAccountProfile];
+  [self openEditProfile:kHomeProfileLabel];
+
+  // Switch on edit mode.
+  [[EarlGrey selectElementWithMatcher:NavigationBarEditButton()]
+      performAction:grey_tap()];
+
+  // Assert that the edit page is no longer displayed.
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                          kAutofillProfileEditTableViewId)]
+      assertWithMatcher:grey_nil()];
+
+  [SigninEarlGrey signOut];
 }
 
 // Checks that the Autofill profiles list view is in edit mode and the Autofill
@@ -350,6 +372,59 @@ id<GREYMatcher> SettingsToolbarDoneButton() {
   // Verify the "Add" button is visible.
   [[EarlGrey selectElementWithMatcher:SettingsToolbarAddButton()]
       assertWithMatcher:grey_sufficientlyVisible()];
+}
+
+// Checks that the toolbar "Add" button's enabled state changes based on the
+// "Autofill profiles" switch.
+- (void)testToggleToolbarAddButtonBySwitch {
+  [AutofillAppInterface saveExampleProfile];
+  [self openAutofillProfilesSettings];
+
+  // Toggle the "Autofill profiles" switch off.
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::TableViewSwitchCell(
+                                   kAutofillAddressSwitchViewId,
+                                   /*is_toggled_on=*/YES, /*is_enabled=*/YES)]
+      performAction:chrome_test_util::TurnTableViewSwitchOn(NO)];
+
+  // Verify the "Add" button is disabled.
+  [[EarlGrey selectElementWithMatcher:SettingsToolbarAddButton()]
+      assertWithMatcher:grey_not(grey_enabled())];
+
+  // Toggle the "Autofill profiles" switch back on.
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::TableViewSwitchCell(
+                                   kAutofillAddressSwitchViewId,
+                                   /*is_toggled_on=*/NO, /*is_enabled=*/YES)]
+      performAction:chrome_test_util::TurnTableViewSwitchOn(YES)];
+
+  // Verify the "Add" button is enabled.
+  [[EarlGrey selectElementWithMatcher:SettingsToolbarAddButton()]
+      assertWithMatcher:grey_enabled()];
+}
+
+// Checks that the toolbar "Add" button's enabled state changes based on the
+// AutofillAddressEnabled Enterprise Policy.
+- (void)testToggleToolbarAddButtonByPolicy {
+  // Force the preference off via policy.
+  SetPolicy(false, policy::key::kAutofillAddressEnabled);
+
+  [self openAutofillProfilesSettings];
+
+  // Verify the "Add" button is disabled.
+  [[EarlGrey selectElementWithMatcher:SettingsToolbarAddButton()]
+      assertWithMatcher:grey_not(grey_enabled())];
+
+  [self exitSettingsMenu];
+
+  // Force the preference on via policy.
+  SetPolicy(true, policy::key::kAutofillAddressEnabled);
+
+  [self openAutofillProfilesSettings];
+
+  // Verify the "Add" button is enabled.
+  [[EarlGrey selectElementWithMatcher:SettingsToolbarAddButton()]
+      assertWithMatcher:grey_enabled()];
 }
 
 // Checks that the Autofill profile switch can be toggled on/off and the list of
@@ -440,6 +515,26 @@ id<GREYMatcher> SettingsToolbarDoneButton() {
       selectElementWithMatcher:grey_accessibilityLabel(
                                    [AutofillAppInterface exampleProfileName])]
       assertWithMatcher:grey_notVisible()];
+}
+
+// Checks that no action is possible when a Home and Work account profile
+// is swiped to be deleted.
+- (void)testSwipeToDeleteBlockedForHomeWorkProfile {
+  [AutofillAppInterface saveExampleHomeWorkAccountProfile];
+  [self openAutofillProfilesSettings];
+
+  // Swipe until the "Delete" button is revealed.
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityLabel(
+                                   [AutofillAppInterface exampleProfileName])]
+      performAction:chrome_test_util::SwipeToShowDeleteButton()];
+
+  [ChromeEarlGreyUI waitForAppToIdle];
+
+  // Assert that "Delete" button is not displayed.
+  [[EarlGrey selectElementWithMatcher:grey_kindOfClassName(
+                                          @"UISwipeActionStandardButton")]
+      assertWithMatcher:grey_nil()];
 }
 
 // Checks that the country field is a selection field in the edit mode and the
@@ -585,10 +680,6 @@ id<GREYMatcher> SettingsToolbarDoneButton() {
   // The "Done" button is not enabled now.
   [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
       assertWithMatcher:grey_not(grey_enabled())];
-
-  // Exit edit mode.
-  [[EarlGrey selectElementWithMatcher:NavigationBarCancelButton()]
-      performAction:grey_tap()];
 
   // Go back to the list view page.
   [[EarlGrey selectElementWithMatcher:SettingsMenuBackButton(0)]

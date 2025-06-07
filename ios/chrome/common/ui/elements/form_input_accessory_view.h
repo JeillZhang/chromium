@@ -48,6 +48,10 @@
 @end
 
 extern NSString* const kFormInputAccessoryViewAccessibilityID;
+
+// Large height for the keyboard accessory.
+extern CGFloat const kFormInputAccessoryViewLargeHeight;
+
 extern NSString* const
     kFormInputAccessoryViewOmniboxTypingShieldAccessibilityID;
 
@@ -120,6 +124,10 @@ extern NSString* const
 // edge of the input accessory view for the collapsed bottom omnibox
 // (crbug.com/1490601).
 - (void)setOmniboxTypingShieldHeight:(CGFloat)typingShieldHeight;
+
+// Sets whether the UI is in compact mode, so that the keyboard accessory can
+// adapt to the compact size class if necessary.
+- (void)setIsCompact:(BOOL)isCompact;
 
 @end
 

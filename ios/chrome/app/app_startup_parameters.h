@@ -48,6 +48,7 @@ enum TabOpeningPostOpeningAction {
   ADD_BOOKMARKS,
   ADD_READING_LIST_ITEMS,
   EXTERNAL_ACTION_SHOW_BROWSER_SETTINGS,
+  START_LENS_FROM_SHARE_EXTENSION,
 };
 
 // Represents the status of a request to change the application mode.
@@ -104,7 +105,8 @@ class GURL;
 // mode is disabled. When the user intends to open an unavailable mode of
 // Chrome, the browser won't proceed in that disabled mode, and it will signal
 // to the user that a different mode is opened.
-@property(nonatomic, readwrite, getter=isUnexpectedMode) BOOL unexpectedMode;
+@property(nonatomic, readwrite, assign, getter=isUnexpectedMode)
+    BOOL unexpectedMode;
 // Boolean to track whether the app was opened via a custom scheme from another
 // first-party app.
 @property(nonatomic, readwrite, assign) BOOL openedViaFirstPartyScheme;

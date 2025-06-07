@@ -11,7 +11,7 @@
 #include "chrome/browser/ui/autofill/address_bubble_controller_delegate.h"
 #include "chrome/browser/ui/autofill/address_bubbles_icon_controller.h"
 #include "chrome/browser/ui/autofill/autofill_bubble_controller_base.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/foundations/autofill_client.h"
 #include "content/public/browser/web_contents_user_data.h"
 
@@ -49,10 +49,6 @@ class AddressBubblesController
       const AutofillProfile& profile,
       const AutofillProfile* original_profile,
       bool is_migration_to_account,
-      AutofillClient::AddressProfileSavePromptCallback callback);
-
-  static void SetUpAndShowAddNewAddressBubble(
-      content::WebContents* web_contents,
       AutofillClient::AddressProfileSavePromptCallback callback);
 
   // AddressBubbleControllerDelegate:

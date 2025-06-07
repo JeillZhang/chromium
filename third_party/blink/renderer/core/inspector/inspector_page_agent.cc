@@ -160,8 +160,11 @@ String FrameDetachTypeToProtocol(FrameDetachType type) {
   switch (type) {
     case FrameDetachType::kRemove:
       return ReasonEnum::Remove;
-    case FrameDetachType::kSwap:
+    case FrameDetachType::kSwapForRemote:
       return ReasonEnum::Swap;
+    case FrameDetachType::kSwapForLocal:
+      // These are not supposed to be reported to client.
+      NOTREACHED();
   }
 }
 
@@ -344,7 +347,7 @@ bool InspectorPageAgent::SegmentedBufferContent(
   const auto byte_buffer = base::as_byte_span(flat_buffer);
   if (decoder) {
     text_content = decoder->Decode(byte_buffer);
-    text_content = text_content + decoder->Flush();
+    text_content = WTF::StrCat({text_content, decoder->Flush()});
   } else if (encoding.IsValid()) {
     text_content = encoding.Decode(byte_buffer);
   }
@@ -481,55 +484,23 @@ String InspectorPageAgent::CachedResourceTypeJson(
   return ResourceTypeJson(ToResourceType(cached_resource.GetType()));
 }
 
-InspectorPageAgent::PageReloadScriptInjection::PageReloadScriptInjection(
-    InspectorAgentState& agent_state)
-    : pending_script_to_evaluate_on_load_once_(&agent_state,
-                                               /*default_value=*/{}),
-      target_url_for_pending_script_(&agent_state,
-                                     /*default_value=*/{}) {}
-
-void InspectorPageAgent::PageReloadScriptInjection::clear() {
-  script_to_evaluate_on_load_once_ = {};
-  pending_script_to_evaluate_on_load_once_.Set({});
-  target_url_for_pending_script_.Set({});
-}
-
-void InspectorPageAgent::PageReloadScriptInjection::SetPending(
-    String script,
-    const KURL& target_url) {
-  pending_script_to_evaluate_on_load_once_.Set(script);
-  target_url_for_pending_script_.Set(target_url.GetString().GetString());
-}
-
-void InspectorPageAgent::PageReloadScriptInjection::PromoteToLoadOnce() {
-  script_to_evaluate_on_load_once_ =
-      pending_script_to_evaluate_on_load_once_.Get();
-  target_url_for_active_script_ = target_url_for_pending_script_.Get();
-  pending_script_to_evaluate_on_load_once_.Set({});
-  target_url_for_pending_script_.Set({});
-}
-
-String InspectorPageAgent::PageReloadScriptInjection::GetScriptForInjection(
-    const KURL& target_url) {
-  if (target_url_for_active_script_ == target_url.GetString()) {
-    return script_to_evaluate_on_load_once_;
-  }
-  return {};
-}
-
 InspectorPageAgent::InspectorPageAgent(
     InspectedFrames* inspected_frames,
     Client* client,
     InspectorResourceContentLoader* resource_content_loader,
-    v8_inspector::V8InspectorSession* v8_session)
+    v8_inspector::V8InspectorSession* v8_session,
+    const String& script_to_evaluate_on_load)
     : inspected_frames_(inspected_frames),
       v8_session_(v8_session),
       client_(client),
       inspector_resource_content_loader_(resource_content_loader),
       resource_content_loader_client_id_(
           resource_content_loader->CreateClientId()),
-      intercept_file_chooser_(&agent_state_, false),
+      suppress_file_chooser_(&agent_state_, false),
+      cancel_file_chooser_(&agent_state_, false),
       enabled_(&agent_state_, /*default_value=*/false),
+      enable_file_chooser_opened_event_(&agent_state_,
+                                        /*default_value=*/false),
       screencast_enabled_(&agent_state_, /*default_value=*/false),
       lifecycle_events_enabled_(&agent_state_, /*default_value=*/false),
       bypass_csp_enabled_(&agent_state_, /*default_value=*/false),
@@ -543,11 +514,11 @@ InspectorPageAgent::InspectorPageAgent(
       standard_font_size_(&agent_state_, /*default_value=*/0),
       fixed_font_size_(&agent_state_, /*default_value=*/0),
       script_font_families_cbor_(&agent_state_, std::vector<uint8_t>()),
-      script_injection_on_load_(agent_state_) {}
+      pending_script_injection_on_load_(script_to_evaluate_on_load) {}
 
 void InspectorPageAgent::Restore() {
   if (enabled_.Get()) {
-    enable();
+    enable(enable_file_chooser_opened_event_.Get());
   }
   if (bypass_csp_enabled_.Get()) {
     setBypassCSP(true);
@@ -577,8 +548,11 @@ void InspectorPageAgent::Restore() {
   }
 }
 
-protocol::Response InspectorPageAgent::enable() {
+protocol::Response InspectorPageAgent::enable(
+    std::optional<bool> enable_file_chooser_opened_event) {
   enabled_.Set(true);
+  enable_file_chooser_opened_event_.Set(
+      enable_file_chooser_opened_event.value_or(false));
   instrumenting_agents_->AddInspectorPageAgent(this);
   return protocol::Response::Success();
 }
@@ -586,13 +560,14 @@ protocol::Response InspectorPageAgent::enable() {
 protocol::Response InspectorPageAgent::disable() {
   agent_state_.ClearAllFields();
   pending_isolated_worlds_.clear();
-  script_injection_on_load_.clear();
+  script_injection_on_load_once_ = {};
+  pending_script_injection_on_load_ = {};
   instrumenting_agents_->RemoveInspectorPageAgent(this);
   inspector_resource_content_loader_->Cancel(
       resource_content_loader_client_id_);
   requested_compilation_cache_.clear();
   compilation_cache_.clear();
-  ad_script_identifiers_.clear();
+  frame_ad_script_ancestry_.clear();
   stopScreencast();
 
   return protocol::Response::Success();
@@ -724,9 +699,8 @@ protocol::Response InspectorPageAgent::reload(
                                        .ToString() != loader_id->Ascii()) {
     return protocol::Response::InvalidParams("Document already navigated");
   }
-  script_injection_on_load_.SetPending(
-      optional_script_to_evaluate_on_load.value_or(""),
-      inspected_frames_->Root()->Loader().GetDocumentLoader()->Url());
+  pending_script_injection_on_load_ =
+      optional_script_to_evaluate_on_load.value_or("");
   v8_session_->setSkipAllPauses(true);
   v8_session_->resume(true /* terminate on resume */);
   return protocol::Response::Success();
@@ -824,18 +798,37 @@ void InspectorPageAgent::getResourceContent(
           WrapPersistent(this), frame_id, url, std::move(callback)));
 }
 
-protocol::Response InspectorPageAgent::getAdScriptId(
+protocol::Response InspectorPageAgent::getAdScriptAncestry(
     const String& frame_id,
-    std::unique_ptr<protocol::Page::AdScriptId>* ad_script_id) {
-  if (ad_script_identifiers_.Contains(frame_id)) {
-    AdScriptIdentifier* ad_script_identifier =
-        ad_script_identifiers_.at(frame_id);
-    *ad_script_id =
-        protocol::Page::AdScriptId::create()
-            .setScriptId(String::Number(ad_script_identifier->id))
-            .setDebuggerId(ToCoreString(
-                ad_script_identifier->context_id.toString()->string()))
+    std::unique_ptr<protocol::Page::AdScriptAncestry>* out_ad_script_ancestry) {
+  auto it = frame_ad_script_ancestry_.find(frame_id);
+  if (it != frame_ad_script_ancestry_.end()) {
+    const AdTracker::AdScriptAncestry& ad_script_ancestry = it->value;
+    CHECK(!ad_script_ancestry.ancestry_chain.empty());
+
+    std::vector<std::unique_ptr<protocol::Page::AdScriptId>> ancestry_chain;
+    for (const auto& ad_script_identifier : ad_script_ancestry.ancestry_chain) {
+      ancestry_chain.push_back(
+          protocol::Page::AdScriptId::create()
+              .setScriptId(String::Number(ad_script_identifier.id))
+              .setDebuggerId(ToCoreString(
+                  ad_script_identifier.context_id.toString()->string()))
+              .build());
+    }
+
+    std::unique_ptr<protocol::Page::AdScriptAncestry> ancestry =
+        protocol::Page::AdScriptAncestry::create()
+            .setAncestryChain(
+                std::make_unique<protocol::Array<protocol::Page::AdScriptId>>(
+                    std::move(ancestry_chain)))
             .build();
+
+    if (ad_script_ancestry.root_script_filterlist_rule.IsValid()) {
+      ancestry->setRootScriptFilterlistRule(
+          String(ad_script_ancestry.root_script_filterlist_rule.ToString()));
+    }
+
+    *out_ad_script_ancestry = std::move(ancestry);
   }
 
   return protocol::Response::Success();
@@ -952,7 +945,7 @@ protocol::Response InspectorPageAgent::getPermissionsPolicyState(
         "No frame for given id found in this target");
   }
 
-  const blink::PermissionsPolicy* permissions_policy =
+  const network::PermissionsPolicy* permissions_policy =
       frame->GetSecurityContext()->GetPermissionsPolicy();
 
   if (!permissions_policy) {
@@ -1091,11 +1084,10 @@ void InspectorPageAgent::DidCreateMainWorldContext(LocalFrame* frame) {
     EvaluateScriptOnNewDocument(*frame, key);
   }
 
-  String script = script_injection_on_load_.GetScriptForInjection(
-      frame->Loader().GetDocumentLoader()->Url());
-  if (script.empty()) {
+  if (script_injection_on_load_once_.empty()) {
     return;
   }
+  String script = std::move(script_injection_on_load_once_);
   ScriptState* script_state = ToScriptStateForMainWorld(frame);
   if (!script_state || !v8_session_) {
     return;
@@ -1154,7 +1146,8 @@ void InspectorPageAgent::LoadEventFired(LocalFrame* frame) {
 
 void InspectorPageAgent::WillCommitLoad(LocalFrame*, DocumentLoader* loader) {
   if (loader->GetFrame() == inspected_frames_->Root()) {
-    script_injection_on_load_.PromoteToLoadOnce();
+    script_injection_on_load_once_ =
+        std::move(pending_script_injection_on_load_);
   }
   GetFrontend()->frameNavigated(BuildObjectForFrame(loader->GetFrame()),
                                 protocol::Page::NavigationTypeEnum::Navigation);
@@ -1176,16 +1169,14 @@ void InspectorPageAgent::DidOpenDocument(LocalFrame* frame,
 
 void InspectorPageAgent::FrameAttachedToParent(
     LocalFrame* frame,
-    const std::optional<AdScriptIdentifier>& ad_script_on_stack) {
+    const AdTracker::AdScriptAncestry& ad_script_ancestry) {
   // TODO(crbug.com/1217041): If an ad script on the stack caused this frame to
   // be tagged as an ad, send the script's ID to the frontend.
   Frame* parent_frame = frame->Tree().Parent();
-  std::unique_ptr<SourceLocation> location =
-      SourceLocation::CaptureWithFullStackTrace();
-  if (ad_script_on_stack.has_value()) {
-    ad_script_identifiers_.Set(
-        IdentifiersFactory::FrameId(frame),
-        std::make_unique<AdScriptIdentifier>(ad_script_on_stack.value()));
+  SourceLocation* location = SourceLocation::CaptureWithFullStackTrace();
+  if (!ad_script_ancestry.ancestry_chain.empty()) {
+    frame_ad_script_ancestry_.Set(IdentifiersFactory::FrameId(frame),
+                                  ad_script_ancestry);
   }
   GetFrontend()->frameAttached(
       IdentifiersFactory::FrameId(frame),
@@ -1201,9 +1192,13 @@ void InspectorPageAgent::FrameDetachedFromParent(LocalFrame* frame,
                                                  FrameDetachType type) {
   // If the frame is swapped, we still maintain the ad script id for it.
   if (type == FrameDetachType::kRemove) {
-    ad_script_identifiers_.erase(IdentifiersFactory::FrameId(frame));
+    frame_ad_script_ancestry_.erase(IdentifiersFactory::FrameId(frame));
   }
-
+  // Skip reporting local swaps as nothing changes for the client and the
+  // frame remains in current frame tree.
+  if (type == FrameDetachType::kSwapForLocal) {
+    return;
+  }
   GetFrontend()->frameDetached(IdentifiersFactory::FrameId(frame),
                                FrameDetachTypeToProtocol(type));
 }
@@ -1564,7 +1559,7 @@ std::unique_ptr<protocol::Page::Frame> InspectorPageAgent::BuildObjectForFrame(
           .setGatedAPIFeatures(CreateGatedAPIFeaturesArray(frame->DomWindow()))
           .build();
   if (url.HasFragmentIdentifier()) {
-    frame_object->setUrlFragment("#" + url.FragmentIdentifier());
+    frame_object->setUrlFragment(WTF::StrCat({"#", url.FragmentIdentifier()}));
   }
   Frame* parent_frame = frame->Tree().Parent();
   if (parent_frame) {
@@ -1995,16 +1990,17 @@ void InspectorPageAgent::DidProduceCompilationCache(
 void InspectorPageAgent::FileChooserOpened(LocalFrame* frame,
                                            HTMLInputElement* element,
                                            bool multiple,
-                                           bool* intercepted) {
-  *intercepted |= intercept_file_chooser_.Get();
-  if (!intercept_file_chooser_.Get()) {
-    return;
+                                           bool* suppressed,
+                                           bool* canceled) {
+  *suppressed |= suppress_file_chooser_.Get();
+  *canceled |= cancel_file_chooser_.Get();
+  if (suppress_file_chooser_.Get() || enable_file_chooser_opened_event_.Get()) {
+    GetFrontend()->fileChooserOpened(
+        IdentifiersFactory::FrameId(frame),
+        multiple ? protocol::Page::FileChooserOpened::ModeEnum::SelectMultiple
+                 : protocol::Page::FileChooserOpened::ModeEnum::SelectSingle,
+        element ? std::optional<int>(element->GetDomNodeId()) : std::nullopt);
   }
-  GetFrontend()->fileChooserOpened(
-      IdentifiersFactory::FrameId(frame),
-      multiple ? protocol::Page::FileChooserOpened::ModeEnum::SelectMultiple
-               : protocol::Page::FileChooserOpened::ModeEnum::SelectSingle,
-      element ? std::optional<int>(element->GetDomNodeId()) : std::nullopt);
 }
 
 protocol::Response InspectorPageAgent::produceCompilationCache(
@@ -2042,8 +2038,11 @@ protocol::Response InspectorPageAgent::waitForDebugger() {
 }
 
 protocol::Response InspectorPageAgent::setInterceptFileChooserDialog(
-    bool enabled) {
-  intercept_file_chooser_.Set(enabled);
+    bool enabled,
+    std::optional<bool> cancel) {
+  suppress_file_chooser_.Set(enabled);
+  // Cancel file chooser only if interception is enabled.
+  cancel_file_chooser_.Set(enabled && cancel.value_or(false));
   return protocol::Response::Success();
 }
 

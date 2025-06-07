@@ -11,14 +11,18 @@ import static org.mockito.Mockito.verify;
 
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.Features;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.scene_layer.SceneLayer;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -39,6 +43,7 @@ public class CompositorModelChangeProcessorUnitTest {
     private static final PropertyModel.WritableBooleanPropertyKey PROPERTY_EXCLUDED =
             new PropertyModel.WritableBooleanPropertyKey();
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     private final CallbackHelper mRequestRenderCallbackHelper = new CallbackHelper();
 
     @Mock private SceneLayer mView;
@@ -47,12 +52,10 @@ public class CompositorModelChangeProcessorUnitTest {
     private CompositorModelChangeProcessor.FrameRequestSupplier mFrameSupplier;
     private CompositorModelChangeProcessor mCompositorMCP;
     private PropertyModel mModel;
-    private AtomicBoolean mPropertyChangedValue = new AtomicBoolean(false);
+    private final AtomicBoolean mPropertyChangedValue = new AtomicBoolean(false);
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-
         mFrameSupplier =
                 new CompositorModelChangeProcessor.FrameRequestSupplier(
                         mRequestRenderCallbackHelper::notifyCalled);
@@ -76,11 +79,25 @@ public class CompositorModelChangeProcessorUnitTest {
     }
 
     @Test
+    @Features.DisableFeatures({ChromeFeatureList.MVC_UPDATE_VIEW_WHEN_MODEL_CHANGED})
     public void testBindAndNoRequestFrame() {
         int callCount = mRequestRenderCallbackHelper.getCallCount();
         mFrameSupplier.set(System.currentTimeMillis());
 
         verify(mViewBinder).bind(eq(mModel), eq(mView), eq(null));
+        Assert.assertEquals(
+                "A render should not have been requested!",
+                callCount,
+                mRequestRenderCallbackHelper.getCallCount());
+    }
+
+    @Test
+    @Features.EnableFeatures({ChromeFeatureList.MVC_UPDATE_VIEW_WHEN_MODEL_CHANGED})
+    public void testNoBindAndNoRequestFrameOnModelUnchanged() throws TimeoutException {
+        int callCount = mRequestRenderCallbackHelper.getCallCount();
+        mFrameSupplier.set(System.currentTimeMillis());
+        verify(mViewBinder, never()).bind(any(), any(), any());
+
         Assert.assertEquals(
                 "A render should not have been requested!",
                 callCount,
@@ -97,6 +114,7 @@ public class CompositorModelChangeProcessorUnitTest {
     }
 
     @Test
+    @Features.DisableFeatures({ChromeFeatureList.MVC_UPDATE_VIEW_WHEN_MODEL_CHANGED})
     public void testMCPWithExclusions() {
         int callCount = mRequestRenderCallbackHelper.getCallCount();
         mModel.set(
@@ -104,6 +122,21 @@ public class CompositorModelChangeProcessorUnitTest {
 
         mFrameSupplier.set(System.currentTimeMillis());
         verify(mViewBinder).bind(eq(mModel), eq(mView), eq(null));
+        Assert.assertEquals(
+                "A render should not have been requested!",
+                callCount,
+                mRequestRenderCallbackHelper.getCallCount());
+    }
+
+    @Test
+    @Features.EnableFeatures({ChromeFeatureList.MVC_UPDATE_VIEW_WHEN_MODEL_CHANGED})
+    public void testMCPWithExclusionsNoBind() {
+        int callCount = mRequestRenderCallbackHelper.getCallCount();
+        mModel.set(
+                PROPERTY_EXCLUDED, mPropertyChangedValue.getAndSet(!mPropertyChangedValue.get()));
+
+        mFrameSupplier.set(System.currentTimeMillis());
+        verify(mViewBinder, never()).bind(any(), any(), any());
         Assert.assertEquals(
                 "A render should not have been requested!",
                 callCount,

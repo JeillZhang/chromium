@@ -15,8 +15,10 @@ import android.view.View;
 import android.widget.LinearLayout;
 
 import org.chromium.base.Callback;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.theme.SurfaceColorUpdateUtils;
 import org.chromium.chrome.tab_ui.R;
-import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.ui.widget.ButtonCompat;
 import org.chromium.ui.widget.ChromeImageView;
 import org.chromium.ui.widget.TextViewWithLeading;
@@ -27,8 +29,9 @@ import java.lang.ref.WeakReference;
  * Represents a secondary card view in Grid Tab Switcher. The view contains an icon, a description,
  * an action button for acceptance, and a close button for dismissal.
  */
+@NullMarked
 class MessageCardView extends LinearLayout {
-    private static WeakReference<Bitmap> sCloseButtonBitmapWeakRef;
+    private static @Nullable WeakReference<Bitmap> sCloseButtonBitmapWeakRef;
 
     /** An interface to get the icon to be shown inside the message card. */
     public interface IconProvider {
@@ -172,7 +175,7 @@ class MessageCardView extends LinearLayout {
         // Set dynamic color.
         GradientDrawable gradientDrawable = (GradientDrawable) getBackground();
         gradientDrawable.setColor(
-                ChromeColors.getSurfaceColor(getContext(), R.dimen.default_elevation_2));
+                SurfaceColorUpdateUtils.getMessageCardBackgroundColor(getContext()));
     }
 
     /**
@@ -191,44 +194,44 @@ class MessageCardView extends LinearLayout {
     /**
      * Set left margin of the message card.
      *
-     * @param leftMarginDp Left margin of the card in dp.
+     * @param leftMarginPx Left margin of the card in px.
      */
-    void setLeftMargin(int leftMarginDp) {
+    void setLeftMargin(int leftMarginPx) {
         MarginLayoutParams params = (MarginLayoutParams) getLayoutParams();
-        params.leftMargin = leftMarginDp;
+        params.leftMargin = leftMarginPx;
         setLayoutParams(params);
     }
 
     /**
      * Set top margin of the message card.
      *
-     * @param topMarginDp Top margin of the card in dp.
+     * @param topMarginPx Top margin of the card in px.
      */
-    void setTopMargin(int topMarginDp) {
+    void setTopMargin(int topMarginPx) {
         MarginLayoutParams params = (MarginLayoutParams) getLayoutParams();
-        params.topMargin = topMarginDp;
+        params.topMargin = topMarginPx;
         setLayoutParams(params);
     }
 
     /**
      * Set right margin of the message card.
      *
-     * @param rightMarginDp Right margin of the card in dp.
+     * @param rightMarginPx Right margin of the card in px.
      */
-    void setRightMargin(int rightMarginDp) {
+    void setRightMargin(int rightMarginPx) {
         MarginLayoutParams params = (MarginLayoutParams) getLayoutParams();
-        params.rightMargin = rightMarginDp;
+        params.rightMargin = rightMarginPx;
         setLayoutParams(params);
     }
 
     /**
      * Set bottom margin of the message card.
      *
-     * @param bottomMarginDp Bottom margin of the card in dp.
+     * @param bottomMarginPx Bottom margin of the card in px.
      */
-    void setBottomMargin(int bottomMarginDp) {
+    void setBottomMargin(int bottomMarginPx) {
         MarginLayoutParams params = (MarginLayoutParams) getLayoutParams();
-        params.bottomMargin = bottomMarginDp;
+        params.bottomMargin = bottomMarginPx;
         setLayoutParams(params);
     }
 }

@@ -25,6 +25,10 @@ struct PasswordFormGenerationData;
 struct PasswordFormFillData;
 }  // namespace autofill
 
+namespace gfx {
+class RectF;
+}  // namespace gfx
+
 namespace password_manager {
 
 class PasswordAutofillManager;
@@ -45,14 +49,16 @@ class PasswordManagerDriver {
   // Returns driver id which is unique in the current tab.
   virtual int GetId() const = 0;
 
-  // Fills forms matching `form_data`.
-  virtual void SetPasswordFillData(
+  // Propagates `form_data` to the renderer, in order to store values for
+  // filling on account select, or fill on pageload if appliccable.
+  virtual void PropagateFillDataOnParsingCompletion(
       const autofill::PasswordFormFillData& form_data) = 0;
 
   // Informs the driver that there are no saved credentials in the password
-  // store for the current page.
-  // TODO(crbug.com/41259715): Remove and observe FormFetcher instead.
-  virtual void InformNoSavedCredentials() {}
+  // store for the current page. In certain situations the password manager will
+  // show popups (e.g. promo UIs) when there are no saved credentials.
+  virtual void InformNoSavedCredentials(
+      bool should_show_popup_without_passwords) {}
 
   // Notifies the driver that a password can be generated on the fields
   // identified by `form`.
@@ -92,13 +98,21 @@ class PasswordManagerDriver {
   // `password_element_id` with `old_password` and `new_password_element_id`,
   // `confirm_password_element_id` with `new_password`. Upon completion
   // asynchronously returns `form_data` with filled values.
-  virtual void SubmitChangePasswordForm(
+  virtual void FillChangePasswordForm(
       autofill::FieldRendererId password_element_id,
       autofill::FieldRendererId new_password_element_id,
       autofill::FieldRendererId confirm_password_element_id,
       const std::u16string& old_password,
       const std::u16string& new_password,
-      base::OnceCallback<void(const autofill::FormData&)> form_data_callback) {}
+      base::OnceCallback<void(const std::optional<autofill::FormData>&)>
+          form_data_callback) {}
+
+  // Submits a form based on field id if all conditions for submission with
+  // Enter are satisfied, i.e. the form exists, there is a submit element inside
+  // a form, the submit element is not disabled.
+  virtual void SubmitFormWithEnter(
+      autofill::FieldRendererId field,
+      base::OnceCallback<void(bool)> success_callback) {}
 
   // Tells the driver to fill the currently focused form with the `username` and
   // `password`.
@@ -191,6 +205,9 @@ class PasswordManagerDriver {
   // corresponding HTML attributes. It is used only for debugging.
   virtual void AnnotateFieldsWithParsingResult(
       const autofill::ParsingResult& parsing_result) {}
+
+  virtual gfx::RectF TransformToRootCoordinates(
+      const gfx::RectF& bounds_in_frame_coordinates) = 0;
 
   // Get a WeakPtr to the instance.
   virtual base::WeakPtr<PasswordManagerDriver> AsWeakPtr() = 0;

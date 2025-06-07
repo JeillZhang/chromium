@@ -8,11 +8,11 @@
 #include <cfloat>
 #include <numeric>
 
-#include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
 #include "third_party/blink/renderer/platform/geometry/length.h"
 #include "third_party/blink/renderer/platform/geometry/length_functions.h"
 #include "third_party/blink/renderer/platform/geometry/math_functions.h"
+#include "third_party/blink/renderer/platform/wtf/math_extras.h"
 
 namespace blink {
 
@@ -32,9 +32,9 @@ bool CalculationExpressionNumberNode::Equals(
   return value_ == other_number->Value();
 }
 
-scoped_refptr<const CalculationExpressionNode>
-CalculationExpressionNumberNode::Zoom(double) const {
-  return base::MakeRefCounted<CalculationExpressionNumberNode>(value_);
+const CalculationExpressionNode* CalculationExpressionNumberNode::Zoom(
+    double) const {
+  return MakeGarbageCollected<CalculationExpressionNumberNode>(value_);
 }
 
 #if DCHECK_IS_ON()
@@ -134,7 +134,9 @@ float CalculationExpressionSizingKeywordNode::Evaluate(
 
 CalculationExpressionColorChannelKeywordNode::
     CalculationExpressionColorChannelKeywordNode(ColorChannelKeyword channel)
-    : channel_(channel) {}
+    : channel_(channel) {
+  has_color_channel_keyword_ = true;
+}
 
 float CalculationExpressionColorChannelKeywordNode::Evaluate(
     float max_value,
@@ -166,12 +168,12 @@ bool CalculationExpressionPixelsAndPercentNode::Equals(
          value_.percent == other_pixels_and_percent->value_.percent;
 }
 
-scoped_refptr<const CalculationExpressionNode>
+const CalculationExpressionNode*
 CalculationExpressionPixelsAndPercentNode::Zoom(double factor) const {
   PixelsAndPercent result(value_.pixels * factor, value_.percent,
                           value_.has_explicit_pixels,
                           value_.has_explicit_percent);
-  return base::MakeRefCounted<CalculationExpressionPixelsAndPercentNode>(
+  return MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
       result);
 }
 
@@ -184,17 +186,26 @@ CalculationExpressionPixelsAndPercentNode::ResolvedResultType() const {
 
 // ------ CalculationExpressionOperationNode ------
 
+namespace {
+
+bool ShouldConvertRad2DegForOperator(CalculationOperator op) {
+  return op == CalculationOperator::kSin || op == CalculationOperator::kCos ||
+         op == CalculationOperator::kTan;
+}
+
+}  // namespace
+
 // static
-scoped_refptr<const CalculationExpressionNode>
+const CalculationExpressionNode*
 CalculationExpressionOperationNode::CreateSimplified(Children&& children,
-                                                    CalculationOperator op) {
+                                                     CalculationOperator op) {
   switch (op) {
     case CalculationOperator::kAdd:
     case CalculationOperator::kSubtract: {
       DCHECK_EQ(children.size(), 2u);
       if (!children[0]->IsPixelsAndPercent() ||
           !children[1]->IsPixelsAndPercent()) {
-        return base::MakeRefCounted<CalculationExpressionOperationNode>(
+        return MakeGarbageCollected<CalculationExpressionOperationNode>(
             Children({std::move(children[0]), std::move(children[1])}), op);
       }
       const auto& left_pixels_and_percent =
@@ -208,19 +219,19 @@ CalculationExpressionOperationNode::CreateSimplified(Children&& children,
       } else {
         value -= right_pixels_and_percent;
       }
-      return base::MakeRefCounted<CalculationExpressionPixelsAndPercentNode>(
+      return MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
           value);
     }
     case CalculationOperator::kMultiply: {
       DCHECK_EQ(children.size(), 2u);
       if (children.front()->IsOperation() || children.back()->IsOperation()) {
-        return base::MakeRefCounted<CalculationExpressionOperationNode>(
+        return MakeGarbageCollected<CalculationExpressionOperationNode>(
             Children({std::move(children[0]), std::move(children[1])}), op);
       }
       auto& maybe_pixels_and_percent_node =
           children[0]->IsNumber() ? children[1] : children[0];
       if (!maybe_pixels_and_percent_node->IsPixelsAndPercent()) {
-        return base::MakeRefCounted<CalculationExpressionOperationNode>(
+        return MakeGarbageCollected<CalculationExpressionOperationNode>(
             Children({std::move(children[0]), std::move(children[1])}), op);
       }
       auto& number_node = children[0]->IsNumber() ? children[0] : children[1];
@@ -230,17 +241,17 @@ CalculationExpressionOperationNode::CreateSimplified(Children&& children,
               *maybe_pixels_and_percent_node)
               .GetPixelsAndPercent();
       pixels_and_percent *= number.Value();
-      return base::MakeRefCounted<CalculationExpressionPixelsAndPercentNode>(
+      return MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
           pixels_and_percent);
     }
     case CalculationOperator::kInvert: {
       DCHECK_EQ(children.size(), 1u);
       auto* number = DynamicTo<CalculationExpressionNumberNode>(*children[0]);
       if (number) {
-        return base::MakeRefCounted<CalculationExpressionNumberNode>(
+        return MakeGarbageCollected<CalculationExpressionNumberNode>(
             1.0 / number->Value());
       }
-      return base::MakeRefCounted<CalculationExpressionOperationNode>(
+      return MakeGarbageCollected<CalculationExpressionOperationNode>(
           Children({std::move(children[0])}), op);
     }
     case CalculationOperator::kMin:
@@ -268,10 +279,10 @@ CalculationExpressionOperationNode::CreateSimplified(Children&& children,
         }
       }
       if (can_simplify) {
-        return base::MakeRefCounted<CalculationExpressionPixelsAndPercentNode>(
+        return MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
             PixelsAndPercent(simplified_px));
       }
-      return base::MakeRefCounted<CalculationExpressionOperationNode>(
+      return MakeGarbageCollected<CalculationExpressionOperationNode>(
           std::move(children), op);
     }
     case CalculationOperator::kClamp: {
@@ -296,10 +307,10 @@ CalculationExpressionOperationNode::CreateSimplified(Children&& children,
         // according to the spec,
         // https://drafts.csswg.org/css-values-4/#funcdef-clamp.
         float clamped_px = std::max(min_px, std::min(val_px, max_px));
-        return base::MakeRefCounted<CalculationExpressionPixelsAndPercentNode>(
+        return MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
             PixelsAndPercent(clamped_px));
       }
-      return base::MakeRefCounted<CalculationExpressionOperationNode>(
+      return MakeGarbageCollected<CalculationExpressionOperationNode>(
           std::move(children), op);
     }
     case CalculationOperator::kRoundNearest:
@@ -317,12 +328,38 @@ CalculationExpressionOperationNode::CreateSimplified(Children&& children,
       if (can_simplify) {
         float value =
             EvaluateSteppedValueFunction(op, a->Pixels(), b->Pixels());
-        return base::MakeRefCounted<CalculationExpressionPixelsAndPercentNode>(
+        return MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
             PixelsAndPercent(value));
       } else {
-        return base::MakeRefCounted<CalculationExpressionOperationNode>(
+        return MakeGarbageCollected<CalculationExpressionOperationNode>(
             std::move(children), op);
       }
+    }
+    case CalculationOperator::kLog: {
+      DCHECK_GE(children.size(), 1u);
+      DCHECK_LE(children.size(), 2u);
+      Vector<float> operand_pixels;
+      operand_pixels.reserve(children.size());
+      bool can_simplify = true;
+      for (auto& child : children) {
+        const auto* pixels_and_percent =
+            DynamicTo<CalculationExpressionPixelsAndPercentNode>(*child);
+        if (!pixels_and_percent || pixels_and_percent->Percent()) {
+          can_simplify = false;
+          break;
+        }
+        operand_pixels.push_back(pixels_and_percent->Pixels());
+      }
+      if (can_simplify) {
+        float value = operand_pixels.size() == 1u
+                          ? std::log(operand_pixels.front())
+                          : std::log2(operand_pixels.front()) /
+                                std::log2(operand_pixels.back());
+        return MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
+            PixelsAndPercent(value));
+      }
+      return MakeGarbageCollected<CalculationExpressionOperationNode>(
+          std::move(children), op);
     }
     case CalculationOperator::kHypot: {
       DCHECK_GE(children.size(), 1u);
@@ -343,34 +380,53 @@ CalculationExpressionOperationNode::CreateSimplified(Children&& children,
         for (float operand : operand_pixels) {
           value = std::hypot(value, operand);
         }
-        return base::MakeRefCounted<CalculationExpressionPixelsAndPercentNode>(
+        return MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
             PixelsAndPercent(value));
       }
-      return base::MakeRefCounted<CalculationExpressionOperationNode>(
+      return MakeGarbageCollected<CalculationExpressionOperationNode>(
           std::move(children), op);
     }
+    case CalculationOperator::kSin:
+    case CalculationOperator::kCos:
+    case CalculationOperator::kTan:
+    case CalculationOperator::kAsin:
+    case CalculationOperator::kAcos:
+    case CalculationOperator::kAtan:
     case CalculationOperator::kAbs:
+    case CalculationOperator::kExp:
+    case CalculationOperator::kSqrt:
     case CalculationOperator::kSign: {
       DCHECK_EQ(children.size(), 1u);
       const auto* pixels_and_percent =
           DynamicTo<CalculationExpressionPixelsAndPercentNode>(
               *children.front());
       if (!pixels_and_percent || pixels_and_percent->Percent()) {
-        return base::MakeRefCounted<CalculationExpressionOperationNode>(
+        return MakeGarbageCollected<CalculationExpressionOperationNode>(
             std::move(children), op);
-      } else {
-        float value = pixels_and_percent->Pixels();
-        if (op == CalculationOperator::kAbs) {
-          return base::MakeRefCounted<
-              CalculationExpressionPixelsAndPercentNode>(
-              PixelsAndPercent(std::abs(value)));
-        } else {
-          if (value == 0 || std::isnan(value)) {
-            return base::MakeRefCounted<CalculationExpressionNumberNode>(value);
-          }
-          return base::MakeRefCounted<CalculationExpressionNumberNode>(
-              value > 0 ? 1 : -1);
+      }
+      float value = pixels_and_percent->Pixels();
+      if (op == CalculationOperator::kAbs) {
+        return MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
+            PixelsAndPercent(std::abs(value)));
+      } else if (op == CalculationOperator::kSign) {
+        if (value == 0 || std::isnan(value)) {
+          return MakeGarbageCollected<CalculationExpressionNumberNode>(value);
         }
+        return MakeGarbageCollected<CalculationExpressionNumberNode>(
+            value > 0 ? 1 : -1);
+      } else if (op == CalculationOperator::kExp) {
+        return MakeGarbageCollected<CalculationExpressionNumberNode>(
+            std::exp(value));
+      } else if (op == CalculationOperator::kSqrt) {
+        return MakeGarbageCollected<CalculationExpressionNumberNode>(
+            std::sqrt(value));
+      } else {
+        if (ShouldConvertRad2DegForOperator(op) &&
+            children.front()->IsNumber()) {
+          value = Rad2deg(value);
+        }
+        value = EvaluateTrigonometricFunction(op, value);
+        return MakeGarbageCollected<CalculationExpressionNumberNode>(value);
       }
     }
     case CalculationOperator::kProgress:
@@ -379,7 +435,7 @@ CalculationExpressionOperationNode::CreateSimplified(Children&& children,
       DCHECK_EQ(children.size(), 3u);
       Vector<float, 3> operand_pixels;
       bool can_simplify = true;
-      for (scoped_refptr<const CalculationExpressionNode>& child : children) {
+      for (const Member<const CalculationExpressionNode>& child : children) {
         const auto* pixels_and_percent =
             DynamicTo<CalculationExpressionPixelsAndPercentNode>(*child);
         if (!pixels_and_percent || pixels_and_percent->Percent()) {
@@ -393,10 +449,10 @@ CalculationExpressionOperationNode::CreateSimplified(Children&& children,
         float from_px = operand_pixels[1];
         float to_px = operand_pixels[2];
         float progress = (progress_px - from_px) / (to_px - from_px);
-        return base::MakeRefCounted<CalculationExpressionPixelsAndPercentNode>(
+        return MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
             PixelsAndPercent(progress));
       }
-      return base::MakeRefCounted<CalculationExpressionOperationNode>(
+      return MakeGarbageCollected<CalculationExpressionOperationNode>(
           std::move(children), op);
     }
     case CalculationOperator::kCalcSize: {
@@ -404,11 +460,39 @@ CalculationExpressionOperationNode::CreateSimplified(Children&& children,
       // TODO(https://crbug.com/313072): It may be worth implementing
       // simplification for calc-size(), but it's not likely to be possible to
       // simplify calc-size() in any of its real use cases.
-      return base::MakeRefCounted<CalculationExpressionOperationNode>(
+      return MakeGarbageCollected<CalculationExpressionOperationNode>(
+          std::move(children), op);
+    }
+    case CalculationOperator::kPow: {
+      DCHECK_EQ(children.size(), 2u);
+      if (children.front()->IsNumber() && children.back()->IsNumber()) {
+        float value = std::pow(
+            To<CalculationExpressionNumberNode>(*children.front()).Value(),
+            To<CalculationExpressionNumberNode>(*children.back()).Value());
+        return MakeGarbageCollected<CalculationExpressionNumberNode>(value);
+      }
+      return MakeGarbageCollected<CalculationExpressionOperationNode>(
           std::move(children), op);
     }
     case CalculationOperator::kInvalid:
       NOTREACHED();
+    case CalculationOperator::kAtan2: {
+      DCHECK_EQ(children.size(), 2u);
+      const auto* a =
+          DynamicTo<CalculationExpressionPixelsAndPercentNode>(*children[0]);
+      const auto* b =
+          DynamicTo<CalculationExpressionPixelsAndPercentNode>(*children[1]);
+      bool can_simplify = a && !a->Percent() && b && !b->Percent();
+      if (can_simplify) {
+        float value =
+            EvaluateTrigonometricFunction(op, a->Pixels(), {b->Pixels()});
+        return MakeGarbageCollected<CalculationExpressionPixelsAndPercentNode>(
+            PixelsAndPercent(value));
+      } else {
+        return MakeGarbageCollected<CalculationExpressionOperationNode>(
+            std::move(children), op);
+      }
+    }
   }
 }
 
@@ -445,6 +529,9 @@ CalculationExpressionOperationNode::CalculationExpressionOperationNode(
       DCHECK(!child->HasStretch());
       if (child->HasPercent()) {
         has_percent_ = true;
+      }
+      if (child->HasColorChannelKeyword()) {
+        has_color_channel_keyword_ = true;
       }
     }
   }
@@ -512,26 +599,40 @@ float CalculationExpressionOperationNode::Evaluate(
       float b = children_[1]->Evaluate(max_value, input);
       return EvaluateSteppedValueFunction(operator_, a, b);
     }
+    case CalculationOperator::kLog: {
+      DCHECK_GE(children_.size(), 1u);
+      DCHECK_LE(children_.size(), 2u);
+      return children_.size() == 1u
+                 ? std::log(children_.front()->Evaluate(max_value, input))
+                 : std::log2(children_.front()->Evaluate(max_value, input)) /
+                       std::log2(children_.back()->Evaluate(max_value, input));
+    }
     case CalculationOperator::kHypot: {
       DCHECK_GE(children_.size(), 1u);
       float value = 0;
-      for (scoped_refptr<const CalculationExpressionNode> operand : children_) {
+      for (const Member<const CalculationExpressionNode>& operand : children_) {
         float a = operand->Evaluate(max_value, input);
         value = std::hypot(value, a);
       }
       return value;
     }
     case CalculationOperator::kAbs:
+    case CalculationOperator::kExp:
+    case CalculationOperator::kSqrt:
     case CalculationOperator::kSign: {
       DCHECK_EQ(children_.size(), 1u);
       const float value = children_.front()->Evaluate(max_value, input);
       if (operator_ == CalculationOperator::kAbs) {
         return std::abs(value);
-      } else {
+      } else if (operator_ == CalculationOperator::kExp) {
+        return std::exp(value);
+      } else if (operator_ == CalculationOperator::kSign) {
         if (value == 0 || std::isnan(value)) {
           return value;
         }
         return value > 0 ? 1 : -1;
+      } else {
+        return std::sqrt(value);
       }
     }
     case CalculationOperator::kCalcSize: {
@@ -557,6 +658,30 @@ float CalculationExpressionOperationNode::Evaluate(
       float to = children_[2]->Evaluate(max_value, input);
       return (progress - from) / (to - from);
     }
+    case CalculationOperator::kPow: {
+      DCHECK_EQ(children_.size(), 2u);
+      float a = children_[0]->Evaluate(max_value, input);
+      float b = children_[1]->Evaluate(max_value, input);
+      return std::pow(a, b);
+    }
+    case CalculationOperator::kSin:
+    case CalculationOperator::kCos:
+    case CalculationOperator::kTan:
+    case CalculationOperator::kAsin:
+    case CalculationOperator::kAcos:
+    case CalculationOperator::kAtan:
+    case CalculationOperator::kAtan2: {
+      float a = children_[0]->Evaluate(max_value, input);
+      if (ShouldConvertRad2DegForOperator(operator_) &&
+          children_.front()->IsNumber()) {
+        a = Rad2deg(a);
+      }
+      std::optional<float> b =
+          operator_ == CalculationOperator::kAtan2
+              ? std::optional<float>(children_[1]->Evaluate(max_value, input))
+              : std::nullopt;
+      return EvaluateTrigonometricFunction(operator_, a, b);
+    }
     case CalculationOperator::kInvalid:
       break;
       // TODO(crbug.com/1284199): Support other math functions.
@@ -579,8 +704,8 @@ bool CalculationExpressionOperationNode::Equals(
       [](const ValueType& a, const ValueType& b) { return *a == *b; });
 }
 
-scoped_refptr<const CalculationExpressionNode>
-CalculationExpressionOperationNode::Zoom(double factor) const {
+const CalculationExpressionNode* CalculationExpressionOperationNode::Zoom(
+    double factor) const {
   switch (operator_) {
     case CalculationOperator::kAdd:
     case CalculationOperator::kSubtract:
@@ -617,12 +742,23 @@ CalculationExpressionOperationNode::Zoom(double factor) const {
     case CalculationOperator::kRem:
     case CalculationOperator::kHypot:
     case CalculationOperator::kAbs:
+    case CalculationOperator::kLog:
+    case CalculationOperator::kExp:
+    case CalculationOperator::kSqrt:
     case CalculationOperator::kSign:
     case CalculationOperator::kProgress:
     case CalculationOperator::kMediaProgress:
-    case CalculationOperator::kContainerProgress: {
+    case CalculationOperator::kContainerProgress:
+    case CalculationOperator::kSin:
+    case CalculationOperator::kCos:
+    case CalculationOperator::kTan:
+    case CalculationOperator::kAsin:
+    case CalculationOperator::kAcos:
+    case CalculationOperator::kAtan:
+    case CalculationOperator::kAtan2:
+    case CalculationOperator::kPow: {
       DCHECK(children_.size());
-      Vector<scoped_refptr<const CalculationExpressionNode>> cloned_operands;
+      HeapVector<Member<const CalculationExpressionNode>> cloned_operands;
       cloned_operands.reserve(children_.size());
       for (const auto& child : children_)
         cloned_operands.push_back(child->Zoom(factor));
@@ -720,6 +856,7 @@ CalculationExpressionOperationNode::ResolvedResultType() const {
     case CalculationOperator::kRoundToZero:
     case CalculationOperator::kMod:
     case CalculationOperator::kRem:
+    case CalculationOperator::kSqrt:
     case CalculationOperator::kHypot:
     case CalculationOperator::kAbs: {
       DCHECK(children_.size());
@@ -735,6 +872,16 @@ CalculationExpressionOperationNode::ResolvedResultType() const {
     case CalculationOperator::kContainerProgress:
     case CalculationOperator::kProgress:
     case CalculationOperator::kMediaProgress:
+    case CalculationOperator::kLog:
+    case CalculationOperator::kExp:
+    case CalculationOperator::kSin:
+    case CalculationOperator::kCos:
+    case CalculationOperator::kTan:
+    case CalculationOperator::kAsin:
+    case CalculationOperator::kAcos:
+    case CalculationOperator::kAtan:
+    case CalculationOperator::kAtan2:
+    case CalculationOperator::kPow:
       return ResultType::kNumber;
     case CalculationOperator::kInvalid:
       NOTREACHED();

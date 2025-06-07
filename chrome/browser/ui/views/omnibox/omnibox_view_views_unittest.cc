@@ -18,6 +18,7 @@
 #include "base/i18n/rtl.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/simple_test_tick_clock.h"
@@ -32,6 +33,7 @@
 #include "chrome/browser/signin/chrome_signin_client_test_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_client.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "chrome/test/base/testing_profile.h"
@@ -39,7 +41,9 @@
 #include "components/lookalikes/core/safety_tip_test_utils.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/test_location_bar_model.h"
+#include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/omnibox/common/omnibox_features.h"
+#include "components/unified_consent/pref_names.h"
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/focused_node_details.h"
 #include "content/public/browser/scoped_accessibility_mode.h"
@@ -48,6 +52,7 @@
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
 #include "services/network/test/test_url_loader_factory.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_keyboard_event.h"
@@ -69,6 +74,8 @@
 
 using gfx::Range;
 using metrics::OmniboxEventProto;
+using ::testing::_;
+using ::testing::Return;
 
 class TestingOmniboxView;
 
@@ -112,7 +119,7 @@ class TestingOmniboxView : public OmniboxViewViews {
 
   using OmniboxView::OnInlineAutocompleteTextMaybeChanged;
 
-  using OmniboxViewViews::SetTextAndSelectedRanges;
+  using OmniboxViewViews::SetTextAndSelectedRange;
   using OmniboxViewViews::SkipDefaultKeyEventProcessing;
 
  protected:
@@ -617,6 +624,57 @@ TEST_F(OmniboxViewViewsTest, OnBlur) {
   EXPECT_FALSE(omnibox_view()->IsSelectAll());
 }
 
+// Verifies that crbug.com/417895268 does not regress.
+TEST_F(OmniboxViewViewsTest, EmojiPickerInsertion) {
+  omnibox_view()->SetFocus(/*is_user_initiated=*/true);
+
+  // Set "ab|c", where | is the caret position.
+  omnibox_textfield()->InsertText(
+      u"abc", OmniboxViewViews::InsertTextCursorBehavior::kMoveCursorAfterText);
+  omnibox_textfield()->Scroll({2});
+  {
+    size_t start, end;
+    omnibox_view()->GetSelectionBounds(&start, &end);
+    EXPECT_EQ(2u, start);
+    EXPECT_EQ(2u, end);
+    EXPECT_EQ(2u, omnibox_view()->GetCursorPosition());
+  }
+
+  // Emulation of Emoji picker. Because emoji picker has the focus,
+  // omnibox looses it.
+  omnibox_textfield()->OnBlur();
+  {
+    size_t start, end;
+    omnibox_view()->GetSelectionBounds(&start, &end);
+    EXPECT_EQ(2u, start);
+    EXPECT_EQ(2u, end);
+    EXPECT_EQ(2u, omnibox_view()->GetCursorPosition());
+  }
+
+  // Then, insertion of an emoji. Uses 0x1F600 (smile mark) as an example.
+  omnibox_textfield()->InsertText(
+      u"\xD83D\xDE00",
+      OmniboxViewViews::InsertTextCursorBehavior::kMoveCursorAfterText);
+
+  // Now, emoji picker closes, and so omnibox will be re-focused.
+  omnibox_textfield()->OnFocus();
+
+  // Verify the result. Emoji is inserted between 'b' and 'c', then
+  // the caret is placed between the emoji and 'c'.
+  EXPECT_EQ(
+      u"ab"
+      u"\xD83D\xDE00"
+      u"c",
+      omnibox_view()->GetText());
+  {
+    size_t start, end;
+    omnibox_view()->GetSelectionBounds(&start, &end);
+    EXPECT_EQ(4u, start);
+    EXPECT_EQ(4u, end);
+    EXPECT_EQ(4u, omnibox_view()->GetCursorPosition());
+  }
+}
+
 // Verifies that https://crbug.com/45260 doesn't regress.
 TEST_F(OmniboxViewViewsTest,
        RendererInitiatedFocusSelectsAllWhenStartingBlurred) {
@@ -636,7 +694,7 @@ TEST_F(OmniboxViewViewsTest,
   // Simulate the user focusing the omnibox and typing something. This is just
   // the test setup, not the actual focus event we are testing.
   omnibox_view()->SetFocus(/*is_user_initiated*/ true);
-  omnibox_view()->SetTextAndSelectedRanges(u"user text", {gfx::Range(9, 9)});
+  omnibox_view()->SetTextAndSelectedRange(u"user text", gfx::Range(9, 9));
   ASSERT_FALSE(omnibox_view()->IsSelectAll());
   ASSERT_TRUE(omnibox_view()->GetSelectionAtEnd());
 
@@ -747,8 +805,8 @@ TEST_F(OmniboxViewViewsTest, AccessibleTextSelectBoundTest) {
   ui::AXNodeData data;
   gfx::Range range(4, 10);
 
-  omnibox_view()->SetTextAndSelectedRanges(u"AccessibleTextSelectBoundTest",
-                                           {range});
+  omnibox_view()->SetTextAndSelectedRange(u"AccessibleTextSelectBoundTest",
+                                          range);
   omnibox_view()->GetViewAccessibility().GetAccessibleNodeData(&data);
   EXPECT_EQ(data.GetIntAttribute(ax::mojom::IntAttribute::kTextSelStart), 4);
   EXPECT_EQ(data.GetIntAttribute(ax::mojom::IntAttribute::kTextSelEnd), 10);
@@ -948,25 +1006,16 @@ TEST_F(OmniboxViewViewsTest, SetWindowTextAndCaretPos) {
 
 TEST_F(OmniboxViewViewsTest, OnInlineAutocompleteTextMaybeChanged) {
   // No selection, google.com|
-  omnibox_view()->OnInlineAutocompleteTextMaybeChanged(u"google.com",
-                                                       {{10, 10}}, u"", u"");
+  omnibox_view()->OnInlineAutocompleteTextMaybeChanged(u"google.com", u"");
   EXPECT_EQ(u"google.com", omnibox_view()->GetText());
   EXPECT_EQ(omnibox_view()->GetRenderText()->GetAllSelections(),
             (std::vector<Range>{{10, 10}}));
 
   // Single selection, gmai[l.com]
-  omnibox_view()->OnInlineAutocompleteTextMaybeChanged(u"gmail.com", {{9, 4}},
-                                                       u"", u"l.com");
+  omnibox_view()->OnInlineAutocompleteTextMaybeChanged(u"gmai", u"l.com");
   EXPECT_EQ(u"gmail.com", omnibox_view()->GetText());
   EXPECT_EQ(omnibox_view()->GetRenderText()->GetAllSelections(),
             (std::vector<Range>{{9, 4}}));
-
-  // Multiselection, [go]ogl[e.com]
-  omnibox_view()->OnInlineAutocompleteTextMaybeChanged(
-      u"google.com", {{10, 5}, {0, 2}}, u"go", u"e.com");
-  EXPECT_EQ(u"google.com", omnibox_view()->GetText());
-  EXPECT_EQ(omnibox_view()->GetRenderText()->GetAllSelections(),
-            (std::vector<Range>{{10, 5}, {0, 2}}));
 }
 
 TEST_F(OmniboxViewViewsTest, OverflowingAutocompleteText) {
@@ -978,9 +1027,7 @@ TEST_F(OmniboxViewViewsTest, OverflowingAutocompleteText) {
 
   omnibox_textfield()->OnFocus();
   omnibox_view()->OnInlineAutocompleteTextMaybeChanged(
-      u"user text. Followed by very long autocompleted text that is unlikely "
-      u"to fit in |kOmniboxWidth|",
-      {{94, 10}}, u"",
+      u"user text.",
       u" Followed by very long autocompleted text that is unlikely to fit in "
       u"|kOmniboxWidth|");
 

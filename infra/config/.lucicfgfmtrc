@@ -33,6 +33,7 @@ rules {
         # Builders
         arg: "description_html"
         arg: "executable"
+        arg: "parent"
         arg: "schedule"
         arg: "triggered_by"
         arg: "triggering_policy"
@@ -52,9 +53,8 @@ rules {
         arg: "free_space"
         arg: "gce"
         arg: "gardener_rotations"
-        arg: "gardener_rotation_console_category"
-        arg: "gardener_rotation_console_short_name"
         arg: "tree_closing"
+        arg: "tree_closing_notifiers"
         arg: "console_view_entry"
         arg: "main_console_view"
         arg: "cq_mirrors_console_view"

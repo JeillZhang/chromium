@@ -281,11 +281,9 @@ void AppShimController::PreInitFeatureState(
       std::move(feature_list),
       {"AppShimLaunchChromeSilently", "AppShimNotificationAttribution",
        "DcheckIsFatal", "DisallowSpaceCharacterInURLHostParsing",
-       "MojoMessageAlwaysUseLatestVersion", "MojoBindingsInlineSLS",
-       "MojoInlineMessagePayloads", "MojoIpcz", "MojoIpczMemV2",
-       "MojoTaskPerMessage", "StandardCompliantHostCharacters",
-       "StandardCompliantNonSpecialSchemeURLParsing",
-       "UseAdHocSigningForWebAppShims", "UseIDNA2008NonTransitional",
+       "MojoBindingsInlineSLS", "MojoInlineMessagePayloads", "MojoIpcz",
+       "MojoIpczMemV2", "MojoTaskPerMessage", "StandardCompliantHostCharacters",
+       "UseAdHocSigningForWebAppShims",
        "SonomaAccessibilityActivationRefinements", "FeatureParamWithCache",
        "UseMachVouchers"});
 }

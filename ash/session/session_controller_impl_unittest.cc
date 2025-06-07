@@ -410,10 +410,9 @@ TEST_F(SessionControllerImplTest, GetLoginStateForActiveSession) {
       {user_manager::UserType::kRegular, LoginStatus::USER},
       {user_manager::UserType::kGuest, LoginStatus::GUEST},
       {user_manager::UserType::kPublicAccount, LoginStatus::PUBLIC},
-      {user_manager::UserType::kKioskApp, LoginStatus::KIOSK_APP},
+      {user_manager::UserType::kKioskChromeApp, LoginStatus::KIOSK_APP},
       {user_manager::UserType::kChild, LoginStatus::CHILD},
-      {user_manager::UserType::kWebKioskApp, LoginStatus::KIOSK_APP}
-  };
+      {user_manager::UserType::kKioskWebApp, LoginStatus::KIOSK_APP}};
 
   for (const auto& test_case : kTestCases) {
     UserSession session;
@@ -573,10 +572,10 @@ TEST_F(SessionControllerImplPrefsTest, Observer) {
   controller->AddObserver(&observer);
 
   // Setup 2 users.
-  TestSessionControllerClient* session = GetSessionControllerClient();
-  session->AddUserSession(kUser1, user_manager::UserType::kRegular);
-  session->AddUserSession(kUser2, user_manager::UserType::kRegular);
+  SimulateUserLogin({kUser1});
+  SimulateUserLogin({kUser2});
 
+  TestSessionControllerClient* session = GetSessionControllerClient();
   session->SwitchActiveUser(kUserAccount1);
 
   EXPECT_EQ(controller->GetUserPrefServiceForUser(kUserAccount1),
@@ -607,12 +606,12 @@ TEST_F(SessionControllerImplPrefsTest, NotifyOnce) {
   controller->AddObserver(&observer);
   ASSERT_EQ(0, observer.user_prefs_changed_count());
 
-  SimulateUserLogin(kUser1);
+  SimulateUserLogin({kUser1});
   EXPECT_EQ(1, observer.user_prefs_changed_count());
   EXPECT_EQ(controller->GetUserPrefServiceForUser(kUserAccount1),
             observer.last_user_pref_service());
 
-  SimulateUserLogin(kUser2);
+  SimulateUserLogin({kUser2});
   EXPECT_EQ(2, observer.user_prefs_changed_count());
   EXPECT_EQ(controller->GetUserPrefServiceForUser(kUserAccount2),
             observer.last_user_pref_service());
@@ -650,13 +649,12 @@ TEST_F(SessionControllerImplPrefsTest, SetsTimeOfLastSessionActivation) {
   controller->AddObserver(&mock_session_observer);
 
   // Switch to test user.
-  TestSessionControllerClient* session = GetSessionControllerClient();
-  session->AddUserSession(kUser1Email, user_manager::UserType::kRegular);
-  session->SwitchActiveUser(kUser1AccountId);
+  SimulateUserLogin({.display_email = kUser1Email, .activate_session = false});
 
   // Initially time of last session activation is expected to be `base::Time()`.
   base::Time expected_time_of_last_session_activation;
 
+  TestSessionControllerClient* session = GetSessionControllerClient();
   // Iterate over all possible session states.
   for (auto expected_session_state : std::vector<SessionState>{
            SessionState::OOBE, SessionState::LOGIN_PRIMARY,
@@ -744,8 +742,7 @@ TEST_F(SessionControllerImplPrefsTest, SetsTimeOfLastSessionActivation) {
             *base::ValueToTime(time_of_last_session_activation->GetValue()),
             expected_time_of_last_session_activation);
       }));
-  session->AddUserSession(kUser2Email, user_manager::UserType::kRegular);
-  session->SwitchActiveUser(kUser2AccountId);
+  SimulateUserLogin({kUser2Email});
   testing::Mock::VerifyAndClearExpectations(&mock_session_observer);
 
   {
@@ -1069,7 +1066,7 @@ TEST_F(SessionControllerImplUnblockTest, ActiveWindowAfterUnblocking) {
       CreateTestWidget(views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   // |widget| should not be active as it is blocked by SessionControllerImpl.
   EXPECT_FALSE(widget->IsActive());
-  SimulateUserLogin("user@test.com");
+  SimulateUserLogin({"user@test.com"});
   EXPECT_FALSE(Shell::Get()->session_controller()->IsUserSessionBlocked());
 
   // |widget| should now be active as SessionControllerImpl no longer is

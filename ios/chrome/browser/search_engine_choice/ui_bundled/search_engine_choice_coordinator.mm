@@ -81,7 +81,7 @@
 - (void)start {
   [super start];
   // Make sure we use the original profile (non-incognito).
-  ProfileIOS* profile = self.browser->GetProfile()->GetOriginalProfile();
+  ProfileIOS* profile = self.profile->GetOriginalProfile();
   if (!ShouldDisplaySearchEngineChoiceScreen(
           *profile, _firstRun,
           /*app_started_via_external_intent=*/false)) {
@@ -169,13 +169,12 @@
 
 - (void)didTapPrimaryButton {
   if (_didTapPrimaryButton) {
-    NOTREACHED(base::NotFatalUntil::M127)
-        << "Double tap on primary button [_firstRun = " << _firstRun
-        << " ; delay : "
-        << (base::Time::Now() - _lastCallToDidTapPrimaryButtonTimestamp)
-               .InMilliseconds()
-        << " ms]";
-    return;
+    NOTREACHED() << "Double tap on primary button [_firstRun = " << _firstRun
+                 << " ; delay : "
+                 << (base::Time::Now() -
+                     _lastCallToDidTapPrimaryButtonTimestamp)
+                        .InMilliseconds()
+                 << " ms]";
   }
   _didTapPrimaryButton = YES;
   _lastCallToDidTapPrimaryButtonTimestamp = base::Time::Now();
@@ -206,9 +205,6 @@
 - (void)dismissChoiceScreen {
   if (_firstRun) {
     [_firstRunDelegate screenWillFinishPresenting];
-    base::UmaHistogramEnumeration(
-        first_run::kFirstRunStageHistogram,
-        first_run::kSearchEngineChoiceScreenCompletionWithoutSelection);
   } else {
     [self.delegate choiceScreenWillBeDismissed:self];
   }

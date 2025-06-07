@@ -23,10 +23,12 @@
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
 #include "ash/shell_delegate.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "base/containers/span.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/types/expected.h"
 #include "build/branding_buildflags.h"
 #include "components/feedback/feedback_constants.h"
@@ -36,9 +38,6 @@
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/public/cpp/notification.h"
 #include "ui/message_center/public/cpp/notifier_id.h"
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-#include "chromeos/ash/resources/internal/strings/grit/ash_internal_strings.h"
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 namespace ash {
 
 namespace {
@@ -53,59 +52,45 @@ constexpr char kLobsterFailedImageDownloadNotificationId[] =
     "lobster_failed_image_download_notification_id";
 
 std::u16string GetDownloadNotificationSourceLabel() {
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return l10n_util::GetStringUTF16(
-      IDS_ASH_LOBSTER_IMAGE_DOWNLOAD_NOTIFICATION_SOURCE);
-#else
-  return u"";
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      IDS_LOBSTER_IMAGE_DOWNLOAD_NOTIFICATION_SOURCE);
 }
 
 std::u16string GetSuccessfulImageDownloadNotificationTitle() {
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return l10n_util::GetStringUTF16(
-      IDS_ASH_LOBSTER_SUCCESSFUL_IMAGE_DOWNLOAD_NOTIFICATION_TITLE);
-#else
-  return u"";
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      IDS_LOBSTER_SUCCESSFUL_IMAGE_DOWNLOAD_NOTIFICATION_TITLE);
 }
 
 std::u16string GetFailedImageDownloadNotificationTitle(
     const std::string& file_name) {
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return l10n_util::GetStringFUTF16(
-      IDS_ASH_LOBSTER_FAILED_IMAGE_DOWNLOAD_NOTIFICATION_TITLE,
+      IDS_LOBSTER_FAILED_IMAGE_DOWNLOAD_NOTIFICATION_TITLE,
       base::UTF8ToUTF16(file_name));
-#else
-  return u"";
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 }
 
 std::u16string GetFailedImageDownloadNotificationMessage() {
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return l10n_util::GetStringUTF16(
-      IDS_ASH_LOBSTER_FAILED_IMAGE_DOWNLOAD_NOTIFICATION_MESSAGE);
-#else
-  return u"";
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      IDS_LOBSTER_FAILED_IMAGE_DOWNLOAD_NOTIFICATION_MESSAGE);
 }
 
 std::u16string GetShowInFolderButtonLabel() {
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return l10n_util::GetStringUTF16(
-      IDS_ASH_LOBSTER_SUCCESSFUL_IMAGE_DOWNLOAD_NOTIFICATION_SHOW_IN_FOLDER_ACTION_LABEL);
-#else
-  return u"";
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      IDS_LOBSTER_SUCCESSFUL_IMAGE_DOWNLOAD_NOTIFICATION_SHOW_IN_FOLDER_ACTION_LABEL);
 }
 
 std::u16string GetCopyToClipboardButtonLabel() {
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return l10n_util::GetStringUTF16(
-      IDS_ASH_LOBSTER_SUCCESSFUL_IMAGE_DOWNLOAD_NOTIFICATION_COPY_IMAGE_TO_CLIPBOARD_ACTION_LABEL);
-#else
-  return u"";
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
+      IDS_LOBSTER_SUCCESSFUL_IMAGE_DOWNLOAD_NOTIFICATION_COPY_IMAGE_TO_CLIPBOARD_ACTION_LABEL);
+}
+
+std::u16string GetAnnouncementForInsertionSuccess() {
+  return l10n_util::GetStringUTF16(
+      IDS_LOBSTER_IMAGE_INSERTION_ANNOUNCEMENT_SUCCESS);
+}
+
+std::u16string GetAnnouncementForInsertionFailure() {
+  return l10n_util::GetStringUTF16(
+      IDS_LOBSTER_IMAGE_INSERTION_ANNOUNCEMENT_FAILURE);
 }
 
 std::string BuildFeedbackDescription(std::string_view query,
@@ -201,6 +186,11 @@ void DisplayFailedImageDownloadNotification(const base::FilePath& image_path) {
   message_center->AddNotification(std::move(notification));
 }
 
+void AnnounceInsertionResultLater(LobsterClient* client, bool success) {
+  client->AnnounceLater(success ? GetAnnouncementForInsertionSuccess()
+                                : GetAnnouncementForInsertionFailure());
+}
+
 }  // namespace
 
 LobsterSessionImpl::LobsterSessionImpl(
@@ -248,12 +238,14 @@ void LobsterSessionImpl::DownloadCandidate(int candidate_id,
   }
 
   client_->InflateCandidate(
-      candidate->seed, candidate->query,
+      candidate->seed,
+      ash::features::IsLobsterUseRewrittenQuery() ? candidate->rewritten_query
+                                                  : candidate->user_query,
       base::BindOnce(
           [](LobsterClient* lobster_client,
              LobsterImageDownloadActuator* actuator,
-             const base::FilePath& download_dir, StatusCallback status_callback,
-             const LobsterResult& result) {
+             const base::FilePath& download_dir, const std::string& file_name,
+             StatusCallback status_callback, const LobsterResult& result) {
             if (!result.has_value() || result->size() == 0) {
               LOG(ERROR) << "No image candidate";
               std::move(status_callback).Run(false);
@@ -263,7 +255,7 @@ void LobsterSessionImpl::DownloadCandidate(int candidate_id,
 
             const LobsterImageCandidate& image_candidate = (*result)[0];
             actuator->WriteImageToPath(
-                download_dir, image_candidate.query, image_candidate.id,
+                download_dir, file_name, image_candidate.id,
                 image_candidate.image_bytes,
                 base::BindOnce(
                     [](StatusCallback status_callback,
@@ -287,7 +279,8 @@ void LobsterSessionImpl::DownloadCandidate(int candidate_id,
                     std::move(status_callback), image_candidate.image_bytes));
           },
           client_.get(), &download_actuator_, download_dir,
-          std::move(status_callback)));
+          // Always use the original user query for the filename
+          candidate->user_query, std::move(status_callback)));
 }
 
 void LobsterSessionImpl::RequestCandidates(const std::string& query,
@@ -309,18 +302,22 @@ void LobsterSessionImpl::CommitAsInsert(int candidate_id,
   if (!candidate.has_value()) {
     LOG(ERROR) << "No candidate found.";
     std::move(status_callback).Run(false);
+    AnnounceInsertionResultLater(client_.get(), false);
     RecordLobsterState(LobsterMetricState::kCommitAsInsertError);
     return;
   }
 
   client_->InflateCandidate(
-      candidate->seed, candidate->query,
+      candidate->seed,
+      ash::features::IsLobsterUseRewrittenQuery() ? candidate->rewritten_query
+                                                  : candidate->user_query,
       base::BindOnce(
           [](LobsterClient* lobster_client, StatusCallback status_callback,
              const LobsterResult& result) {
             if (!result.has_value() || result->size() == 0) {
               LOG(ERROR) << "No image candidate";
               std::move(status_callback).Run(false);
+              AnnounceInsertionResultLater(lobster_client, false);
               RecordLobsterState(LobsterMetricState::kCommitAsInsertError);
               return;
             }
@@ -337,6 +334,7 @@ void LobsterSessionImpl::CommitAsInsert(int candidate_id,
             // webui is closed. Therefore, as long as the inflation request is
             // successful, we return true back to WebUI and close WebUI.
             std::move(status_callback).Run(true);
+            AnnounceInsertionResultLater(lobster_client, true);
 
             // Close the WebUI.
             lobster_client->CloseUI();
@@ -360,12 +358,14 @@ void LobsterSessionImpl::CommitAsDownload(int candidate_id,
   }
 
   client_->InflateCandidate(
-      candidate->seed, candidate->query,
+      candidate->seed,
+      ash::features::IsLobsterUseRewrittenQuery() ? candidate->rewritten_query
+                                                  : candidate->user_query,
       base::BindOnce(
           [](LobsterClient* lobster_client,
              LobsterImageDownloadActuator* actuator,
-             const base::FilePath& download_dir, StatusCallback status_callback,
-             const LobsterResult& result) {
+             const base::FilePath& download_dir, const std::string& file_name,
+             StatusCallback status_callback, const LobsterResult& result) {
             if (!result.has_value() || result->size() == 0) {
               LOG(ERROR) << "No image candidate";
               std::move(status_callback).Run(false);
@@ -375,7 +375,7 @@ void LobsterSessionImpl::CommitAsDownload(int candidate_id,
 
             const LobsterImageCandidate& image_candidate = (*result)[0];
             actuator->WriteImageToPath(
-                download_dir, image_candidate.query, image_candidate.id,
+                download_dir, file_name, image_candidate.id,
                 image_candidate.image_bytes,
                 base::BindOnce(
                     [](LobsterClient* lobster_client,
@@ -403,7 +403,8 @@ void LobsterSessionImpl::CommitAsDownload(int candidate_id,
                     std::move(status_callback)));
           },
           client_.get(), &download_actuator_, download_dir,
-          std::move(status_callback)));
+          // Always use the original user query for the filename
+          candidate->user_query, std::move(status_callback)));
 }
 
 void LobsterSessionImpl::PreviewFeedback(
@@ -416,10 +417,8 @@ void LobsterSessionImpl::PreviewFeedback(
     return;
   }
 
-  // TODO: b/362403784 - add the proper version.
   std::move(callback).Run(LobsterFeedbackPreview(
-      {{"model_version", "dummy_version"}, {"model_input", candidate->query}},
-      candidate->image_bytes));
+      {{"Query and image", candidate->user_query}}, candidate->image_bytes));
 }
 
 bool LobsterSessionImpl::SubmitFeedback(int candidate_id,
@@ -432,7 +431,7 @@ bool LobsterSessionImpl::SubmitFeedback(int candidate_id,
   // Submit feedback along with the preview image.
   // TODO: b/362403784 - add the proper version.
   std::string feedback_description = BuildFeedbackDescription(
-      candidate->query, /*model_version=*/"dummy_version", description);
+      candidate->user_query, /*model_version=*/"dummy_version", description);
 
   return Shell::Get()->shell_delegate()->SendSpecializedFeatureFeedback(
       client_->GetAccountId(), feedback::kLobsterFeedbackProductId,
@@ -465,6 +464,8 @@ void LobsterSessionImpl::ShowDisclaimerUIAndCacheContext(
     std::optional<std::string> query,
     const gfx::Rect& anchor_bounds) {
   client_->ShowDisclaimerUI();
+  RecordLobsterState(ash::LobsterMetricState::kConsentScreenImpression);
+
   query_before_disclaimer_ui_ = query;
   anchor_bounds_before_disclaimer_ui_ = anchor_bounds;
 }

@@ -22,7 +22,7 @@
 #include "chrome/browser/extensions/extension_menu_icon_loader.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/menu_manager_factory.h"
-#include "chrome/browser/extensions/tab_helper.h"
+#include "chrome/browser/extensions/permissions/active_tab_permission_granter.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/chrome_web_view_internal.h"
 #include "chrome/common/extensions/api/context_menus.h"
@@ -673,11 +673,6 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
 
   WebViewGuest* webview_guest =
       WebViewGuest::FromRenderFrameHost(render_frame_host);
-  if (webview_guest) {
-    // This is used in web_view_internalcustom_bindings.js.
-    // The property is not exposed to developer API.
-    properties.Set("webviewInstanceId", webview_guest->view_instance_id());
-  }
 
   base::Value::List args;
   args.Append(std::move(properties));
@@ -723,14 +718,22 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
   }
 
   // Note: web_contents are null in unit tests :(
-  if (web_contents && TabHelper::FromWebContents(web_contents)) {
-    TabHelper::FromWebContents(web_contents)
-        ->active_tab_permission_granter()
+  if (web_contents &&
+      ActiveTabPermissionGranter::FromWebContents(web_contents)) {
+    ActiveTabPermissionGranter::FromWebContents(web_contents)
         ->GrantIfRequested(extension);
   }
   {
     // Dispatch to menu item's .onclick handler (this is the legacy API, from
     // before chrome.contextMenus.onClicked existed).
+    auto args_cloned = args.Clone();
+    if (webview_guest) {
+      // This is used in
+      // extensions/renderer/resources/context_menus_handlers.js.
+      // The property is not exposed to developer API.
+      args_cloned[0].GetDict().Set("webviewInstanceId",
+                                   webview_guest->view_instance_id());
+    }
     auto event = std::make_unique<Event>(
         webview_guest ? events::WEB_VIEW_INTERNAL_CONTEXT_MENUS
                       : events::CONTEXT_MENUS,
@@ -738,8 +741,8 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
                              ? "controlledFrameInternal.contextMenus"
                              : kOnWebviewContextMenus)
                       : kOnContextMenus,
-        args.Clone(), context);
-    event->user_gesture = EventRouter::USER_GESTURE_ENABLED;
+        std::move(args_cloned), context);
+    event->user_gesture = EventRouter::UserGestureState::kEnabled;
     if (webview_guest) {
       event->filter_info->has_instance_id = true;
       event->filter_info->instance_id = webview_guest->view_instance_id();
@@ -764,7 +767,7 @@ void MenuManager::ExecuteCommand(content::BrowserContext* context,
         webview_guest ? api::chrome_web_view_internal::OnClicked::kEventName
                       : api::context_menus::OnClicked::kEventName,
         std::move(args), context);
-    event->user_gesture = EventRouter::USER_GESTURE_ENABLED;
+    event->user_gesture = EventRouter::UserGestureState::kEnabled;
     if (webview_guest) {
       event->filter_info->has_instance_id = true;
       event->filter_info->instance_id = webview_guest->view_instance_id();
@@ -1041,10 +1044,6 @@ bool MenuItem::ExtensionKey::operator<(const ExtensionKey& other) const {
   return extension_id < other.extension_id;
 }
 
-bool MenuItem::ExtensionKey::operator!=(const ExtensionKey& other) const {
-  return !(*this == other);
-}
-
 bool MenuItem::ExtensionKey::empty() const {
   return extension_id.empty() &&
       webview_embedder_process_id == ChildProcessHost::kInvalidUniqueID &&
@@ -1057,16 +1056,6 @@ MenuItem::Id::Id(bool incognito, const MenuItem::ExtensionKey& extension_key)
     : incognito(incognito), extension_key(extension_key), uid(0) {}
 
 MenuItem::Id::~Id() = default;
-
-bool MenuItem::Id::operator==(const Id& other) const {
-  return (incognito == other.incognito &&
-          extension_key == other.extension_key && uid == other.uid &&
-          string_uid == other.string_uid);
-}
-
-bool MenuItem::Id::operator!=(const Id& other) const {
-  return !(*this == other);
-}
 
 bool MenuItem::Id::operator<(const Id& other) const {
   return std::tie(incognito, extension_key, uid, string_uid) <

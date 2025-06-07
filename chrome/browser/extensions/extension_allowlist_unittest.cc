@@ -16,6 +16,9 @@
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "extensions/browser/allowlist_state.h"
 #include "extensions/browser/blocklist_extension_prefs.h"
+#include "extensions/browser/disable_reason.h"
+#include "extensions/browser/extension_registrar.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/extension_id.h"
@@ -226,8 +229,8 @@ TEST_F(ExtensionAllowlistUnitTest, DisabledItemStaysDisabledWhenAllowlisted) {
   service()->Init();
 
   // Start with an extension disabled by user.
-  service()->DisableExtension(kExtensionId1,
-                              disable_reason::DISABLE_USER_ACTION);
+  registrar()->DisableExtension(kExtensionId1,
+                                {disable_reason::DISABLE_USER_ACTION});
   EXPECT_TRUE(IsDisabled(kExtensionId1));
 
   // Disable the extension with allowlist enforcement.
@@ -521,8 +524,8 @@ TEST_F(ExtensionAllowlistUnitTest, AcknowledgeNotNeededIfAlreadyDisabled) {
   CreateExtensionService(/*enhanced_protection_enabled=*/true);
 
   service()->Init();
-  service()->DisableExtension(kExtensionId1,
-                              disable_reason::DISABLE_USER_ACTION);
+  registrar()->DisableExtension(kExtensionId1,
+                                {disable_reason::DISABLE_USER_ACTION});
   EXPECT_TRUE(IsDisabled(kExtensionId1));
   EXPECT_EQ(ALLOWLIST_ACKNOWLEDGE_NONE,
             allowlist()->GetExtensionAllowlistAcknowledgeState(kExtensionId1));
@@ -560,7 +563,7 @@ TEST_F(ExtensionAllowlistUnitTest,
             allowlist()->GetExtensionAllowlistAcknowledgeState(kExtensionId1));
 
   // Re-enable the extension.
-  service()->EnableExtension(kExtensionId1);
+  registrar()->EnableExtension(kExtensionId1);
 
   // The extensions should now be marked with
   // `ALLOWLIST_ACKNOWLEDGE_ENABLED_BY_USER'.
@@ -663,7 +666,7 @@ TEST_F(ExtensionAllowlistUnitTest, TurnOffEnhancedProtection) {
 TEST_F(ExtensionAllowlistUnitTest, BypassFrictionSetAckowledgeEnabledByUser) {
   CreateExtensionService(/*enhanced_protection_enabled=*/true);
 
-  scoped_refptr<CrxInstaller> installer(CrxInstaller::CreateSilent(service()));
+  scoped_refptr<CrxInstaller> installer(CrxInstaller::CreateSilent(profile()));
   installer->set_allow_silent_install(true);
   installer->set_bypassed_safebrowsing_friction_for_testing(true);
 
@@ -698,7 +701,7 @@ TEST_F(ExtensionAllowlistUnitTest, NoEnforcementOnPolicyForceInstall) {
           .SetPath(data_dir().AppendASCII("good.crx"))
           .SetLocation(mojom::ManifestLocation::kExternalPolicyDownload)
           .Build();
-  service()->AddExtension(extension.get());
+  registrar()->AddExtension(extension.get());
 
   {
     ManagementPrefUpdater pref(profile_->GetTestingPrefService());
@@ -764,7 +767,7 @@ TEST_F(ExtensionAllowlistWithFeatureDisabledUnitTest,
           .SetPath(data_dir().AppendASCII("good.crx"))
           .SetLocation(mojom::ManifestLocation::kExternalPrefDownload)
           .Build();
-  service()->AddExtension(extension.get());
+  registrar()->AddExtension(extension.get());
 
   {
     ManagementPrefUpdater pref(profile_->GetTestingPrefService());
@@ -798,7 +801,7 @@ TEST_F(ExtensionAllowlistWithFeatureDisabledUnitTest,
           .SetPath(data_dir().AppendASCII("good.crx"))
           .SetLocation(mojom::ManifestLocation::kInternal)
           .Build();
-  service()->AddExtension(extension.get());
+  registrar()->AddExtension(extension.get());
 
   {
     ManagementPrefUpdater pref(profile_->GetTestingPrefService());

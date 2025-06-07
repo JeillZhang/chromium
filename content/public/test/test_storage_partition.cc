@@ -83,10 +83,6 @@ storage::FileSystemContext* TestStoragePartition::GetFileSystemContext() {
   return file_system_context_;
 }
 
-storage::DatabaseTracker* TestStoragePartition::GetDatabaseTracker() {
-  return database_tracker_;
-}
-
 DOMStorageContext* TestStoragePartition::GetDOMStorageContext() {
   return dom_storage_context_;
 }
@@ -170,7 +166,7 @@ CdmStorageDataModel* TestStoragePartition::GetCdmStorageDataModel() {
 
 network::mojom::DeviceBoundSessionManager*
 TestStoragePartition::GetDeviceBoundSessionManager() {
-  return nullptr;
+  return device_bound_session_manager_;
 }
 
 BrowsingTopicsSiteDataManager*

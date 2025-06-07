@@ -138,10 +138,9 @@ mach_port_t IOSurfaceMachPortTraits::Retain(mach_port_t port) {
 
 // static
 void IOSurfaceMachPortTraits::Release(mach_port_t port) {
-  kern_return_t kr =
-      mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, -1);
+  kern_return_t kr = mach_port_deallocate(mach_task_self(), port);
   MACH_LOG_IF(ERROR, kr != KERN_SUCCESS, kr)
-      << "IOSurfaceMachPortTraits::Release mach_port_mod_refs";
+      << "IOSurfaceMachPortTraits::Release mach_port_deallocate";
 }
 
 // Common method used by IOSurfaceSetColorSpace and IOSurfaceCanSetColorSpace.
@@ -202,10 +201,8 @@ bool IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
   }
 
   if (color_space_name) {
-    if (io_surface) {
-      IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceColorSpace"),
-                        color_space_name);
-    }
+    IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceColorSpace"),
+                      color_space_name);
     return true;
   }
 
@@ -242,6 +239,8 @@ base::apple::ScopedCFTypeRef<IOSurfaceRef> CreateIOSurface(
     bool should_clear,
     bool override_rgba_to_bgra) {
   TRACE_EVENT0("ui", "CreateIOSurface");
+  base::TimeTicks start_time = base::TimeTicks::Now();
+
   base::apple::ScopedCFTypeRef<CFMutableDictionaryRef> properties(
       CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
                                 &kCFTypeDictionaryKeyCallBacks,
@@ -300,11 +299,11 @@ base::apple::ScopedCFTypeRef<IOSurfaceRef> CreateIOSurface(
     const size_t bytes_per_element = BytesPerElement(format, 0);
     const size_t bytes_per_row = IOSurfaceAlignProperty(
         kIOSurfaceBytesPerRow,
-        base::bits::AlignUpDeprecatedDoNotUse(size.width(), 2) *
+        base::bits::AlignUp(static_cast<size_t>(size.width()), size_t{2}) *
             bytes_per_element);
     const size_t bytes_alloc = IOSurfaceAlignProperty(
         kIOSurfaceAllocSize,
-        base::bits::AlignUpDeprecatedDoNotUse(size.height(), 2) *
+        base::bits::AlignUp(static_cast<size_t>(size.height()), size_t{2}) *
             bytes_per_row);
     AddIntegerValue(properties.get(), kIOSurfaceBytesPerElement,
                     bytes_per_element);
@@ -323,15 +322,19 @@ base::apple::ScopedCFTypeRef<IOSurfaceRef> CreateIOSurface(
   if (should_clear) {
     // Zero-initialize the IOSurface. Calling IOSurfaceLock/IOSurfaceUnlock
     // appears to be sufficient. https://crbug.com/584760#c17
-    IOReturn r = IOSurfaceLock(surface.get(), 0, nullptr);
-    DCHECK_EQ(kIOReturnSuccess, r);
+    kern_return_t r = IOSurfaceLock(surface.get(), 0, nullptr);
+    DCHECK_EQ(KERN_SUCCESS, r);
     r = IOSurfaceUnlock(surface.get(), 0, nullptr);
-    DCHECK_EQ(kIOReturnSuccess, r);
+    DCHECK_EQ(KERN_SUCCESS, r);
   }
 
   // Ensure that all IOSurfaces start as sRGB.
   IOSurfaceSetValue(surface.get(), CFSTR("IOSurfaceColorSpace"),
                     kCGColorSpaceSRGB);
+
+  UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES(
+      "GPU.IOSurface.CreationTimeUs", base::TimeTicks::Now() - start_time,
+      base::Microseconds(1), base::Milliseconds(50), /*bucket_count=*/100);
 
   return surface;
 }
@@ -348,8 +351,7 @@ void IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
   }
 }
 
-COMPONENT_EXPORT(GFX)
-base::apple::ScopedCFTypeRef<IOSurfaceRef> IOSurfaceMachPortToIOSurface(
+ScopedIOSurface IOSurfaceMachPortToIOSurface(
     ScopedRefCountedIOSurfaceMachPort io_surface_mach_port) {
   base::apple::ScopedCFTypeRef<IOSurfaceRef> io_surface;
   if (!io_surface_mach_port) {

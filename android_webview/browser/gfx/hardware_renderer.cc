@@ -8,6 +8,7 @@
 #include <iterator>
 #include <memory>
 #include <utility>
+#include <variant>
 
 #include "android_webview/browser/gfx/aw_gl_surface.h"
 #include "android_webview/browser/gfx/display_scheduler_webview.h"
@@ -23,9 +24,9 @@
 #include "android_webview/common/aw_features.h"
 #include "android_webview/common/aw_switches.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
-#include "base/functional/overloaded.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
@@ -51,6 +52,7 @@
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "gpu/config/gpu_finch_features.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "ui/gfx/geometry/transform.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
@@ -191,10 +193,6 @@ class HardwareRenderer::OnViz : public viz::DisplayClient {
   void DisplayAddChildWindowToBrowser(
       gpu::SurfaceHandle child_window) override {}
   void SetWideColorEnabled(bool enabled) override {}
-  void SetPreferredFrameInterval(base::TimeDelta interval) override {}
-  base::TimeDelta GetPreferredFrameIntervalForFrameSinkId(
-      const viz::FrameSinkId& id,
-      viz::mojom::CompositorFrameSinkType* type) override;
 
  private:
   viz::FrameSinkManagerImpl* GetFrameSinkManager();
@@ -265,15 +263,18 @@ HardwareRenderer::OnViz::OnViz(
         [](HardwareRenderer::OnViz* self,
            viz::FrameIntervalDecider::Result result,
            viz::FrameIntervalMatcherType matcher_type) {
-          self->preferred_frame_interval_ = absl::visit(
-              base::Overloaded(
+          self->preferred_frame_interval_ = std::visit(
+              absl::Overload(
                   [](viz::FrameIntervalDecider::FrameIntervalClass
                          frame_interval_class) {
-                    // Zero currently is interpreted by WebView as no opinion,
-                    // which allows system to use its default heuristics.
+                    // Zero currently is interpreted by WebView as no
+                    // opinion, which allows system to use its
+                    // default heuristics.
                     return base::Milliseconds(0);
                   },
-                  [](base::TimeDelta interval) { return interval; }),
+                  [](viz::FrameIntervalDecider::ResultInterval interval) {
+                    return interval.interval;
+                  }),
               result);
         },
         this);
@@ -527,15 +528,6 @@ void HardwareRenderer::OnViz::DisplayWillDrawAndSwap(
   hit_test_aggregator_->Aggregate(child_surface_id_);
 }
 
-base::TimeDelta
-HardwareRenderer::OnViz::GetPreferredFrameIntervalForFrameSinkId(
-    const viz::FrameSinkId& id,
-    viz::mojom::CompositorFrameSinkType* type) {
-  DCHECK_CALLED_ON_VALID_THREAD(viz_thread_checker_);
-  return GetFrameSinkManager()->GetPreferredFrameIntervalForFrameSinkId(id,
-                                                                        type);
-}
-
 // static
 ChildFrameQueue HardwareRenderer::WaitAndPruneFrameQueue(
     ChildFrameQueue* child_frames_ptr) {
@@ -601,7 +593,7 @@ bool HardwareRendererDrawParams::operator==(
          clip_right == other.clip_right && clip_bottom == other.clip_bottom &&
          width == other.width && height == other.height &&
          color_space == other.color_space &&
-         !memcmp(transform, other.transform, sizeof(transform));
+         UNSAFE_TODO(!memcmp(transform, other.transform, sizeof(transform)));
 }
 
 bool HardwareRendererDrawParams::operator!=(

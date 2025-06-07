@@ -21,6 +21,7 @@
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/shortcuts/shortcut_icon_generator.h"
 #include "chrome/browser/ui/browser.h"
@@ -194,6 +195,9 @@ IN_PROC_BROWSER_TEST_F(CreateShortcutBrowserTest,
 // TODO(crbug.com/40793595): Remove chrome-extension scheme for web apps.
 IN_PROC_BROWSER_TEST_F(CreateShortcutBrowserTest,
                        ShouldShowCustomTabBarForExtensionPage) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   // This involves the creation of a regular (non-app) extension with a popup
   // page, and the creation of a shortcut app created from the popup page URL
   // (allowing the extension's popup page to be loaded in a window).
@@ -334,7 +338,7 @@ IN_PROC_BROWSER_TEST_F(CreateShortcutBrowserTest, UseHostWhenTitleIsUrl) {
   // The letter for https://example.com should be the first letter of the host,
   // which is "E".
   SkBitmap generated_icon_bitmap =
-      shortcuts::GenerateBitmap(icon_size::k128, static_cast<char32_t>('E'));
+      shortcuts::GenerateBitmap(icon_size::k128, u"E");
   EXPECT_TRUE(gfx::BitmapsAreEqual(bitmap, generated_icon_bitmap));
 }
 

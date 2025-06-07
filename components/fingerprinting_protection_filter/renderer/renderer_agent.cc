@@ -165,11 +165,8 @@ void RendererAgent::DidCreateNewDocument() {
     auto new_origin = url::Origin::Create(new_document_url);
     auto current_origin = url::Origin::Create(current_document_url_);
     // Reset the filter handle and re-initialize to get a new activation state
-    // if:
-    //   1. The origin has changed, meaning this is not just a refresh, or
-    //   2. The activation state has already been reset i.e. by a call to
-    //      `DidFailProvisionalLoad`.
-    if (!new_origin.IsSameOriginWith(current_origin) || pending_activation_) {
+    // if the origin has changed, meaning this is not just a refresh.
+    if (!new_origin.IsSameOriginWith(current_origin)) {
       filter_.reset();
       Initialize();
     }
@@ -179,11 +176,10 @@ void RendererAgent::DidCreateNewDocument() {
 
 void RendererAgent::DidFailProvisionalLoad() {
   if (IsTopLevelMainFrame()) {
-    // We know the document will change (or this agent will be deleted) since a
-    // navigation did not commit - set up to request new activation in
-    // `DidCreateNewDocument()`.
+    // Request new activation since a navigation did not commit. This may or may
+    // or not result in creating a new document, particularly for downloads.
     activation_state_ = subresource_filter::mojom::ActivationState();
-    pending_activation_ = true;
+    Initialize();
   }
 }
 
@@ -243,6 +239,7 @@ void RendererAgent::GetActivationState(ActivationCallback callback) {
 }
 
 void RendererAgent::CheckURL(const GURL& url,
+                             std::optional<std::string> devtools_request_id,
                              url_pattern_index::proto::ElementType element_type,
                              FilterCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -250,6 +247,12 @@ void RendererAgent::CheckURL(const GURL& url,
       subresource_filter::LoadPolicy::ALLOW;
   if (filter_) {
     load_policy = filter_->GetLoadPolicy(url, element_type);
+  }
+
+  if (load_policy == subresource_filter::LoadPolicy::DISALLOW) {
+    // Report a DevTools Inspector issue for disallowed subresource loads.
+    render_frame()->GetWebFrame()->AddUserReidentificationIssue(
+        devtools_request_id, url);
   }
   std::move(callback).Run(load_policy);
 }

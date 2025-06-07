@@ -13,7 +13,6 @@ import android.app.Activity;
 import androidx.fragment.app.FragmentManager;
 import androidx.lifecycle.Lifecycle.State;
 import androidx.test.core.app.ActivityScenario;
-import androidx.test.filters.SmallTest;
 
 import org.junit.After;
 import org.junit.Before;
@@ -23,6 +22,8 @@ import org.junit.runner.RunWith;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskTraits;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
@@ -78,7 +79,6 @@ public class TabArchiveSettingsFragmentUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testLaunchSettings() {
         mArchiveSettings.setArchiveEnabled(true);
         mArchiveSettings.setArchiveTimeDeltaDays(7);
@@ -134,24 +134,39 @@ public class TabArchiveSettingsFragmentUnitTest {
         ChromeSwitchPreference enableArchiveDuplicateTabs =
                 tabArchiveSettingsFragment.findPreference(
                         TabArchiveSettingsFragment.PREF_TAB_ARCHIVE_INCLUDE_DUPLICATE_TABS);
-        assertFalse(enableArchiveDuplicateTabs.isChecked());
-
-        histogramWatcher =
-                HistogramWatcher.newSingleRecordWatcher(
-                        "Tabs.ArchiveSettings.ArchiveDuplicateTabsEnabled", true);
-        enableArchiveDuplicateTabs.onClick();
-        assertTrue(mArchiveSettings.isArchiveDuplicateTabsEnabled());
+        assertTrue(enableArchiveDuplicateTabs.isEnabled());
+        assertTrue(enableArchiveDuplicateTabs.isChecked());
 
         histogramWatcher =
                 HistogramWatcher.newSingleRecordWatcher(
                         "Tabs.ArchiveSettings.ArchiveDuplicateTabsEnabled", false);
         enableArchiveDuplicateTabs.onClick();
         histogramWatcher.assertExpected();
+        assertTrue(enableArchiveDuplicateTabs.isEnabled());
         assertFalse(mArchiveSettings.isArchiveDuplicateTabsEnabled());
+
+        histogramWatcher =
+                HistogramWatcher.newSingleRecordWatcher(
+                        "Tabs.ArchiveSettings.ArchiveDuplicateTabsEnabled", true);
+        enableArchiveDuplicateTabs.onClick();
+        histogramWatcher.assertExpected();
+        assertTrue(enableArchiveDuplicateTabs.isEnabled());
+        assertTrue(mArchiveSettings.isArchiveDuplicateTabsEnabled());
+
+        // Click "Never" radio button to disable archive. The archive duplicate tabs
+        // preference should be disabled.
+        radioButton = archiveTimeDeltaPreference.getRadioButtonForTesting(0);
+        radioButton.onClick(radioButton);
+        // PostTask to ensure the UI is updated after the preference change.
+        PostTask.postTask(
+                TaskTraits.UI_DEFAULT,
+                () -> {
+                    assertFalse(enableArchiveDuplicateTabs.isEnabled());
+                    assertFalse(enableArchiveDuplicateTabs.isChecked());
+                });
     }
 
     @Test
-    @SmallTest
     public void testArchiveTimeDeltaSettings() {
         mArchiveSettings.setArchiveEnabled(true);
         mArchiveSettings.setArchiveTimeDeltaDays(7);

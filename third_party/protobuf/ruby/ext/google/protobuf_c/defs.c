@@ -146,8 +146,8 @@ VALUE DescriptorPool_add_serialized_file(VALUE _self,
  * call-seq:
  *     DescriptorPool.lookup(name) => descriptor
  *
- * Finds a Descriptor, EnumDescriptor or FieldDescriptor by name and returns it,
- * or nil if none exists with the given name.
+ * Finds a Descriptor, EnumDescriptor, FieldDescriptor or ServiceDescriptor by
+ * name and returns it, or nil if none exists with the given name.
  */
 static VALUE DescriptorPool_lookup(VALUE _self, VALUE name) {
   DescriptorPool* self = ruby_to_DescriptorPool(_self);
@@ -156,6 +156,7 @@ static VALUE DescriptorPool_lookup(VALUE _self, VALUE name) {
   const upb_EnumDef* enumdef;
   const upb_FieldDef* fielddef;
   const upb_ServiceDef* servicedef;
+  const upb_FileDef* filedef;
 
   msgdef = upb_DefPool_FindMessageByName(self->symtab, name_str);
   if (msgdef) {
@@ -175,6 +176,11 @@ static VALUE DescriptorPool_lookup(VALUE _self, VALUE name) {
   servicedef = upb_DefPool_FindServiceByName(self->symtab, name_str);
   if (servicedef) {
     return get_servicedef_obj(_self, servicedef);
+  }
+
+  filedef = upb_DefPool_FindFileByName(self->symtab, name_str);
+  if (filedef) {
+    return get_filedef_obj(_self, filedef);
   }
 
   return Qnil;
@@ -451,6 +457,27 @@ static VALUE Descriptor_options(VALUE _self) {
   return message_options;
 }
 
+/*
+ * call-seq:
+ *     Descriptor.to_proto => DescriptorProto
+ *
+ * Returns the `DescriptorProto` of this `Descriptor`.
+ */
+static VALUE Descriptor_to_proto(VALUE _self) {
+  Descriptor* self = ruby_to_Descriptor(_self);
+  upb_Arena* arena = upb_Arena_New();
+  google_protobuf_DescriptorProto* proto =
+      upb_MessageDef_ToProto(self->msgdef, arena);
+  size_t size;
+  const char* serialized =
+      google_protobuf_DescriptorProto_serialize(proto, arena, &size);
+  VALUE proto_class = rb_path2class("Google::Protobuf::DescriptorProto");
+  VALUE proto_rb =
+      Message_decode_bytes(size, serialized, 0, proto_class, false);
+  upb_Arena_Free(arena);
+  return proto_rb;
+}
+
 static void Descriptor_register(VALUE module) {
   VALUE klass = rb_define_class_under(module, "Descriptor", rb_cObject);
   rb_define_alloc_func(klass, Descriptor_alloc);
@@ -463,6 +490,7 @@ static void Descriptor_register(VALUE module) {
   rb_define_method(klass, "name", Descriptor_name, 0);
   rb_define_method(klass, "file_descriptor", Descriptor_file_descriptor, 0);
   rb_define_method(klass, "options", Descriptor_options, 0);
+  rb_define_method(klass, "to_proto", Descriptor_to_proto, 0);
   rb_include_module(klass, rb_mEnumerable);
   rb_gc_register_address(&cDescriptor);
   cDescriptor = klass;
@@ -558,12 +586,37 @@ static VALUE FileDescriptor_options(VALUE _self) {
   return file_options;
 }
 
+/*
+ * call-seq:
+ *     FileDescriptor.to_proto => FileDescriptorProto
+ *
+ * Returns the `FileDescriptorProto` of this `FileDescriptor`.
+ */
+static VALUE FileDescriptor_to_proto(VALUE _self) {
+  FileDescriptor* self = ruby_to_FileDescriptor(_self);
+  upb_Arena* arena = upb_Arena_New();
+  google_protobuf_FileDescriptorProto* file_proto =
+      upb_FileDef_ToProto(self->filedef, arena);
+
+  size_t size;
+  const char* serialized =
+      google_protobuf_FileDescriptorProto_serialize(file_proto, arena, &size);
+
+  VALUE file_proto_class =
+      rb_path2class("Google::Protobuf::FileDescriptorProto");
+  VALUE proto_rb =
+      Message_decode_bytes(size, serialized, 0, file_proto_class, false);
+  upb_Arena_Free(arena);
+  return proto_rb;
+}
+
 static void FileDescriptor_register(VALUE module) {
   VALUE klass = rb_define_class_under(module, "FileDescriptor", rb_cObject);
   rb_define_alloc_func(klass, FileDescriptor_alloc);
   rb_define_method(klass, "initialize", FileDescriptor_initialize, 3);
   rb_define_method(klass, "name", FileDescriptor_name, 0);
   rb_define_method(klass, "options", FileDescriptor_options, 0);
+  rb_define_method(klass, "to_proto", FileDescriptor_to_proto, 0);
   rb_gc_register_address(&cFileDescriptor);
   cFileDescriptor = klass;
 }
@@ -747,6 +800,28 @@ static VALUE FieldDescriptor_has_presence(VALUE _self) {
 
 /*
  * call-seq:
+ *     FieldDescriptor.required? => bool
+ *
+ * Returns whether this is a required field.
+ */
+static VALUE FieldDescriptor_is_required(VALUE _self) {
+  FieldDescriptor* self = ruby_to_FieldDescriptor(_self);
+  return upb_FieldDef_IsRequired(self->fielddef) ? Qtrue : Qfalse;
+}
+
+/*
+ * call-seq:
+ *     FieldDescriptor.repeated? => bool
+ *
+ * Returns whether this is a repeated field.
+ */
+static VALUE FieldDescriptor_is_repeated(VALUE _self) {
+  FieldDescriptor* self = ruby_to_FieldDescriptor(_self);
+  return upb_FieldDef_IsRepeated(self->fielddef) ? Qtrue : Qfalse;
+}
+
+/*
+ * call-seq:
  *     FieldDescriptor.is_packed? => bool
  *
  * Returns whether this is a repeated field that uses packed encoding.
@@ -770,6 +845,8 @@ static VALUE FieldDescriptor_json_name(VALUE _self) {
 }
 
 /*
+ * DEPRECATED: Use repeated? or required? instead.
+ *
  * call-seq:
  *     FieldDescriptor.label => label
  *
@@ -956,6 +1033,27 @@ static VALUE FieldDescriptor_options(VALUE _self) {
   return field_options;
 }
 
+/*
+ * call-seq:
+ *     FieldDescriptor.to_proto => FieldDescriptorProto
+ *
+ * Returns the `FieldDescriptorProto` of this `FieldDescriptor`.
+ */
+static VALUE FieldDescriptor_to_proto(VALUE _self) {
+  FieldDescriptor* self = ruby_to_FieldDescriptor(_self);
+  upb_Arena* arena = upb_Arena_New();
+  google_protobuf_FieldDescriptorProto* proto =
+      upb_FieldDef_ToProto(self->fielddef, arena);
+  size_t size;
+  const char* serialized =
+      google_protobuf_FieldDescriptorProto_serialize(proto, arena, &size);
+  VALUE proto_class = rb_path2class("Google::Protobuf::FieldDescriptorProto");
+  VALUE proto_rb =
+      Message_decode_bytes(size, serialized, 0, proto_class, false);
+  upb_Arena_Free(arena);
+  return proto_rb;
+}
+
 static void FieldDescriptor_register(VALUE module) {
   VALUE klass = rb_define_class_under(module, "FieldDescriptor", rb_cObject);
   rb_define_alloc_func(klass, FieldDescriptor_alloc);
@@ -964,6 +1062,8 @@ static void FieldDescriptor_register(VALUE module) {
   rb_define_method(klass, "type", FieldDescriptor__type, 0);
   rb_define_method(klass, "default", FieldDescriptor_default, 0);
   rb_define_method(klass, "has_presence?", FieldDescriptor_has_presence, 0);
+  rb_define_method(klass, "required?", FieldDescriptor_is_required, 0);
+  rb_define_method(klass, "repeated?", FieldDescriptor_is_repeated, 0);
   rb_define_method(klass, "is_packed?", FieldDescriptor_is_packed, 0);
   rb_define_method(klass, "json_name", FieldDescriptor_json_name, 0);
   rb_define_method(klass, "label", FieldDescriptor_label, 0);
@@ -975,6 +1075,7 @@ static void FieldDescriptor_register(VALUE module) {
   rb_define_method(klass, "get", FieldDescriptor_get, 1);
   rb_define_method(klass, "set", FieldDescriptor_set, 2);
   rb_define_method(klass, "options", FieldDescriptor_options, 0);
+  rb_define_method(klass, "to_proto", FieldDescriptor_to_proto, 0);
   rb_gc_register_address(&cFieldDescriptor);
   cFieldDescriptor = klass;
 }
@@ -1093,6 +1194,27 @@ static VALUE OneOfDescriptor_options(VALUE _self) {
   return oneof_options;
 }
 
+/*
+ * call-seq:
+ *     OneofDescriptor.to_proto => OneofDescriptorProto
+ *
+ * Returns the `OneofDescriptorProto` of this `OneofDescriptor`.
+ */
+static VALUE OneOfDescriptor_to_proto(VALUE _self) {
+  OneofDescriptor* self = ruby_to_OneofDescriptor(_self);
+  upb_Arena* arena = upb_Arena_New();
+  google_protobuf_OneofDescriptorProto* proto =
+      upb_OneofDef_ToProto(self->oneofdef, arena);
+  size_t size;
+  const char* serialized =
+      google_protobuf_OneofDescriptorProto_serialize(proto, arena, &size);
+  VALUE proto_class = rb_path2class("Google::Protobuf::OneofDescriptorProto");
+  VALUE proto_rb =
+      Message_decode_bytes(size, serialized, 0, proto_class, false);
+  upb_Arena_Free(arena);
+  return proto_rb;
+}
+
 static void OneofDescriptor_register(VALUE module) {
   VALUE klass = rb_define_class_under(module, "OneofDescriptor", rb_cObject);
   rb_define_alloc_func(klass, OneofDescriptor_alloc);
@@ -1100,6 +1222,7 @@ static void OneofDescriptor_register(VALUE module) {
   rb_define_method(klass, "name", OneofDescriptor_name, 0);
   rb_define_method(klass, "each", OneofDescriptor_each, 0);
   rb_define_method(klass, "options", OneOfDescriptor_options, 0);
+  rb_define_method(klass, "to_proto", OneOfDescriptor_to_proto, 0);
   rb_include_module(klass, rb_mEnumerable);
   rb_gc_register_address(&cOneofDescriptor);
   cOneofDescriptor = klass;
@@ -1298,6 +1421,29 @@ static VALUE EnumDescriptor_options(VALUE _self) {
   return enum_options;
 }
 
+/*
+ * call-seq:
+ *     EnumDescriptor.to_proto => EnumDescriptorProto
+ *
+ * Returns the `EnumDescriptorProto` of this `EnumDescriptor`.
+ */
+static VALUE EnumDescriptor_to_proto(VALUE _self) {
+  EnumDescriptor* self = ruby_to_EnumDescriptor(_self);
+  upb_Arena* arena = upb_Arena_New();
+  google_protobuf_EnumDescriptorProto* proto =
+      upb_EnumDef_ToProto(self->enumdef, arena);
+
+  size_t size;
+  const char* serialized =
+      google_protobuf_EnumDescriptorProto_serialize(proto, arena, &size);
+
+  VALUE proto_class = rb_path2class("Google::Protobuf::EnumDescriptorProto");
+  VALUE proto_rb =
+      Message_decode_bytes(size, serialized, 0, proto_class, false);
+  upb_Arena_Free(arena);
+  return proto_rb;
+}
+
 static void EnumDescriptor_register(VALUE module) {
   VALUE klass = rb_define_class_under(module, "EnumDescriptor", rb_cObject);
   rb_define_alloc_func(klass, EnumDescriptor_alloc);
@@ -1310,6 +1456,7 @@ static void EnumDescriptor_register(VALUE module) {
   rb_define_method(klass, "file_descriptor", EnumDescriptor_file_descriptor, 0);
   rb_define_method(klass, "is_closed?", EnumDescriptor_is_closed, 0);
   rb_define_method(klass, "options", EnumDescriptor_options, 0);
+  rb_define_method(klass, "to_proto", EnumDescriptor_to_proto, 0);
   rb_include_module(klass, rb_mEnumerable);
   rb_gc_register_address(&cEnumDescriptor);
   cEnumDescriptor = klass;
@@ -1438,6 +1585,27 @@ static VALUE ServiceDescriptor_options(VALUE _self) {
   return service_options;
 }
 
+/*
+ * call-seq:
+ *     ServiceDescriptor.to_proto => ServiceDescriptorProto
+ *
+ * Returns the `ServiceDescriptorProto` of this `ServiceDescriptor`.
+ */
+static VALUE ServiceDescriptor_to_proto(VALUE _self) {
+  ServiceDescriptor* self = ruby_to_ServiceDescriptor(_self);
+  upb_Arena* arena = upb_Arena_New();
+  google_protobuf_ServiceDescriptorProto* proto =
+      upb_ServiceDef_ToProto(self->servicedef, arena);
+  size_t size;
+  const char* serialized =
+      google_protobuf_ServiceDescriptorProto_serialize(proto, arena, &size);
+  VALUE proto_class = rb_path2class("Google::Protobuf::ServiceDescriptorProto");
+  VALUE proto_rb =
+      Message_decode_bytes(size, serialized, 0, proto_class, false);
+  upb_Arena_Free(arena);
+  return proto_rb;
+}
+
 static void ServiceDescriptor_register(VALUE module) {
   VALUE klass = rb_define_class_under(module, "ServiceDescriptor", rb_cObject);
   rb_define_alloc_func(klass, ServiceDescriptor_alloc);
@@ -1447,6 +1615,7 @@ static void ServiceDescriptor_register(VALUE module) {
   rb_define_method(klass, "file_descriptor", ServiceDescriptor_file_descriptor,
                    0);
   rb_define_method(klass, "options", ServiceDescriptor_options, 0);
+  rb_define_method(klass, "to_proto", ServiceDescriptor_to_proto, 0);
   rb_include_module(klass, rb_mEnumerable);
   rb_gc_register_address(&cServiceDescriptor);
   cServiceDescriptor = klass;
@@ -1582,6 +1751,27 @@ static VALUE MethodDescriptor_client_streaming(VALUE _self) {
 
 /*
  * call-seq:
+ *     MethodDescriptor.to_proto => MethodDescriptorProto
+ *
+ * Returns the `MethodDescriptorProto` of this `MethodDescriptor`.
+ */
+static VALUE MethodDescriptor_to_proto(VALUE _self) {
+  MethodDescriptor* self = ruby_to_MethodDescriptor(_self);
+  upb_Arena* arena = upb_Arena_New();
+  google_protobuf_MethodDescriptorProto* proto =
+      upb_MethodDef_ToProto(self->methoddef, arena);
+  size_t size;
+  const char* serialized =
+      google_protobuf_MethodDescriptorProto_serialize(proto, arena, &size);
+  VALUE proto_class = rb_path2class("Google::Protobuf::MethodDescriptorProto");
+  VALUE proto_rb =
+      Message_decode_bytes(size, serialized, 0, proto_class, false);
+  upb_Arena_Free(arena);
+  return proto_rb;
+}
+
+/*
+ * call-seq:
  *      MethodDescriptor.server_streaming => bool
  *
  * Returns whether or not this is a streaming response method
@@ -1603,6 +1793,7 @@ static void MethodDescriptor_register(VALUE module) {
                    0);
   rb_define_method(klass, "server_streaming", MethodDescriptor_server_streaming,
                    0);
+  rb_define_method(klass, "to_proto", MethodDescriptor_to_proto, 0);
   rb_gc_register_address(&cMethodDescriptor);
   cMethodDescriptor = klass;
 }

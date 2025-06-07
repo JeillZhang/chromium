@@ -305,8 +305,9 @@ NavigateToURLWithDispositionBlockUntilNavigationsComplete(
     EXPECT_TRUE(web_contents)
         << " Unable to wait for navigation to \"" << url.spec()
         << "\" because the new tab is not available yet";
-    if (!web_contents)
+    if (!web_contents) {
       return nullptr;
+    }
   } else if ((disposition == WindowOpenDisposition::CURRENT_TAB) ||
              (disposition == WindowOpenDisposition::NEW_FOREGROUND_TAB) ||
              (disposition == WindowOpenDisposition::SINGLETON_TAB)) {
@@ -315,6 +316,7 @@ NavigateToURLWithDispositionBlockUntilNavigationsComplete(
   }
   if (disposition == WindowOpenDisposition::CURRENT_TAB) {
     same_tab_observer.Wait();
+    content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(web_contents);
     return web_contents->GetPrimaryMainFrame();
   } else if (web_contents) {
     content::TestNavigationObserver observer(
@@ -324,6 +326,7 @@ NavigateToURLWithDispositionBlockUntilNavigationsComplete(
     if (!blink::IsRendererDebugURL(url))
       observer.set_expected_initial_url(url);
     observer.Wait();
+    content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(web_contents);
     return web_contents->GetPrimaryMainFrame();
   }
   EXPECT_TRUE(web_contents)
@@ -537,12 +540,6 @@ void FullscreenWaiter::Wait() {
 }
 
 void FullscreenWaiter::OnFullscreenStateChanged() {
-  // Note: In Lacros, when full screen mode changes, FullscreenController
-  // triggers WindowFullscreenStateChanged twice for the same change
-  // asynchronously. If the test code toggles fullscreen mode on and off, there
-  // is a race between the second notification of fullscreen mode on and test
-  // code toggle fullscreen mode off. Wait until the fullscreen state changes to
-  // the expected mode. See details in crbug.com/1481727.
   if (!IsSatisfied()) {
     return;
   }

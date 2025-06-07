@@ -11,11 +11,14 @@
 #include <utility>
 #include <vector>
 
+#include "base/check_op.h"
 #include "base/containers/adapters.h"
 #include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
 #include "base/lazy_instance.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "ui/accessibility/accessibility_features.h"
@@ -144,7 +147,7 @@ ViewAXPlatformNodeDelegate::ViewAXPlatformNodeDelegate(View* view)
     : ViewAccessibility(view) {}
 
 void ViewAXPlatformNodeDelegate::Init() {
-  ax_platform_node_ = ui::AXPlatformNode::Create(this);
+  ax_platform_node_ = ui::AXPlatformNode::Create(*this);
   DCHECK(ax_platform_node_);
 
   static bool first_time = true;
@@ -158,11 +161,17 @@ void ViewAXPlatformNodeDelegate::Init() {
 ViewAXPlatformNodeDelegate::~ViewAXPlatformNodeDelegate() {
   if (ui::AXPlatformNode::GetPopupFocusOverride() ==
       ax_platform_node_->GetNativeViewAccessible()) {
-    ui::AXPlatformNode::SetPopupFocusOverride(nullptr);
+    ui::AXPlatformNode::SetPopupFocusOverride(gfx::NativeViewAccessible());
   }
-  // Call ExtractAsDangling() first to clear the underlying pointer and return
-  // another raw_ptr instance that is allowed to dangle.
-  ax_platform_node_.ExtractAsDangling()->Destroy();
+}
+
+void ViewAXPlatformNodeDelegate::EnsureAtomicViewAXTreeManager() {
+  if (atomic_view_ax_tree_manager_) {
+    return;
+  }
+
+  atomic_view_ax_tree_manager_ =
+      views::AtomicViewAXTreeManager::Create(this, GetData());
 }
 
 bool ViewAXPlatformNodeDelegate::IsAccessibilityFocusable() const {
@@ -183,12 +192,12 @@ void ViewAXPlatformNodeDelegate::SetPopupFocusOverride() {
 }
 
 void ViewAXPlatformNodeDelegate::EndPopupFocusOverride() {
-  ui::AXPlatformNode::SetPopupFocusOverride(nullptr);
+  ui::AXPlatformNode::SetPopupFocusOverride(gfx::NativeViewAccessible());
 }
 
 void ViewAXPlatformNodeDelegate::FireFocusAfterMenuClose() {
   ui::AXPlatformNodeBase* focused_node =
-      static_cast<ui::AXPlatformNodeBase*>(ax_platform_node_);
+      static_cast<ui::AXPlatformNodeBase*>(ax_platform_node_.get());
   // Continue to drill down focused nodes to get to the "deepest" node that is
   // focused. This is not necessarily a view. It could be web content.
   while (focused_node) {
@@ -322,13 +331,6 @@ const ui::AXNodeData& ViewAXPlatformNodeDelegate::GetData() const {
 
   GetAccessibleNodeData(&data_);
 
-
-#if BUILDFLAG(IS_WIN)
-  if (view()->GetViewAccessibility().needs_ax_tree_manager()) {
-    view()->GetViewAccessibility().EnsureAtomicViewAXTreeManager();
-  }
-#endif  // BUILDFLAG(IS_WIN)
-
   return data_;
 }
 
@@ -394,7 +396,7 @@ gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::ChildAtIndex(
   DCHECK_LT(index, GetChildCount())
       << "|index| should be less than the unignored child count.";
   if (IsLeaf()) {
-    return nullptr;
+    return gfx::NativeViewAccessible();
   }
 
   if (!virtual_children().empty()) {
@@ -474,7 +476,7 @@ std::wstring ViewAXPlatformNodeDelegate::ComputeListItemNameFromContent()
   // TODO(accessibility): We're aware the accessible name might be computed
   // incorrectly if there's a complex structure. Things might be missing for
   // descendants of descendants.
-  for (size_t i = 0; i < GetChildCount(); ++i) {
+  for (size_t i = 0, child_count = GetChildCount(); i < child_count; ++i) {
     auto* child = ui::AXPlatformNode::FromNativeViewAccessible(ChildAtIndex(i));
     if (GetData().role != ax::mojom::Role::kListMarker) {
       str += child->GetDelegate()->GetName();
@@ -504,23 +506,6 @@ const ui::AXSelection ViewAXPlatformNodeDelegate::GetUnignoredSelection()
   return selection;
 }
 
-const ui::AXSelection ViewAXPlatformNodeDelegate::GetHypertextSelection()
-    const {
-  const ui::AXSelection& selection = GetUnignoredSelection();
-  // In Views, the selection is purely used for textfields, and therefore the
-  // does not need to be adjusted away from leaf node endpoints for
-  // text/hypertext interfaces.
-#if DCHECK_IS_ON()
-  if (selection.anchor_offset != ax::mojom::kNoSelectionOffset) {
-    DCHECK_EQ(data_.id, selection.anchor_object_id);
-    DCHECK_EQ(data_.id, selection.focus_object_id);
-    DCHECK(data_.IsAtomicTextField());
-  }
-#endif
-
-  return selection;
-}
-
 // Since AtomicViewAXTreeManager only ever contains a single node, we can be
 // sure that we are in a leaf node and only need to return a text position.
 ui::AXNodePosition::AXPositionInstance
@@ -544,7 +529,7 @@ ViewAXPlatformNodeDelegate::CreateTextPositionAt(
 
 gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::GetNSWindow() {
   NOTIMPLEMENTED() << "Should only be called on Mac.";
-  return nullptr;
+  return gfx::NativeViewAccessible();
 }
 
 gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::GetNativeViewAccessible()
@@ -582,7 +567,7 @@ gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::GetParent() const {
     }
   }
 
-  return nullptr;
+  return gfx::NativeViewAccessible();
 }
 
 bool ViewAXPlatformNodeDelegate::IsLeaf() const {
@@ -659,7 +644,9 @@ gfx::Rect ViewAXPlatformNodeDelegate::GetInnerTextRangeBoundsRect(
 gfx::RectF ViewAXPlatformNodeDelegate::GetInlineTextRect(
     const int start_offset,
     const int end_offset) const {
-  DCHECK(start_offset >= 0 && end_offset >= 0 && start_offset <= end_offset);
+  DCHECK_GE(start_offset, 0);
+  DCHECK_GE(end_offset, 0);
+  DCHECK_LE(start_offset, end_offset);
   const std::vector<int32_t>& character_offsets =
       data_.GetIntListAttribute(ax::mojom::IntListAttribute::kCharacterOffsets);
   if (character_offsets.empty()) {
@@ -710,7 +697,7 @@ gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::HitTestSync(
     int screen_physical_pixel_x,
     int screen_physical_pixel_y) const {
   if (!view() || !view()->GetWidget()) {
-    return nullptr;
+    return gfx::NativeViewAccessible();
   }
 
   if (IsLeaf()) {
@@ -731,7 +718,7 @@ gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::HitTestSync(
 
   View::ConvertPointFromScreen(view(), &point);
   if (!view()->HitTestPoint(point)) {
-    return nullptr;
+    return gfx::NativeViewAccessible();
   }
 
   // Check if the point is within any of the virtual children of this view.
@@ -787,7 +774,7 @@ gfx::NativeViewAccessible ViewAXPlatformNodeDelegate::GetFocus() const {
       focus_manager ? focus_manager->GetFocusedView() : nullptr;
 
   if (!focused_view) {
-    return nullptr;
+    return gfx::NativeViewAccessible();
   }
 
   // The accessibility focus will be either on the |focused_view| or on one of
@@ -1052,8 +1039,8 @@ ViewAXPlatformNodeDelegate::GetChildWidgets() const {
     return ChildWidgetsResult();
   }
 
-  std::set<raw_ptr<Widget, SetExperimental>> owned_widgets;
-  Widget::GetAllOwnedWidgets(widget->GetNativeView(), &owned_widgets);
+  Widget::Widgets owned_widgets =
+      Widget::GetAllOwnedWidgets(widget->GetNativeView());
 
   std::vector<raw_ptr<Widget, VectorExperimental>> visible_widgets;
   std::ranges::copy_if(owned_widgets, std::back_inserter(visible_widgets),

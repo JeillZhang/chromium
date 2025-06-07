@@ -25,6 +25,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/notreached.h"
+#include "base/trace_event/trace_event.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "components/download/public/common/in_progress_download_manager.h"
@@ -194,11 +195,13 @@ StoragePartition* BrowserContext::GetDefaultStoragePartition() {
 std::unique_ptr<content::PrefetchHandle>
 BrowserContext::StartBrowserPrefetchRequest(
     const GURL& url,
+    const std::string& embedder_histogram_suffix,
     bool javascript_enabled,
     std::optional<net::HttpNoVarySearchData> no_vary_search_hint,
     const net::HttpRequestHeaders& additional_headers,
     std::unique_ptr<PrefetchRequestStatusListener> request_status_listener,
-    base::TimeDelta ttl_in_sec) {
+    base::TimeDelta ttl_in_sec,
+    bool should_append_variations_header) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   TRACE_EVENT0("loading", "BrowserContext::StartBrowserPrefetchRequest");
 
@@ -206,7 +209,7 @@ BrowserContext::StartBrowserPrefetchRequest(
       BrowserContextImpl::From(this)->GetPrefetchService();
   if (!prefetch_service) {
     if (request_status_listener) {
-      request_status_listener->OnPrefetchStartFailed();
+      request_status_listener->OnPrefetchStartFailedGeneric();
     }
     return nullptr;
   }
@@ -214,10 +217,12 @@ BrowserContext::StartBrowserPrefetchRequest(
   PrefetchType prefetch_type(PreloadingTriggerType::kEmbedder,
                              /*use_prefetch_proxy=*/false);
   auto container = std::make_unique<PrefetchContainer>(
-      this, url, prefetch_type, blink::mojom::Referrer(), javascript_enabled,
+      this, url, prefetch_type, embedder_histogram_suffix,
+      blink::mojom::Referrer(), javascript_enabled,
       /*referring_origin=*/std::nullopt, std::move(no_vary_search_hint),
       /*attempt=*/nullptr, additional_headers,
-      std::move(request_status_listener), ttl_in_sec);
+      std::move(request_status_listener), ttl_in_sec,
+      should_append_variations_header);
   return prefetch_service->AddPrefetchContainerWithHandle(std::move(container));
 }
 
@@ -230,6 +235,17 @@ void BrowserContext::UpdatePrefetchServiceDelegateAcceptLanguageHeader(
   }
   prefetch_service->GetPrefetchServiceDelegate()->SetAcceptLanguageHeader(
       accept_language_header);
+}
+
+bool BrowserContext::IsPrefetchDuplicate(
+    GURL& url,
+    std::optional<net::HttpNoVarySearchData> no_vary_search_hint) {
+  PrefetchService* prefetch_service =
+      BrowserContextImpl::From(this)->GetPrefetchService();
+  // `CHECK` is used here because this method should not be called unless there
+  // is a `prefetch_service` created for `this` browser context.
+  CHECK(prefetch_service);
+  return prefetch_service->IsPrefetchDuplicate(url, no_vary_search_hint);
 }
 
 void BrowserContext::CreateMemoryBackedBlob(base::span<const uint8_t> data,

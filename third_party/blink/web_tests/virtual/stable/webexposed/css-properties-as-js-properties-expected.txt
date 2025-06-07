@@ -160,6 +160,7 @@ descentOverride
 direction
 display
 dominantBaseline
+dynamicRangeLimit
 emptyCells
 fallback
 fieldSizing
@@ -363,11 +364,15 @@ positionTryFallbacks
 positionTryOrder
 positionVisibility
 prefix
+printColorAdjust
 quotes
 r
 range
+readingFlow
+readingOrder
 removeProperty
 resize
+result
 right
 rotate
 rowGap
@@ -389,6 +394,7 @@ scrollMarginInlineStart
 scrollMarginLeft
 scrollMarginRight
 scrollMarginTop
+scrollMarkerGroup
 scrollPadding
 scrollPaddingBlock
 scrollPaddingBlockEnd

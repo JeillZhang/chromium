@@ -10,7 +10,6 @@
 #import "components/prefs/pref_service.h"
 #import "components/signin/public/base/signin_pref_names.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin/interruptible_chrome_coordinator.h"
 #import "ios/chrome/browser/signin/model/signin_util.h"
 #import "ios/chrome/browser/signin/model/system_identity_interaction_manager.h"
 
@@ -75,6 +74,10 @@ void LogAddAccountToDeviceHistograms(SigninAddAccountToDeviceResult result,
         (id<SystemIdentityInteractionManager>)identityInteractionManager {
   self = [super init];
   if (self) {
+    CHECK(baseViewController, base::NotFatalUntil::M140);
+    CHECK(prefService, base::NotFatalUntil::M140);
+    CHECK(identityManager, base::NotFatalUntil::M140);
+    CHECK(identityInteractionManager, base::NotFatalUntil::M140);
     _baseViewController = baseViewController;
     _prefService = prefService;
     _identityManager = identityManager;
@@ -125,56 +128,10 @@ void LogAddAccountToDeviceHistograms(SigninAddAccountToDeviceResult result,
                                }];
 }
 
-- (void)interruptWithAction:(SigninCoordinatorInterrupt)action
-                 completion:(ProceduralBlock)completion {
+- (void)interruptAnimated:(BOOL)animated {
   self.signinInterrupted = YES;
-  switch (action) {
-    case SigninCoordinatorInterrupt::UIShutdownNoDismiss:
-      CHECK(!IsInterruptibleCoordinatorAlwaysDismissedEnabled(),
-            base::NotFatalUntil::M136);
-      // IdentityInteractionManager doesn't support interrupt with no dismiss.
-      // We need to stop with no animation to make sure dealloc are done with
-      // CHECK failures.
-      // When the interrupt is called with `NoDismiss`, the completion block
-      // needs to be synchronous. So we can't wait for the cancel completion
-      // block from `IdentityInteractionManager` to be called, to call the
-      // interrupt completion block.
-      // See crbug.com/1455216.
-      [self.identityInteractionManager cancelAuthActivityAnimated:NO
-                                                       completion:nil];
-      [self operationCompletedWithIdentity:nil error:nil];
-      if (completion) {
-        completion();
-      }
-      break;
-    case SigninCoordinatorInterrupt::DismissWithoutAnimation:
-    case SigninCoordinatorInterrupt::DismissWithAnimation: {
-      __weak __typeof(self) weakSelf = self;
-      BOOL animated =
-          action == SigninCoordinatorInterrupt::DismissWithAnimation;
-      ProceduralBlock cancelCompletion = ^() {
-        // If `identityInteractionManager` completion
-        // callback has not been called yet, the add account
-        // needs to be fully done by calling:
-        // `operationCompletedWithIdentity:error:`, before
-        // calling `completion` See crbug.com/1227658.
-        [weakSelf operationCompletedWithIdentity:nil error:nil];
-        if (completion) {
-          completion();
-        }
-      };
-      if (IsInterruptibleCoordinatorStoppedSynchronouslyEnabled()) {
-        [self.identityInteractionManager cancelAuthActivityAnimated:animated
-                                                         completion:nil];
-        cancelCompletion();
-      } else {
-        [self.identityInteractionManager
-            cancelAuthActivityAnimated:animated
-                            completion:cancelCompletion];
-      }
-      break;
-    }
-  }
+  [self.identityInteractionManager cancelAuthActivityAnimated:animated];
+  [self operationCompletedWithIdentity:nil error:nil];
 }
 
 #pragma mark - Private
@@ -188,7 +145,7 @@ void LogAddAccountToDeviceHistograms(SigninAddAccountToDeviceResult result,
     // See: `interruptAddAccountAnimated:completion:`.
     return;
   }
-  CHECK(!_lastStartAddAccountToDeviceTs.is_null(), base::NotFatalUntil::M135);
+  CHECK(!_lastStartAddAccountToDeviceTs.is_null());
   base::TimeDelta addAccountDuration =
       base::TimeTicks::Now() - _lastStartAddAccountToDeviceTs;
   _lastStartAddAccountToDeviceTs = base::TimeTicks();
@@ -216,9 +173,13 @@ void LogAddAccountToDeviceHistograms(SigninAddAccountToDeviceResult result,
   }
 
   LogAddAccountToDeviceHistograms(result, addAccountDuration);
-  [self.delegate addAccountSigninManagerFinishedWithResult:result
-                                                  identity:resultIdentity
-                                                     error:resultError];
+  if (!self.signinInterrupted) {
+    // If the coordinator interrupted the manager, it is in charge of doing
+    // the cleanup.
+    [self.delegate addAccountSigninManagerFinishedWithResult:result
+                                                    identity:resultIdentity
+                                                       error:resultError];
+  }
 }
 
 @end

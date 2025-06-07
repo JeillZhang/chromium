@@ -7,6 +7,7 @@ package org.chromium.components.browser_ui.widget.scrim;
 import android.graphics.Color;
 import android.view.GestureDetector;
 import android.view.View;
+import android.view.ViewGroup;
 
 import androidx.annotation.ColorInt;
 
@@ -36,17 +37,27 @@ public class ScrimProperties {
      */
     public static final WritableIntPropertyKey TOP_MARGIN = new WritableIntPropertyKey();
 
+    /**
+     * The bottom margin of the scrim. This can be used to shrink the scrim to show items, such as
+     * the bottom toolbar, at the bottom of the screen.
+     */
+    public static final WritableIntPropertyKey BOTTOM_MARGIN = new WritableIntPropertyKey();
+
     /** Whether the scrim should affect the status bar color. */
     public static final ReadableBooleanPropertyKey AFFECTS_STATUS_BAR =
             new ReadableBooleanPropertyKey();
 
-    /** The view that the scrim is using to place itself in the hierarchy. */
+    /** The view that the scrim is using to place itself relative to in the hierarchy. */
     public static final ReadableObjectPropertyKey<View> ANCHOR_VIEW =
             new ReadableObjectPropertyKey<>();
 
     /** Whether the scrim should show in front of the anchor view. */
     public static final ReadableBooleanPropertyKey SHOW_IN_FRONT_OF_ANCHOR_VIEW =
             new ReadableBooleanPropertyKey();
+
+    /** A custom parent for the scrim to use, must be a child of the scrim manager's parent view. */
+    public static final ReadableObjectPropertyKey<ViewGroup> CUSTOM_PARENT =
+            new ReadableObjectPropertyKey<>();
 
     /** A callback for updates to the scrim's visibility. */
     public static final ReadableObjectPropertyKey<Callback<Boolean>> VISIBILITY_CALLBACK =
@@ -87,9 +98,11 @@ public class ScrimProperties {
     public static final PropertyKey[] ALL_KEYS =
             new PropertyKey[] {
                 TOP_MARGIN,
+                BOTTOM_MARGIN,
                 AFFECTS_STATUS_BAR,
                 ANCHOR_VIEW,
                 SHOW_IN_FRONT_OF_ANCHOR_VIEW,
+                CUSTOM_PARENT,
                 VISIBILITY_CALLBACK,
                 CLICK_DELEGATE,
                 ALPHA,

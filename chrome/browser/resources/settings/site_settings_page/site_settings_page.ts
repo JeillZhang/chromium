@@ -247,6 +247,16 @@ function getCategoryItemMap(): Map<ContentSettingsTypes, CategoryListItem> {
       disabledLabel: 'siteSettingsFontsBlocked',
     },
     {
+      route: routes.SITE_SETTINGS_LOCAL_NETWORK_ACCESS,
+      id: Id.LOCAL_NETWORK_ACCESS,
+      label: 'siteSettingsLocalNetworkAccess',
+      icon: 'settings20:router',
+      enabledLabel: 'siteSettingsLocalNetworkAccessAsk',
+      disabledLabel: 'siteSettingsLocalNetworkAccessBlock',
+      shouldShow: () =>
+          loadTimeData.getBoolean('enableLocalNetworkAccessSetting'),
+    },
+    {
       route: routes.SITE_SETTINGS_MICROPHONE,
       id: Id.MIC,
       label: 'siteSettingsMic',
@@ -524,6 +534,7 @@ export class SettingsSiteSettingsPageElement extends
               Id.SMART_CARD_READERS,
               // </if>
               Id.WEB_APP_INSTALLATION,
+              Id.LOCAL_NETWORK_ACCESS,
             ]),
             contentBasic: buildItemListFromIds([
               Id.COOKIES,
@@ -564,14 +575,8 @@ export class SettingsSiteSettingsPageElement extends
         value: false,
       },
 
-      safetyHubAbusiveNotificationRevocationEnabled_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean(
-            'safetyHubAbusiveNotificationRevocationEnabled'),
-      },
-
       unusedSitePermissionsHeader_: String,
-      unusedSitePermissionsSubeader_: String,
+      unusedSitePermissionsSubheader_: String,
     };
   }
 
@@ -588,21 +593,20 @@ export class SettingsSiteSettingsPageElement extends
             this.onUnusedSitePermissionListChanged_(sites));
   }
 
-  prefs: Object;
-  focusConfig: FocusConfig;
-  private permissionsExpanded_: boolean;
-  private contentExpanded_: boolean;
-  private noRecentSitePermissions_: boolean;
-  private showUnusedSitePermissions_: boolean;
-  private safetyHubAbusiveNotificationRevocationEnabled_: boolean;
-  private unusedSitePermissionsHeader_: string;
-  private unusedSitePermissionsSubheader_: string;
+  declare prefs: Object;
+  declare focusConfig: FocusConfig;
+  declare private permissionsExpanded_: boolean;
+  declare private contentExpanded_: boolean;
+  declare private noRecentSitePermissions_: boolean;
+  declare private showUnusedSitePermissions_: boolean;
+  declare private unusedSitePermissionsHeader_: string;
+  declare private unusedSitePermissionsSubheader_: string;
   private safetyHubBrowserProxy_: SafetyHubBrowserProxy =
       SafetyHubBrowserProxyImpl.getInstance();
   private metricsBrowserProxy_: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
 
-  private lists_: {
+  declare private lists_: {
     all: CategoryListItem[],
     permissionsBasic: CategoryListItem[],
     permissionsAdvanced: CategoryListItem[],
@@ -654,10 +658,7 @@ export class SettingsSiteSettingsPageElement extends
     // TODO(crbug/342210522): Add test for this.
     this.unusedSitePermissionsSubheader_ =
         await PluralStringProxyImpl.getInstance().getPluralString(
-            this.safetyHubAbusiveNotificationRevocationEnabled_ ?
-                'safetyHubRevokedPermissionsSecondaryLabel' :
-                'safetyHubUnusedSitePermissionsSecondaryLabel',
-            permissions.length);
+            'safetyHubRevokedPermissionsSecondaryLabel', permissions.length);
   }
 
   /** @return Class for the all site settings link */

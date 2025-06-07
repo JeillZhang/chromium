@@ -86,6 +86,12 @@ CompositingReasons CompositingReasonsForWillChange(const ComputedStyle& style) {
     reasons |= CompositingReason::kWillChangeFilter;
   if (style.HasWillChangeBackdropFilterHint())
     reasons |= CompositingReason::kWillChangeBackdropFilter;
+  if (style.HasWillChangeClipPathHint()) {
+    reasons |= CompositingReason::kWillChangeClipPath;
+  }
+  if (style.HasWillChangeMixBlendModeHint()) {
+    reasons |= CompositingReason::kWillChangeMixBlendMode;
+  }
 
   // kWillChangeOther is needed only when none of the explicit kWillChange*
   // reasons are set.
@@ -108,12 +114,7 @@ CompositingReasons CompositingReasonsFor3DTransform(
   CompositingReasons reasons =
       CompositingReasonFinder::PotentialCompositingReasonsFor3DTransform(style);
 
-  bool has_scale =
-      RuntimeEnabledFeatures::RenderSurfaceForScaleTransformEnabled() &&
-      style.Scale();
-
-  if ((reasons != CompositingReason::kNone || has_scale) &&
-      layout_object.IsBox()) {
+  if (reasons != CompositingReason::kNone && layout_object.IsBox()) {
     // In theory this should operate on fragment sizes, but using the box size
     // is probably good enough for a use counter.
     auto& box = To<LayoutBox>(layout_object);
@@ -134,13 +135,6 @@ CompositingReasons CompositingReasonsFor3DTransform(
         UseCounter::Count(layout_object.GetDocument(),
                           WebFeature::kTransform3dScene);
       }
-    }
-
-    if (RuntimeEnabledFeatures::RenderSurfaceForScaleTransformEnabled() &&
-        matrix.IsScale2d()) {
-      // TODO(chrishtr): make this "2d scale with composited descendants"
-      // somehow.
-      reasons |= CompositingReason::k2DScaleTransformWithCompositedDescendants;
     }
   }
   return reasons;
@@ -384,6 +378,7 @@ CompositingReasons CompositingReasonFinder::DirectReasonsForPaintProperties(
   switch (style.StyleType()) {
     case kPseudoIdViewTransition:
     case kPseudoIdViewTransitionGroup:
+    case kPseudoIdViewTransitionGroupChildren:
     case kPseudoIdViewTransitionImagePair:
     case kPseudoIdViewTransitionNew:
     case kPseudoIdViewTransitionOld:
@@ -393,15 +388,15 @@ CompositingReasons CompositingReasonFinder::DirectReasonsForPaintProperties(
       break;
   }
 
-  if (auto* transition =
-          ViewTransitionUtils::GetTransition(object.GetDocument())) {
-    // Note that `NeedsViewTransitionEffectNode` returns true for values that
-    // are in the non-transition-pseudo tree DOM. That is, things like layout
-    // view or the view transition elements that we are transitioning.
-    if (transition->NeedsViewTransitionEffectNode(object)) {
-      reasons |= CompositingReason::kViewTransitionElement;
-    }
-  }
+  ViewTransitionUtils::ForEachTransition(
+      object.GetDocument(), [&](ViewTransition& transition) {
+        // This ensures compositing for elements that are actively participating
+        // in a transition because they are tagged with view-transition-name.
+        // It does not apply to the ::view-transition* pseudo-elements.
+        if (transition.NeedsViewTransitionEffectNode(object)) {
+          reasons |= CompositingReason::kViewTransitionElement;
+        }
+      });
 
   auto* element = DynamicTo<Element>(object.GetNode());
   if (element && element->GetRestrictionTargetId()) {

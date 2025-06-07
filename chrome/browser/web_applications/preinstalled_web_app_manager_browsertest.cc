@@ -22,7 +22,6 @@
 #include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/intent_helper/preferred_apps_test_util.h"
@@ -68,20 +67,11 @@
 #include "ui/events/devices/touchscreen_device.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
-#include "chromeos/constants/chromeos_features.h"
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/public/cpp/test/app_list_test_api.h"
 #include "chrome/browser/ash/app_list/app_list_client_impl.h"
 #include "chrome/browser/ash/app_list/app_list_syncable_service.h"
 #include "chrome/browser/ash/app_list/app_list_syncable_service_factory.h"
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chrome/browser/web_applications/app_service/test/loopback_crosapi_app_service_proxy.h"
-#include "chromeos/crosapi/mojom/crosapi.mojom.h"
-#include "chromeos/startup/browser_init_params.h"
+#include "chromeos/constants/chromeos_features.h"
 #endif
 
 namespace web_app {
@@ -284,6 +274,27 @@ class PreinstalledWebAppManagerBrowserTestBase
     sync_run_loop.Run();
 
     return code;
+  }
+
+  struct SyncResults {
+    std::map<GURL, ExternallyManagedAppManager::InstallResult> install_results;
+    std::map<GURL, webapps::UninstallResultCode> uninstall_results;
+  };
+  SyncResults SyncPreinstalledApps() {
+    base::test::TestFuture<
+        std::map<GURL, ExternallyManagedAppManager::InstallResult>,
+        std::map<GURL, webapps::UninstallResultCode>>
+        future;
+
+    WebAppProvider::GetForTest(profile())
+        ->preinstalled_web_app_manager()
+        .LoadAndSynchronizeForTesting(future.GetCallback());
+    return {
+        .install_results = future.Get<
+            std::map<GURL, ExternallyManagedAppManager::InstallResult>>(),
+        .uninstall_results =
+            future.Get<std::map<GURL, webapps::UninstallResultCode>>(),
+    };
   }
 
   ~PreinstalledWebAppManagerBrowserTestBase() override = default;
@@ -513,7 +524,6 @@ class PreinstalledWebAppManagerExtensionBrowserTest
   base::AutoReset<bool> enable_chrome_apps_;
 };
 
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
 IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerExtensionBrowserTest,
                        UninstallAndReplace) {
   base::AutoReset<bool> bypass_offline_manifest_requirement =
@@ -551,7 +561,72 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerExtensionBrowserTest,
   EXPECT_EQ(app, uninstalled_app.get());
 }
 
-#endif  // !BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_CHROMEOS)
+class PreinstalledWebAppManagerExtensionAlwaysMigrateBrowserTest
+    : public PreinstalledWebAppManagerExtensionBrowserTest {
+ public:
+  PreinstalledWebAppManagerExtensionAlwaysMigrateBrowserTest() = default;
+  ~PreinstalledWebAppManagerExtensionAlwaysMigrateBrowserTest() override =
+      default;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_{
+      features::kPreinstalledWebAppAlwaysMigrate};
+};
+
+IN_PROC_BROWSER_TEST_F(
+    PreinstalledWebAppManagerExtensionAlwaysMigrateBrowserTest,
+    AlwaysUninstallAndReplace) {
+  GURL app_url = GURL("https://example.org/");
+  std::optional<extensions::ExtensionId> chrome_app_id;
+
+  base::HistogramTester tester;
+
+  ScopedTestingPreinstalledAppData scoped_preinstalls;
+  scoped_preinstalls.apps.push_back([&] {
+    ExternalInstallOptions options(
+        app_url, /*user_display_mode=*/mojom::UserDisplayMode::kStandalone,
+        ExternalInstallSource::kExternalDefault);
+    options.user_type_allowlist = {"unmanaged"};
+    options.only_use_app_info_factory = true;
+    options.app_info_factory = base::BindLambdaForTesting([=] {
+      auto info = std::make_unique<WebAppInstallInfo>(
+          GenerateManifestIdFromStartUrlOnly(app_url), app_url);
+      info->title = u"Test app";
+      return info;
+    });
+    return options;
+  }());
+
+  // Preinstall web app.
+  EXPECT_EQ(SyncPreinstalledApps().install_results[app_url].code,
+            webapps::InstallResultCode::kSuccessOfflineOnlyInstall);
+  tester.ExpectUniqueSample("WebApp.Preinstalled.ChromeAppMigrationNeeded",
+                            false, 1);
+
+  // Install Chrome app to be replaced after web app is already preinstalled.
+  const extensions::Extension* app = InstallExtensionWithSourceAndFlags(
+      test_data_dir_.AppendASCII("app"), 1,
+      extensions::mojom::ManifestLocation::kInternal,
+      extensions::Extension::NO_FLAGS);
+  scoped_preinstalls.apps[0].uninstall_and_replace.push_back(app->id());
+
+  // Start listening for Chrome app uninstall.
+  extensions::TestExtensionRegistryObserver uninstall_observer(
+      extensions::ExtensionRegistry::Get(browser()->profile()));
+
+  // Trigger preinstall sync again.
+  EXPECT_EQ(SyncPreinstalledApps().install_results[app_url].code,
+            webapps::InstallResultCode::kSuccessOfflineOnlyInstall);
+  tester.ExpectBucketCount("WebApp.Preinstalled.ChromeAppMigrationNeeded", true,
+                           1);
+
+  // Chrome app should get uninstalled.
+  scoped_refptr<const extensions::Extension> uninstalled_app =
+      uninstall_observer.WaitForExtensionUninstalled();
+  EXPECT_EQ(app, uninstalled_app.get());
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerBrowserTest,
                        PreinstalledAppsPrefInstall) {
@@ -1212,7 +1287,7 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerBrowserTest,
             std::nullopt);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerBrowserTest, OemInstalled) {
   base::AutoReset<bool> bypass_offline_manifest_requirement =
       PreinstalledWebAppManager::BypassOfflineManifestRequirementForTesting();
@@ -1244,9 +1319,8 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerBrowserTest, OemInstalled) {
 
   EXPECT_EQ(install_reason, apps::InstallReason::kOem);
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
 namespace {
 ui::TouchscreenDevice CreateTouchDevice(ui::InputDeviceType type,
                                         bool stylus_support) {
@@ -1256,7 +1330,6 @@ ui::TouchscreenDevice CreateTouchDevice(ui::InputDeviceType type,
   return touch_device;
 }
 }  // namespace
-#endif
 
 IN_PROC_BROWSER_TEST_F(
     PreinstalledWebAppManagerBrowserTest,
@@ -1265,16 +1338,9 @@ IN_PROC_BROWSER_TEST_F(
       PreinstalledWebAppManager::BypassOfflineManifestRequirementForTesting();
   ASSERT_TRUE(embedded_test_server()->Start());
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  auto init_params = crosapi::mojom::BrowserInitParams::New();
-  init_params->device_properties = crosapi::mojom::DeviceProperties::New();
-  init_params->device_properties->has_stylus_enabled_touchscreen = false;
-  chromeos::BrowserInitParams::SetInitParamsForTests(std::move(init_params));
-#else
   ui::DeviceDataManagerTestApi().SetTouchscreenDevices(
       {CreateTouchDevice(ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
                          /*stylus_support=*/false)});
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
   const auto manifest = base::ReplaceStringPlaceholders(
       R"({
@@ -1304,16 +1370,9 @@ IN_PROC_BROWSER_TEST_F(
       PreinstalledWebAppManager::BypassOfflineManifestRequirementForTesting();
   ASSERT_TRUE(embedded_test_server()->Start());
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  auto init_params = crosapi::mojom::BrowserInitParams::New();
-  init_params->device_properties = crosapi::mojom::DeviceProperties::New();
-  init_params->device_properties->has_stylus_enabled_touchscreen = true;
-  chromeos::BrowserInitParams::SetInitParamsForTests(std::move(init_params));
-#else
   ui::DeviceDataManagerTestApi().SetTouchscreenDevices(
       {CreateTouchDevice(ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
                          /*stylus_support=*/true)});
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 
   const auto manifest = base::ReplaceStringPlaceholders(
       R"({
@@ -1340,13 +1399,6 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerBrowserTest,
       PreinstalledWebAppManager::BypassOfflineManifestRequirementForTesting();
   ASSERT_TRUE(embedded_test_server()->Start());
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  auto init_params = crosapi::mojom::BrowserInitParams::New();
-  init_params->device_properties = crosapi::mojom::DeviceProperties::New();
-  init_params->device_properties->has_stylus_enabled_touchscreen = true;
-  chromeos::BrowserInitParams::SetInitParamsForTests(std::move(init_params));
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
-
   const auto manifest = base::ReplaceStringPlaceholders(
       R"({
         "app_url": "$1",
@@ -1363,14 +1415,10 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerBrowserTest,
   ui::DeviceDataManager::GetInstance()->ResetDeviceListsForTest();
   base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, base::BindLambdaForTesting([]() {
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
         // Create a built-in touchscreen device with stylus support
-        // and add it to the device. Lacros does not use DeviceDataManager to
-        // determine whether stylus is supported, but still needs device lists
-        // to be complete before continuing.
+        // and add it to the device.
         ui::DeviceDataManagerTestApi().SetTouchscreenDevices({CreateTouchDevice(
             ui::InputDeviceType::INPUT_DEVICE_INTERNAL, true)});
-#endif  // !BUILDFLAG(IS_CHROMEOS_LACROS)
         ui::DeviceDataManagerTestApi().OnDeviceListsComplete();
       }),
       base::Milliseconds(500));
@@ -1379,7 +1427,7 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerBrowserTest,
             webapps::InstallResultCode::kSuccessNewInstall);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // Disabled due to test flakiness. https://crbug.com/1267164.
 IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerBrowserTest,
                        DISABLED_UninstallFromTwoItemAppListFolder) {
@@ -1446,7 +1494,7 @@ IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerBrowserTest,
       "");
   EXPECT_EQ(app_list_syncable_service->GetSyncItem(user_app_id)->parent_id, "");
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // Check that offline only installs don't overwrite fresh online manifest
 // obtained via sync install.
@@ -1512,22 +1560,14 @@ class PreinstalledWebAppManagerWithCloudGamingBrowserTest
     : public PreinstalledWebAppManagerBrowserTest {
  public:
   PreinstalledWebAppManagerWithCloudGamingBrowserTest() {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    auto params = crosapi::mojom::BrowserInitParams::New();
-    params->is_cloud_gaming_device = true;
-    chromeos::BrowserInitParams::SetInitParamsForTests(std::move(params));
-#else
     scoped_feature_list_.InitAndEnableFeature(
         chromeos::features::kCloudGamingDevice);
-#endif
   }
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
-// Tests that the custom behavior for the "CloudGamingDevice" feature works on
-// both Ash and Lacros.
 IN_PROC_BROWSER_TEST_F(PreinstalledWebAppManagerWithCloudGamingBrowserTest,
                        GateOnCloudGamingFeature) {
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -1558,13 +1598,7 @@ class PreinstalledWebAppManagerPreferredAppForSupportedLinksBrowserTest
   bool IsPreferredAppForSupportedLinks() const { return GetParam(); }
 
   void RemoveSupportedLinksPreference(const webapps::AppId& app_id) {
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    // NOTE: CrosAPI doesn't implement `RemoveSupportedLinksPreference()`.
-    loopback_crosapi_->RemoveSupportedLinksPreference(app_id);
-    WaitForSupportedLinksPreference(app_id, /*is_preferred_app=*/false);
-#else  // BUILDFLAG(IS_CHROMEOS_LACROS)
     apps_util::RemoveSupportedLinksPreferenceAndWait(profile(), app_id);
-#endif
   }
 
   void WaitForSupportedLinksPreference(const webapps::AppId& app_id,
@@ -1575,23 +1609,6 @@ class PreinstalledWebAppManagerPreferredAppForSupportedLinksBrowserTest
         app_id, is_preferred_app)
         .Wait();
   }
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
- private:
-  // PreinstalledWebAppManagerBrowserTest:
-  void SetUpOnMainThread() override {
-    PreinstalledWebAppManagerBrowserTest::SetUpOnMainThread();
-    loopback_crosapi_ =
-        std::make_unique<LoopbackCrosapiAppServiceProxy>(profile());
-  }
-
-  void TearDownOnMainThread() override {
-    PreinstalledWebAppManagerBrowserTest::TearDownOnMainThread();
-    loopback_crosapi_.reset();
-  }
-
-  std::unique_ptr<LoopbackCrosapiAppServiceProxy> loopback_crosapi_;
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
 };
 
 INSTANTIATE_TEST_SUITE_P(
@@ -1764,7 +1781,10 @@ IN_PROC_BROWSER_TEST_P(PreinstalledWebAppNavigationCapturing,
             proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION
 #endif
   );
+
+#if !BUILDFLAG(IS_CHROMEOS)
   EXPECT_EQ(ShouldCaptureLinks(), registrar().CapturesLinksInScope(app_id));
+#endif
 }
 
 INSTANTIATE_TEST_SUITE_P(

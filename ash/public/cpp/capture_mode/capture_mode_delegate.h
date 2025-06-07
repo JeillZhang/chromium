@@ -5,6 +5,7 @@
 #ifndef ASH_PUBLIC_CPP_CAPTURE_MODE_CAPTURE_MODE_DELEGATE_H_
 #define ASH_PUBLIC_CPP_CAPTURE_MODE_CAPTURE_MODE_DELEGATE_H_
 
+#include <optional>
 #include <string>
 
 #include "ash/public/cpp/ash_public_export.h"
@@ -14,6 +15,7 @@
 #include "base/unguessable_token.h"
 #include "chromeos/crosapi/mojom/video_conference.mojom-shared.h"
 #include "chromeos/crosapi/mojom/video_conference.mojom.h"
+#include "components/search_engines/template_url.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 
@@ -58,10 +60,11 @@ using OnGotDriveFsFreeSpace =
     base::OnceCallback<void(int64_t free_remaining_bytes)>;
 
 // Defines the type of the callback that will be invoked when text detection has
-// been performed on an image. `detected_text` contains detected text, or is
-// empty if no text is detected.
+// been performed on an image. `detected_text` contains detected text, empty if
+// no text has been detected, or nullopt if text detection fails (such as the
+// OCR service being reset after the text detection request).
 using OnTextDetectionComplete =
-    base::OnceCallback<void(std::string detected_text)>;
+    base::OnceCallback<void(std::optional<std::string> detected_text)>;
 
 // Defines the type of the callback that will be invoked when the search backend
 // result is fetched. Repeating because the `LensOverlayUrlResponseCallback`
@@ -105,11 +108,13 @@ class ASH_PUBLIC_EXPORT CaptureModeDelegate {
   virtual bool Uses24HourFormat() const = 0;
 
   // Called when capture mode is being started to check if there are any content
-  // currently on the screen that are restricted by DLP. `callback` will be
-  // triggered by the DLP manager with `proceed` set to true if capture mode
-  // initialization is allowed to continue, or set to false if it should be
-  // aborted.
+  // currently on the screen that are restricted by DLP.`shutting_down` is true
+  // if the lock state controller has received a request to shut down, and false
+  // otherwise. `callback` will be triggered by the DLP manager with `proceed`
+  // set to true if capture mode initialization is allowed to continue, or set
+  // to false if it should be aborted.
   virtual void CheckCaptureModeInitRestrictionByDlp(
+      bool shutting_down,
       OnCaptureModeDlpRestrictionChecked callback) = 0;
 
   // Checks whether capture of the region defined by |window| and |bounds|
@@ -250,20 +255,17 @@ class ASH_PUBLIC_EXPORT CaptureModeDelegate {
   virtual void DetectTextInImage(const SkBitmap& image,
                                  OnTextDetectionComplete callback) = 0;
 
-  // Sends the captured `region` and `image` to the backend. Invokes `callback`
-  // when the response is fetched.
-  virtual void SendRegionSearch(const SkBitmap& image,
-                                const gfx::Rect& region,
-                                OnSearchUrlFetchedCallback search_callback,
-                                OnTextDetectionComplete text_callback) = 0;
-
-  // Sends the captured `image`, `region`, and search box `text` to the backend.
-  // Invokes `callback` when the response is fetched.
-  virtual void SendMultimodalSearch(
-      const SkBitmap& image,
-      const gfx::Rect& region,
-      const std::string& text,
-      ash::OnSearchUrlFetchedCallback callback) = 0;
+  // Sends the captured `image` to the Lens Web API for image search and text
+  // detection (if enabled). Invokes `search_callback` when the image search
+  // response is fetched, then `text_callback` when the text detection response
+  // is fetched. Invokes `error_callback` if an error occurs or an unexpected
+  // response is received.
+  virtual void SendLensWebRegionSearch(
+      const gfx::Image& image,
+      const bool is_standalone_session,
+      OnSearchUrlFetchedCallback search_callback,
+      OnTextDetectionComplete text_callback,
+      base::OnceCallback<void()> error_callback) = 0;
 
   // Returns true if the network is currently in an offline or unknown state.
   virtual bool IsNetworkConnectionOffline() const = 0;
@@ -271,6 +273,10 @@ class ASH_PUBLIC_EXPORT CaptureModeDelegate {
   // Deletes the remote file under `path` and calls `callback` with result.
   virtual void DeleteRemoteFile(const base::FilePath& path,
                                 base::OnceCallback<void(bool)> callback) = 0;
+
+  // Returns true if Google is the default search engine for the active user,
+  // and false otherwise.
+  virtual bool ActiveUserDefaultSearchProviderIsGoogle() const = 0;
 };
 
 }  // namespace ash

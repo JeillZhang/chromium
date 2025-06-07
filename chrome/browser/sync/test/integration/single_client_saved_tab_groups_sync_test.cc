@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "base/uuid.h"
+#include "build/build_config.h"
 #include "chrome/browser/sync/test/integration/saved_tab_groups_helper.h"
 #include "chrome/browser/sync/test/integration/sync_service_impl_harness.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
@@ -142,7 +143,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest,
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -173,7 +174,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest,
   // Add a group with no tabs from sync.
   AddGroupToFakeServer(group1);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -205,7 +206,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest,
   // Add a group with no tabs from sync.
   AddTabToFakeServer(tab1);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -239,7 +240,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, AddToExistingGroup) {
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -281,7 +282,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, RemoveTabFromGroup) {
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -323,7 +324,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, RemoveGroup) {
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -374,7 +375,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest,
   AddGroupToFakeServer(group1);
   AddTabToFakeServer(tab1);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -408,7 +409,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, UpdatedTabData) {
   AddGroupToFakeServer(group1);
   AddTabToFakeServer(tab1);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -450,7 +451,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, ReorderGroups) {
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -489,7 +490,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest, ReorderTabs) {
   AddTabToFakeServer(tab1);
   AddTabToFakeServer(tab2);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(
       GetSyncService(0)->GetActiveDataTypes().Has(syncer::SAVED_TAB_GROUP));
 
@@ -527,7 +528,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest,
                         /*position=*/0);
   AddTabToFakeServer(tab1);
 
-  ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
+  ASSERT_TRUE(SetupSync());
   TabGroupSyncService* service = GetService();
 
   // Verify guid1 is added to the model.
@@ -551,7 +552,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTest,
 
 // On ChromeOS, Sync-the-feature gets started automatically once a primary
 // account is signed in and the transport mode is not a thing.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 
 // Subclass that enables an additional feature, namely
 // `syncer::kReplaceSyncPromosWithSignInPromos`.
@@ -637,7 +638,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSavedTabGroupsSyncTestWithTransportMode,
                   .Wait());
 }
 
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace
 }  // namespace tab_groups

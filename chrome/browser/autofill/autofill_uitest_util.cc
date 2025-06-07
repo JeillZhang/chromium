@@ -15,9 +15,9 @@
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager_observer.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager_test_utils.h"
-#include "components/autofill/core/browser/data_model/autofill_i18n_api.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_i18n_api.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/foundations/autofill_manager.h"
 #include "components/autofill/core/browser/foundations/browser_autofill_manager.h"
 #include "components/autofill/core/browser/foundations/browser_autofill_manager_test_api.h"
@@ -120,7 +120,8 @@ void WaitForPersonalDataManagerToBeLoaded(Profile* base_profile) {
   driver.renderer_events().AskForValuesToFill(
       form, form.fields().front().renderer_id(),
       /*caret_bounds=*/gfx::Rect(gfx::Point(p.x(), p.y()), gfx::Size(0, 10)),
-      AutofillSuggestionTriggerSource::kFormControlElementClicked);
+      AutofillSuggestionTriggerSource::kFormControlElementClicked,
+      /*password_request=*/std::nullopt);
   if (AssertionResult a = std::move(wait_for_ask_for_values_to_fill).Wait();
       !a) {
     return a << " " << __func__ << "(): "

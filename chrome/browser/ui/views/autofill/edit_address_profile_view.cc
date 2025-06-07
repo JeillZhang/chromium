@@ -16,12 +16,12 @@
 #include "chrome/browser/ui/autofill/edit_address_profile_view.h"
 #include "chrome/browser/ui/tabs/public/tab_dialog_manager.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
-#include "chrome/browser/ui/tabs/public/tab_interface.h"
 #include "chrome/browser/ui/views/autofill/address_editor_view.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/mojom/dialog_button.mojom.h"
@@ -85,9 +85,11 @@ std::unique_ptr<AutofillBubbleBase> ShowEditAddressProfileDialogView(
   dialog->ShowForWebContents(web_contents);
   tabs::TabInterface* tab_interface =
       tabs::TabInterface::GetFromContents(web_contents);
-  auto widget = tab_interface->GetTabFeatures()
-                    ->tab_dialog_manager()
-                    ->CreateShowDialogAndBlockTabInteraction(dialog);
+  auto widget =
+      tab_interface->GetTabFeatures()
+          ->tab_dialog_manager()
+          ->CreateAndShowDialog(
+              dialog, std::make_unique<tabs::TabDialogManager::Params>());
   dialog->RequestFocus();
   return std::make_unique<AutofillBubbleUI>(std::move(widget), dialog);
 }
@@ -97,9 +99,8 @@ EditAddressProfileView::EditAddressProfileView(
     : controller_(controller) {
   DCHECK(controller);
 
-  // TODO(crbug.com/338254375): Remove the following two lines once this is the
-  // default state for widgets and the delegates.
-  SetOwnedByWidget(false);
+  // TODO(crbug.com/338254375): Remove the following line once this is the
+  // default state for widgets.
   SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
 
   SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk) |

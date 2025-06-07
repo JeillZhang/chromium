@@ -24,10 +24,10 @@
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
-#include "base/not_fatal_until.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -46,6 +46,7 @@
 #include "chrome/browser/background_fetch/background_fetch_delegate_impl.h"
 #include "chrome/browser/background_sync/background_sync_controller_factory.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
+#include "chrome/browser/browser_features.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
@@ -104,7 +105,6 @@
 #include "chrome/browser/ssl/stateful_ssl_host_state_delegate_factory.h"
 #include "chrome/browser/startup_data.h"
 #include "chrome/browser/storage/storage_notification_service_factory.h"
-#include "chrome/browser/storage_access_api/storage_access_header_service_factory.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/tpcd/support/origin_trial_service_factory.h"
 #include "chrome/browser/tpcd/support/top_level_trial_service_factory.h"
@@ -195,6 +195,7 @@
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_switches.h"
+#include "base/check_deref.h"
 #include "base/command_line.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/ash/account_manager/account_manager_util.h"
@@ -230,15 +231,12 @@
 #include "ui/accessibility/accessibility_features.h"
 #endif
 
-#if !BUILDFLAG(IS_ANDROID) && BUILDFLAG(ENABLE_PDF)
-#include "chrome/browser/accessibility/pdf_ocr_controller_factory.h"
-#endif  // !BUILDFLAG(IS_ANDROID) && BUILDFLAG(ENABLE_PDF)
-
 #if BUILDFLAG(ENABLE_BACKGROUND_MODE)
-#include "chrome/browser/background/background_mode_manager.h"
+#include "chrome/browser/background/extensions/background_mode_manager.h"
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+#include "chrome/browser/extensions/extension_special_storage_policy.h"
 #include "extensions/browser/extension_pref_store.h"
 #include "extensions/browser/extension_pref_value_map.h"
 #include "extensions/browser/extension_pref_value_map_factory.h"
@@ -246,7 +244,6 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/extension_special_storage_policy.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "extensions/browser/extension_prefs.h"
@@ -435,7 +432,7 @@ void ProfileImpl::RegisterProfilePrefs(
 #endif  // !BUILDFLAG(IS_ANDROID)
   registry->RegisterTimePref(prefs::kProfileCreationTime, base::Time());
 
-#if BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(ENABLE_PDF_INK2)
   registry->RegisterBooleanPref(prefs::kPdfAnnotationsEnabled, true);
 #endif
   registry->RegisterIntegerPref(prefs::kEnterpriseBadgingTemporarySetting, 0);
@@ -509,6 +506,10 @@ ProfileImpl::ProfileImpl(
   // TODO(crbug.com/40225390): Move this into
   // ProfileUserManagerController::OnProfileCreationStarted().
   if (ash::ProfileHelper::IsUserProfile(this)) {
+    // TODO(crbug.com/404133029): Avoid g_browser_process usage.
+    scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory =
+        g_browser_process->shared_url_loader_factory();
+
     // |ash::InitializeAccountManager| is called during a User's session
     // initialization but some tests do not properly login to a User Session.
     // This invocation of |ash::InitializeAccountManager| is used only during
@@ -517,7 +518,8 @@ ProfileImpl::ProfileImpl(
     // multiple times.
     // TODO(crbug.com/40635309): Remove this call.
     ash::InitializeAccountManager(
-        path_, base::DoNothing() /* initialization_callback */);
+        std::move(shared_url_loader_factory), path_,
+        base::DoNothing() /* initialization_callback */);
 
     auto* account_manager = g_browser_process->platform_part()
                                 ->GetAccountManagerFactory()
@@ -561,6 +563,11 @@ void ProfileImpl::TakePrefsFromStartupData() {
   user_cloud_policy_manager_ = startup_data->TakeUserCloudPolicyManager();
   profile_policy_connector_ = startup_data->TakeProfilePolicyConnector();
   pref_registry_ = startup_data->TakePrefRegistrySyncable();
+
+  // The extension prefs value store requires a profile, so it can't be created
+  // in StartupData.
+  prefs_->UpdateExtensionPrefStore(
+      CreateExtensionPrefStore(this, /*incognito_pref_store=*/false));
 
   ProfileKeyStartupAccessor::GetInstance()->Reset();
 }
@@ -848,19 +855,6 @@ void ProfileImpl::DoFinalInit(CreateMode create_mode) {
   PasswordManagerSettingsServiceFactory::GetForProfile(this);
 #else
 
-#if BUILDFLAG(ENABLE_PDF)
-  bool pcf_ocr_may_be_needed = true;
-#if BUILDFLAG(IS_CHROMEOS)
-  // `PdfOcrControllerFactory` is not needed in the not-signed-in profile of
-  // ChromeOS as no user navigation to PDFs is possible there.
-  pcf_ocr_may_be_needed = IsSignedIn();
-#endif
-  // Create the PDF OCR controller so that it can self-activate as needed.
-  if (pcf_ocr_may_be_needed) {
-    screen_ai::PdfOcrControllerFactory::GetForProfile(this);
-  }
-#endif  // BUILDFLAG(ENABLE_PDF)
-
   if (features::IsMainNodeAnnotationsEnabled()) {
     screen_ai::AXMainNodeAnnotatorControllerFactory::GetForProfile(this);
   }
@@ -880,15 +874,13 @@ void ProfileImpl::DoFinalInit(CreateMode create_mode) {
   // as it depends on the default StoragePartition being initialized.
   GetOriginTrialsControllerDelegate();
 
-  // The TpcdTrialService, TopLevelTrialService, OriginTrialService, and
-  // StorageAccessHeaderService for third-party cookie deprecation must be
-  // created with the profile, but after the initialization of the
-  // OriginTrialsControllerDelegate, as it depends on it.
+  // The TpcdTrialService, TopLevelTrialService, and OriginTrialService for
+  // third-party cookie deprecation must be created with the profile, but after
+  // the initialization of the OriginTrialsControllerDelegate, as it depends on
+  // it.
   tpcd::trial::TpcdTrialServiceFactory::GetForProfile(this);
   tpcd::trial::TopLevelTrialServiceFactory::GetForProfile(this);
   tpcd::trial::OriginTrialServiceFactory::GetForProfile(this);
-  storage_access_api::trial::StorageAccessHeaderServiceFactory::GetForProfile(
-      this);
 }
 
 base::FilePath ProfileImpl::last_selected_directory() {
@@ -944,11 +936,6 @@ ProfileImpl::~ProfileImpl() {
 
   FullBrowserTransitionManager::Get()->OnProfileDestroyed(this);
 
-  // Records the number of active KeyedServices for SystemProfile right before
-  // shutting the Services.
-  if (IsSystemProfile())
-    ProfileMetrics::LogSystemProfileKeyedServicesCount(this);
-
   // The SimpleDependencyManager should always be passed after the
   // BrowserContextDependencyManager. This is because the KeyedService instances
   // in the BrowserContextDependencyManager's dependency graph can depend on the
@@ -966,6 +953,14 @@ ProfileImpl::~ProfileImpl() {
   // This must be called before ProfileIOData::ShutdownOnUIThread but after
   // other profile-related destroy notifications are dispatched.
   ShutdownStoragePartitions();
+
+  // Explicitly clear all user data here, so that the other fields of
+  // `ProfileImpl` are still valid while user data is being destroyed.
+  // See crbug.com/402028628 for a motivating example.
+  if (base::FeatureList::IsEnabled(
+          features::kClearUserDataUponProfileDestruction)) {
+    ClearAllUserData();
+  }
 }
 
 std::string ProfileImpl::GetProfileUserName() const {
@@ -1083,7 +1078,7 @@ bool ProfileImpl::AllowsBrowserWindows() const {
 }
 
 ExtensionSpecialStoragePolicy* ProfileImpl::GetExtensionSpecialStoragePolicy() {
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
   if (!extension_special_storage_policy_.get()) {
     TRACE_EVENT0("browser", "ProfileImpl::GetExtensionSpecialStoragePolicy");
     extension_special_storage_policy_ =
@@ -1118,17 +1113,13 @@ void ProfileImpl::OnLocaleReady(CreateMode create_mode) {
   // the services affected by the migration are.
   // TODO(crbug.com/369297671): Remove one year after launching
   // kForceMigrateSyncingUserToSignedIn on all //chrome platforms.
-  CHECK(GetPrefs(), base::NotFatalUntil::M133);
-  CHECK(!IdentityManagerFactory::GetForProfileIfExists(this),
-        base::NotFatalUntil::M133);
-  CHECK(!SyncServiceFactory::HasSyncService(this), base::NotFatalUntil::M133);
-  CHECK(!BookmarkModelFactory::GetForBrowserContextIfExists(this),
-        base::NotFatalUntil::M133);
-  CHECK(!ProfilePasswordStoreFactory::HasStore(this),
-        base::NotFatalUntil::M133);
-  CHECK(!AccountPasswordStoreFactory::HasStore(this),
-        base::NotFatalUntil::M133);
-  CHECK(!ReadingListModelFactory::HasModel(this), base::NotFatalUntil::M133);
+  CHECK(GetPrefs());
+  CHECK(!IdentityManagerFactory::GetForProfileIfExists(this));
+  CHECK(!SyncServiceFactory::HasSyncService(this));
+  CHECK(!BookmarkModelFactory::GetForBrowserContextIfExists(this));
+  CHECK(!ProfilePasswordStoreFactory::HasStore(this));
+  CHECK(!AccountPasswordStoreFactory::HasStore(this));
+  CHECK(!ReadingListModelFactory::HasModel(this));
   browser_sync::MaybeMigrateSyncingUserToSignedIn(GetPath(), GetPrefs());
 
 #if BUILDFLAG(IS_ANDROID)
@@ -1328,7 +1319,7 @@ DownloadManagerDelegate* ProfileImpl::GetDownloadManagerDelegate() {
 }
 
 storage::SpecialStoragePolicy* ProfileImpl::GetSpecialStoragePolicy() {
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
   return GetExtensionSpecialStoragePolicy();
 #else
   return NULL;

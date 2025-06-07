@@ -3,19 +3,20 @@
 // found in the LICENSE file.
 
 #include <memory>
+#include <variant>
 
 #include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_timeouts.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_browsertest_util.h"
 #include "chrome/browser/ui/browser.h"
@@ -64,7 +65,6 @@
 #include "components/guest_view/browser/test_guest_view_manager.h"
 #include "extensions/browser/guest_view/mime_handler_view/test_mime_handler_view_guest.h"
 #include "pdf/pdf_features.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #endif  // BUILDFLAG(ENABLE_PDF)
 
 namespace {
@@ -751,9 +751,7 @@ IN_PROC_BROWSER_TEST_P(SitePerProcessInteractiveFencedFrameBrowserTest,
   EXPECT_EQ("\"child3-focused-input1\"", press_tab_and_wait_for_message(false));
 }
 
-// TODO(crbug.com/40118868): Revisit the macro expression once build flag switch
-// of lacros-chrome is complete.
-#if (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
 // Ensures that renderers know to advance focus to sibling frames and parent
 // frames in the presence of mouse click initiated focus changes.
 // Verifies against regression of https://crbug.com/702330
@@ -1571,7 +1569,7 @@ class SitePerProcessInteractivePDFTest
 
   void TearDownOnMainThread() override {
     test_guest_view_manager_ = nullptr;
-    factory_ = absl::monostate();
+    factory_ = std::monostate();
     SitePerProcessInteractiveBrowserTest::TearDownOnMainThread();
   }
 
@@ -1583,14 +1581,14 @@ class SitePerProcessInteractivePDFTest
   }
 
   pdf::TestPdfViewerStreamManager* GetTestPdfViewerStreamManager() const {
-    return absl::get<std::unique_ptr<pdf::TestPdfViewerStreamManagerFactory>>(
+    return std::get<std::unique_ptr<pdf::TestPdfViewerStreamManagerFactory>>(
                factory_)
         ->GetTestPdfViewerStreamManager(
             browser()->tab_strip_model()->GetActiveWebContents());
   }
 
   void CreateTestPdfViewerStreamManager() const {
-    absl::get<std::unique_ptr<pdf::TestPdfViewerStreamManagerFactory>>(factory_)
+    std::get<std::unique_ptr<pdf::TestPdfViewerStreamManagerFactory>>(factory_)
         ->CreatePdfViewerStreamManager(
             browser()->tab_strip_model()->GetActiveWebContents());
   }
@@ -1614,9 +1612,9 @@ class SitePerProcessInteractivePDFTest
   }
 
  private:
-  absl::variant<absl::monostate,
-                std::unique_ptr<guest_view::TestGuestViewManagerFactory>,
-                std::unique_ptr<pdf::TestPdfViewerStreamManagerFactory>>
+  std::variant<std::monostate,
+               std::unique_ptr<guest_view::TestGuestViewManagerFactory>,
+               std::unique_ptr<pdf::TestPdfViewerStreamManagerFactory>>
       factory_;
   raw_ptr<guest_view::TestGuestViewManager> test_guest_view_manager_;
 };

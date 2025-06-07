@@ -25,6 +25,8 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/numerics/checked_math.h"
 #include "base/task/sequenced_task_runner.h"
+// TODO(crbug.com/421608904): include auto_picture_in_picture_tab_helper for
+// Android.
 #include "chrome/browser/picture_in_picture/auto_picture_in_picture_tab_helper.h"
 #include "media/base/media_switches.h"
 #include "net/base/url_util.h"
@@ -35,6 +37,10 @@
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/common/constants.h"
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+
+#if BUILDFLAG(IS_OZONE)
+#include "ui/ozone/public/ozone_platform.h"
+#endif
 
 namespace {
 // The initial aspect ratio for Document Picture-in-Picture windows. This does
@@ -345,6 +351,16 @@ gfx::Rect PictureInPictureWindowManager::CalculateOuterWindowBounds(
         excluded_margin, window_bounds);
   }
 
+#if BUILDFLAG(IS_OZONE)
+  // Some platforms like ozone/wayland don't allow clients to control windows
+  // in global screen coordinates. So it is not possible to position windows in
+  // that case.
+  if (!ui::OzonePlatform::GetInstance()
+           ->GetPlatformProperties()
+           .supports_global_screen_coordinates) {
+    return window_bounds;
+  }
+#endif
   // Position the window.
   int window_diff_width = work_area.right() - window_bounds.width();
   int window_diff_height = work_area.bottom() - window_bounds.height();
@@ -467,6 +483,14 @@ void PictureInPictureWindowManager::CloseWindowInternal() {
 #endif  // !BUILDFLAG(IS_ANDROID)
 }
 
+bool PictureInPictureWindowManager::IsPictureInPictureDisabled() const {
+#if !BUILDFLAG(IS_ANDROID)
+  return number_of_existing_scoped_disallow_picture_in_pictures_ > 0;
+#else
+  return false;
+#endif  // !BUILDFLAG(IS_ANDROID)
+}
+
 #if !BUILDFLAG(IS_ANDROID)
 void PictureInPictureWindowManager::DocumentWebContentsDestroyed() {
   // Document PiP window controller also observes the parent and child web
@@ -581,10 +605,6 @@ void PictureInPictureWindowManager::OnScopedDisallowPictureInPictureDestroyed(
   number_of_existing_scoped_disallow_picture_in_pictures_--;
 }
 
-bool PictureInPictureWindowManager::IsPictureInPictureDisabled() const {
-  return number_of_existing_scoped_disallow_picture_in_pictures_ > 0;
-}
-
 void PictureInPictureWindowManager::
     RecordDocumentPictureInPictureRequestedSizeMetrics(
         const blink::mojom::PictureInPictureWindowOptions& pip_options,
@@ -641,6 +661,10 @@ void PictureInPictureWindowManager::MaybeRecordPictureInPictureChanged(
   }
 
   uma_helper_->MaybeRecordPictureInPictureChanged(is_picture_in_picture);
+
+  if (!is_picture_in_picture) {
+    uma_helper_.reset();
+  }
 }
 
 #endif  // !BUILDFLAG(IS_ANDROID)

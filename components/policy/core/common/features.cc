@@ -14,4 +14,12 @@ BASE_FEATURE(kProfileSeparationDomainExceptionListRetroactive,
              "ProfileSeparationDomainExceptionListRetroactive",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+BASE_FEATURE(kEnhancedSecurityEventFields,
+             "EnhancedSecurityEventFields",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kUseCECFlagInPolicyData,
+             "UseCECFlagInPolicyData",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 }  // namespace policy::features

@@ -21,13 +21,15 @@ import android.content.Context;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.mockito.invocation.InvocationOnMock;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.mockito.stubbing.Answer;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
@@ -124,6 +126,7 @@ public class NativeBackgroundTaskTest {
         }
     }
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     private TestBrowserStartupController mBrowserStartupController;
     private TaskFinishedCallback mCallback;
     private TestNativeBackgroundTask mTask;
@@ -135,7 +138,7 @@ public class NativeBackgroundTaskTest {
     private static class TaskFinishedCallback implements BackgroundTask.TaskFinishedCallback {
         private boolean mWasCalled;
         private boolean mNeedsReschedule;
-        private CountDownLatch mCallbackLatch;
+        private final CountDownLatch mCallbackLatch;
 
         TaskFinishedCallback() {
             mCallbackLatch = new CountDownLatch(1);
@@ -168,10 +171,10 @@ public class NativeBackgroundTaskTest {
         @StartBeforeNativeResult private int mStartBeforeNativeResult;
         private boolean mWasOnStartTaskWithNativeCalled;
         private boolean mNeedsReschedulingAfterStop;
-        private CountDownLatch mStartWithNativeLatch;
+        private final CountDownLatch mStartWithNativeLatch;
         private boolean mWasOnStopTaskWithNativeCalled;
         private boolean mWasOnStopTaskBeforeNativeLoadedCalled;
-        private BrowserStartupController mBrowserStartupController;
+        private final BrowserStartupController mBrowserStartupController;
 
         public TestNativeBackgroundTask(BrowserStartupController controller) {
             super();
@@ -243,7 +246,6 @@ public class NativeBackgroundTaskTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         mBrowserStartupController = new TestBrowserStartupController();
         mCallback = new TaskFinishedCallback();
         mTask = new TestNativeBackgroundTask(mBrowserStartupController);
@@ -264,7 +266,7 @@ public class NativeBackgroundTaskTest {
         switch (setup) {
             case SUCCESS:
                 doAnswer(
-                                new Answer<Void>() {
+                                new Answer<>() {
                                     @Override
                                     public Void answer(InvocationOnMock invocation) {
                                         mBrowserParts.getValue().finishNativeInitialization();
@@ -276,7 +278,7 @@ public class NativeBackgroundTaskTest {
                 break;
             case FAILURE:
                 doAnswer(
-                                new Answer<Void>() {
+                                new Answer<>() {
                                     @Override
                                     public Void answer(InvocationOnMock invocation) {
                                         mBrowserParts.getValue().onStartupFailure(null);

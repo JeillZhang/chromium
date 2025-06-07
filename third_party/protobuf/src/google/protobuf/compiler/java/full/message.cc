@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
@@ -27,6 +28,7 @@
 #include "google/protobuf/compiler/java/doc_comment.h"
 #include "google/protobuf/compiler/java/field_common.h"
 #include "google/protobuf/compiler/java/generator_common.h"
+#include "google/protobuf/compiler/java/generator_factory.h"
 #include "google/protobuf/compiler/java/helpers.h"
 #include "google/protobuf/compiler/java/full/enum.h"
 #include "google/protobuf/compiler/java/full/extension.h"
@@ -47,9 +49,6 @@ namespace google {
 namespace protobuf {
 namespace compiler {
 namespace java {
-
-using internal::WireFormat;
-using internal::WireFormatLite;
 
 namespace {
 std::string MapValueImmutableClassdName(const Descriptor* descriptor,
@@ -72,7 +71,7 @@ MessageGenerator::MessageGenerator(const Descriptor* descriptor)
   }
 }
 
-MessageGenerator::~MessageGenerator() {}
+MessageGenerator::~MessageGenerator() = default;
 
 // ===================================================================
 ImmutableMessageGenerator::ImmutableMessageGenerator(
@@ -86,7 +85,7 @@ ImmutableMessageGenerator::ImmutableMessageGenerator(
          "generate lite messages.";
 }
 
-ImmutableMessageGenerator::~ImmutableMessageGenerator() {}
+ImmutableMessageGenerator::~ImmutableMessageGenerator() = default;
 
 void ImmutableMessageGenerator::GenerateStaticVariables(
     io::Printer* printer, int* bytecode_estimate) {
@@ -104,12 +103,12 @@ void ImmutableMessageGenerator::GenerateStaticVariables(
   if (descriptor_->containing_type() != nullptr) {
     vars["parent"] = UniqueFileScopeIdentifier(descriptor_->containing_type());
   }
-  if (MultipleJavaFiles(descriptor_->file(), /* immutable = */ true)) {
+  if (NestedInFileClass(*descriptor_, /* immutable = */ true)) {
+    vars["private"] = "private ";
+  } else {
     // We can only make these package-private since the classes that use them
     // are in separate files.
     vars["private"] = "";
-  } else {
-    vars["private"] = "private ";
   }
   if (*bytecode_estimate <= kMaxStaticSize) {
     vars["final"] = "final ";
@@ -180,12 +179,12 @@ void ImmutableMessageGenerator::GenerateFieldAccessorTable(
     io::Printer* printer, int* bytecode_estimate) {
   absl::flat_hash_map<absl::string_view, std::string> vars;
   vars["identifier"] = UniqueFileScopeIdentifier(descriptor_);
-  if (MultipleJavaFiles(descriptor_->file(), /* immutable = */ true)) {
+  if (NestedInFileClass(*descriptor_, /* immutable = */ true)) {
+    vars["private"] = "private ";
+  } else {
     // We can only make these package-private since the classes that use them
     // are in separate files.
     vars["private"] = "";
-  } else {
-    vars["private"] = "private ";
   }
   if (*bytecode_estimate <= kMaxStaticSize) {
     vars["final"] = "final ";
@@ -273,7 +272,7 @@ void ImmutableMessageGenerator::GenerateInterface(io::Printer* printer) {
     field_generators_.get(descriptor_->field(i))
         .GenerateInterfaceMembers(printer);
   }
-  for (auto& kv : oneofs_) {
+  for (const auto& kv : oneofs_) {
     printer->Print(
         "\n"
         "$classname$.$oneof_capitalized_name$Case "
@@ -295,7 +294,7 @@ void ImmutableMessageGenerator::Generate(io::Printer* printer) {
 
   absl::flat_hash_map<absl::string_view, std::string> variables;
   variables["static"] = is_own_file ? "" : "static ";
-  variables["classname"] = descriptor_->name();
+  variables["classname"] = std::string(descriptor_->name());
   variables["extra_interfaces"] = ExtraMessageInterfaces(descriptor_);
   variables["deprecation"] =
       descriptor_->options().deprecated() ? "@java.lang.Deprecated " : "";
@@ -394,7 +393,7 @@ void ImmutableMessageGenerator::Generate(io::Printer* printer) {
 
   // oneof
   absl::flat_hash_map<absl::string_view, std::string> vars;
-  for (auto& kv : oneofs_) {
+  for (const auto& kv : oneofs_) {
     const OneofDescriptor* oneof = kv.second;
     vars["oneof_name"] = context_->GetOneofGeneratorInfo(oneof)->name;
     vars["oneof_capitalized_name"] =
@@ -804,8 +803,7 @@ void ImmutableMessageGenerator::GenerateDescriptorMethods(
         "  switch (number) {\n");
     printer->Indent();
     printer->Indent();
-    for (int i = 0; i < map_fields.size(); ++i) {
-      const FieldDescriptor* field = map_fields[i];
+    for (const FieldDescriptor* field : map_fields) {
       const FieldGeneratorInfo* info = context_->GetFieldGeneratorInfo(field);
       printer->Print(
           "case $number$:\n"
@@ -879,53 +877,49 @@ void ImmutableMessageGenerator::GenerateIsInitialized(io::Printer* printer) {
     const FieldGeneratorInfo* info = context_->GetFieldGeneratorInfo(field);
     if (GetJavaType(field) == JAVATYPE_MESSAGE &&
         HasRequiredFields(field->message_type())) {
-      switch (field->label()) {
-        case FieldDescriptor::LABEL_REQUIRED:
+      if (field->is_required()) {
+        printer->Print(
+            "if (!get$name$().isInitialized()) {\n"
+            "  memoizedIsInitialized = 0;\n"
+            "  return false;\n"
+            "}\n",
+            "type",
+            name_resolver_->GetImmutableClassName(field->message_type()),
+            "name", info->capitalized_name);
+      } else if (field->is_repeated()) {
+        if (IsMapEntry(field->message_type())) {
           printer->Print(
-              "if (!get$name$().isInitialized()) {\n"
-              "  memoizedIsInitialized = 0;\n"
-              "  return false;\n"
-              "}\n",
-              "type",
-              name_resolver_->GetImmutableClassName(field->message_type()),
-              "name", info->capitalized_name);
-          break;
-        case FieldDescriptor::LABEL_OPTIONAL:
-          printer->Print(
-              "if (has$name$()) {\n"
-              "  if (!get$name$().isInitialized()) {\n"
+              "for ($type$ item : get$name$Map().values()) {\n"
+              "  if (!item.isInitialized()) {\n"
               "    memoizedIsInitialized = 0;\n"
               "    return false;\n"
               "  }\n"
               "}\n",
+              "type",
+              MapValueImmutableClassdName(field->message_type(),
+                                          name_resolver_),
               "name", info->capitalized_name);
-          break;
-        case FieldDescriptor::LABEL_REPEATED:
-          if (IsMapEntry(field->message_type())) {
-            printer->Print(
-                "for ($type$ item : get$name$Map().values()) {\n"
-                "  if (!item.isInitialized()) {\n"
-                "    memoizedIsInitialized = 0;\n"
-                "    return false;\n"
-                "  }\n"
-                "}\n",
-                "type",
-                MapValueImmutableClassdName(field->message_type(),
-                                            name_resolver_),
-                "name", info->capitalized_name);
-          } else {
-            printer->Print(
-                "for (int i = 0; i < get$name$Count(); i++) {\n"
-                "  if (!get$name$(i).isInitialized()) {\n"
-                "    memoizedIsInitialized = 0;\n"
-                "    return false;\n"
-                "  }\n"
-                "}\n",
-                "type",
-                name_resolver_->GetImmutableClassName(field->message_type()),
-                "name", info->capitalized_name);
-          }
-          break;
+        } else {
+          printer->Print(
+              "for (int i = 0; i < get$name$Count(); i++) {\n"
+              "  if (!get$name$(i).isInitialized()) {\n"
+              "    memoizedIsInitialized = 0;\n"
+              "    return false;\n"
+              "  }\n"
+              "}\n",
+              "type",
+              name_resolver_->GetImmutableClassName(field->message_type()),
+              "name", info->capitalized_name);
+        }
+      } else {
+        printer->Print(
+            "if (has$name$()) {\n"
+            "  if (!get$name$().isInitialized()) {\n"
+            "    memoizedIsInitialized = 0;\n"
+            "    return false;\n"
+            "  }\n"
+            "}\n",
+            "name", info->capitalized_name);
       }
     }
   }
@@ -994,7 +988,7 @@ void ImmutableMessageGenerator::GenerateEqualsAndHashCode(
   }
 
   // Compare oneofs.
-  for (auto& kv : oneofs_) {
+  for (const auto& kv : oneofs_) {
     const OneofDescriptor* oneof = kv.second;
     printer->Print(
         "if (!get$oneof_capitalized_name$Case().equals("
@@ -1074,7 +1068,7 @@ void ImmutableMessageGenerator::GenerateEqualsAndHashCode(
   }
 
   // hashCode oneofs.
-  for (auto& kv : oneofs_) {
+  for (const auto& kv : oneofs_) {
     const OneofDescriptor* oneof = kv.second;
     printer->Print("switch ($oneof_name$Case_) {\n", "oneof_name",
                    context_->GetOneofGeneratorInfo(oneof)->name);

@@ -9,7 +9,7 @@
 #include <utility>
 
 #include "base/test/task_environment.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
@@ -162,7 +162,7 @@ SyncStatusLabels SetUpDistinctCase(
     }
 #if BUILDFLAG(IS_CHROMEOS)
     case STATUS_CASE_SYNC_RESET_FROM_DASHBOARD: {
-      service->GetUserSettings()->SetSyncFeatureDisabledViaDashboard(true);
+      service->GetUserSettings()->SetSyncFeatureDisabledViaDashboard();
       return {SyncStatusMessageType::kSyncError,
               IDS_SIGNED_IN_WITH_SYNC_STOPPED_VIA_DASHBOARD,
               IDS_SYNC_EMPTY_STRING, IDS_SYNC_EMPTY_STRING,

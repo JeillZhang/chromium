@@ -19,17 +19,18 @@
 #include "components/guest_view/browser/guest_view_base.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/guest_view/web_view/web_view_constants.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
+#include "extensions/browser/guest_view/web_view/web_view_permission_types.h"
 #include "ppapi/buildflags/buildflags.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 #include "third_party/blink/public/common/permissions/permission_utils.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy_features.h"
 #include "url/origin.h"
 
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -54,7 +55,7 @@ bool IsFeatureEnabledByEmbedderPermissionsPolicy(
   content::RenderFrameHost* embedder_rfh = web_view_guest->embedder_rfh();
   CHECK(embedder_rfh);
 
-  const blink::PermissionsPolicy* permissions_policy =
+  const network::PermissionsPolicy* permissions_policy =
       embedder_rfh->GetPermissionsPolicy();
   CHECK(permissions_policy);
   if (!permissions_policy->IsFeatureEnabledForOrigin(feature,
@@ -325,9 +326,6 @@ void ChromeWebViewPermissionHelperDelegate::RequestGeolocationPermission(
   request_info.Set(guest_view::kUrl, requesting_frame.spec());
   request_info.Set(guest_view::kUserGesture, user_gesture);
 
-  // It is safe to hold an unretained pointer to
-  // ChromeWebViewPermissionHelperDelegate because this callback is called from
-  // ChromeWebViewPermissionHelperDelegate::SetPermission.
   WebViewPermissionHelper::PermissionResponseCallback permission_callback =
       base::BindOnce(&ChromeWebViewPermissionHelperDelegate::
                          OnGeolocationPermissionResponse,
@@ -343,21 +341,15 @@ void ChromeWebViewPermissionHelperDelegate::OnGeolocationPermissionResponse(
     base::OnceCallback<void(blink::mojom::PermissionStatus)> callback,
     bool allow,
     const std::string& user_input) {
-  if (!allow || !web_view_guest()->attached()) {
+  if (!allow) {
     std::move(callback).Run(blink::mojom::PermissionStatus::DENIED);
     return;
   }
 
   // The <webview> embedder has responded to the permission request. We now need
   // to make sure that the embedder has geolocation permission.
-  web_view_guest()
-      ->browser_context()
-      ->GetPermissionController()
-      ->RequestPermissionFromCurrentDocument(
-          web_view_guest()->embedder_rfh(),
-          content::PermissionRequestDescription(
-              blink::PermissionType::GEOLOCATION, user_gesture),
-          std::move(callback));
+  RequestEmbedderFramePermission(user_gesture, std::move(callback),
+                                 blink::PermissionType::GEOLOCATION);
 }
 
 void ChromeWebViewPermissionHelperDelegate::RequestHidPermission(
@@ -436,6 +428,127 @@ void ChromeWebViewPermissionHelperDelegate::RequestFullscreenPermission(
       std::move(callback), /*allowed_by_default=*/false);
 }
 
+void ChromeWebViewPermissionHelperDelegate::RequestClipboardReadWritePermission(
+    const GURL& requesting_frame_url,
+    bool user_gesture,
+    base::OnceCallback<void(bool)> callback) {
+  // Supported only if all cases true:
+  // 1. Owned by controlled Frame.
+  // 2. Permissions policy is present for embedder and requesting origin.
+  if (!web_view_guest()->IsOwnedByControlledFrameEmbedder() ||
+      (web_view_guest()->attached() &&
+       !IsFeatureEnabledByEmbedderPermissionsPolicy(
+           web_view_guest(),
+           network::mojom::PermissionsPolicyFeature::kClipboardRead,
+           url::Origin::Create(requesting_frame_url)))) {
+    std::move(callback).Run(false);
+    return;
+  }
+
+  auto request_info = base::Value::Dict()
+                          .Set(guest_view::kUrl, requesting_frame_url.spec())
+                          .Set(guest_view::kUserGesture, user_gesture);
+
+  WebViewPermissionHelper::PermissionResponseCallback permission_callback =
+      base::BindOnce(&ChromeWebViewPermissionHelperDelegate::
+                         OnClipboardReadWritePermissionResponse,
+                     weak_factory_.GetWeakPtr(),
+                     base::BindOnce(&CallbackWrapper, std::move(callback)),
+                     user_gesture);
+  web_view_permission_helper()->RequestPermission(
+      WEB_VIEW_PERMISSION_TYPE_CLIPBOARD_READ_WRITE, std::move(request_info),
+      std::move(permission_callback), false /* allowed_by_default */);
+}
+
+void ChromeWebViewPermissionHelperDelegate::
+    OnClipboardReadWritePermissionResponse(
+        base::OnceCallback<void(blink::mojom::PermissionStatus)> callback,
+        bool user_gesture,
+        bool allow,
+        const std::string& user_input) {
+  if (!allow) {
+    std::move(callback).Run(blink::mojom::PermissionStatus::DENIED);
+    return;
+  }
+
+  // The <webview> embedder has responded to the permission request. We now need
+  // to make sure that the embedder has the permission.
+  RequestEmbedderFramePermission(user_gesture, std::move(callback),
+                                 blink::PermissionType::CLIPBOARD_READ_WRITE);
+}
+
+void ChromeWebViewPermissionHelperDelegate::
+    RequestClipboardSanitizedWritePermission(
+        const GURL& requesting_frame_url,
+        base::OnceCallback<void(bool)> callback) {
+  // Supported only if all cases true:
+  // 1. Owned by controlled Frame.
+  // 2. Permissions policy is present for embedder and requesting origin.
+  if (!web_view_guest()->IsOwnedByControlledFrameEmbedder() ||
+      (web_view_guest()->attached() &&
+       !IsFeatureEnabledByEmbedderPermissionsPolicy(
+           web_view_guest(),
+           network::mojom::PermissionsPolicyFeature::kClipboardWrite,
+           url::Origin::Create(requesting_frame_url)))) {
+    std::move(callback).Run(false);
+    return;
+  }
+
+  // This permission request always has user_gesture=true.
+  // That's why we don't add respective entry to the dict.
+  auto request_info =
+      base::Value::Dict().Set(guest_view::kUrl, requesting_frame_url.spec());
+
+  WebViewPermissionHelper::PermissionResponseCallback permission_callback =
+      base::BindOnce(&ChromeWebViewPermissionHelperDelegate::
+                         OnClipboardSanitizedWritePermissionResponse,
+                     weak_factory_.GetWeakPtr(),
+                     base::BindOnce(&CallbackWrapper, std::move(callback)));
+
+  web_view_permission_helper()->RequestPermission(
+      WEB_VIEW_PERMISSION_TYPE_CLIPBOARD_SANITIZED_WRITE,
+      std::move(request_info), std::move(permission_callback),
+      false /* allowed_by_default */);
+}
+
+void ChromeWebViewPermissionHelperDelegate::
+    OnClipboardSanitizedWritePermissionResponse(
+        base::OnceCallback<void(blink::mojom::PermissionStatus)> callback,
+        bool allow,
+        const std::string& user_input) {
+  if (!allow) {
+    std::move(callback).Run(blink::mojom::PermissionStatus::DENIED);
+    return;
+  }
+
+  // The <webview> embedder has responded to the permission request. We now need
+  // to make sure that the embedder has the permission.
+  RequestEmbedderFramePermission(
+      /*user_gesture=*/true, std::move(callback),
+      blink::PermissionType::CLIPBOARD_SANITIZED_WRITE);
+}
+
+void ChromeWebViewPermissionHelperDelegate::RequestEmbedderFramePermission(
+    bool user_gesture,
+    base::OnceCallback<void(blink::mojom::PermissionStatus)> callback,
+    blink::PermissionType permission_type) {
+  if (!web_view_guest()->attached()) {
+    std::move(callback).Run(blink::mojom::PermissionStatus::DENIED);
+    return;
+  }
+
+  web_view_guest()
+      ->browser_context()
+      ->GetPermissionController()
+      ->RequestPermissionFromCurrentDocument(
+          web_view_guest()->embedder_rfh(),
+          content::PermissionRequestDescription(
+              content::PermissionDescriptorUtil::
+                  CreatePermissionDescriptorForPermissionType(permission_type),
+              user_gesture),
+          std::move(callback));
+}
+
 bool ChromeWebViewPermissionHelperDelegate::
     ForwardEmbeddedMediaPermissionChecksAsEmbedder(
         const url::Origin& embedder_origin) {
@@ -447,6 +560,29 @@ bool ChromeWebViewPermissionHelperDelegate::
   // old behavior.
   return embedder_origin.scheme() == content::kChromeUIScheme &&
          embedder_origin.host() == chrome::kChromeUIGlicHost;
+}
+
+std::optional<content::PermissionResult>
+ChromeWebViewPermissionHelperDelegate::OverridePermissionResult(
+    ContentSettingsType type) {
+  const url::Origin& origin =
+      web_view_guest()->owner_rfh()->GetLastCommittedOrigin();
+  // chrome://glic requires additional permissions, and webview's
+  // permissionrequest API does not handle clipboard access or screen wake lock.
+  if (origin.scheme() == content::kChromeUIScheme &&
+      origin.host() == chrome::kChromeUIGlicHost) {
+    switch (type) {
+      case ContentSettingsType::CLIPBOARD_READ_WRITE:
+      case ContentSettingsType::CLIPBOARD_SANITIZED_WRITE:
+      case ContentSettingsType::WAKE_LOCK_SCREEN:
+        return content::PermissionResult(
+            content::PermissionStatus::GRANTED,
+            content::PermissionStatusSource::UNSPECIFIED);
+      default:
+        break;
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace extensions

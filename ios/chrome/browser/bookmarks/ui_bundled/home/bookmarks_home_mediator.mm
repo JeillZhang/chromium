@@ -107,7 +107,7 @@ bool IsABookmarkNodeSectionForIdentifier(
                                      BookmarkModelBridgeObserver,
                                      BookmarkPromoControllerDelegate,
                                      PrefObserverDelegate,
-                                     SigninPresenter,
+                                     SigninPromoViewMediatorDelegate,
                                      SyncObserverModelBridge> {
   // Observer to keep track of the signin and syncing status.
   std::unique_ptr<sync_bookmarks::SyncedBookmarksObserverBridge>
@@ -176,7 +176,7 @@ bool IsABookmarkNodeSectionForIdentifier(
       [[BookmarkPromoController alloc] initWithBrowser:_browser.get()
                                            syncService:_syncService
                                               delegate:self
-                                       signinPresenter:self
+                       signinPromoViewMediatorDelegate:self
                               accountSettingsPresenter:self];
 
   _prefChangeRegistrar = std::make_unique<PrefChangeRegistrar>();
@@ -209,6 +209,13 @@ bool IsABookmarkNodeSectionForIdentifier(
 
 - (void)dealloc {
   DCHECK(!_bookmarkPromoController);
+}
+
+- (BOOL)canDismiss {
+  // While sign-in is in progress, the UI should be frozen.
+  // The promo manager is in charge of displaying the activity overlay, but
+  // we’re still in charge of stopping dismiss from occurring.
+  return !_bookmarkPromoController.signinInProgress;
 }
 
 #pragma mark - Initial Model Setup
@@ -341,7 +348,7 @@ bool IsABookmarkNodeSectionForIdentifier(
   // show the spinner backgound. Otherwise, check if we need to show the empty
   // background.
   if (self.consumer.isDisplayingBookmarkRoot) {
-    if (_bookmarkModel->HasNoUserCreatedBookmarksOrFolders() &&
+    if (!_bookmarkModel->HasUserCreatedBookmarksOrFolders() &&
         _syncedBookmarksObserver->IsPerformingInitialSync()) {
       [self.consumer
           updateTableViewBackgroundStyle:BookmarksHomeBackgroundStyleLoading];
@@ -480,6 +487,12 @@ bool IsABookmarkNodeSectionForIdentifier(
          bookmark_utils_ios::IsAccountBookmarkStorageOptedIn(
              self.syncService) &&
          _bookmarkModel->IsLocalOnlyNode(*bookmarkNode);
+}
+
+- (void)signinDidCompleteWithResult:(SigninCoordinatorResult)result {
+  [self.bookmarkPromoController.signinPromoViewMediator
+      signinDidCompleteWithResult:result];
+  [self.bookmarkPromoController updateShouldShowSigninPromo];
 }
 
 #pragma mark - BookmarkModelBridgeObserver
@@ -635,10 +648,12 @@ bool IsABookmarkNodeSectionForIdentifier(
   return _syncedBookmarksObserver->IsPerformingInitialSync();
 }
 
-#pragma mark - SigninPresenter
+#pragma mark - SigninPromoViewMediatorDelegate
 
-- (void)showSignin:(ShowSigninCommand*)command {
+- (void)showSignin:(SigninPromoViewMediator*)mediator
+           command:(ShowSigninCommand*)command {
   // Proxy this call along to the consumer.
+  CHECK_EQ(mediator, self.bookmarkPromoController.signinPromoViewMediator);
   [self.consumer showSignin:command];
 }
 
@@ -737,12 +752,6 @@ bool IsABookmarkNodeSectionForIdentifier(
           syncer::UserSelectableType::kBookmarks) ||
       self.syncService->GetTransportState() ==
           syncer::SyncService::TransportState::PAUSED) {
-    return NO;
-  }
-  // Do not show for syncing users.
-  // TODO(crbug.com/40066949): Remove this after UNO phase 3. See
-  // ConsentLevel::kSync documentation for more details.
-  if (self.syncService->HasSyncConsent()) {
     return NO;
   }
   // Do not show if last syncing account is different from the current one.

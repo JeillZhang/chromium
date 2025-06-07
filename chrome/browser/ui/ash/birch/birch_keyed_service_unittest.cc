@@ -20,7 +20,6 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "base/version_info/version_info.h"
 #include "chrome/browser/ash/file_suggest/file_suggest_keyed_service.h"
@@ -30,6 +29,7 @@
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/release_notes/release_notes_storage.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
+#include "chrome/browser/global_features.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/send_tab_to_self_sync_service_factory.h"
@@ -396,9 +396,8 @@ class BirchKeyedServiceTest : public BrowserWithTestWindowTest {
             base::test::TaskEnvironment::TimeSource::MOCK_TIME),
         fake_user_manager_(std::make_unique<FakeChromeUserManager>()) {
     feature_list_.InitWithFeatures(
-        {features::kForestFeature,
-         ash::features::kReleaseNotesNotificationAllChannels,
-         ash::features::kBirchVideoConferenceSuggestions},
+        {features::kReleaseNotesNotificationAllChannels,
+         features::kBirchVideoConferenceSuggestions},
         {});
   }
 
@@ -575,10 +574,6 @@ class BirchKeyedServiceTest : public BrowserWithTestWindowTest {
     return version_info::GetVersion().components()[0];
   }
 
-  TestSessionControllerClient* GetSessionControllerClient() {
-    return ash_test_helper()->test_session_controller_client();
-  }
-
   BirchLostMediaProvider* GetLostMediaProvider() {
     return static_cast<BirchLostMediaProvider*>(
         birch_keyed_service()->GetLostMediaProvider());
@@ -621,6 +616,9 @@ class BirchKeyedServiceTest : public BrowserWithTestWindowTest {
             FileSuggestKeyedServiceFactory::GetInstance(),
             base::BindRepeating(
                 &MockFileSuggestKeyedService::BuildMockFileSuggestKeyedService,
+                TestingBrowserProcess::GetGlobal()
+                    ->GetFeatures()
+                    ->application_locale_storage(),
                 temp_dir_.GetPath())},
         TestingProfile::TestingFactory{
             SessionSyncServiceFactory::GetInstance(),
@@ -667,22 +665,6 @@ class BirchKeyedServiceTest : public BrowserWithTestWindowTest {
   std::unique_ptr<ReleaseNotesStorage> release_notes_storage_;
 
   base::test::ScopedFeatureList feature_list_;
-};
-
-// A test harness that enables focus mode.
-class BirchKeyedServiceFocusModeTest : public BirchKeyedServiceTest {
- public:
-  BirchKeyedServiceFocusModeTest() {
-    scoped_feature_list_.InitAndEnableFeature(features::kFocusMode);
-  }
-  BirchKeyedServiceFocusModeTest(const BirchKeyedServiceFocusModeTest&) =
-      delete;
-  BirchKeyedServiceFocusModeTest& operator=(
-      const BirchKeyedServiceFocusModeTest&) = delete;
-  ~BirchKeyedServiceFocusModeTest() override = default;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(BirchKeyedServiceTest, HasDataProviders) {
@@ -1062,7 +1044,7 @@ TEST_F(BirchKeyedServiceTest, LostMediaProvider_PausedDoesNotShow) {
   EXPECT_EQ(lost_media_items.size(), 1u);
 }
 
-TEST_F(BirchKeyedServiceFocusModeTest, LostMediaProvider_FocusModeDoesNotShow) {
+TEST_F(BirchKeyedServiceTest, LostMediaProvider_FocusModeDoesNotShow) {
   BirchModel* model = Shell::Get()->birch_model();
   BirchDataProvider* lost_media_provider =
       birch_keyed_service()->GetLostMediaProvider();

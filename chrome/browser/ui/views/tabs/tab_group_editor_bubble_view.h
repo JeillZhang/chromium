@@ -17,7 +17,6 @@
 #include "ui/base/mojom/menu_source_type.mojom-forward.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/button/label_button.h"
-#include "ui/views/controls/button/toggle_button.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
 
@@ -29,7 +28,6 @@ class TabGroupId;
 }  // namespace tab_groups
 
 namespace views {
-class ToggleButton;
 class Separator;
 }  // namespace views
 
@@ -57,14 +55,14 @@ class TabGroupEditorBubbleView : public views::BubbleDialogDelegateView,
   using Colors =
       std::vector<std::pair<tab_groups::TabGroupColorId, std::u16string>>;
 
-  // Shows the editor for |group|. Returns a *non-owning* pointer to the
+  // Shows the editor for `group`. Returns a *non-owning* pointer to the
   // bubble's widget.
   static views::Widget* Show(
-      const Browser* browser,
+      Browser* browser,
       const tab_groups::TabGroupId& group,
       TabGroupHeader* header_view,
       std::optional<gfx::Rect> anchor_rect = std::nullopt,
-      // If not provided, will be set to |header_view|.
+      // If not provided, will be set to `header_view`.
       views::View* anchor_view = nullptr,
       bool stop_context_menu_propagation = false);
 
@@ -76,7 +74,7 @@ class TabGroupEditorBubbleView : public views::BubbleDialogDelegateView,
   void AddedToWidget() override;
 
  private:
-  TabGroupEditorBubbleView(const Browser* browser,
+  TabGroupEditorBubbleView(Browser* browser,
                            const tab_groups::TabGroupId& group,
                            views::View* anchor_view,
                            std::optional<gfx::Rect> anchor_rect,
@@ -87,11 +85,16 @@ class TabGroupEditorBubbleView : public views::BubbleDialogDelegateView,
   void OnTabGroupChanged(const TabGroupChange& change) override;
 
   void UpdateGroup();
-  const std::u16string GetTextForCloseButton() const;
-  const std::u16string GetSaveToggleAccessibleName() const;
+  std::u16string GetTextForCloseButton() const;
 
+  // Returns whether the user has the appropriate profile and the
+  // enabled features to save/share groups.
   bool CanSaveGroups() const;
   bool CanShareGroups() const;
+
+  // Returns whether the user has permissions to create shared groups.
+  bool IsAllowedToCreateSharedGroup() const;
+
   bool IsGroupSaved() const;
   bool IsGroupShared() const;
   bool ShouldShowSavedFooter() const;
@@ -109,7 +112,7 @@ class TabGroupEditorBubbleView : public views::BubbleDialogDelegateView,
   std::unique_ptr<ColorPickerView> BuildColorPicker();
   std::unique_ptr<views::LabelButton> BuildNewTabInGroupButton();
   std::unique_ptr<views::LabelButton> BuildUngroupButton();
-  std::unique_ptr<views::LabelButton> BuildHideGroupButton();
+  std::unique_ptr<views::LabelButton> BuildCloseGroupButton();
   std::unique_ptr<views::LabelButton> BuildDeleteGroupButton();
   std::unique_ptr<views::LabelButton> BuildLeaveGroupButton();
   std::unique_ptr<views::LabelButton> BuildMoveGroupToNewWindowButton();
@@ -117,11 +120,10 @@ class TabGroupEditorBubbleView : public views::BubbleDialogDelegateView,
   std::unique_ptr<views::LabelButton> BuildShareGroupButton();
   std::unique_ptr<views::LabelButton> BuildRecentActivityButton();
 
-  void OnSaveTogglePressed();
   void NewTabInGroupPressed();
   void UngroupPressed();
   void ShareOrManagePressed();
-  void HideGroupPressed();
+  void CloseGroupPressed();
   void DeleteGroupPressed();
   void LeaveGroupPressed();
   void MoveGroupToNewWindowPressed();
@@ -143,10 +145,6 @@ class TabGroupEditorBubbleView : public views::BubbleDialogDelegateView,
   void DeleteGroupFromTabstrip();
 
   void OnBubbleClose();
-
-  // Returns the view responsible for being able to save a tab group. It
-  // most notably contains a toggle button to save and unsave the group.
-  views::View* CreateSavedTabGroupToggle(views::LabelButton* layout_helper);
 
   // Creates the set of tab group colors to display and returns the color that
   // is initially selected.
@@ -206,24 +204,23 @@ class TabGroupEditorBubbleView : public views::BubbleDialogDelegateView,
   TitleFieldController title_field_controller_;
   Colors colors_;
 
-  const raw_ptr<const Browser> browser_;
+  const raw_ptr<Browser> browser_;
   const tab_groups::TabGroupId group_;
 
-  // ptr access to specific children. must be cleared and reset by
-  // RebuildMenuContents
+  // Ptr access to specific children. Must be cleared and reset by
+  // RebuildMenuContents.
   raw_ptr<TitleField> title_field_ = nullptr;
   raw_ptr<ColorPickerView> color_selector_ = nullptr;
   raw_ptr<Footer> footer_ = nullptr;
   raw_ptr<ManageSharingRow> manage_shared_group_button_ = nullptr;
-  raw_ptr<views::ToggleButton> save_group_toggle_ = nullptr;
   raw_ptr<views::ImageView> save_group_icon_ = nullptr;
   raw_ptr<views::Label> save_group_label_ = nullptr;
 
-  // the different menu items, used for referring back to specific children for
+  // The different menu items, used for referring back to specific children for
   // styling.
   std::vector<raw_ptr<views::LabelButton>> simple_menu_items_;
 
-  // If true will use the |anchor_rect_| provided in the constructor, otherwise
+  // If true will use the `anchor_rect_` provided in the constructor, otherwise
   // fall back to using the anchor view bounds.
   const bool use_set_anchor_rect_;
 

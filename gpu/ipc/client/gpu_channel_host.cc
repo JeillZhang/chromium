@@ -13,6 +13,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "gpu/ipc/client/client_shared_image_interface.h"
@@ -138,14 +139,6 @@ void GpuChannelHost::CopyToGpuMemoryBufferAsync(
       std::move(callback));
 }
 
-void GpuChannelHost::CopyNativeGmbToSharedMemorySync(
-    gfx::GpuMemoryBufferHandle buffer_handle,
-    base::UnsafeSharedMemoryRegion memory_region,
-    bool* status) {
-  GetGpuChannel().CopyNativeGmbToSharedMemorySync(
-      std::move(buffer_handle), std::move(memory_region), status);
-}
-
 void GpuChannelHost::CopyNativeGmbToSharedMemoryAsync(
     gfx::GpuMemoryBufferHandle buffer_handle,
     base::UnsafeSharedMemoryRegion memory_region,
@@ -159,11 +152,27 @@ void GpuChannelHost::CopyNativeGmbToSharedMemoryAsync(
   GetGpuChannel().CopyNativeGmbToSharedMemoryAsync(
       std::move(buffer_handle), std::move(memory_region), std::move(callback));
 }
+#endif  // BUILDFLAG(IS_WIN)
 
-bool GpuChannelHost::IsConnected() {
-  return static_cast<bool>(gpu_channel_);
+void GpuChannelHost::DelayedEnsureFlush(uint32_t deferred_message_id) {
+  AutoLock lock(deferred_message_lock_);
+  if (delayed_flush_deferred_message_id_) {
+    delayed_flush_deferred_message_id_ = deferred_message_id;
+  } else {
+    delayed_flush_deferred_message_id_ = deferred_message_id;
+    base::ThreadPool::PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](GpuChannelHost* host) {
+              AutoLock lock(host->deferred_message_lock_);
+              host->InternalFlush(
+                  host->delayed_flush_deferred_message_id_.value());
+              host->delayed_flush_deferred_message_id_ = std::nullopt;
+            },
+            base::RetainedRef(this)),
+        kDelayForEnsuringFlush);
+  }
 }
-#endif
 
 void GpuChannelHost::EnsureFlush(uint32_t deferred_message_id) {
   AutoLock lock(deferred_message_lock_);
@@ -360,7 +369,7 @@ GpuChannelHost::~GpuChannelHost() = default;
 GpuChannelHost::ConnectionTracker::ConnectionTracker() = default;
 
 GpuChannelHost::ConnectionTracker::~ConnectionTracker() {
-  CHECK(observer_list_.empty(), base::NotFatalUntil::M126);
+  CHECK(observer_list_.empty());
 }
 
 void GpuChannelHost::ConnectionTracker::OnDisconnectedFromGpuProcess() {
@@ -371,7 +380,7 @@ void GpuChannelHost::ConnectionTracker::OnDisconnectedFromGpuProcess() {
 void GpuChannelHost::ConnectionTracker::AddObserver(
     GpuChannelLostObserver* obs) {
   AutoLock lock(channel_obs_lock_);
-  CHECK(!base::Contains(observer_list_, obs), base::NotFatalUntil::M126);
+  CHECK(!base::Contains(observer_list_, obs));
   observer_list_.push_back(obs);
 }
 

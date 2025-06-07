@@ -31,6 +31,7 @@
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -65,7 +66,7 @@
 #include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/ash/login/login_manager_test.h"
 #include "chrome/browser/ash/login/test/login_manager_mixin.h"
-#include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
+#include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -101,6 +102,8 @@
 #include "components/browser_sync/browser_sync_switches.h"
 #include "components/prefs/pref_service.h"
 #include "components/services/app_service/public/cpp/package_id.h"
+#include "components/session_manager/core/session_manager.h"
+#include "components/user_manager/test_helper.h"
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_names.h"
 #include "components/user_manager/user_type.h"
@@ -1273,19 +1276,29 @@ class AppListClientNewUserTest : public InProcessBrowserTest,
 
  private:
   // InProcessBrowserTest:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    InProcessBrowserTest::SetUpCommandLine(command_line);
+    // Disable automatic login.
+    command_line->AppendSwitch(ash::switches::kLoginManager);
+  }
+
   void SetUpOnMainThread() override {
     SetUpEnvironment();
-    // Inject the testing profile into the client, since once a user session was
-    // created, with one browser, the client stops observing the profile
-    // manager.
-    AppListClientImpl::GetInstance()->OnProfileAdded(profile_);
     InProcessBrowserTest::SetUpOnMainThread();
   }
 
   // Sets up profile and user manager. Should be called only once on test setup.
   void SetUpEnvironment() {
+    ash::ProfileHelper::SetProfileToUserForTestingEnabled(true);
     account_id_ =
         AccountId::FromUserEmailGaiaId("test@test-user", GaiaId("gaia-id"));
+    auto* user = user_manager::TestHelper(user_manager::UserManager::Get())
+                     .AddRegularUser(account_id_);
+    ASSERT_TRUE(user);
+    session_manager::SessionManager::Get()->CreateSession(
+        account_id_, user_manager::TestHelper::GetFakeUsernameHash(account_id_),
+        /*new_user=*/false,
+        /*has_active_session=*/false);
 
     TestingProfile::Builder profile_builder;
     profile_builder.AddTestingFactory(
@@ -1306,23 +1319,20 @@ class AppListClientNewUserTest : public InProcessBrowserTest,
     g_browser_process->profile_manager()->RegisterTestingProfile(
         std::move(testing_profile), true);
 
-    auto user_manager = std::make_unique<ash::FakeChromeUserManager>();
-    user_manager->AddUserWithAffiliationAndTypeAndProfile(
-        account_id_, true, user_manager::UserType::kRegular, profile_);
-    user_manager->LoginUser(account_id_);
-
-    user_manager_enabler_ = std::make_unique<user_manager::ScopedUserManager>(
-        std::move(user_manager));
+    user_manager::UserManager::Get()->OnUserProfileCreated(
+        account_id_, profile_->GetPrefs());
+    ash::ProfileHelper::Get()->SetUserToProfileMappingForTesting(user,
+                                                                 profile_);
   }
 
   void TearDownOnMainThread() override {
+    user_manager::UserManager::Get()->OnUserProfileWillBeDestroyed(account_id_);
     profile_ = nullptr;
     base::RunLoop().RunUntilIdle();
-    user_manager_enabler_.reset();
     InProcessBrowserTest::TearDownOnMainThread();
+    ash::ProfileHelper::SetProfileToUserForTestingEnabled(false);
   }
 
-  std::unique_ptr<user_manager::ScopedUserManager> user_manager_enabler_;
   // The event to signal when the first app list sync in the session has been
   // completed.
   base::OneShotEvent on_first_sync_;
@@ -1730,6 +1740,7 @@ IN_PROC_BROWSER_TEST_F(AppListClientImplAssistantNewEntryPointTest, Eligible) {
           ash::assistant::AssistantBrowserDelegate::Get());
   ASSERT_TRUE(delegate);
   delegate->OverrideEntryPointIdForTesting(app_id);
+  delegate->SetGoogleChromeBuildForTesting();
 
   AppListClientImpl* client = AppListClientImpl::GetInstance();
   ASSERT_TRUE(client);
@@ -1756,6 +1767,7 @@ IN_PROC_BROWSER_TEST_F(AppListClientImplAssistantNewEntryPointTest, Name) {
           ash::assistant::AssistantBrowserDelegate::Get());
   ASSERT_TRUE(delegate);
   delegate->OverrideEntryPointIdForTesting(app_id);
+  delegate->SetGoogleChromeBuildForTesting();
 
   base::test::TestFuture<bool> eligibility_future;
   client->GetAssistantNewEntryPointEligibility(

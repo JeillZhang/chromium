@@ -23,6 +23,11 @@ namespace experimental_flags {
 // Whether the First Run UI will always be displayed.
 bool AlwaysDisplayFirstRun();
 
+// Whether the First Run UI will never be displayed. Useful when running
+// automated testing on the "chrome" build target which otherwise cannot skip
+// the FRE using tests_hook::DisableDefaultFirstRun
+bool NeverDisplayFirstRun();
+
 // Whether the Upgrade Promo UI will always be displayed.
 bool AlwaysDisplayUpgradePromo();
 
@@ -168,10 +173,6 @@ bool ShouldUseInactiveTabsDemoThreshold();
 // tabs are immediately considered inactive.
 bool ShouldUseInactiveTabsTestThreshold();
 
-// Returns the override for Tab Resumption decoration.
-// Returns nil is not set.
-NSString* GetTabResumptionDecorationOverride();
-
 // Whether the first party incognito experience should be simulated.
 bool ShouldOpenInIncognitoOverride();
 
@@ -184,6 +185,9 @@ bool AlwaysShowTheFirstPartyIncognitoUI();
 // Enables the AI menu, which is a tool for debugging LLM queries.
 bool EnableAIPrototypingMenu();
 
+// Gets GWS URL base used to generate Lens result panel URLs. Returns nil if
+// there is no alternative URL specified.
+NSString* GetLensResultPanelGwsURL();
 }  // namespace experimental_flags
 
 #endif  // IOS_CHROME_BROWSER_SHARED_PUBLIC_FEATURES_SYSTEM_FLAGS_H_

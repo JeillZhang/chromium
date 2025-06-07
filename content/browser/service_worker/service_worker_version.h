@@ -46,7 +46,6 @@
 #include "content/public/browser/service_worker_client_info.h"
 #include "ipc/ipc_message.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
-#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -180,6 +179,7 @@ class CONTENT_EXPORT ServiceWorkerVersion
 
   class Observer {
    public:
+    virtual void OnStartWorkerMessageSent(ServiceWorkerVersion* version) {}
     virtual void OnRunningStateChanged(ServiceWorkerVersion* version) {}
     virtual void OnVersionStateChanged(ServiceWorkerVersion* version) {}
     virtual void OnDevToolsRoutingIdChanged(ServiceWorkerVersion* version) {}
@@ -673,10 +673,8 @@ class CONTENT_EXPORT ServiceWorkerVersion
     return receiver_;
   }
 
-  void set_policy_container_host(
-      scoped_refptr<PolicyContainerHost> policy_container_host) {
-    policy_container_host_ = std::move(policy_container_host);
-  }
+  void SetPolicyContainerHost(
+      scoped_refptr<PolicyContainerHost> policy_container_host);
 
   // Initializes the global scope of the ServiceWorker on the renderer side.
   void InitializeGlobalScope();
@@ -892,6 +890,7 @@ class CONTENT_EXPORT ServiceWorkerVersion
   void OnScriptLoaded() override;
   void OnProcessAllocated() override;
   void OnStarting() override;
+  void OnStartWorkerMessageSent() override;
   void OnStarted(blink::mojom::ServiceWorkerStartStatus status,
                  FetchHandlerType new_fetch_handler_type,
                  bool new_has_hid_event_handlers,
@@ -1221,10 +1220,6 @@ class CONTENT_EXPORT ServiceWorkerVersion
   bool force_bypass_cache_for_scripts_ = false;
   bool is_update_scheduled_ = false;
   bool in_dtor_ = false;
-
-  // If true, warms up service worker after service worker is stopped.
-  // (https://crbug.com/1431792).
-  bool will_warm_up_on_stopped_ = false;
 
   // Populated via network::mojom::URLResponseHead of the main script.
   std::unique_ptr<MainScriptResponse> main_script_response_;

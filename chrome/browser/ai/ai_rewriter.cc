@@ -72,7 +72,7 @@ AIRewriter::AIRewriter(
     blink::mojom::AIRewriterCreateOptionsPtr options,
     mojo::PendingReceiver<blink::mojom::AIRewriter> receiver)
     : AIContextBoundObject(context_bound_object_set),
-      session_(std::move(session)),
+      session_wrapper_(std::move(session)),
       options_(std::move(options)),
       receiver_(this, std::move(receiver)) {
   receiver_.set_disconnect_handler(base::BindOnce(
@@ -81,7 +81,8 @@ AIRewriter::AIRewriter(
 
 AIRewriter::~AIRewriter() {
   for (auto& responder : responder_set_) {
-    responder->OnError(
+    AIUtils::SendStreamingStatus(
+        responder,
         blink::mojom::ModelStreamingResponseStatus::kErrorSessionDestroyed);
   }
 }
@@ -103,17 +104,55 @@ void AIRewriter::Rewrite(
     const std::optional<std::string>& context,
     mojo::PendingRemote<blink::mojom::ModelStreamingResponder>
         pending_responder) {
-  optimization_guide::proto::WritingAssistanceApiRequest request;
-  request.set_context(context.value_or(std::string()));
-  request.set_allocated_options(ToProtoOptions(options_).release());
-  request.set_rewrite_text(input);
-  // TODO(crbug.com/390006887): Pass shared context with session creation.
-  request.set_shared_context(options_->shared_context.value_or(std::string()));
-  session_->ExecuteModel(
-      request,
+  auto request = BuildRequest(input, context.value_or(std::string()));
+  mojo::RemoteSetElementId responder_id =
+      responder_set_.Add(std::move(pending_responder));
+
+  session_wrapper_.session()->GetExecutionInputSizeInTokens(
+      optimization_guide::MultimodalMessageReadView(request),
+      base::BindOnce(&AIRewriter::DidGetExecutionInputSizeForRewrite,
+                     weak_ptr_factory_.GetWeakPtr(), responder_id, request));
+}
+
+void AIRewriter::DidGetExecutionInputSizeForRewrite(
+    mojo::RemoteSetElementId responder_id,
+    const optimization_guide::proto::WritingAssistanceApiRequest& request,
+    std::optional<uint32_t> result) {
+  blink::mojom::ModelStreamingResponder* responder =
+      responder_set_.Get(responder_id);
+  if (!responder) {
+    // It might be possible for the responder mojo connection to be closed
+    // before this callback is invoked, in this case, we can't do anything.
+    return;
+  }
+
+  if (!session_wrapper_.session()) {
+    AIUtils::SendStreamingStatus(
+        responder,
+        blink::mojom::ModelStreamingResponseStatus::kErrorSessionDestroyed);
+    return;
+  }
+
+  if (!result.has_value()) {
+    AIUtils::SendStreamingStatus(
+        responder,
+        blink::mojom::ModelStreamingResponseStatus::kErrorGenericFailure);
+    return;
+  }
+
+  uint32_t quota = blink::mojom::kWritingAssistanceMaxInputTokenSize;
+  if (result.value() > quota) {
+    AIUtils::SendStreamingStatus(
+        responder,
+        blink::mojom::ModelStreamingResponseStatus::kErrorInputTooLarge,
+        blink::mojom::QuotaErrorInfo::New(result.value(), quota));
+    return;
+  }
+
+  session_wrapper_.ExecuteModelOrQueue(
+      optimization_guide::MultimodalMessage(request),
       base::BindRepeating(&AIRewriter::ModelExecutionCallback,
-                          weak_ptr_factory_.GetWeakPtr(),
-                          responder_set_.Add(std::move(pending_responder))));
+                          weak_ptr_factory_.GetWeakPtr(), responder_id));
 }
 
 void AIRewriter::ModelExecutionCallback(
@@ -125,7 +164,8 @@ void AIRewriter::ModelExecutionCallback(
     return;
   }
   if (!result.response.has_value()) {
-    responder->OnError(
+    AIUtils::SendStreamingStatus(
+        responder,
         AIUtils::ConvertModelExecutionError(result.response.error().error()));
     return;
   }
@@ -134,12 +174,55 @@ void AIRewriter::ModelExecutionCallback(
       optimization_guide::proto::WritingAssistanceApiResponse>(
       result.response->response);
   if (response) {
-    responder->OnStreaming(
-        response->output(),
-        blink::mojom::ModelStreamingResponderAction::kReplace);
+    responder->OnStreaming(response->output());
   }
   if (result.response->is_complete) {
     responder->OnCompletion(/*context_info=*/nullptr);
     responder_set_.Remove(responder_id);
   }
+}
+
+void AIRewriter::MeasureUsage(const std::string& input,
+                              const std::string& context,
+                              MeasureUsageCallback callback) {
+  auto* session = session_wrapper_.session();
+  if (!session) {
+    std::move(callback).Run(std::nullopt);
+    return;
+  }
+
+  auto request = BuildRequest(input, context);
+  session->GetExecutionInputSizeInTokens(
+      optimization_guide::MultimodalMessageReadView(request),
+      base::BindOnce(&AIRewriter::DidGetExecutionInputSizeInTokensForMeasure,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+}
+
+void AIRewriter::SetPriority(on_device_model::mojom::Priority priority) {
+  auto* session = session_wrapper_.session();
+  if (session) {
+    session->SetPriority(priority);
+  }
+}
+
+void AIRewriter::DidGetExecutionInputSizeInTokensForMeasure(
+    MeasureUsageCallback callback,
+    std::optional<uint32_t> result) {
+  if (!result.has_value()) {
+    std::move(callback).Run(std::nullopt);
+    return;
+  }
+  std::move(callback).Run(result.value());
+}
+
+optimization_guide::proto::WritingAssistanceApiRequest AIRewriter::BuildRequest(
+    const std::string& input,
+    const std::string& context) {
+  optimization_guide::proto::WritingAssistanceApiRequest request;
+  request.set_context(context);
+  request.set_allocated_options(ToProtoOptions(options_).release());
+  request.set_rewrite_text(input);
+  // TODO(crbug.com/390006887): Pass shared context with session creation.
+  request.set_shared_context(options_->shared_context.value_or(std::string()));
+  return request;
 }

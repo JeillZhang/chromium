@@ -49,6 +49,8 @@
 #include "components/search_engines/template_url_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/disable_reason.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
@@ -72,7 +74,7 @@
 #include "base/win/shortcut.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "base/containers/to_vector.h"
 #include "chromeos/ash/components/dbus/hermes/hermes_euicc_client.h"
 #include "chromeos/ash/components/dbus/hermes/hermes_manager_client.h"
@@ -81,7 +83,7 @@
 #include "chromeos/ash/components/dbus/shill/shill_service_client.h"
 #include "chromeos/ash/components/network/managed_network_configuration_handler_impl.h"
 #include "third_party/cros_system_api/dbus/shill/dbus-constants.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 using extensions::mojom::ManifestLocation;
 
@@ -216,7 +218,7 @@ std::unique_ptr<content::WebContents> PinnedTabsResetTest::CreateWebContents() {
       content::WebContents::CreateParams(profile()));
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // DnsConfigResetTest --------------------------------------------------------
 
 class DnsConfigResetTest : public BrowserWithTestWindowTest,
@@ -249,7 +251,7 @@ class DnsConfigResetTest : public BrowserWithTestWindowTest,
     BrowserWithTestWindowTest::TearDown();
   }
 };
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // ConfigParserTest -----------------------------------------------------------
 
@@ -458,7 +460,7 @@ void ReplaceString(std::string* str,
   str->replace(placeholder_pos, placeholder.size(), substitution);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // Returns the configured static name servers from `shill_properties`, or an
 // empty vector if no static name servers are configured.
 std::vector<std::string> GetStaticNameServersFromShillProperties(
@@ -477,7 +479,7 @@ std::vector<std::string> GetStaticNameServersFromShillProperties(
     return nameserver.GetString();
   });
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 /********************* Tests *********************/
 
@@ -625,28 +627,28 @@ TEST_F(ProfileResetterTest, ResetExtensionsByDisabling) {
   scoped_refptr<Extension> ext2 = CreateExtension(
       u"example2", base::FilePath(FILE_PATH_LITERAL("//nonexistent")),
       ManifestLocation::kUnpacked, extensions::Manifest::TYPE_EXTENSION, false);
-  service_->AddExtension(ext2.get());
+  registrar()->AddExtension(ext2.get());
   // Component extensions and policy-managed extensions shouldn't be disabled.
   scoped_refptr<Extension> ext3 = CreateExtension(
       u"example3", base::FilePath(FILE_PATH_LITERAL("//nonexistent2")),
       ManifestLocation::kComponent, extensions::Manifest::TYPE_EXTENSION,
       false);
-  service_->AddExtension(ext3.get());
+  registrar()->AddExtension(ext3.get());
   scoped_refptr<Extension> ext4 = CreateExtension(
       u"example4", base::FilePath(FILE_PATH_LITERAL("//nonexistent3")),
       ManifestLocation::kExternalPolicyDownload,
       extensions::Manifest::TYPE_EXTENSION, false);
-  service_->AddExtension(ext4.get());
+  registrar()->AddExtension(ext4.get());
   scoped_refptr<Extension> ext5 = CreateExtension(
       u"example5", base::FilePath(FILE_PATH_LITERAL("//nonexistent4")),
       ManifestLocation::kExternalComponent,
       extensions::Manifest::TYPE_EXTENSION, false);
-  service_->AddExtension(ext5.get());
+  registrar()->AddExtension(ext5.get());
   scoped_refptr<Extension> ext6 = CreateExtension(
       u"example6", base::FilePath(FILE_PATH_LITERAL("//nonexistent5")),
       ManifestLocation::kExternalPolicy, extensions::Manifest::TYPE_EXTENSION,
       false);
-  service_->AddExtension(ext6.get());
+  registrar()->AddExtension(ext6.get());
   EXPECT_EQ(6u, registry()->enabled_extensions().size());
 
   ResetAndWait(ProfileResetter::EXTENSIONS);
@@ -664,12 +666,12 @@ TEST_F(ProfileResetterTest, ResetExtensionsByDisablingNonOrganic) {
   scoped_refptr<Extension> ext2 = CreateExtension(
       u"example2", base::FilePath(FILE_PATH_LITERAL("//nonexistent")),
       ManifestLocation::kUnpacked, extensions::Manifest::TYPE_EXTENSION, false);
-  service_->AddExtension(ext2.get());
+  registrar()->AddExtension(ext2.get());
   // Components and external policy extensions shouldn't be deleted.
   scoped_refptr<Extension> ext3 = CreateExtension(
       u"example3", base::FilePath(FILE_PATH_LITERAL("//nonexistent2")),
       ManifestLocation::kUnpacked, extensions::Manifest::TYPE_EXTENSION, false);
-  service_->AddExtension(ext3.get());
+  registrar()->AddExtension(ext3.get());
   EXPECT_EQ(2u, registry()->enabled_extensions().size());
 
   std::string master_prefs(kDistributionConfig);
@@ -701,12 +703,12 @@ TEST_F(ProfileResetterTest, ResetExtensionsAndDefaultApps) {
   scoped_refptr<Extension> ext2 = CreateExtension(
       u"example2", base::FilePath(FILE_PATH_LITERAL("//nonexistent2")),
       ManifestLocation::kUnpacked, extensions::Manifest::TYPE_EXTENSION, false);
-  service_->AddExtension(ext2.get());
+  registrar()->AddExtension(ext2.get());
 
   scoped_refptr<Extension> ext3 = CreateExtension(
       u"example2", base::FilePath(FILE_PATH_LITERAL("//nonexistent3")),
       ManifestLocation::kUnpacked, extensions::Manifest::TYPE_HOSTED_APP, true);
-  service_->AddExtension(ext3.get());
+  registrar()->AddExtension(ext3.get());
   EXPECT_EQ(3u, registry()->enabled_extensions().size());
 
   ResetAndWait(ProfileResetter::EXTENSIONS);
@@ -728,10 +730,10 @@ TEST_F(ProfileResetterTest, ResetExtensionsByReenablingExternalComponents) {
       u"example", base::FilePath(FILE_PATH_LITERAL("//nonexistent")),
       ManifestLocation::kExternalComponent,
       extensions::Manifest::TYPE_EXTENSION, false);
-  service_->AddExtension(ext.get());
+  registrar()->AddExtension(ext.get());
 
-  service_->DisableExtension(ext->id(),
-                             extensions::disable_reason::DISABLE_USER_ACTION);
+  registrar()->DisableExtension(
+      ext->id(), {extensions::disable_reason::DISABLE_USER_ACTION});
   EXPECT_FALSE(registry()->enabled_extensions().Contains(ext->id()));
   EXPECT_TRUE(registry()->disabled_extensions().Contains(ext->id()));
 
@@ -919,7 +921,7 @@ TEST_F(ProfileResetterTest, CheckSnapshots) {
       u"example", base::FilePath(FILE_PATH_LITERAL("//nonexistent")),
       ManifestLocation::kUnpacked, extensions::Manifest::TYPE_EXTENSION, false);
   ASSERT_TRUE(ext.get());
-  service_->AddExtension(ext.get());
+  registrar()->AddExtension(ext.get());
 
   std::string master_prefs(kDistributionConfig);
   std::string ext_id = ext->id();
@@ -1003,7 +1005,7 @@ TEST_F(ProfileResetterTest, FeedbackSerializationAsProtoTest) {
       u"example", base::FilePath(FILE_PATH_LITERAL("//nonexistent")),
       ManifestLocation::kUnpacked, extensions::Manifest::TYPE_EXTENSION, false);
   ASSERT_TRUE(ext.get());
-  service_->AddExtension(ext.get());
+  registrar()->AddExtension(ext.get());
 
   ShortcutHandler shortcut;
   ShortcutCommand command_line = shortcut.CreateWithArguments(
@@ -1063,7 +1065,7 @@ TEST_F(ProfileResetterTest, GetReadableFeedback) {
       u"Tiësto", base::FilePath(FILE_PATH_LITERAL("//nonexistent")),
       ManifestLocation::kUnpacked, extensions::Manifest::TYPE_EXTENSION, false);
   ASSERT_TRUE(ext.get());
-  service_->AddExtension(ext.get());
+  registrar()->AddExtension(ext.get());
 
   PrefService* prefs = profile()->GetPrefs();
   DCHECK(prefs);
@@ -1147,7 +1149,7 @@ TEST_F(ProfileResetterTest, ResetNTPCustomizationsTest) {
       ntp_custom_background_service->GetCustomBackground().has_value());
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 TEST_F(DnsConfigResetTest, ResetDnsConfigurations) {
   ash::ShillServiceClient::TestInterface* shill_service_client =
       ash::ShillServiceClient::Get()->GetTestInterface();
@@ -1185,6 +1187,6 @@ TEST_F(DnsConfigResetTest, ResetDnsConfigurations) {
   EXPECT_THAT(GetStaticNameServersFromShillProperties(*shill_properties),
               testing::IsEmpty());
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace

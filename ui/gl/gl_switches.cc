@@ -4,19 +4,22 @@
 
 #include "ui/gl/gl_switches.h"
 
+#include "base/trace_event/trace_event.h"
 #include "build/android_buildflags.h"
 #include "build/build_config.h"
+#include "ui/gl/buildflags.h"
 #include "ui/gl/gl_display_manager.h"
-#include "ui/gl/startup_trace.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/build_info.h"
 #endif
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_VULKAN) && \
+    (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID))
 #include <vulkan/vulkan_core.h>
 #include "third_party/angle/src/gpu_info_util/SystemInfo.h"  // nogncheck
-#endif
+#endif  // BUILDFLAG(ENABLE_VULKAN) && (BUILDFLAG(IS_LINUX) ||
+        // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID))
 
 namespace gl {
 
@@ -30,6 +33,8 @@ const char kANGLEImplementationDefaultName[]  = "default";
 const char kANGLEImplementationD3D9Name[]     = "d3d9";
 const char kANGLEImplementationD3D11Name[]    = "d3d11";
 const char kANGLEImplementationD3D11on12Name[] = "d3d11on12";
+const char kANGLEImplementationD3D11WarpName[] = "d3d11-warp";
+const char kANGLEImplementationD3D11WarpForWebGLName[] = "d3d11-warp-webgl";
 const char kANGLEImplementationOpenGLName[]   = "gl";
 const char kANGLEImplementationOpenGLEGLName[] = "gl-egl";
 const char kANGLEImplementationOpenGLESName[] = "gles";
@@ -135,8 +140,10 @@ const char kDisableGLExtensions[] = "disable-gl-extensions";
 // Enables SwapBuffersWithBounds if it is supported.
 const char kEnableSwapBuffersWithBounds[] = "enable-swap-buffers-with-bounds";
 
-// Enables using DirectComposition video overlays, even if hardware overlays
-// aren't supported.
+// Disable DirectComposition.
+const char kDisableDirectComposition[] = "disable-direct-composition";
+
+// Enable DirectComposition video overlays even if hardware doesn't support it.
 const char kEnableDirectCompositionVideoOverlays[] =
     "enable-direct-composition-video-overlays";
 
@@ -166,6 +173,7 @@ const char* const kGLSwitchesCopiedFromGpuProcessHost[] = {
     kOverrideUseSoftwareGLForTests,
     kUseANGLE,
     kEnableSwapBuffersWithBounds,
+    kDisableDirectComposition,
     kEnableDirectCompositionVideoOverlays,
     kDirectCompositionVideoSwapChainFormat,
     kEnableUnsafeSwiftShader,
@@ -314,10 +322,11 @@ bool IsDefaultANGLEVulkan() {
     return false;
   }
 #endif  // BUILDFLAG(IS_ANDROID)
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(ENABLE_VULKAN) && \
+    (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID))
   angle::SystemInfo system_info;
   {
-    GPU_STARTUP_TRACE_EVENT("angle::GetSystemInfoVulkan");
+    TRACE_EVENT("gpu,startup", "angle::GetSystemInfoVulkan");
     if (!angle::GetSystemInfoVulkan(&system_info)) {
       return false;
     }
@@ -351,18 +360,34 @@ bool IsDefaultANGLEVulkan() {
   }
 
   // Exclude old ARM drivers due to crashes related to creating
-  // AHB-based Video images in Vulkan.  http://anglebug.com/382676807.
+  // AHB-based Video images in Vulkan.  http://crbug.com/382676807.
   if (active_gpu.driverId == VK_DRIVER_ID_ARM_PROPRIETARY &&
       active_gpu.detailedDriverVersion.major <= 32) {
     return false;
   }
 
+  // Exclude old ARM chipsets due to rendering bugs, G52 is still found in
+  // Xiaomi phones. Note that if included in the future, there still seems to be
+  // a driver bug with async garbage collection, so that feature needs to be
+  // disabled in ANGLE. http://crbug.com/405085132
+  if (active_gpu.driverId == VK_DRIVER_ID_ARM_PROPRIETARY &&
+      active_gpu.deviceName.find("G52") != std::string::npos) {
+    return false;
+  }
+
   // Exclude old Qualcomm drivers due to inefficient (and buggy) fallback
   // to CPU path in glCopyTextureCHROMIUM with multi-plane images.
-  // http://anglebug.com/383056998.
+  // http://crbug.com/383056998.
   if (active_gpu.driverId == VK_DRIVER_ID_QUALCOMM_PROPRIETARY &&
-      (active_gpu.detailedDriverVersion.major != 512 ||
-       active_gpu.detailedDriverVersion.minor <= 530)) {
+      active_gpu.detailedDriverVersion.minor <= 530) {
+    return false;
+  }
+
+  // Exclude Qualcomm 512.615 driver on Xiaomi phones that is the cause of
+  // yet-to-be explained GPU hangs.
+  // http://crbug.com/382725542
+  if (active_gpu.driverId == VK_DRIVER_ID_QUALCOMM_PROPRIETARY &&
+      active_gpu.detailedDriverVersion.minor == 615) {
     return false;
   }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -379,8 +404,9 @@ bool IsDefaultANGLEVulkan() {
     return false;
   }
 
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
-        // BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(ENABLE_VULKAN) && (BUILDFLAG(IS_LINUX) ||
+        // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID))
+
   return base::FeatureList::IsEnabled(kDefaultANGLEVulkan);
 #endif  // !defined(MEMORY_SANITIZER)
 }

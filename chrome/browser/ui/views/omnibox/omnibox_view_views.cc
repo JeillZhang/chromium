@@ -19,7 +19,9 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/escape.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -56,6 +58,7 @@
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_popup_selection.h"
 #include "components/omnibox/browser/omnibox_prefs.h"
+#include "components/omnibox/browser/omnibox_text_util.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/prefs/pref_service.h"
 #include "components/security_state/core/security_state.h"
@@ -112,6 +115,10 @@
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
 
+#if BUILDFLAG(IS_MAC)
+#include "ui/base/cocoa/appkit_utils.h"
+#endif
+
 #if BUILDFLAG(IS_WIN)
 #include "chrome/browser/browser_process.h"
 #endif
@@ -128,8 +135,8 @@ struct OmniboxState : public base::SupportsUserData::Data {
   static const char kKey[];
 
   OmniboxState(const OmniboxEditModel::State& model_state,
-               const std::vector<gfx::Range> selection,
-               const std::vector<gfx::Range> saved_selection_for_focus_change);
+               const gfx::Range& selection,
+               const gfx::Range& saved_selection_for_focus_change);
 
   ~OmniboxState() override;
 
@@ -139,17 +146,16 @@ struct OmniboxState : public base::SupportsUserData::Data {
   // omnibox is not focused).  This allows us to properly handle cases like
   // selecting text, tabbing out of the omnibox, switching tabs away and back,
   // and tabbing back into the omnibox.
-  const std::vector<gfx::Range> selection;
-  const std::vector<gfx::Range> saved_selection_for_focus_change;
+  const gfx::Range selection;
+  const gfx::Range saved_selection_for_focus_change;
 };
 
 // static
 const char OmniboxState::kKey[] = "OmniboxState";
 
-OmniboxState::OmniboxState(
-    const OmniboxEditModel::State& model_state,
-    const std::vector<gfx::Range> selection,
-    const std::vector<gfx::Range> saved_selection_for_focus_change)
+OmniboxState::OmniboxState(const OmniboxEditModel::State& model_state,
+                           const gfx::Range& selection,
+                           const gfx::Range& saved_selection_for_focus_change)
     : model_state(model_state),
       selection(selection),
       saved_selection_for_focus_change(saved_selection_for_focus_change) {}
@@ -159,6 +165,48 @@ OmniboxState::~OmniboxState() = default;
 bool IsClipboardDataMarkedAsConfidential() {
   return ui::Clipboard::GetForCurrentThread()
       ->IsMarkedByOriginatorAsConfidential();
+}
+
+// This function provides a logging implementation that aligns with the original
+// definition of the `DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES()` macro, which is
+// currently being used to log the `FocusToOpenTimeAnyPopupState3` Omnibox
+// metric.
+void LogHistogramMediumTimes(const std::string& histogram_name,
+                             base::TimeDelta elapsed) {
+  base::UmaHistogramCustomTimes(histogram_name, elapsed, base::Milliseconds(10),
+                                base::Minutes(3), 50);
+}
+
+void LogOmniboxFocusToCutOrCopyAllTextTime(
+    base::TimeDelta elapsed,
+    bool is_zero_prefix,
+    PageClassification page_classification) {
+  LogHistogramMediumTimes("Omnibox.FocusToCutOrCopyAllTextTime", elapsed);
+
+  const std::string page_context =
+      OmniboxEventProto::PageClassification_Name(page_classification);
+  LogHistogramMediumTimes(
+      base::StrCat(
+          {"Omnibox.FocusToCutOrCopyAllTextTime.ByPageContext.", page_context}),
+      elapsed);
+
+  if (is_zero_prefix) {
+    LogHistogramMediumTimes("Omnibox.FocusToCutOrCopyAllTextTime.ZeroSuggest",
+                            elapsed);
+    LogHistogramMediumTimes(
+        base::StrCat(
+            {"Omnibox.FocusToCutOrCopyAllTextTime.ZeroSuggest.ByPageContext.",
+             page_context}),
+        elapsed);
+  } else {
+    LogHistogramMediumTimes("Omnibox.FocusToCutOrCopyAllTextTime.TypedSuggest",
+                            elapsed);
+    LogHistogramMediumTimes(
+        base::StrCat(
+            {"Omnibox.FocusToCutOrCopyAllTextTime.TypedSuggest.ByPageContext.",
+             page_context}),
+        elapsed);
+  }
 }
 
 }  // namespace
@@ -171,6 +219,7 @@ OmniboxViewViews::OmniboxViewViews(std::unique_ptr<OmniboxClient> client,
                                    const gfx::FontList& font_list)
     : OmniboxView(std::move(client)),
       popup_window_mode_(popup_window_mode),
+      saved_selection_for_focus_change_(gfx::Range::InvalidRange()),
       location_bar_view_(location_bar_view),
       latency_histogram_state_(NOT_ACTIVE),
       friendly_suggestion_text_prefix_length_(0) {
@@ -283,10 +332,9 @@ void OmniboxViewViews::SaveStateToTab(content::WebContents* tab) {
   // NOTE: GetStateForTabSwitch() may affect GetSelectedRange(), so order is
   // important.
   const OmniboxEditModel::State state = model()->GetStateForTabSwitch();
-  tab->SetUserData(
-      OmniboxState::kKey,
-      std::make_unique<OmniboxState>(state, GetRenderText()->GetAllSelections(),
-                                     saved_selection_for_focus_change_));
+  tab->SetUserData(OmniboxState::kKey, std::make_unique<OmniboxState>(
+                                           state, GetSelectedRange(),
+                                           saved_selection_for_focus_change_));
   UpdateAccessibleTextSelection();
 }
 
@@ -305,9 +353,9 @@ void OmniboxViewViews::OnTabChanged(const content::WebContents* web_contents) {
       // See comment in OmniboxEditModel::GetStateForTabSwitch() for details on
       // this.
       SelectAll(true);
-      saved_selection_for_focus_change_.clear();
+      saved_selection_for_focus_change_ = gfx::Range();
     } else {
-      SetSelectedRanges(state->selection);
+      SetSelectedRange(state->selection);
       saved_selection_for_focus_change_ =
           state->saved_selection_for_focus_change;
     }
@@ -381,7 +429,7 @@ std::u16string OmniboxViewViews::GetText() const {
 
 void OmniboxViewViews::SetUserText(const std::u16string& text,
                                    bool update_popup) {
-  saved_selection_for_focus_change_.clear();
+  saved_selection_for_focus_change_ = gfx::Range::InvalidRange();
   OmniboxView::SetUserText(text, update_popup);
   UpdateAccessibleTextSelection();
 }
@@ -412,20 +460,12 @@ void OmniboxViewViews::GetSelectionBounds(
   *end = static_cast<size_t>(range.end());
 }
 
-size_t OmniboxViewViews::GetAllSelectionsLength() const {
-  size_t sum = 0;
-  for (auto s : GetRenderText()->GetAllSelections()) {
-    sum += s.length();
-  }
-  return sum;
-}
-
 void OmniboxViewViews::SelectAll(bool reversed) {
   views::Textfield::SelectAll(reversed);
 }
 
 void OmniboxViewViews::RevertAll() {
-  saved_selection_for_focus_change_.clear();
+  saved_selection_for_focus_change_ = gfx::Range::InvalidRange();
   OmniboxView::RevertAll();
   UpdateAccessibleTextSelection();
 }
@@ -684,11 +724,8 @@ void OmniboxViewViews::ApplyStyle(gfx::TextStyle style,
   Textfield::ApplyStyle(style, value, range);
 }
 
-void OmniboxViewViews::SetTextAndSelectedRanges(
-    const std::u16string& text,
-    const std::vector<gfx::Range>& ranges) {
-  DCHECK(!ranges.empty());
-
+void OmniboxViewViews::SetTextAndSelectedRange(const std::u16string& text,
+                                               const gfx::Range& selection) {
   // Will try to fit as much of the text preceding the cursor as possible. If
   // possible, guarantees at least |kPadLeading| chars of the text preceding the
   // the cursor are visible. If possible given the prior guarantee, also
@@ -699,28 +736,15 @@ void OmniboxViewViews::SetTextAndSelectedRanges(
 
   // We use SetTextWithoutCaretBoundsChangeNotification() in order to avoid
   // triggering accessibility events multiple times.
-  SetTextWithoutCaretBoundsChangeNotification(text, ranges[0].end());
-  Scroll({0, std::min(ranges[0].end() + kPadTrailing, text.size()),
-          ranges[0].end() - std::min(kPadLeading, ranges[0].end())});
+  SetTextWithoutCaretBoundsChangeNotification(text, selection.end());
+  Scroll({0, std::min(selection.end() + kPadTrailing, text.size()),
+          selection.end() - std::min(kPadLeading, selection.end())});
   // Setting the primary selected range will also fire an appropriate final
   // accessibility event after the changes above.
-  SetSelectedRanges(ranges);
+  SetSelectedRange(selection);
 
   // Clear the additional text.
   SetAdditionalText(std::u16string());
-}
-
-void OmniboxViewViews::SetSelectedRanges(
-    const std::vector<gfx::Range>& ranges) {
-  // Even when no text is selected, |ranges| should have at least 1 (empty)
-  // Range representing the cursor.
-  DCHECK(!ranges.empty());
-
-  SetSelectedRange(ranges[0]);
-  for (size_t i = 1; i < ranges.size(); i++) {
-    AddSecondarySelectedRange(ranges[i]);
-  }
-  UpdateAccessibleTextSelection();
 }
 
 std::u16string_view OmniboxViewViews::GetSelectedText() const {
@@ -732,9 +756,9 @@ void OmniboxViewViews::UpdateAccessibleTextSelection() {
   std::u16string::size_type entry_start;
   std::u16string::size_type entry_end;
 
-  if (!saved_selection_for_focus_change_.empty()) {
-    entry_start = saved_selection_for_focus_change_[0].start();
-    entry_end = saved_selection_for_focus_change_[0].end();
+  if (saved_selection_for_focus_change_.IsValid()) {
+    entry_start = saved_selection_for_focus_change_.start();
+    entry_end = saved_selection_for_focus_change_.end();
   } else {
     GetSelectionBounds(&entry_start, &entry_end);
   }
@@ -795,7 +819,7 @@ void OmniboxViewViews::SetWindowTextAndCaretPos(const std::u16string& text,
                                                 bool update_popup,
                                                 bool notify_text_changed) {
   const gfx::Range range(caret_pos);
-  SetTextAndSelectedRanges(text, {range});
+  SetTextAndSelectedRange(text, range);
 
   if (update_popup) {
     UpdatePopup();
@@ -839,7 +863,7 @@ void OmniboxViewViews::OnTemporaryTextMaybeChanged(
     bool save_original_selection,
     bool notify_text_changed) {
   if (save_original_selection) {
-    saved_temporary_selection_ = GetRenderText()->GetAllSelections();
+    saved_temporary_selection_ = GetSelectedRange();
   }
 
   // SetWindowTextAndCaretPos will fire the accessibility notification,
@@ -852,18 +876,17 @@ void OmniboxViewViews::OnTemporaryTextMaybeChanged(
 }
 
 void OmniboxViewViews::OnInlineAutocompleteTextMaybeChanged(
-    const std::u16string& display_text,
-    std::vector<gfx::Range> selections,
-    const std::u16string& prefix_autocompletion,
+    const std::u16string& user_text,
     const std::u16string& inline_autocompletion) {
+  std::u16string display_text = user_text + inline_autocompletion;
   if (display_text == GetText()) {
     return;
   }
 
   if (!IsIMEComposing()) {
-    SetTextAndSelectedRanges(display_text, selections);
+    SetTextAndSelectedRange(display_text,
+                            {display_text.size(), user_text.length()});
   } else if (location_bar_view_) {
-    location_bar_view_->SetImePrefixAutocompletion(prefix_autocompletion);
     location_bar_view_->SetImeInlineAutocompletion(inline_autocompletion);
   }
 
@@ -873,7 +896,6 @@ void OmniboxViewViews::OnInlineAutocompleteTextMaybeChanged(
 void OmniboxViewViews::OnInlineAutocompleteTextCleared() {
   // Hide the inline autocompletion for IME users.
   if (location_bar_view_) {
-    location_bar_view_->SetImePrefixAutocompletion(std::u16string());
     location_bar_view_->SetImeInlineAutocompletion(std::u16string());
   }
 }
@@ -887,7 +909,7 @@ void OmniboxViewViews::OnRevertTemporaryText(const std::u16string& display_text,
   // However, it's important to notify accessibility that the value has changed,
   // otherwise the screen reader will use the old accessibility label text.
   SetAccessibilityLabel(display_text, match, true);
-  SetSelectedRanges(saved_temporary_selection_);
+  SetSelectedRange(saved_temporary_selection_);
 }
 
 void OmniboxViewViews::ClearAccessibilityLabel() {
@@ -909,7 +931,8 @@ void OmniboxViewViews::SetAccessibilityLabel(const std::u16string& display_text,
     // case, and |match| is a synthetically generated match. In that case,
     // bypass OmniboxPopupModel and get the label from our synthetic |match|.
     friendly_suggestion_text_ = AutocompleteMatchType::ToAccessibilityLabel(
-        match, display_text, OmniboxPopupSelection::kNoMatch,
+        match, /*header_text=*/u"", display_text,
+        OmniboxPopupSelection::kNoMatch,
         controller()->autocomplete_controller()->result().size(),
         std::u16string(), &friendly_suggestion_text_prefix_length_);
   } else {
@@ -1127,17 +1150,46 @@ bool OmniboxViewViews::IsItemForCommandIdDynamic(int command_id) const {
 std::u16string OmniboxViewViews::GetLabelForCommandId(int command_id) const {
   DCHECK_EQ(IDC_PASTE_AND_GO, command_id);
 
-  // Don't paste-and-go data that was marked by its originator as confidential.
-  constexpr size_t kMaxSelectionTextLength = 50;
+  // If the originator marked the clipboard data as confidential, then
+  // paste-and-go is unavailable, so use a menu label that doesn't contain
+  // clipboard data. (The menu command is disabled in
+  // `OmniboxViewViews::IsCommandIdEnabled()`.)
+  //
+  // On the Mac, if Pasteboard Privacy is enabled, then programmatic access to
+  // the clipboard is either prohibited or will prompt the user, and we can't
+  // inline the contents of the clipboard into the label.
+  //
+  // If we were to attempt to access the clipboard contents to inline it into
+  // the label, the result would be a glitched out user window (see the
+  // screenshot attached to https://crbug.com/417683820#comment3). That's super
+  // bad.
+  //
+  // Therefore, take the less bad approach as done below, where if accessing the
+  // clipboard could block, we just turn "paste and go" into a generic menu
+  // item.
+  //
+  // The best approach would actually be to use -[NSPasteboard
+  // detectPatternsForPatterns:completionHandler:] to select a specific menu
+  // string that matches what's on the clipboard, in order to convey to the user
+  // what will happen. The usage of `/components/open_from_clipboard` might be
+  // useful. This behavior should be patterned after what Chrome iOS does, which
+  // has to work under similar restrictions. TODO(https://crbug.com/419266152):
+  // Switch to this better approach.
+  if (IsClipboardDataMarkedAsConfidential()
+#if BUILDFLAG(IS_MAC)
+      || ui::PasteMightBlockWithPrivacyAlert()
+#endif
+  )
+    return l10n_util::GetStringUTF16(IDS_PASTE_AND_GO_EMPTY);
+
   const std::u16string clipboard_text =
-      IsClipboardDataMarkedAsConfidential()
-          ? std::u16string()
-          : GetClipboardText(/*notify_if_restricted=*/false);
+      GetClipboardText(/*notify_if_restricted=*/false);
 
   if (clipboard_text.empty()) {
     return l10n_util::GetStringUTF16(IDS_PASTE_AND_GO_EMPTY);
   }
 
+  constexpr size_t kMaxSelectionTextLength = 50;
   std::u16string selection_text = gfx::TruncateString(
       clipboard_text, kMaxSelectionTextLength, gfx::WORD_BREAK);
 
@@ -1187,15 +1239,17 @@ bool OmniboxViewViews::OnMousePressed(const ui::MouseEvent& event) {
     // possible to later set select_all_on_mouse_release_ back to false, but
     // that happens for things like dragging, which are cases where having
     // invalidated this saved selection is still OK.
-    saved_selection_for_focus_change_.clear();
+    saved_selection_for_focus_change_ = gfx::Range::InvalidRange();
     UpdateAccessibleTextSelection();
   }
 
   // Show on-focus suggestions if either:
   //  - The textfield doesn't already have focus.
   //  - Or if the textfield is empty, to cover the NTP ZeroSuggest case.
-  if (event.IsOnlyLeftMouseButton() && (!HasFocus() || GetText().empty())) {
-    model()->StartZeroSuggestRequest();
+  if (!base::FeatureList::IsEnabled(omnibox::kShowPopupOnMouseReleased)) {
+    if (event.IsOnlyLeftMouseButton() && (!HasFocus() || GetText().empty())) {
+      model()->StartZeroSuggestRequest();
+    }
   }
 
   const bool handled = views::Textfield::OnMousePressed(event);
@@ -1281,6 +1335,21 @@ void OmniboxViewViews::OnMouseReleased(const ui::MouseEvent& event) {
     // into view and shift the contents jarringly.
     SelectAll(true);
   }
+  // When the user has released the left mouse button only, show on-focus
+  // suggestions if `select_all_on_mouse_release_` is true (or if the textfield
+  // is empty, to cover the NTP ZeroSuggest case).
+  //
+  // Note that ZeroSuggest is run on mouse release rather than on mouse press in
+  // order to delay the omnibox text shift (due to presenting the popup) until
+  // after the mouse events are handled. Otherwise, when a small, unintentional
+  // drag is detected, the mouse cursor might end up a few characters distant
+  // from the original click position, leading to selection of some characters
+  // rather than the whole-URL selection the user intended.
+  if (base::FeatureList::IsEnabled(omnibox::kShowPopupOnMouseReleased) &&
+      event.IsOnlyLeftMouseButton() &&
+      (select_all_on_mouse_release_ || GetText().empty())) {
+    model()->StartZeroSuggestRequest();
+  }
   select_all_on_mouse_release_ = false;
 
   is_mouse_pressed_ = false;
@@ -1303,7 +1372,7 @@ void OmniboxViewViews::OnGestureEvent(ui::GestureEvent* event) {
 
     // If we're trying to select all on tap, invalidate any saved selection lest
     // restoring it fights with the "select all" action.
-    saved_selection_for_focus_change_.clear();
+    saved_selection_for_focus_change_ = gfx::Range::InvalidRange();
     UpdateAccessibleTextSelection();
   }
 
@@ -1358,9 +1427,9 @@ bool OmniboxViewViews::HandleAccessibleAction(
     return true;
   } else if (action_data.action == ax::mojom::Action::kReplaceSelectedText) {
     model()->SetInputInProgress(true);
-    if (!saved_selection_for_focus_change_.empty()) {
-      SetSelectedRanges(saved_selection_for_focus_change_);
-      saved_selection_for_focus_change_.clear();
+    if (saved_selection_for_focus_change_.IsValid()) {
+      SetSelectedRange(saved_selection_for_focus_change_);
+      saved_selection_for_focus_change_ = gfx::Range::InvalidRange();
     }
     InsertOrReplaceText(base::UTF8ToUTF16(action_data.value));
     TextChanged();
@@ -1395,9 +1464,9 @@ void OmniboxViewViews::OnFocus() {
   // focus.
 
   // Restore the selection we saved in OnBlur() if it's still valid.
-  if (!saved_selection_for_focus_change_.empty()) {
-    SetSelectedRanges(saved_selection_for_focus_change_);
-    saved_selection_for_focus_change_.clear();
+  if (saved_selection_for_focus_change_.IsValid()) {
+    SetSelectedRange(saved_selection_for_focus_change_);
+    saved_selection_for_focus_change_ = gfx::Range::InvalidRange();
     UpdateAccessibleTextSelection();
   }
 
@@ -1417,7 +1486,7 @@ void OmniboxViewViews::OnFocus() {
 
 void OmniboxViewViews::OnBlur() {
   // Save the user's existing selection to restore it later.
-  saved_selection_for_focus_change_ = GetRenderText()->GetAllSelections();
+  saved_selection_for_focus_change_ = GetSelectedRange();
 
   // If the view is showing text that's not user-text, revert the text to the
   // permanent display text. This usually occurs if Steady State Elisions is on
@@ -1461,7 +1530,7 @@ void OmniboxViewViews::OnBlur() {
   model()->OnKillFocus();
 
   // Deselect the text. Ensures the cursor is an I-beam.
-  SetSelectedRange(gfx::Range(0));
+  SetSelectedRange(gfx::Range(GetCursorPosition()));
 
   // When deselected, elide and reset scroll position. After eliding, the old
   // scroll offset is meaningless (since the string is guaranteed to fit within
@@ -1498,13 +1567,47 @@ void OmniboxViewViews::OnBlur() {
 
 bool OmniboxViewViews::IsCommandIdEnabled(int command_id) const {
   if (command_id == Textfield::kPaste) {
-    return !GetReadOnly() &&
-           !GetClipboardText(/*notify_if_restricted=*/false).empty();
+    return !GetReadOnly() && CanGetClipboardText();
   }
   if (command_id == IDC_PASTE_AND_GO) {
-    return !GetReadOnly() && !IsClipboardDataMarkedAsConfidential() &&
-           model()->CanPasteAndGo(
-               GetClipboardText(/*notify_if_restricted=*/false));
+    if (GetReadOnly()) {
+      return false;
+    }
+
+    // If the originator marked the clipboard data as confidential, then
+    // paste-and-go is unavailable, so disable the menu command. (The menu label
+    // is set to be generic in `GetLabelForCommandId()`.)
+    if (IsClipboardDataMarkedAsConfidential()) {
+      return false;
+    }
+
+#if BUILDFLAG(IS_MAC)
+    // On the Mac, if Pasteboard Privacy is enabled, then programmatic access to
+    // the clipboard is either prohibited or will prompt the user, and we can't
+    // use the actual clipboard text to make decisions about enabling the menu
+    // command.
+    //
+    // Therefore, for now, go with a general check for if there is a
+    // probably-valid item on the clipboard to use for paste-and-go, with a
+    // cheat of using a constant string to ensure that all the other
+    // requirements for paste-and-go are fulfilled.
+    //
+    // TODO(https://crbug.com/419266152): Switch to a better approach of using
+    // -[NSPasteboard detectPatternsForPatterns:completionHandler:] to actually
+    // know if there are valid values on the clipboard to enable paste-and-go
+    // with confidence.
+    if (ui::PasteMightBlockWithPrivacyAlert()) {
+      if (CanGetClipboardText()) {
+        constexpr char16_t kSomeValidText[] = u"validtext";
+        return model()->CanPasteAndGo(kSomeValidText);
+      } else {
+        return false;
+      }
+    }
+#endif
+
+    return model()->CanPasteAndGo(
+        GetClipboardText(/*notify_if_restricted=*/false));
   }
 
   // These menu items are only shown when they are valid.
@@ -1523,7 +1626,7 @@ OmniboxPopupView* OmniboxViewViews::GetPopupViewForTesting() const {
 }
 
 std::u16string OmniboxViewViews::GetSelectionClipboardText() const {
-  return SanitizeTextForPaste(Textfield::GetSelectionClipboardText());
+  return omnibox::SanitizeTextForPaste(Textfield::GetSelectionClipboardText());
 }
 
 void OmniboxViewViews::DoInsertChar(char16_t ch) {
@@ -1558,8 +1661,7 @@ bool OmniboxViewViews::IsTextEditCommandEnabled(
     case ui::TextEditCommand::MOVE_DOWN:
       return !GetReadOnly();
     case ui::TextEditCommand::PASTE:
-      return !GetReadOnly() &&
-             !GetClipboardText(show_rejection_ui_if_any_).empty();
+      return !GetReadOnly() && CanGetClipboardText();
     default:
       return Textfield::IsTextEditCommandEnabled(command);
   }
@@ -1636,7 +1738,9 @@ void OmniboxViewViews::CandidateWindowClosed(
 #endif
 
 void OmniboxViewViews::ContentsChanged(views::Textfield* sender,
-                                       const std::u16string& new_contents) {}
+                                       const std::u16string& new_contents) {
+  saved_selection_for_focus_change_ = gfx::Range::InvalidRange();
+}
 
 bool OmniboxViewViews::HandleKeyEvent(views::Textfield* textfield,
                                       const ui::KeyEvent& event) {
@@ -1827,6 +1931,7 @@ void OmniboxViewViews::OnAfterUserAction(views::Textfield* sender) {
 }
 
 void OmniboxViewViews::OnAfterCutOrCopy(ui::ClipboardBuffer clipboard_buffer) {
+  const base::TimeTicks now(base::TimeTicks::Now());
   const ui::Clipboard* cb = ui::Clipboard::GetForCurrentThread();
   std::u16string selected_text;
   ui::DataTransferEndpoint data_dst = ui::DataTransferEndpoint(
@@ -1838,6 +1943,14 @@ void OmniboxViewViews::OnAfterCutOrCopy(ui::ClipboardBuffer clipboard_buffer) {
                              &write_url);
   if (IsSelectAll()) {
     UMA_HISTOGRAM_COUNTS_1M(OmniboxEditModel::kCutOrCopyAllTextHistogram, 1);
+
+    const auto last_omnibox_focus = model()->last_omnibox_focus();
+    if (!last_omnibox_focus.is_null()) {
+      LogOmniboxFocusToCutOrCopyAllTextTime(
+          now - last_omnibox_focus,
+          controller()->autocomplete_controller()->input().IsZeroSuggest(),
+          model()->GetPageClassification());
+    }
 
     if (clipboard_buffer != ui::ClipboardBuffer::kSelection &&
         location_bar_view_) {
@@ -2023,10 +2136,10 @@ void OmniboxViewViews::PerformDrop(
   if (std::optional<ui::OSExchangeData::UrlInfo> url_result =
           data.GetURLAndTitle(ui::FilenameToURLPolicy::CONVERT_FILENAMES);
       url_result.has_value()) {
-    text = StripJavascriptSchemas(base::UTF8ToUTF16(url_result->url.spec()));
+    text = omnibox::StripJavascriptSchemas(base::UTF8ToUTF16(url_result->url.spec()));
   } else if (const std::optional<std::u16string> text_result = data.GetString();
              text_result.has_value()) {
-    text = StripJavascriptSchemas(base::CollapseWhitespace(*text_result, true));
+    text = omnibox::StripJavascriptSchemas(base::CollapseWhitespace(*text_result, true));
   } else {
     output_drag_op = DragOperation::kNone;
     return;

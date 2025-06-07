@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/json/json_writer.h"
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "base/types/expected.h"
 #include "base/values.h"
@@ -20,6 +21,7 @@
 namespace ash::boca {
 
 UpdateSessionRequest::UpdateSessionRequest(google_apis::RequestSender* sender,
+                                           std::string url_base,
                                            ::boca::UserIdentity teacher,
                                            std::string session_id,
                                            UpdateSessionCallback callback)
@@ -28,7 +30,7 @@ UpdateSessionRequest::UpdateSessionRequest(google_apis::RequestSender* sender,
                           google_apis::ProgressCallback()),
       teacher_(std::move(teacher)),
       session_id_(session_id),
-      url_base_(kSchoolToolsApiBaseUrl),
+      url_base_(std::move(url_base)),
       callback_(std::move(callback)) {}
 
 UpdateSessionRequest ::~UpdateSessionRequest() = default;

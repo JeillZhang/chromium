@@ -94,6 +94,10 @@ void ChromeBrowserMainExtraPartsViews::ToolkitInitialized() {
     views_delegate_ = std::make_unique<ChromeViewsDelegate>();
   }
 
+  // Set our raw pointer to the views delegate. This should never be nullptr.
+  views_delegate_ptr_ = views::ViewsDelegate::GetInstance();
+  CHECK(views_delegate_ptr_);
+
   SetConstrainedWindowViewsClient(CreateChromeConstrainedWindowViewsClient());
 
 #if defined(USE_AURA)
@@ -105,6 +109,10 @@ void ChromeBrowserMainExtraPartsViews::ToolkitInitialized() {
   if (!views::LayoutProvider::Get()) {
     layout_provider_ = ChromeLayoutProvider::CreateLayoutProvider();
   }
+}
+
+void ChromeBrowserMainExtraPartsViews::PostCreateMainMessageLoop() {
+  views_delegate_ptr_->InitializeViewsAXManager();
 }
 
 void ChromeBrowserMainExtraPartsViews::PreCreateThreads() {
@@ -162,7 +170,7 @@ void ChromeBrowserMainExtraPartsViews::PreProfileInit() {
   std::u16string message = l10n_util::GetStringFUTF16(
       IDS_REFUSE_TO_RUN_AS_ROOT_2, l10n_util::GetStringUTF16(IDS_PRODUCT_NAME));
 
-  chrome::ShowWarningMessageBox(nullptr, title, message);
+  chrome::ShowWarningMessageBoxAsync(nullptr, title, message);
 
   // Avoids gpu_process_transport_factory.cc(153)] Check failed:
   // per_compositor_data_.empty() when quit is chosen.

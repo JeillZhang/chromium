@@ -4,8 +4,10 @@
 
 #import "ios/chrome/browser/credential_provider_promo/ui_bundled/credential_provider_promo_coordinator.h"
 
+#import "base/test/ios/wait_util.h"
 #import "base/test/metrics/histogram_tester.h"
 #import "base/test/scoped_feature_list.h"
+#import "base/test/test_timeouts.h"
 #import "ios/chrome/browser/credential_provider_promo/ui_bundled/credential_provider_promo_constants.h"
 #import "ios/chrome/browser/credential_provider_promo/ui_bundled/credential_provider_promo_coordinator.h"
 #import "ios/chrome/browser/credential_provider_promo/ui_bundled/credential_provider_promo_metrics.h"
@@ -23,6 +25,29 @@
 
 using credential_provider_promo::IOSCredentialProviderPromoAction;
 
+namespace {
+
+// Name of the histogram that logs the outcome of the prompt that allows the
+// user to set the app as a credential provider.
+constexpr char kTurnOnCredentialProviderExtensionPromptOutcomeHistogram[] =
+    "IOS.CredentialProviderExtension.TurnOnPromptOutcome.Promo";
+
+}  // namespace
+
+@interface FakeCredentialProviderPromoCoordinatorSettingsOpener
+    : NSObject <CredentialProviderPromoCoordinatorSettingsOpenerDelegate>
+
+@end
+
+@implementation FakeCredentialProviderPromoCoordinatorSettingsOpener
+
+- (void)credentialProviderPromoCoordinatorOpenIOSCredentialProviderSettings:
+    (id)credentialProviderPromoCoordinator {
+  // No-op.
+}
+
+@end
+
 // Test fixture for testing the CredentialProviderPromoCoordinator class.
 class CredentialProviderPromoCoordinatorTest : public PlatformTest {
  public:
@@ -33,6 +58,9 @@ class CredentialProviderPromoCoordinatorTest : public PlatformTest {
     coordinator_ = [[CredentialProviderPromoCoordinator alloc]
         initWithBaseViewController:nil
                            browser:browser_.get()];
+    settings_opener_delegate_ =
+        [[FakeCredentialProviderPromoCoordinatorSettingsOpener alloc] init];
+    coordinator_.settingsOpenerDelegate = settings_opener_delegate_;
     [coordinator_ start];
 
     credential_provider_promo_command_handler_ = HandlerForProtocol(
@@ -61,6 +89,8 @@ class CredentialProviderPromoCoordinatorTest : public PlatformTest {
   CredentialProviderPromoCoordinator* coordinator_;
   id<CredentialProviderPromoCommands>
       credential_provider_promo_command_handler_;
+  FakeCredentialProviderPromoCoordinatorSettingsOpener*
+      settings_opener_delegate_;
 };
 
 #pragma mark - Tests
@@ -161,19 +191,13 @@ TEST_F(CredentialProviderPromoCoordinatorTest,
   // Enable the Passkeys M2 feature.
   base::test::ScopedFeatureList feature_list(kIOSPasskeysM2);
 
-  int final_learn_more_action_count;
-  int final_go_to_settings_action_count;
-  // TODO(crbug.com/392652904): Add final expected count for new actions when
-  // added.
+  int final_learn_more_action_count = 1;
+  int final_turn_on_autofill_action_count = 0;
+  int final_go_to_settings_action_count = 1;
   if (@available(iOS 18.0, *)) {
     final_learn_more_action_count = 0;
+    final_turn_on_autofill_action_count = 1;
     final_go_to_settings_action_count = 0;
-  } else if (@available(iOS 17.0, *)) {
-    final_learn_more_action_count = 1;
-    final_go_to_settings_action_count = 0;
-  } else {
-    final_learn_more_action_count = 1;
-    final_go_to_settings_action_count = 1;
   }
 
   // Make sure bucket counts are all initially zero.
@@ -184,12 +208,17 @@ TEST_F(CredentialProviderPromoCoordinatorTest,
   histogram_tester_->ExpectBucketCount(
       kIOSCredentialProviderPromoOnAutofillUsedHistogram,
       credential_provider_promo::IOSCredentialProviderPromoAction::
+          kTurnOnAutofill,
+      0);
+  histogram_tester_->ExpectBucketCount(
+      kIOSCredentialProviderPromoOnAutofillUsedHistogram,
+      credential_provider_promo::IOSCredentialProviderPromoAction::
           kGoToSettings,
       0);
 
   // Trigger the promo with PasswordSaved.
   // The primary CTA on the first step of the promo is 'Learn more' before iOS
-  // 18 and 'Turn on autofill' after.
+  // 18 and 'Turn on AutoFill…' after.
   [credential_provider_promo_command_handler_
       showCredentialProviderPromoWithTrigger:
           CredentialProviderPromoTrigger::SuccessfulLoginUsingExistingPassword];
@@ -205,6 +234,11 @@ TEST_F(CredentialProviderPromoCoordinatorTest,
       kIOSCredentialProviderPromoOnAutofillUsedHistogram,
       credential_provider_promo::IOSCredentialProviderPromoAction::kLearnMore,
       final_learn_more_action_count);
+  histogram_tester_->ExpectBucketCount(
+      kIOSCredentialProviderPromoOnAutofillUsedHistogram,
+      credential_provider_promo::IOSCredentialProviderPromoAction::
+          kTurnOnAutofill,
+      final_turn_on_autofill_action_count);
 
   if (@available(iOS 18.0, *)) {
     // There's no other button to tap in this case.
@@ -219,6 +253,43 @@ TEST_F(CredentialProviderPromoCoordinatorTest,
       credential_provider_promo::IOSCredentialProviderPromoAction::
           kGoToSettings,
       final_go_to_settings_action_count);
+}
+
+// Tests that tapping the "Turn on AutoFill…" primary action results in
+// recording the right histogram.
+TEST_F(CredentialProviderPromoCoordinatorTest,
+       CredentialProviderPromoTurnOnAutoFillPromptOutcomeRecorded) {
+  // The "Turn on AutoFill…" action is only available on iOS 18+.
+  if (@available(iOS 18.0, *)) {
+    // Enable the Passkeys M2 feature.
+    base::test::ScopedFeatureList feature_list(kIOSPasskeysM2);
+
+    // Make sure bucket counts are all initially zero.
+    histogram_tester_->ExpectTotalCount(
+        kTurnOnCredentialProviderExtensionPromptOutcomeHistogram, 0);
+
+    // Trigger the promo and tap the primary action button.
+    [credential_provider_promo_command_handler_
+        showCredentialProviderPromoWithTrigger:
+            CredentialProviderPromoTrigger::
+                SuccessfulLoginUsingExistingPassword];
+    ASSERT_TRUE([coordinator_
+        conformsToProtocol:@protocol(ConfirmationAlertActionHandler)]);
+    [(id<ConfirmationAlertActionHandler>)
+            coordinator_ confirmationAlertPrimaryAction];
+
+    // Wait for the histogram to be logged.
+    EXPECT_TRUE(base::test::ios::WaitUntilConditionOrTimeout(
+        TestTimeouts::action_timeout(), ^bool() {
+          return histogram_tester_->GetBucketCount(
+                     kTurnOnCredentialProviderExtensionPromptOutcomeHistogram,
+                     false) == 1;
+        }));
+
+    // Verify that only the expected metric was logged.
+    histogram_tester_->ExpectUniqueSample(
+        kTurnOnCredentialProviderExtensionPromptOutcomeHistogram, false, 1);
+  }
 }
 
 // Tests that tapping the secondary CTA is recorded correctly when the promo is
@@ -248,6 +319,8 @@ TEST_F(CredentialProviderPromoCoordinatorTest,
 // Tests the flow when the trigger is the SetUpList. It should go directly to
 // LearnMore and the primary CTA should go to settings.
 TEST_F(CredentialProviderPromoCoordinatorTest, SetUpListTrigger) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(kIOSExpandedTips);
   histogram_tester_->ExpectBucketCount(
       kIOSCredentialProviderPromoOnSetUpListHistogram,
       credential_provider_promo::IOSCredentialProviderPromoAction::kLearnMore,
@@ -273,6 +346,46 @@ TEST_F(CredentialProviderPromoCoordinatorTest, SetUpListTrigger) {
       credential_provider_promo::IOSCredentialProviderPromoAction::
           kGoToSettings,
       1);
+}
+
+// Tests the flow when the trigger is the SetUpList with the ExpandedTips
+// feature enabled. It should go to the first step and the primary CTA should
+// directly enable the CPE.
+TEST_F(CredentialProviderPromoCoordinatorTest,
+       SetUpListTriggerWithExpandedTips) {
+  if (!@available(iOS 18.0, *)) {
+    return;
+  }
+
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures({kIOSPasskeysM2, kIOSExpandedTips}, {});
+  histogram_tester_->ExpectBucketCount(
+      kIOSCredentialProviderPromoOnSetUpListHistogram,
+      credential_provider_promo::IOSCredentialProviderPromoAction::kLearnMore,
+      0);
+  // Trigger the promo with SetUpList. The primary CTA of the promo, when
+  // triggered from SetUpList, is 'Turn on AutoFill'.
+  [credential_provider_promo_command_handler_
+      showCredentialProviderPromoWithTrigger:CredentialProviderPromoTrigger::
+                                                 SetUpList];
+
+  // Perform the action. Coordinator will record the action 'Turn on AutoFill'.
+  ASSERT_TRUE([coordinator_
+      conformsToProtocol:@protocol(ConfirmationAlertActionHandler)]);
+  [(id<ConfirmationAlertActionHandler>)
+          coordinator_ confirmationAlertPrimaryAction];
+
+  // Wait for the histogram to be logged.
+  EXPECT_TRUE(base::test::ios::WaitUntilConditionOrTimeout(
+      TestTimeouts::action_timeout(), ^bool() {
+        return histogram_tester_->GetBucketCount(
+                   kTurnOnCredentialProviderExtensionPromptOutcomeHistogram,
+                   false) == 1;
+      }));
+
+  // Verify that only the expected metric was logged.
+  histogram_tester_->ExpectUniqueSample(
+      kTurnOnCredentialProviderExtensionPromptOutcomeHistogram, false, 1);
 }
 
 // Tests that the last action taken is recorded in local state.

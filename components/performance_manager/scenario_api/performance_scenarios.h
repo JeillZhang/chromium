@@ -9,12 +9,10 @@
 #include <utility>
 
 #include "base/component_export.h"
+#include "base/containers/enum_set.h"
 #include "base/memory/raw_ptr_exclusion.h"
-#include "base/memory/read_only_shared_memory_region.h"
-#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/memory/shared_memory_safety_checker.h"
-#include "base/memory/structured_shared_memory.h"
+#include "components/performance_manager/scenario_api/performance_scenario_memory_forward.h"
 
 namespace performance_scenarios {
 
@@ -28,25 +26,45 @@ namespace performance_scenarios {
 // child processes over shared memory. Each process can view a global scenario
 // list over the entire browser (eg. some page is loading) or a scenario list
 // targeted only to that process (eg. a page hosted in this process is loading).
+//
+// Additional functions to let the browser process query the performance
+// scenarios for a child process are in
+// components/performance_manager/public/scenarios/process_performance_scenarios.h.
 
-// Scenarios indicating a page is loading.
+// Scenarios indicating a page is loading, ordered from least-specific to
+// most-specific.
 enum class LoadingScenario {
   // No pages covered by the scenario are loading.
   kNoPageLoading = 0,
-  // The focused page is loading. Implies the page is also visible.
-  kFocusedPageLoading,
-  // The focused page (if any) is not loading, but a visible page is loading.
-  kVisiblePageLoading,
   // No visible pages are loading, but a non-visible page is.
   kBackgroundPageLoading,
+  // The focused page (if any) is not loading, but a visible page is.
+  kVisiblePageLoading,
+  // The focused page is loading. Implies the page is also visible.
+  kFocusedPageLoading,
+  kMax = kFocusedPageLoading,
 };
+using LoadingScenarios = base::EnumSet<LoadingScenario,
+                                       LoadingScenario::kNoPageLoading,
+                                       LoadingScenario::kMax>;
 
-// Scenarios indicating user input.
+// Scenarios indicating user input, ordered from least-specific to
+// most-specific.
 enum class InputScenario {
-  // TODO(crbug.com/365586676): Add additional scenarios.
+  // No input was detected.
   kNoInput = 0,
+  // The user is typing in a focused page. There were no recent taps or scrolls.
   kTyping,
+  // The user tapped a focused page. There may be recent typing, but not
+  // scrolls.
+  kTap,
+  // The user is scrolling in a focused page. There may also be recent typing or
+  // taps.
+  kScroll,
+  kMax = kScroll,
 };
+using InputScenarios =
+    base::EnumSet<InputScenario, InputScenario::kNoInput, InputScenario::kMax>;
 
 // The scope that a scenario covers.
 enum class ScenarioScope {
@@ -55,22 +73,38 @@ enum class ScenarioScope {
   // The scenario covers the whole browser.
   kGlobal,
 };
+using ScenarioScopes = base::EnumSet<ScenarioScope,
+                                     /*Min=*/ScenarioScope::kCurrentProcess,
+                                     /*Max=*/ScenarioScope::kGlobal>;
 
-// The full scenario state to copy over shared memory.
-#pragma clang diagnostic push
-#pragma clang diagnostic error "-Wpadded"
-struct COMPONENT_EXPORT(SCENARIO_API) ScenarioState {
-  base::subtle::SharedAtomic<LoadingScenario> loading;
-  base::subtle::SharedAtomic<InputScenario> input;
+// Different subsets of scenarios that can be checked with the ScenariosMatch()
+// function or a MatchingScenarioObserver.
+//
+// A given ScenarioScope `scope` matches a ScenarioPattern if all of:
+//
+// * GetLoadingScenario(scope) returns a value in the `loading` set, or the set
+//   is empty.
+// * GetInputScenarios(scope) returns a value in the `input` set, or the set is
+//   empty.
+struct COMPONENT_EXPORT(SCENARIO_API) ScenarioPattern {
+  // Set of LoadingScenarios that match the pattern. If this is empty, any
+  // LoadingScenario matches.
+  LoadingScenarios loading;
+
+  // Set of InputScenarios that match the pattern. If this is empty, any
+  // InputScenario matches.
+  InputScenarios input;
 };
-#pragma clang diagnostic pop
 
-// Pointers to the mapped shared memory are held in thread-safe scoped_refptr's.
-// The memory will be unmapped when the final reference is dropped. Functions
-// that copy values out of the shared memory must hold a reference to it so that
-// it's not unmapped while reading.
-using RefCountedScenarioMapping = base::RefCountedData<
-    base::StructuredSharedMemory<ScenarioState>::ReadOnlyMapping>;
+// A ScenarioPattern for a scope that's considered "idle": only background pages
+// are loading and there is no input. This is a good definition of "idle" for
+// most purposes, but some features that are particularly sensitive to different
+// scenarios may want to define a different ScenarioPattern.
+inline constexpr ScenarioPattern kDefaultIdleScenarios{
+    .loading = {LoadingScenario::kNoPageLoading,
+                LoadingScenario::kBackgroundPageLoading},
+    .input = {InputScenario::kNoInput},
+};
 
 // A wrapper around a std::atomic<T> that's stored in shared memory. The wrapper
 // prevents the shared memory from being unmapped while a caller has a reference
@@ -109,28 +143,6 @@ class SharedAtomicRef {
   RAW_PTR_EXCLUSION const std::atomic<T>& wrapped_atomic_;
 };
 
-// A scoped object that maps shared memory for the scenario state into the
-// current process as long as it exists.
-class COMPONENT_EXPORT(SCENARIO_API) ScopedReadOnlyScenarioMemory {
- public:
-  // Maps `region` into the current process, as a read-only view of the memory
-  // holding the scenario state for `scope`.
-  ScopedReadOnlyScenarioMemory(ScenarioScope scope,
-                               base::ReadOnlySharedMemoryRegion region);
-  ~ScopedReadOnlyScenarioMemory();
-
-  ScopedReadOnlyScenarioMemory(const ScopedReadOnlyScenarioMemory&) = delete;
-  ScopedReadOnlyScenarioMemory& operator=(const ScopedReadOnlyScenarioMemory&) =
-      delete;
-
-  // Returns a pointer to the mapping registered for `scope`, if any.
-  static scoped_refptr<RefCountedScenarioMapping> GetMappingForTesting(
-      ScenarioScope scope);
-
- private:
-  ScenarioScope scope_;
-};
-
 // Functions to query performance scenarios.
 //
 // Since the scenarios can be modified at any time from another process, they're
@@ -148,10 +160,32 @@ class COMPONENT_EXPORT(SCENARIO_API) ScopedReadOnlyScenarioMemory {
 //     ... delay less-important work until scenario changes ...
 //   }
 //
+//   // Inverse of the above test: true if NO foreground page is loading.
+//   if (CurrentScenariosMatch(ScenarioScope::kGlobal,
+//                             ScenarioPattern{.loading = {
+//                               LoadingScenario::kNoPageLoading,
+//                               LoadingScenario::kBackgroundPageLoading,
+//                             }) {
+//     ... good time to do less-important work ...
+//   }
+//
 //   // Test whether the current process is in the critical path for user input.
 //   if (GetInputScenario(ScenarioScope::kCurrentProcess)->load(
 //           std::memory_order_relaxed) != InputScenario::kNoInput) {
 //     ... current process should prioritize input responsiveness ...
+//   }
+//
+//   // Equivalently:
+//   if (!CurrentScenariosMatch(ScenarioScope::kCurrentProcess,
+//                              ScenarioPattern{
+//                                .input = {InputScenario::kNoInput}
+//                              }) {
+//     ... current process should prioritize input responsiveness ...
+//   }
+//
+//   // Test whether the browser overall is idle by the most common definition.
+//   if (CurrentScenariosMatch(ScenarioScope::kGlobal, kDefaultIdleScenarios)) {
+//     ... good time to do maintenance tasks ...
 //   }
 
 // Returns a reference to the loading scenario for `scope`.
@@ -161,6 +195,16 @@ SharedAtomicRef<LoadingScenario> GetLoadingScenario(ScenarioScope scope);
 // Returns a reference to the input scenario for `scope`.
 COMPONENT_EXPORT(SCENARIO_API)
 SharedAtomicRef<InputScenario> GetInputScenario(ScenarioScope scope);
+
+// Returns true if `scope` currently matches `pattern`.
+COMPONENT_EXPORT(SCENARIO_API)
+bool CurrentScenariosMatch(ScenarioScope scope, ScenarioPattern pattern);
+
+// Returns true if the given scenarios match `pattern`.
+COMPONENT_EXPORT(SCENARIO_API)
+bool ScenariosMatch(LoadingScenario loading_scenario,
+                    InputScenario input_scenario,
+                    ScenarioPattern pattern);
 
 }  // namespace performance_scenarios
 

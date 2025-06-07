@@ -33,6 +33,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/unguessable_token.h"
 #include "services/network/public/cpp/content_security_policy/content_security_policy.h"
+#include "services/network/public/cpp/integrity_policy.h"
 #include "services/network/public/mojom/content_security_policy.mojom-blink.h"
 #include "services/network/public/mojom/web_sandbox_flags.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
@@ -105,7 +106,7 @@ class CORE_EXPORT ContentSecurityPolicyDelegate : public GarbageCollectedMixin {
 
   // See https://w3c.github.io/webappsec-csp/#create-violation-for-global.
   // These functions are used to create the violation object.
-  virtual std::unique_ptr<SourceLocation> GetSourceLocation() = 0;
+  virtual SourceLocation* GetSourceLocation() = 0;
   virtual std::optional<uint16_t> GetStatusCode() = 0;
   // If the Delegate is not bound to a document, a null string should be
   // returned as the referrer.
@@ -264,15 +265,6 @@ class CORE_EXPORT ContentSecurityPolicy final
 
   // TODO(crbug.com/889751): Remove "mojom::blink::RequestContextType" once
   // all the code migrates.
-  bool AllowRequestWithoutIntegrity(
-      mojom::blink::RequestContextType context,
-      network::mojom::RequestDestination request_destination,
-      const KURL& url,
-      ReportingDisposition reporting_disposition,
-      CheckHeaderType check_header_type);
-
-  // TODO(crbug.com/889751): Remove "mojom::blink::RequestContextType" once
-  // all the code migrates.
   bool AllowRequest(mojom::blink::RequestContextType,
                     network::mojom::RequestDestination,
                     network::mojom::RequestMode,
@@ -328,13 +320,17 @@ class CORE_EXPORT ContentSecurityPolicy final
       const String& header,
       network::mojom::ContentSecurityPolicyType,
       ContentSecurityPolicyViolationType,
-      std::unique_ptr<SourceLocation>,
+      SourceLocation*,
       LocalFrame* = nullptr,
       Element* = nullptr,
       const String& source = g_empty_string,
       const String& source_prefix = g_empty_string,
       std::optional<base::UnguessableToken> issue_id = std::nullopt);
 
+  // Strip a URL to make it safe to report it.
+  static String StripURLForUseInReport(const SecurityOrigin* security_origin,
+                                       const KURL& url,
+                                       CSPDirectiveName effective_type);
   // Called when mixed content is detected on a page; will trigger a violation
   // report if the 'block-all-mixed-content' directive is specified for a
   // policy.
@@ -434,10 +430,6 @@ class CORE_EXPORT ContentSecurityPolicy final
                            AllowResponseChecksReportedAndEnforcedCSP);
   FRIEND_TEST_ALL_PREFIXES(FrameFetchContextTest,
                            PopulateResourceRequestChecksReportOnlyCSP);
-  FRIEND_TEST_ALL_PREFIXES(RequireSRIForContentSecurityPolicyTest,
-                           RequireSRIFor);
-  FRIEND_TEST_ALL_PREFIXES(RequireSRIForContentSecurityPolicyTest,
-                           RequireSRIForNoReport);
 
   void ApplyPolicySideEffectsToDelegate();
   void ReportUseCounters(
@@ -465,11 +457,6 @@ class CORE_EXPORT ContentSecurityPolicy final
                        const String& = String(),
                        const IntegrityMetadataSet& = IntegrityMetadataSet(),
                        ParserDisposition = kParserInserted);
-
-  static void FillInCSPHashValues(
-      const String& source,
-      WTF::HashSet<IntegrityAlgorithm> hash_algorithms_used,
-      Vector<network::mojom::blink::CSPHashSourcePtr>& csp_hash_values);
 
   // checks a vector of csp hashes against policy, probably a good idea
   // to use in tandem with FillInCSPHashValues.

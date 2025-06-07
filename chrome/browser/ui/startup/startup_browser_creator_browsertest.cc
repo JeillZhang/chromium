@@ -17,6 +17,7 @@
 #include "base/json/json_writer.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -24,6 +25,8 @@
 #include "base/test/mock_log.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
+#include "base/version_info/version_info.h"
+#include "build/build_config.h"
 #include "build/buildflag.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
@@ -177,7 +180,8 @@ Browser* FindOneOtherBrowser(Browser* browser) {
 
 void DisableWhatsNewPage() {
   PrefService* pref_service = g_browser_process->local_state();
-  pref_service->SetInteger(prefs::kLastWhatsNewVersion, CHROME_VERSION_MAJOR);
+  pref_service->SetInteger(prefs::kLastWhatsNewVersion,
+                           version_info::GetMajorVersionNumberAsInt());
 }
 
 Browser* OpenNewBrowser(Profile* profile) {
@@ -462,6 +466,55 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, OpenAppUrlShortcut) {
   observer.Wait();
   EXPECT_EQ("title2.html",
             web_contents->GetLastCommittedURL().ExtractFileName());
+}
+
+IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest,
+                       KSameTabSwitchReplacesActiveTab) {
+  // Use a couple of arbitrary URLs.
+  std::vector<GURL> urls;
+  urls.push_back(ui_test_utils::GetTestUrl(
+      base::FilePath(base::FilePath::kCurrentDirectory),
+      base::FilePath(FILE_PATH_LITERAL("title1.html"))));
+  urls.push_back(ui_test_utils::GetTestUrl(
+      base::FilePath(base::FilePath::kCurrentDirectory),
+      base::FilePath(FILE_PATH_LITERAL("title2.html"))));
+  urls.push_back(ui_test_utils::GetTestUrl(
+      base::FilePath(base::FilePath::kCurrentDirectory),
+      base::FilePath(FILE_PATH_LITERAL("title3.html"))));
+
+  DisableWhatsNewPage();
+
+  // Open a browser window with some preloaded tabs.
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), GURL("http://localhost"), WindowOpenDisposition::CURRENT_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+  TabStripModel* tab_strip = browser()->tab_strip_model();
+  EXPECT_EQ(1, tab_strip->count());  // Verify one tab is open.
+
+  // Set the first tab as the active tab.
+  tab_strip->ActivateTabAt(0);
+  EXPECT_EQ(0, tab_strip->active_index());
+
+  // Add the --kSameTab switch and URLs to the command line.
+  base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
+  command_line.AppendSwitch(switches::kSameTab);  // Add the switch.
+  command_line.AppendArg(urls[0].spec());         // First URL.
+  command_line.AppendArg(urls[1].spec());         // Second URL.
+  command_line.AppendArg(urls[2].spec());         // Third URL.
+
+  // Process the command line to simulate the launch.
+  ASSERT_TRUE(StartupBrowserCreator().ProcessCmdLineImpl(
+      command_line, base::FilePath(), chrome::startup::IsProcessStartup::kNo,
+      {browser()->profile(), StartupProfileMode::kBrowserWindow}, {}));
+
+  // Verify the behavior:
+  // - The active tab's URL should be replaced by the first URL.
+  EXPECT_EQ(urls[0], tab_strip->GetWebContentsAt(0)->GetVisibleURL());
+
+  // - The remaining URLs should open in new tabs.
+  EXPECT_EQ(3, tab_strip->count());  // Verify total tabs.
+  EXPECT_EQ(urls[1], tab_strip->GetWebContentsAt(1)->GetVisibleURL());
+  EXPECT_EQ(urls[2], tab_strip->GetWebContentsAt(2)->GetVisibleURL());
 }
 
 IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorTest, OpenAppUrlIncognitoShortcut) {
@@ -2051,8 +2104,15 @@ IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorRestartTest,
 // and an app restore occurs, apps will be duplicated. This test ensures that
 // does not occur. This test doesn't build on non app_session_service
 // platforms, hence the buildflag disablement.
+//
+// TODO(crbug.com/401224321): Flaky on "Mac13 Tests" bot.
+#if BUILDFLAG(IS_MAC) && defined(ARCH_CPU_X86_64)
+#define MAYBE_ProfileRestartedAppRestore DISABLED_ProfileRestartedAppRestore
+#else
+#define MAYBE_ProfileRestartedAppRestore ProfileRestartedAppRestore
+#endif
 IN_PROC_BROWSER_TEST_F(StartupBrowserCreatorRestartTest,
-                       ProfileRestartedAppRestore) {
+                       MAYBE_ProfileRestartedAppRestore) {
   Profile* test_profile = browser()->profile();
 
   // StartupBrowserCreator() has already run in SetUp(), so it would already be

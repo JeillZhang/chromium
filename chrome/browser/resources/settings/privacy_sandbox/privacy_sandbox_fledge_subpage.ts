@@ -48,14 +48,6 @@ export class SettingsPrivacySandboxFledgeSubpageElement extends
 
   static get properties() {
     return {
-      /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
       sitesList_: {
         type: Array,
         observer: 'onSitesListChanged_',
@@ -139,14 +131,15 @@ export class SettingsPrivacySandboxFledgeSubpageElement extends
     return maxFledgeSitesCount;
   }
 
-  private sitesList_: PrivacySandboxInterest[];
-  private mainSitesList_: PrivacySandboxInterest[];
-  private remainingSitesList_: PrivacySandboxInterest[];
-  private blockedSitesList_: PrivacySandboxInterest[];
-  private isSitesListLoaded_: boolean;
-  private isLearnMoreDialogOpen_: boolean;
-  private seeAllSitesExpanded_: boolean;
-  private blockedSitesExpanded_: boolean;
+  declare private sitesList_: PrivacySandboxInterest[];
+  declare private mainSitesList_: PrivacySandboxInterest[];
+  declare private remainingSitesList_: PrivacySandboxInterest[];
+  declare private blockedSitesList_: PrivacySandboxInterest[];
+  declare private isSitesListLoaded_: boolean;
+  declare private isLearnMoreDialogOpen_: boolean;
+  declare private seeAllSitesExpanded_: boolean;
+  declare private blockedSitesExpanded_: boolean;
+  declare private shouldShowV2_: boolean;
   private privacySandboxBrowserProxy_: PrivacySandboxBrowserProxy =
       PrivacySandboxBrowserProxyImpl.getInstance();
   private metricsBrowserProxy_: MetricsBrowserProxy =

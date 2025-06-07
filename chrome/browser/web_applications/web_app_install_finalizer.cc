@@ -19,7 +19,6 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -27,7 +26,7 @@
 #include "base/types/optional_ref.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/commands/web_app_uninstall_command.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_integrity_block_data.h"
@@ -60,8 +59,10 @@
 #include "chrome/browser/web_applications/web_app_ui_manager.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/common/chrome_features.h"
+#include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/sync/base/time.h"
 #include "components/sync/protocol/web_app_specifics.pb.h"
 #include "components/webapps/browser/uninstall_result_code.h"
 #include "components/webapps/common/web_app_id.h"
@@ -69,7 +70,7 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "url/origin.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/ash/experiences/system_web_apps/types/system_web_app_data.h"
 #endif
 
@@ -122,8 +123,6 @@ bool ShouldInstallOverwriteUserDisplayMode(
     case InstallSource::PRELOADED_DEFAULT:
     case InstallSource::MICROSOFT_365_SETUP:
       return false;
-    case InstallSource::COUNT:
-      NOTREACHED();
   }
 }
 
@@ -138,9 +137,13 @@ bool ShouldInstallOverwriteUserDisplayMode(
 void ApplyUserDisplayModeSyncMitigations(
     const WebAppInstallFinalizer::FinalizeOptions& options,
     WebApp& web_app) {
+  if (WebAppInstallFinalizer::
+          DisableUserDisplayModeSyncMitigationsForTesting()) {
+    return;
+  }
+
   // Guaranteed by EnsureAppsHaveUserDisplayModeForCurrentPlatform().
-  CHECK(web_app.sync_proto().has_user_display_mode_cros(),
-        base::NotFatalUntil::M125);
+  CHECK(web_app.sync_proto().has_user_display_mode_cros());
 
   // Don't mitigate installations from sync, this is only for installs that will
   // be newly uploaded to sync.
@@ -162,11 +165,6 @@ void ApplyUserDisplayModeSyncMitigations(
 
   switch (web_app.sync_proto().user_display_mode_cros()) {
     case sync_pb::WebAppSpecifics_UserDisplayMode_BROWSER:
-      if (!base::FeatureList::IsEnabled(
-              kUserDisplayModeSyncBrowserMitigation)) {
-        return;
-      }
-
       // Pre-M122 CrOS devices use the user_display_mode_default sync field
       // instead of user_display_mode_cros. If user_display_mode_default is ever
       // unset they will fallback to using kStandalone even if
@@ -183,11 +181,6 @@ void ApplyUserDisplayModeSyncMitigations(
       break;
 
     case sync_pb::WebAppSpecifics_UserDisplayMode_STANDALONE: {
-      if (!base::FeatureList::IsEnabled(
-              kUserDisplayModeSyncStandaloneMitigation)) {
-        return;
-      }
-
       // Ensure standalone averse apps don't get defaulted to kStandalone on
       // non-CrOS devices via sync.
       // Example user journey:
@@ -243,6 +236,12 @@ WebAppInstallFinalizer::FinalizeOptions::~FinalizeOptions() = default;
 
 WebAppInstallFinalizer::FinalizeOptions::FinalizeOptions(
     const FinalizeOptions&) = default;
+
+bool& WebAppInstallFinalizer::
+    DisableUserDisplayModeSyncMitigationsForTesting() {
+  static bool disable = false;
+  return disable;
+}
 
 WebAppInstallFinalizer::WebAppInstallFinalizer(Profile* profile)
     : profile_(profile) {}
@@ -319,7 +318,11 @@ void WebAppInstallFinalizer::OnOriginAssociationValidated(
   }
   web_app->SetValidatedScopeExtensions(validated_scope_extensions);
 
-  const base::Time now_time = base::Time::Now();
+  // When testing, the database state is compared with the in-memory registry,
+  // and because proto time has less granularity, this comparison fails unless
+  // we pre-downgrade to proto time and back before saving in our database.
+  const base::Time now_time =
+      syncer::ProtoTimeToTime(syncer::TimeToProtoTime(clock_->Now()));
 
   // The UI may initiate a full install to overwrite the existing
   // non-locally-installed app. Therefore, `install_state` can be
@@ -357,6 +360,15 @@ void WebAppInstallFinalizer::OnOriginAssociationValidated(
 #if BUILDFLAG(IS_CHROMEOS)
   ApplyUserDisplayModeSyncMitigations(options, *web_app);
 #endif  // BUILDFLAG(IS_CHROMEOS)
+  CHECK(HasCurrentPlatformUserDisplayMode(web_app->sync_proto()));
+
+#if BUILDFLAG(IS_MAC)
+  // Only set this flag for newly installed DIY apps on Mac
+  if (web_app->is_diy_app() &&
+      (!existing_web_app || options.overwrite_existing_manifest_fields)) {
+    web_app->SetDiyAppIconsMaskedOnMac(true);
+  }
+#endif
 
   // `WebApp::chromeos_data` has a default value already. Only override if the
   // caller provided a new value.
@@ -371,7 +383,7 @@ void WebAppInstallFinalizer::OnOriginAssociationValidated(
     web_app->SetWebAppChromeOsData(std::move(cros_data));
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // `WebApp::system_web_app_data` has a default value already. Only override if
   // the caller provided a new value.
   if (options.system_web_app_data.has_value()) {
@@ -385,14 +397,21 @@ void WebAppInstallFinalizer::OnOriginAssociationValidated(
         web_app.get(), options.iwa_options->location,
         web_app_info.isolated_web_app_version,
         options.iwa_options->integrity_block_data);
+
+    if (options.source == WebAppManagement::kIwaPolicy) {
+      HostContentSettingsMap* const host_content_settings_map =
+          HostContentSettingsMapFactory::GetForProfile(profile_);
+
+      host_content_settings_map->SetContentSettingDefaultScope(
+          web_app_info.scope, web_app_info.scope, ContentSettingsType::POPUPS,
+          CONTENT_SETTING_ALLOW);
+    }
   }
 
   web_app->SetParentAppId(web_app_info.parent_app_id);
   web_app->SetAdditionalSearchTerms(web_app_info.additional_search_terms);
   web_app->AddSource(options.source);
-  if (base::FeatureList::IsEnabled(
-          features::kWebAppDontAddExistingAppsToSync) &&
-      options.source == WebAppManagement::kUserInstalled &&
+  if (options.source == WebAppManagement::kUserInstalled &&
       IsSyncEnabledForApps(profile_)) {
     web_app->AddSource(WebAppManagement::kSync);
   }
@@ -493,6 +512,10 @@ void WebAppInstallFinalizer::Shutdown() {
   // can properly call callbacks on shutdown instead of dropping them on
   // shutdown.
   weak_ptr_factory_.InvalidateWeakPtrs();
+}
+
+void WebAppInstallFinalizer::SetClockForTesting(base::Clock* clock) {
+  clock_ = clock;
 }
 
 void WebAppInstallFinalizer::UpdateIsolationDataAndResetPendingUpdateInfo(
@@ -739,8 +762,11 @@ void WebAppInstallFinalizer::WriteExternalConfigMapInfo(
 FileHandlerUpdateAction WebAppInstallFinalizer::GetFileHandlerUpdateAction(
     const webapps::AppId& app_id,
     const WebAppInstallInfo& new_web_app_info) {
-  if (provider_->registrar_unsafe().GetAppFileHandlerApprovalState(app_id) ==
-      ApiApprovalState::kDisallowed) {
+  // TODO(crbug.com/411632946): Add test case: Update file handler in
+  // manifest for an already installed app + override user choice by
+  // adding the app to file handlers policy.
+  if (provider_->registrar_unsafe().GetAppFileHandlerUserApprovalState(
+          app_id) == ApiApprovalState::kDisallowed) {
     return FileHandlerUpdateAction::kNoUpdate;
   }
 

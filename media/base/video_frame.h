@@ -31,6 +31,7 @@
 #include "base/types/pass_key.h"
 #include "base/unguessable_token.h"
 #include "build/build_config.h"
+#include "crypto/hash.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/common/mailbox_holder.h"
 #include "gpu/ipc/common/vulkan_ycbcr_info.h"
@@ -363,21 +364,6 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
       size_t u_stride,
       size_t v_stride,
       size_t a_stride,
-      const uint8_t* y_data,
-      const uint8_t* u_data,
-      const uint8_t* v_data,
-      const uint8_t* a_data,
-      base::TimeDelta timestamp);
-
-  static scoped_refptr<VideoFrame> WrapExternalYuvaData(
-      VideoPixelFormat format,
-      const gfx::Size& coded_size,
-      const gfx::Rect& visible_rect,
-      const gfx::Size& natural_size,
-      size_t y_stride,
-      size_t u_stride,
-      size_t v_stride,
-      size_t a_stride,
       base::span<const uint8_t> y_data,
       base::span<const uint8_t> u_data,
       base::span<const uint8_t> v_data,
@@ -393,8 +379,8 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
       const gfx::Size& natural_size,
       size_t y_stride,
       size_t uv_stride,
-      const uint8_t* y_data,
-      const uint8_t* uv_data,
+      base::span<const uint8_t> y_data,
+      base::span<const uint8_t> uv_data,
       base::TimeDelta timestamp);
 
   // Wraps |gpu_memory_buffer|. This will transfer ownership of
@@ -533,8 +519,19 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
 
   // Used to keep a running hash of seen frames.  Expects an initialized MD5
   // context.  Calls MD5Update with the context and the contents of the frame.
+  //
+  // Deprecated, do not use this.
+  // TODO(https://crbug.com/419771387): Remove this.
   static void HashFrameForTesting(base::MD5Context* context,
                                   const VideoFrame& frame);
+
+  // Given a crypto/hash Hasher, hash in the pixels from a single VideoFrame.
+  static void UpdateHashWithFrameForTesting(crypto::hash::Hasher& hasher,
+                                            const VideoFrame& frame);
+
+  // Convenience wrapper around UpdateHashWithFrameForTesting(): produces the
+  // SHA-256 hash of a single video frame's pixels, as a lowercase hex string.
+  static std::string HexHashOfFrameForTesting(const VideoFrame& frame);
 
   // Returns true if |frame| is accessible mapped in the VideoFrame memory
   // space.
@@ -709,6 +706,8 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
     return const_cast<uint8_t*>(data(plane));
   }
 
+  bool is_mappable_si_enabled() const { return is_mappable_si_enabled_; }
+
   const std::optional<gpu::VulkanYCbCrInfo>& ycbcr_info() const {
     return wrapped_frame_ ? wrapped_frame_->ycbcr_info() : ycbcr_info_;
   }
@@ -820,6 +819,18 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
   void set_ycbcr_info(const std::optional<gpu::VulkanYCbCrInfo>& ycbcr_info) {
     ycbcr_info_ = ycbcr_info;
   }
+
+  // Tests can use this method to mark a VF as non-texturable. This is required
+  // when tests creates a VF with a mappable shared image but does not want to
+  // render it. In those cases only looking for ::HasSharedImage() does not
+  // provide enough info to make a decision if VF is texturable or not since VF
+  // will always have a shared image for MappableSI case.
+  void DisableTexturingForTesting() {
+    CHECK(is_mappable_si_enabled_);
+    is_texturable_for_testing_ = false;
+  }
+
+  bool IsTexturableForTesting() const { return is_texturable_for_testing_; }
 
  protected:
   friend class base::RefCountedThreadSafe<VideoFrame>;
@@ -992,6 +1003,17 @@ class MEDIA_EXPORT VideoFrame : public base::RefCountedThreadSafe<VideoFrame> {
 
   // Allocation which makes up |data_| planes for self-allocated frames.
   std::unique_ptr<uint8_t, base::UncheckedFreeDeleter> private_data_;
+
+  // Only used by tests.
+  // Some tests creates VideoFrame with a Mappable shared image which it does
+  // not intend to render. Tests generally uses ::IsSharedImage() to identify
+  // if a frame is texture backed and can be rendered. This is not enough when
+  // MappableSI is used since a Mappable shared image can be created by tests
+  // only for mapping the underlying buffer to CPU visible memory for
+  // read/write and not necessarily for rendering. Tests which intends to do so
+  // must explicitly mark the VideoFrame as non texturable via
+  // ::DisableTexturingForTesting().
+  bool is_texturable_for_testing_ = true;
 };
 
 }  // namespace media

@@ -9,6 +9,7 @@
 #include <limits>
 #include <optional>
 #include <utility>
+#include <variant>
 
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
@@ -361,6 +362,18 @@ void FrameSinkVideoCapturerImpl::SetMinSizeChangePeriod(
                       "min_size_change_period", min_period);
 
   oracle_->SetMinSizeChangePeriod(min_period);
+}
+
+void FrameSinkVideoCapturerImpl::SetAnimationFpsLockIn(
+    bool enabled,
+    float majority_damaged_pixel_min_ratio) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  TRACE_EVENT_INSTANT("gpu.capture", "SetAnimationFpsLockIn", "enabled",
+                      enabled, "majority_damaged_pixel_min_ratio",
+                      majority_damaged_pixel_min_ratio);
+
+  oracle_->SetAnimationFpsLockIn(enabled, majority_damaged_pixel_min_ratio);
 }
 
 void FrameSinkVideoCapturerImpl::SetResolutionConstraints(
@@ -1189,7 +1202,7 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
 
   const SubtreeCaptureId subtree_id =
       IsSubtreeCapture(target_->sub_target)
-          ? absl::get<SubtreeCaptureId>(target_->sub_target)
+          ? std::get<SubtreeCaptureId>(target_->sub_target)
           : SubtreeCaptureId();
 
   resolved_target_->RequestCopyOfOutput(

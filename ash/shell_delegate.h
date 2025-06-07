@@ -21,11 +21,12 @@
 #include "services/device/public/mojom/fingerprint.mojom-forward.h"
 #include "services/media_session/public/cpp/media_session_service.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "services/video_capture/public/mojom/multi_capture_service.mojom-forward.h"
 #include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
 
 class AccountId;
+class PrefService;
+
 namespace aura {
 class Window;
 }
@@ -47,7 +48,6 @@ class BackGestureContextualNudgeDelegate;
 class CaptureModeDelegate;
 class ClipboardHistoryControllerDelegate;
 class CoralDelegate;
-class DeskProfilesDelegate;
 class FocusModeDelegate;
 class GameDashboardDelegate;
 class MediaNotificationProvider;
@@ -77,8 +77,8 @@ class ASH_EXPORT ShellDelegate {
   virtual bool CanShowWindowForUser(const aura::Window* window) const = 0;
 
   // Creates and returns the delegate of the Capture Mode feature.
-  virtual std::unique_ptr<CaptureModeDelegate> CreateCaptureModeDelegate()
-      const = 0;
+  virtual std::unique_ptr<CaptureModeDelegate> CreateCaptureModeDelegate(
+      PrefService* local_state) const = 0;
 
   // Creates and returns the delegate of the clipboard history feature.
   virtual std::unique_ptr<ClipboardHistoryControllerDelegate>
@@ -140,7 +140,7 @@ class ASH_EXPORT ShellDelegate {
   virtual bool CanGoBack(gfx::NativeWindow window) const = 0;
 
   // Sets the tab scrubber |enabled_| field to |enabled|.
-  virtual void SetTabScrubberChromeOSEnabled(bool enabled) = 0;
+  virtual void SetTabScrubberEnabled(bool enabled) = 0;
 
   // Returns true if |window| allows default touch behaviors. If false, it means
   // no default touch behavior is allowed (i.e., the touch action of window is
@@ -166,12 +166,6 @@ class ASH_EXPORT ShellDelegate {
   // Binds a MultiDeviceSetup receiver for the primary profile.
   virtual void BindMultiDeviceSetup(
       mojo::PendingReceiver<multidevice_setup::mojom::MultiDeviceSetup>
-          receiver) = 0;
-
-  // Binds a MultiCaptureService receiver to start observing
-  // MultiCaptureStarted() and MultiCaptureStopped() events.
-  virtual void BindMultiCaptureService(
-      mojo::PendingReceiver<video_capture::mojom::MultiCaptureService>
           receiver) = 0;
 
   // Returns an interface to the Media Session service, or null if not
@@ -243,10 +237,6 @@ class ASH_EXPORT ShellDelegate {
   using ShouldExitFullscreenCallback = base::OnceCallback<void(bool)>;
   virtual void ShouldExitFullscreenBeforeLock(
       ShouldExitFullscreenCallback callback);
-
-  // Returns the DeskProfilesDelegate, or nullptr if it isn't available. The
-  // delegate (when available) is owned by `CrosapiAsh`.
-  virtual DeskProfilesDelegate* GetDeskProfilesDelegate();
 
   // Opens the Multitasking OS Settings page.
   virtual void OpenMultitaskingSettings() = 0;

@@ -11,11 +11,12 @@
 #import "ios/chrome/app/application_delegate/app_state_agent.h"
 #import "ios/chrome/app/application_delegate/app_state_observer.h"
 #import "ios/chrome/app/background_refresh/background_refresh_app_agent_audience.h"
+#import "ios/chrome/browser/device_orientation/ui_bundled/portait_orientation_manager.h"
 #import "ios/chrome/browser/scoped_ui_blocker/ui_bundled/ui_blocker_manager.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state_observer.h"
-#import "ios/chrome/browser/ui/device_orientation/portait_orientation_manager.h"
 
 @class CommandDispatcher;
+@class ProfileState;
 @class SceneState;
 @class DeferredInitializationRunner;
 @protocol StartupInformation;
@@ -89,6 +90,9 @@ enum class PostCrashAction {
 // active.
 - (NSArray<SceneState*>*)foregroundScenes;
 
+// Returns a list of all known ProfileStates.
+- (NSArray<ProfileState*>*)profileStates;
+
 // Adds an observer to this app state. The observers will be notified about
 // app state changes per AppStateObserver protocol.
 // The observer will be *immediately* notified about the latest init stage
@@ -98,6 +102,10 @@ enum class PostCrashAction {
 // Removes the observer. It's safe to call this at any time, including from
 // AppStateObserver callbacks.
 - (void)removeObserver:(id<AppStateObserver>)observer;
+
+// Informs the AppState of the creation/destruction of a ProfileState.
+- (void)profileStateCreated:(ProfileState*)profileState;
+- (void)profileStateDestroyed:(ProfileState*)profileState;
 
 // Adds a new agent. Agents are owned by the app state.
 // This automatically sets the app state on the `agent`.

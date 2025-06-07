@@ -27,6 +27,7 @@
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/passwords/manage_passwords_ui_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/webauthn/authenticator_request_dialog_controller.h"
@@ -36,6 +37,7 @@
 #include "chrome/browser/webauthn/enclave_manager_factory.h"
 #include "chrome/browser/webauthn/webauthn_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
@@ -64,6 +66,22 @@ namespace {
 
 constexpr char kPhoneName[] = "Elisa's Pixel 6 Pro";
 using BleStatus = device::FidoRequestHandlerBase::BleStatus;
+
+void UpdateModelBeforeStartFlow(
+    AuthenticatorRequestDialogModel* model,
+    device::FidoRequestHandlerBase::TransportAvailabilityInfo tai) {
+  model->request_type = tai.request_type;
+  model->resident_key_requirement = tai.resident_key_requirement;
+  model->attestation_conveyance_preference =
+      tai.attestation_conveyance_preference;
+  model->ble_adapter_is_powered =
+      tai.ble_status == device::FidoRequestHandlerBase::BleStatus::kOn;
+  model->show_security_key_on_qr_sheet =
+      base::Contains(tai.available_transports,
+                     device::FidoTransportProtocol::kUsbHumanInterfaceDevice);
+  model->is_off_the_record = tai.is_off_the_record_context;
+  model->platform_has_biometrics = tai.platform_has_biometrics;
+}
 
 }  // namespace
 
@@ -391,6 +409,7 @@ class AuthenticatorDialogTest : public DialogBrowserTest {
     }
 #endif
 
+    UpdateModelBeforeStartFlow(model_.get(), transport_availability);
     controller_->StartFlow(std::move(transport_availability), {});
     if (name.ends_with("_disabled")) {
       model_->ui_disabled_ = true;
@@ -845,6 +864,7 @@ class GPMPasskeysAuthenticatorDialogTest : public DialogBrowserTest {
     } else {
       NOTREACHED();
     }
+    UpdateModelBeforeStartFlow(model_.get(), transport_availability);
     controller_->StartFlow(std::move(transport_availability), {});
     if (name.ends_with("_disabled")) {
       model_->ui_disabled_ = true;
@@ -998,9 +1018,7 @@ IN_PROC_BROWSER_TEST_F(GPMPasskeysAuthenticatorDialogTest,
 
 #if BUILDFLAG(IS_MAC)
 IN_PROC_BROWSER_TEST_F(GPMPasskeysAuthenticatorDialogTest, InvokeUi_touchid) {
-  if (__builtin_available(macos 12, *)) {
-    ShowAndVerifyUi();
-  }
+  ShowAndVerifyUi();
 }
 #endif  // BUILDFLAG(IS_MAC)
 
@@ -1164,4 +1182,45 @@ IN_PROC_BROWSER_TEST_F(AuthenticatorWindowTest, UINavigatesAway) {
   model_->SetStep(
       AuthenticatorRequestDialogModel::Step::kRecoverSecurityDomain);
   model_->SetStep(AuthenticatorRequestDialogModel::Step::kNotStarted);
+}
+
+// Run with:
+//
+// browser_tests
+//   --gtest_filter=BrowserUiTest.Invoke --test-launcher-interactive \
+//   --ui=PasskeyUpgradeConfirmationBubbleTest.InvokeUi_${test_name}
+//
+// where test_name is the second arg to IN_PROC_BROWSER_TEST_F().
+class PasskeyUpgradeConfirmationBubbleTest : public DialogBrowserTest {
+ public:
+  PasskeyUpgradeConfirmationBubbleTest() = default;
+  PasskeyUpgradeConfirmationBubbleTest(
+      const PasskeyUpgradeConfirmationBubbleTest&) = delete;
+  PasskeyUpgradeConfirmationBubbleTest& operator=(
+      const PasskeyUpgradeConfirmationBubbleTest&) = delete;
+
+  void SetUpOnMainThread() override {
+    DialogBrowserTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
+    signin::MakePrimaryAccountAvailable(
+        IdentityManagerFactory::GetForProfile(browser()->profile()),
+        "user@gmail.com", signin::ConsentLevel::kSync);
+  }
+
+  // DialogBrowserTest:
+  void ShowUi(const std::string& name) override {
+    // Bubble can only show on webby URLs
+    ASSERT_TRUE(embedded_test_server()->Start());
+    EXPECT_TRUE(ui_test_utils::NavigateToURL(
+        browser(), embedded_test_server()->GetURL("a.test", "/empty.html")));
+    content::WebContents* web_contents =
+        browser()->tab_strip_model()->GetActiveWebContents();
+    auto* controller =
+        ManagePasswordsUIController::FromWebContents(web_contents);
+    controller->OnPasskeyUpgrade("example.com");
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(PasskeyUpgradeConfirmationBubbleTest, InvokeUi_default) {
+  ShowAndVerifyUi();
 }

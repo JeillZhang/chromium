@@ -21,6 +21,7 @@
 #include "ash/style/system_textfield_controller.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "ui/base/cursor/cursor.h"
@@ -246,7 +247,7 @@ class FolderHeaderView::FolderNameView : public views::Textfield,
 
  private:
   void UpdateBackgroundColor(bool is_active) {
-    background()->SetNativeControlColor(GetFolderBackgroundColor(is_active));
+    background()->SetColor(GetFolderBackgroundColor(is_active));
     SchedulePaint();
   }
 

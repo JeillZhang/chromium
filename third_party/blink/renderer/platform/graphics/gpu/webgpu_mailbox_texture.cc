@@ -108,7 +108,11 @@ scoped_refptr<WebGPUMailboxTexture> WebGPUMailboxTexture::FromCanvasResource(
   scoped_refptr<CanvasResource> canvas_resource =
       recyclable_canvas_resource->resource_provider()->ProduceCanvasResource(
           FlushReason::kWebGPUTexture);
-  DCHECK(canvas_resource->IsValid());
+
+  if (!canvas_resource) {
+    return nullptr;
+  }
+  CHECK(canvas_resource->IsValid());
 
   scoped_refptr<gpu::ClientSharedImage> shared_image =
       canvas_resource->GetClientSharedImage();
@@ -275,6 +279,7 @@ gpu::SyncToken WebGPUMailboxTexture::Dissociate() {
       }
     }
   }
+  shared_image_.reset();
   return finished_access_token;
 }
 

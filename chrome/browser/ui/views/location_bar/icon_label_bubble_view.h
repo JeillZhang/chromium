@@ -23,6 +23,7 @@
 #include "ui/views/animation/ink_drop_observer.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/label.h"
+#include "ui/views/layout/flex_layout_types.h"
 #include "ui/views/widget/widget_observer.h"
 
 namespace gfx {
@@ -103,21 +104,26 @@ class IconLabelBubbleView : public views::InkDropObserver,
   void InkDropRippleAnimationEnded(views::InkDropState state) override;
 
   // views::LabelButton:
-  void Layout(PassKey) override;
+  views::ProposedLayout CalculateProposedLayout(
+      const views::SizeBounds& size_bounds) const override;
+  gfx::Size GetMinimumSize() const override;
 
   // Returns true when the label should be visible.
   virtual bool ShouldShowLabel() const;
 
-  virtual void SetBackgroundVisibility(
-      BackgroundVisibility background_visibility);
+  void SetBackgroundVisibility(BackgroundVisibility background_visibility);
 
   // Sets whether tonal colors are used for the background of the view when
   // expanded to show the label.
-  virtual void SetUseTonalColorsWhenExpanded(bool use_tonal_colors);
+  void SetUseTonalColorsWhenExpanded(bool use_tonal_colors);
 
   void SetLabel(std::u16string_view label);
   void SetLabel(std::u16string_view label, std::u16string_view accessible_name);
   void SetFontList(const gfx::FontList& font_list);
+
+  // Applies additional padding around the icon and label whenever the label
+  // is visible and not collapsed.
+  void SetExpandedLabelAdditionalInsets(const views::Inset1D& insets);
 
   gfx::RoundedCornersF GetCornerRadii() const;
   void SetCornerRadii(const gfx::RoundedCornersF& radii);
@@ -141,13 +147,9 @@ class IconLabelBubbleView : public views::InkDropObserver,
     grow_animation_starting_width_ = width;
   }
 
-  // Reduces the slide duration to 1ms such that animation still follows
-  // through in the code but is short enough that it is essentially skipped.
-  void ReduceAnimationTimeForTesting();
-
-  // Enables tests to reset slide animation to a state where the label is not
-  // showing.
-  void ResetSlideAnimationForTesting() { ResetSlideAnimation(false); }
+  gfx::SlideAnimation& slide_animation_for_testing() {
+    return slide_animation_;
+  }
 
  protected:
   static constexpr int kOpenTimeMS = 150;
@@ -214,7 +216,7 @@ class IconLabelBubbleView : public views::InkDropObserver,
 
   // Set up for icons that animate their labels in. Animating out is initiated
   // manually.
-  void SetUpForAnimation();
+  void SetUpForAnimation(base::TimeDelta duration = base::Milliseconds(150));
 
   // Set up for icons that animate their labels in and then automatically out
   // after a period of time. The duration of the slide includes the just the
@@ -342,6 +344,9 @@ class IconLabelBubbleView : public views::InkDropObserver,
   std::optional<ui::ColorId> foreground_color_id_;
 
   std::optional<gfx::RoundedCornersF> radii_;
+
+  // Padding that should be applied when the label is expanded.
+  views::Inset1D expanded_label_additional_insets_;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_ICON_LABEL_BUBBLE_VIEW_H_

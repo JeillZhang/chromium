@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.tasks.tab_management;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.tasks.tab_management.TabGroupUiProperties.BACKGROUND_COLOR;
 import static org.chromium.chrome.browser.tasks.tab_management.TabGroupUiProperties.IMAGE_TILES_CONTAINER_VISIBLE;
 import static org.chromium.chrome.browser.tasks.tab_management.TabGroupUiProperties.INITIAL_SCROLL_INDEX;
@@ -12,16 +13,19 @@ import static org.chromium.chrome.browser.tasks.tab_management.TabGroupUiPropert
 import static org.chromium.chrome.browser.tasks.tab_management.TabGroupUiProperties.SHOW_GROUP_DIALOG_BUTTON_VISIBLE;
 import static org.chromium.chrome.browser.tasks.tab_management.TabGroupUiProperties.SHOW_GROUP_DIALOG_ON_CLICK_LISTENER;
 import static org.chromium.chrome.browser.tasks.tab_management.TabGroupUiProperties.TINT;
+import static org.chromium.chrome.browser.tasks.tab_management.TabGroupUiProperties.WIDTH_PX_CALLBACK;
 
 import android.view.View;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** ViewBinder for TabGroupUi component. */
+@NullMarked
 class TabGroupUiViewBinder {
     /** ViewHolder class to get access to all {@link View}s inside the TabGroupUi. */
     public static class ViewHolder {
@@ -60,10 +64,12 @@ class TabGroupUiViewBinder {
         } else if (IMAGE_TILES_CONTAINER_VISIBLE == propertyKey) {
             viewHolder.toolbarView.setImageTilesContainerVisible(
                     model.get(IMAGE_TILES_CONTAINER_VISIBLE));
-        } else if (INITIAL_SCROLL_INDEX == propertyKey) {
-            scrollToIndex(viewHolder, model);
         } else if (TINT == propertyKey) {
             viewHolder.toolbarView.setTint(model.get(TINT));
+        } else if (INITIAL_SCROLL_INDEX == propertyKey) {
+            scrollToIndex(viewHolder, model);
+        } else if (WIDTH_PX_CALLBACK == propertyKey) {
+            viewHolder.toolbarView.setWidthPxCallback(model.get(WIDTH_PX_CALLBACK));
         }
     }
 
@@ -89,7 +95,7 @@ class TabGroupUiViewBinder {
                         }
                         int index = model.get(INITIAL_SCROLL_INDEX);
                         LinearLayoutManager manager =
-                                (LinearLayoutManager) contentView.getLayoutManager();
+                                (LinearLayoutManager) assumeNonNull(contentView.getLayoutManager());
                         int showingItemsCount =
                                 manager.findLastVisibleItemPosition()
                                         - manager.findFirstVisibleItemPosition();

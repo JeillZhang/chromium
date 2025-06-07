@@ -57,7 +57,8 @@ class CandidateViewTest : public views::ViewsTestBase {
         CreateParams(views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET,
                      views::Widget::InitParams::TYPE_WINDOW));
 
-    init_params.delegate = new views::WidgetDelegateView();
+    init_params.delegate = new views::WidgetDelegateView(
+        views::WidgetDelegateView::CreatePassKey());
 
     container_ = init_params.delegate->GetContentsView();
     container_->SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -68,7 +69,7 @@ class CandidateViewTest : public views::ViewsTestBase {
       ui::CandidateWindow::Entry entry;
       entry.value = base::UTF8ToUTF16(kDummyCandidates[i]);
       candidate->SetEntry(entry);
-      container_->AddChildView(candidate);
+      container_->AddChildViewRaw(candidate);
     }
 
     widget_ = new views::Widget();
@@ -192,7 +193,7 @@ TEST_F(CandidateViewTest, SetEntryChangesAccessibleName) {
 }
 
 TEST_F(CandidateViewTest, SetEntryNotifiesAccessibilityEvent) {
-  views::test::AXEventCounter counter(views::AXEventManager::Get());
+  views::test::AXEventCounter counter(views::AXUpdateNotifier::Get());
   CandidateView* view = GetCandidateAt(1);
 
   // Calling SetEntry affects the accessible name, so it should notify twice:

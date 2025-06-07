@@ -35,7 +35,7 @@ export function createHistoryEntry(
     dateRelativeDay: d.toISOString().split('T')[0]!,
     dateShort: '',
     dateTimeOfDay: d.getUTCHours() + ':' + d.getUTCMinutes(),
-    debugInfo: null,
+    debug: null,
     deviceName: '',
     deviceType: '',
     domain: domain,
@@ -94,7 +94,7 @@ export function waitForEvent(
 
   return new Promise<void>(function(resolve) {
     const listener = function(e: Event) {
-      if (!predicate!(e)) {
+      if (!predicate(e)) {
         return;
       }
 

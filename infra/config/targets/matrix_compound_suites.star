@@ -294,7 +294,7 @@ targets.legacy_matrix_compound_suite(
         "chromeos_chrome_all_tast_tests": targets.legacy_matrix_config(
             mixins = [
                 # jacuzzi is slow. So that we use more number of shards.
-                "skylab-shards-50",
+                "skylab-shards-45",
             ],
             variants = [
                 "CROS_RELEASE_LKGM",
@@ -442,7 +442,7 @@ targets.legacy_matrix_compound_suite(
     basic_suites = {
         "optimization_guide_ios_unittests": targets.legacy_matrix_config(
             variants = [
-                "SIM_IPHONE_14_18_0",
+                "SIM_IPHONE_14_18_2",
             ],
         ),
     },
@@ -579,6 +579,17 @@ targets.legacy_matrix_compound_suite(
                 "AMD_RADEON_RX_5500_XT",
                 "INTEL_UHD_630_OR_770",
                 "NVIDIA_GEFORCE_GTX_1660",
+            ],
+        ),
+    },
+)
+
+targets.legacy_matrix_compound_suite(
+    name = "chromeos_tfc_tests",
+    basic_suites = {
+        "chromeos_chrome_all_tast_tests_tfc": targets.legacy_matrix_config(
+            variants = [
+                "CROS_RELEASE_LKGM",
             ],
         ),
     },

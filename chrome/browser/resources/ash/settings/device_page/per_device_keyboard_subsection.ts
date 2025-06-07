@@ -8,7 +8,6 @@
  * per-device-keyboard subsection settings in system settings.
  */
 
-import '../icons.html.js';
 import '../settings_shared.css.js';
 import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
 import 'chrome://resources/ash/common/cr_elements/cr_link_row/cr_link_row.js';
@@ -43,7 +42,7 @@ import type {Route} from '../router.js';
 import {Router, routes} from '../router.js';
 
 import {getInputDeviceSettingsProvider} from './input_device_mojo_interface_provider.js';
-import type {InputDeviceSettingsProviderInterface, Keyboard, KeyboardPolicies, KeyboardSettings, SixPackKeyInfo} from './input_device_settings_types.js';
+import type {InputDeviceSettingsProviderInterface, Keyboard, KeyboardPolicies, KeyboardSettings} from './input_device_settings_types.js';
 import {CompanionAppState, MetaKey, ModifierKey, SixPackShortcutModifier} from './input_device_settings_types.js';
 import {getPrefPolicyFields, settingsAreEqual} from './input_device_settings_utils.js';
 import {getTemplate} from './per_device_keyboard_subsection.html.js';
@@ -131,17 +130,6 @@ export class SettingsPerDeviceKeyboardSubsectionElement extends
         value: '',
       },
 
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kKeyboardFunctionKeys,
-          Setting.kKeyboardRemapKeys,
-        ]),
-      },
-
       keyboardIndex: {
         type: Number,
       },
@@ -201,6 +189,12 @@ export class SettingsPerDeviceKeyboardSubsectionElement extends
       this.attemptDeepLink();
     }
   }
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kKeyboardFunctionKeys,
+    Setting.kKeyboardRemapKeys,
+  ]);
 
   protected keyboard: Keyboard;
   protected keyboardPolicies: KeyboardPolicies;
@@ -392,8 +386,7 @@ export class SettingsPerDeviceKeyboardSubsectionElement extends
       return 0;
     }
 
-    return Object
-        .values(this.keyboard.settings.sixPackKeyRemappings as SixPackKeyInfo)
+    return Object.values(this.keyboard.settings.sixPackKeyRemappings)
         .filter(
             (modifier: SixPackShortcutModifier) =>
                 modifier !== SixPackShortcutModifier.kSearch)

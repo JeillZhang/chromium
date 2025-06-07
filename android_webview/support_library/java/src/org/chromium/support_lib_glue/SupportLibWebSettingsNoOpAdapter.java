@@ -199,4 +199,37 @@ class SupportLibWebSettingsNoOpAdapter implements WebSettingsBoundaryInterface {
         recordApiCall(ApiCall.GET_BACK_FORWARD_CACHE_ENABLED);
         return false;
     }
+
+    @Override
+    public void setPaymentRequestEnabled(boolean enabled) {
+        recordApiCall(ApiCall.SET_PAYMENT_REQUEST_ENABLED);
+    }
+
+    @Override
+    public boolean getPaymentRequestEnabled() {
+        recordApiCall(ApiCall.GET_PAYMENT_REQUEST_ENABLED);
+        return false;
+    }
+
+    @Override
+    public void setHasEnrolledInstrumentEnabled(boolean enabled) {
+        recordApiCall(ApiCall.SET_HAS_ENROLLED_INSTRUMENT_ENABLED);
+    }
+
+    @Override
+    public boolean getHasEnrolledInstrumentEnabled() {
+        recordApiCall(ApiCall.GET_HAS_ENROLLED_INSTRUMENT_ENABLED);
+        return false;
+    }
+
+    @Override
+    public void setIncludeCookiesOnIntercept(boolean includeCookiesOnIntercept) {
+        recordApiCall(ApiCall.SET_INCLUDE_COOKIES_ON_INTERCEPT);
+    }
+
+    @Override
+    public boolean getIncludeCookiesOnIntercept() {
+        recordApiCall(ApiCall.GET_INCLUDE_COOKIES_ON_INTERCEPT);
+        return false;
+    }
 }

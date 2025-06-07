@@ -239,6 +239,9 @@ CONSOLE MESSAGE:     method defer
 CONSOLE MESSAGE:     method dispose
 CONSOLE MESSAGE:     method move
 CONSOLE MESSAGE:     method use
+CONSOLE MESSAGE: interface Float16Array : TypedArray
+CONSOLE MESSAGE:     attribute BYTES_PER_ELEMENT
+CONSOLE MESSAGE:     method constructor
 CONSOLE MESSAGE: interface IntrinsicSizes
 CONSOLE MESSAGE:     attribute @@toStringTag
 CONSOLE MESSAGE:     getter maxContentSize
@@ -278,6 +281,11 @@ CONSOLE MESSAGE:     setter blockOffset
 CONSOLE MESSAGE:     setter inlineOffset
 CONSOLE MESSAGE: interface LayoutWorkletGlobalScope : WorkletGlobalScope
 CONSOLE MESSAGE:     attribute @@toStringTag
+CONSOLE MESSAGE:     method constructor
+CONSOLE MESSAGE: interface QuotaExceededError : DOMException
+CONSOLE MESSAGE:     attribute @@toStringTag
+CONSOLE MESSAGE:     getter quota
+CONSOLE MESSAGE:     getter requested
 CONSOLE MESSAGE:     method constructor
 CONSOLE MESSAGE: interface ReadableByteStreamController
 CONSOLE MESSAGE:     attribute @@toStringTag
@@ -649,6 +657,9 @@ CONSOLE MESSAGE:     method defer
 CONSOLE MESSAGE:     method dispose
 CONSOLE MESSAGE:     method move
 CONSOLE MESSAGE:     method use
+CONSOLE MESSAGE: interface Float16Array : TypedArray
+CONSOLE MESSAGE:     attribute BYTES_PER_ELEMENT
+CONSOLE MESSAGE:     method constructor
 CONSOLE MESSAGE: interface IntrinsicSizes
 CONSOLE MESSAGE:     attribute @@toStringTag
 CONSOLE MESSAGE:     getter maxContentSize
@@ -688,6 +699,11 @@ CONSOLE MESSAGE:     setter blockOffset
 CONSOLE MESSAGE:     setter inlineOffset
 CONSOLE MESSAGE: interface LayoutWorkletGlobalScope : WorkletGlobalScope
 CONSOLE MESSAGE:     attribute @@toStringTag
+CONSOLE MESSAGE:     method constructor
+CONSOLE MESSAGE: interface QuotaExceededError : DOMException
+CONSOLE MESSAGE:     attribute @@toStringTag
+CONSOLE MESSAGE:     getter quota
+CONSOLE MESSAGE:     getter requested
 CONSOLE MESSAGE:     method constructor
 CONSOLE MESSAGE: interface ReadableByteStreamController
 CONSOLE MESSAGE:     attribute @@toStringTag

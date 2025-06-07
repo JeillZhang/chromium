@@ -17,7 +17,7 @@
               "builder_group": "chromium.android",
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_android_config": {
-                "config": "x64_builder"
+                "config": "base_config"
               },
               "legacy_chromium_config": {
                 "apply_configs": [
@@ -25,7 +25,8 @@
                   "mb"
                 ],
                 "build_config": "Debug",
-                "config": "android",
+                "config": "main_builder",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "android"
               },
@@ -48,7 +49,7 @@
               "builder_group": "chromium.android",
               "execution_mode": "TEST",
               "legacy_android_config": {
-                "config": "x64_builder"
+                "config": "base_config"
               },
               "legacy_chromium_config": {
                 "apply_configs": [
@@ -56,7 +57,8 @@
                   "mb"
                 ],
                 "build_config": "Debug",
-                "config": "android",
+                "config": "main_builder",
+                "target_arch": "intel",
                 "target_bits": 64,
                 "target_platform": "android"
               },
@@ -92,18 +94,6 @@
       "targets_spec_directory": "src/infra/config/generated/builders/try/android-cronet-x64-dbg-15-tests/targets"
     }
   },
-  "$build/code_coverage": {
-    "coverage_test_types": [
-      "unit",
-      "overall"
-    ],
-    "use_clang_coverage": true,
-    "use_java_coverage": true
-  },
-  "$build/flakiness": {
-    "check_for_flakiness": true,
-    "check_for_flakiness_with_resultdb": true
-  },
   "$build/siso": {
     "configs": [
       "builder",
@@ -126,6 +116,5 @@
     ]
   },
   "builder_group": "tryserver.chromium.android",
-  "cq": "path-based",
   "recipe": "chromium_trybot"
 }

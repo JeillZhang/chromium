@@ -7,15 +7,12 @@
 
 #import <UIKit/UIKit.h>
 
+#import "components/policy/core/browser/signin/profile_separation_policies.h"
 #import "ios/chrome/browser/signin/model/capabilities_dict.h"
 #import "url/gurl.h"
 
 @class FakeSystemIdentity;
 @protocol GREYMatcher;
-
-namespace signin {
-enum class ConsentLevel;
-}
 
 namespace syncer {
 enum class UserSelectableType;
@@ -52,13 +49,16 @@ enum class UserSelectableType;
 // Returns YES if the identity was added to the fake identity service.
 + (BOOL)isIdentityAdded:(FakeSystemIdentity*)fakeIdentity;
 
+// Simulates a persistent authentication error for an account.
++ (void)setPersistentAuthErrorForAccount:(NSString*)accountGaiaId;
+
 // Returns the gaia ID of the primary account.
 // If there is no primary account returns an empty string.
 + (NSString*)primaryAccountGaiaID;
 
-// Returns the email of the primary account base on `consentLevel`.
+// Returns the email of the primary account.
 // If there is no signed-in account returns an empty string.
-+ (NSString*)primaryAccountEmailWithConsent:(signin::ConsentLevel)consentLevel;
++ (NSString*)primaryAccountEmail;
 
 // Returns the gaia IDs of all accounts in the current profile.
 + (NSSet<NSString*>*)accountsInProfileGaiaIDs;
@@ -69,21 +69,21 @@ enum class UserSelectableType;
 // Signs out the current user.
 + (void)signOut;
 
-// Signs in with the fake identity and access point Settings.
+// Signs in with the fake identity.
 // Adds the fake-identity to the identity manager if necessary.
 // Call `[SigninEarlGrey signinWithFakeIdentity:identity]` instead.
 // `fakeIdentity` is added if it was not added yet.
 + (void)signinWithFakeIdentity:(FakeSystemIdentity*)identity;
 
-// TODO(crbug.com/40066949): Remove all tests invoking this when deleting the
-// MaybeMigrateSyncingUserToSignedIn() call on //ios (not right after launching
-// kMigrateSyncingUserToSignedIn).
+// Signs in with the fake managed identity.
+// Adds the fake-identity to the identity manager if necessary.
+// If separate profiles for managed accounts are enabled, converts the personal
+// profile into a managed one.
+// Call `[SigninEarlGrey
+// signinWithFakeManagedIdentityInPersonalProfile:identity]` instead.
 // `fakeIdentity` is added if it was not added yet.
-+ (void)signinAndEnableLegacySyncFeature:(FakeSystemIdentity*)identity;
-
-// Signs in with `identity` without history sync consent.
-// `fakeIdentity` is added if it was not added yet.
-+ (void)signInWithoutHistorySyncWithFakeIdentity:(FakeSystemIdentity*)identity;
++ (void)signinWithFakeManagedIdentityInPersonalProfile:
+    (FakeSystemIdentity*)identity;
 
 // Triggers the reauth dialog. This is done by sending ShowSigninCommand to
 // SceneController, without any UI interaction to open the dialog.
@@ -103,6 +103,32 @@ enum class UserSelectableType;
 
 // Returns if the data type is enabled for the sync service.
 + (BOOL)isSelectedTypeEnabled:(syncer::UserSelectableType)type;
+
+// Set/clear a global flag to return fake default responses for all profile
+// separation policy fetch requests (unless a specific response is set for the
+// next request, see `setPolicyResponseForNextProfileSeparationPolicyRequest:`).
+// If a test sets this (typically in `setUpForTestCase`), it must also unset it
+// again (in `tearDown`).
++ (void)setUseFakeResponsesForProfileSeparationPolicyRequests;
++ (void)clearUseFakeResponsesForProfileSeparationPolicyRequests;
+
+// Stores a policy that will be returned for the next fetch profile separation
+// policy request.
++ (void)setPolicyResponseForNextProfileSeparationPolicyRequest:
+    (policy::ProfileSeparationDataMigrationSettings)
+        profileSeparationDataMigrationSettings;
+
+// Returns whether the feature to put each managed account into its own separate
+// profile is enabled. This depends on the `kSeparateProfilesForManagedAccounts`
+// feature flag, plus some additional conditions which can't be directly checked
+// in the test app.
++ (BOOL)areSeparateProfilesForManagedAccountsEnabled;
+
+// Returns whether the account particle disc on the NTP should open the account
+// menu. This depends on the `kSeparateProfilesForManagedAccounts` and
+// `kIdentityDiscAccountMenu` feature flags, plus some additional conditions
+// which can't be directly checked in the test app.
++ (BOOL)isIdentityDiscAccountMenuEnabled;
 
 @end
 

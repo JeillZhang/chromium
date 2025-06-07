@@ -45,7 +45,9 @@
 #include "chrome/browser/ui/views/side_panel/customize_chrome/side_panel_controller_views.h"
 #include "chrome/browser/ui/webui/browser_command/browser_command_handler.h"
 #include "chrome/browser/ui/webui/cr_components/most_visited/most_visited_handler.h"
+#include "chrome/browser/ui/webui/customize_buttons/customize_buttons_handler.h"
 #include "chrome/browser/ui/webui/favicon_source.h"
+#include "chrome/browser/ui/webui/metrics_reporter/metrics_reporter_service.h"
 #include "chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.h"
 #include "chrome/browser/ui/webui/new_tab_page/ntp_pref_names.h"
 #include "chrome/browser/ui/webui/new_tab_page/untrusted_source.h"
@@ -54,6 +56,7 @@
 #include "chrome/browser/ui/webui/searchbox/realbox_handler.h"
 #include "chrome/browser/ui/webui/searchbox/searchbox_handler.h"
 #include "chrome/browser/ui/webui/theme_source.h"
+#include "chrome/browser/ui/webui/webui_embedding_context.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/search/instant_types.h"
 #include "chrome/common/url_constants.h"
@@ -97,6 +100,11 @@
 #include "ui/webui/webui_util.h"
 #include "url/origin.h"
 #include "url/url_util.h"
+
+#if !BUILDFLAG(OPTIMIZE_WEBUI)
+#include "chrome/grit/new_tab_shared_resources.h"
+#include "chrome/grit/new_tab_shared_resources_map.h"
+#endif
 
 #if !defined(OFFICIAL_BUILD)
 #include "chrome/browser/ui/webui/new_tab_page/foo/foo_handler.h"
@@ -198,18 +206,17 @@ content::WebUIDataSource* CreateAndAddNewTabPageUiHtmlSource(Profile* profile) {
   source->AddInteger(
       "multipleLoadedModulesMaxModuleInstanceCount",
       ntp_features::GetMultipleLoadedModulesMaxModuleInstanceCount());
-  source->AddBoolean("mostRelevantTabResumptionEnabled",
-                     base::FeatureList::IsEnabled(
-                         ntp_features::kNtpMostRelevantTabResumptionModule));
   source->AddBoolean(
-      "mostRelevantTabResumptionDeviceIconEnabled",
+      "mostRelevantTabResumptionAllowFaviconServerFallback",
       base::FeatureList::IsEnabled(
-          ntp_features::kNtpMostRelevantTabResumptionModuleDeviceIcon));
-
+          ntp_features::
+              kNtpMostRelevantTabResumptionAllowFaviconServerFallback));
   source->AddBoolean(
-      "mostRelevantTabResumptionUseIsKnownToSync",
+      "mostRelevantTabResumptionModuleFallbackToHost",
       base::FeatureList::IsEnabled(
-          ntp_features::kNtpMostRelevantTabResumptionUseIsKnownToSync));
+          ntp_features::kNtpMostRelevantTabResumptionModuleFallbackToHost));
+  source->AddBoolean("footerEnabled",
+                     base::FeatureList::IsEnabled(ntp_features::kNtpFooter));
 
   static constexpr webui::LocalizedString kStrings[] = {
       {"doneButton", IDS_DONE},
@@ -372,10 +379,13 @@ content::WebUIDataSource* CreateAndAddNewTabPageUiHtmlSource(Profile* profile) {
       {"modulesOutlookCalendarInfo", IDS_NTP_MODULES_OUTLOOK_CALENDAR_INFO},
       {"modulesCalendarJoinMeetingButtonText",
        IDS_NTP_MODULES_CALENDAR_JOIN_MEETING_BUTTON_TEXT},
+      {"modulesCalendarJoinMeetingButtonAcc",
+       IDS_NTP_MODULES_CALENDAR_JOIN_MEETING_BUTTON_ACCNAME},
       {"modulesCalendarInProgress", IDS_NTP_MODULES_CALENDAR_IN_PROGRESS},
       {"modulesCalendarInXMin", IDS_NTP_MODULES_CALENDAR_IN_X_MIN},
       {"modulesCalendarInXHr", IDS_NTP_MODULES_CALENDAR_IN_X_HR},
       {"modulesCalendarSeeMore", IDS_NTP_MODULES_CALENDAR_SEE_MORE},
+      {"modulesCalendarSeeMoreAcc", IDS_NTP_MODULES_CALENDAR_SEE_MORE_ACCNAME},
       {"modulesKaleidoscopeTitle", IDS_NTP_MODULES_KALEIDOSCOPE_TITLE},
       {"modulesTasksInfoTitle", IDS_NTP_MODULES_SHOPPING_TASKS_INFO_TITLE},
       {"modulesTasksInfoClose", IDS_NTP_MODULES_SHOPPING_TASKS_INFO_CLOSE},
@@ -406,7 +416,8 @@ content::WebUIDataSource* CreateAndAddNewTabPageUiHtmlSource(Profile* profile) {
       {"modulesMoreActions", IDS_NTP_MODULES_MORE_ACTIONS},
       {"modulesTabResumptionDismissButton",
        IDS_NTP_MODULES_TAB_RESUMPTION_DISMISS_BUTTON},
-      {"modulesTabResumptionTitle", IDS_NTP_TAB_RESUMPTION_TITLE},
+      {"modulesTabResumptionTitle",
+       IDS_NTP_MODULES_MOST_RELEVANT_TAB_RESUMPTION_TITLE},
       {"modulesTabResumptionInfo", IDS_NTP_MODULES_TAB_RESUMPTION_INFO},
       {"modulesTabResumptionMultiDismiss",
        IDS_NTP_MODULES_TAB_RESUMPTION_MULTI_DISMISS},
@@ -463,6 +474,11 @@ content::WebUIDataSource* CreateAndAddNewTabPageUiHtmlSource(Profile* profile) {
   source->AddBoolean("modulesReloadable", microsoft_module_enabled);
   source->AddBoolean("waitToLoadModules", microsoft_module_enabled);
 
+  // ComposeBox LoadTimeData
+  source->AddString("composeboxImageFileTypes", "image/*");
+  source->AddString("composeboxAttachmentFileTypes", ".pdf,application/pdf");
+  source->AddInteger("composeboxFileMaxSize", 1000000);
+
   SearchboxHandler::SetupWebUIDataSource(
       source, profile,
       /*enable_voice_search=*/true,
@@ -471,6 +487,10 @@ content::WebUIDataSource* CreateAndAddNewTabPageUiHtmlSource(Profile* profile) {
 
   webui::SetupWebUIDataSource(source, kNewTabPageResources,
                               IDR_NEW_TAB_PAGE_NEW_TAB_PAGE_HTML);
+
+#if !BUILDFLAG(OPTIMIZE_WEBUI)
+  source->AddResourcePaths(kNewTabSharedResources);
+#endif
 
   // Allow embedding of iframes for the doodle and
   // chrome-untrusted://new-tab-page for other external content and resources.
@@ -492,6 +512,7 @@ NewTabPageUI::NewTabPageUI(content::WebUI* web_ui)
     : ui::MojoWebUIController(web_ui, /*enable_chrome_send=*/true),
       content::WebContentsObserver(web_ui->GetWebContents()),
       page_factory_receiver_(this),
+      customize_buttons_factory_receiver_(this),
       most_visited_page_factory_receiver_(this),
       browser_command_factory_receiver_(this),
       profile_(Profile::FromWebUI(web_ui)),
@@ -640,14 +661,11 @@ void NewTabPageUI::BindInterface(
 
 void NewTabPageUI::BindInterface(
     mojo::PendingReceiver<searchbox::mojom::PageHandler> pending_page_handler) {
+  MetricsReporterService* service =
+      MetricsReporterService::GetFromWebContents(web_ui()->GetWebContents());
   realbox_handler_ = std::make_unique<RealboxHandler>(
       std::move(pending_page_handler), profile_, web_contents(),
-      &metrics_reporter_, /*omnibox_controller=*/nullptr);
-}
-
-void NewTabPageUI::BindInterface(
-    mojo::PendingReceiver<metrics_reporter::mojom::PageMetricsHost> receiver) {
-  metrics_reporter_.BindInterface(std::move(receiver));
+      service->metrics_reporter(), /*omnibox_controller=*/nullptr);
 }
 
 void NewTabPageUI::BindInterface(
@@ -657,6 +675,16 @@ void NewTabPageUI::BindInterface(
     browser_command_factory_receiver_.reset();
   }
   browser_command_factory_receiver_.Bind(std::move(pending_receiver));
+}
+
+void NewTabPageUI::BindInterface(
+    mojo::PendingReceiver<
+        customize_buttons::mojom::CustomizeButtonsHandlerFactory>
+        pending_receiver) {
+  if (customize_buttons_factory_receiver_.is_bound()) {
+    customize_buttons_factory_receiver_.reset();
+  }
+  customize_buttons_factory_receiver_.Bind(std::move(pending_receiver));
 }
 
 void NewTabPageUI::BindInterface(
@@ -774,7 +802,19 @@ void NewTabPageUI::CreateBrowserCommandHandler(
       Command::kNoOpCommand,
   };
   promo_browser_command_handler_ = std::make_unique<BrowserCommandHandler>(
-      std::move(pending_handler), profile_, supported_commands);
+      std::move(pending_handler), profile_, supported_commands,
+      web_ui()->GetWebContents());
+}
+
+void NewTabPageUI::CreateCustomizeButtonsHandler(
+    mojo::PendingRemote<customize_buttons::mojom::CustomizeButtonsDocument>
+        pending_page,
+    mojo::PendingReceiver<customize_buttons::mojom::CustomizeButtonsHandler>
+        pending_page_handler) {
+  customize_buttons_handler_ = std::make_unique<CustomizeButtonsHandler>(
+      std::move(pending_page_handler), std::move(pending_page), web_ui(),
+      webui::GetTabInterface(web_contents()),
+      std::make_unique<NewTabPageFeaturePromoHelper>());
 }
 
 void NewTabPageUI::CreatePageHandler(

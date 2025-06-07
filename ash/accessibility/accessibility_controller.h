@@ -5,6 +5,7 @@
 #ifndef ASH_ACCESSIBILITY_ACCESSIBILITY_CONTROLLER_H_
 #define ASH_ACCESSIBILITY_ACCESSIBILITY_CONTROLLER_H_
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -101,6 +102,8 @@ enum class A11yNotificationType {
   kDicationOnlyPumpkinDownloaded,
   // Shown when the SODA DLC (but no other DLCs) have downloaded.
   kDictationOnlySodaDownloaded,
+  // Shown when FaceGaze is active.
+  kFaceGazeActive,
   // Shown when the facegaze-assets DLC has successfully downloaded.
   kFaceGazeAssetsDownloaded,
   // Shown when the facegaze-assets DLC failed to download.
@@ -215,9 +218,11 @@ class ASH_EXPORT AccessibilityController
   struct A11yNotificationWrapper {
     A11yNotificationWrapper();
     A11yNotificationWrapper(A11yNotificationType type_in,
+                            const std::string& notification_id_in,
                             std::vector<std::u16string> replacements_in);
     A11yNotificationWrapper(
         A11yNotificationType type_in,
+        const std::string& notification_id_in,
         std::vector<std::u16string> replacements_in,
         std::optional<base::RepeatingCallback<void(std::optional<int>)>>
             callback_in);
@@ -225,6 +230,7 @@ class ASH_EXPORT AccessibilityController
     A11yNotificationWrapper(const A11yNotificationWrapper&);
 
     A11yNotificationType type = A11yNotificationType::kNone;
+    std::string notification_id;
     std::vector<std::u16string> replacements;
     std::optional<base::RepeatingCallback<void(std::optional<int>)>> callback;
   };
@@ -368,6 +374,7 @@ class ASH_EXPORT AccessibilityController
 
   bool IsTouchpadDisabled();
 
+  void OnFaceGazeActiveNotificationClicked(std::optional<int> button_index);
   void OnTouchpadNotificationClicked(std::optional<int> button_index);
 
   // Switch access may be disabled in prefs but still running when the disable
@@ -757,6 +764,10 @@ class ASH_EXPORT AccessibilityController
   // and Autoclick.
   void EnableDragEventRewriter(bool enabled);
 
+  // Will show a confirmation dialog asking if the user wants to turn off
+  // FaceGaze.
+  void RequestDisableFaceGaze();
+
  private:
   // Populate |features_| with the feature of the correct type.
   void CreateAccessibilityFeatures();
@@ -806,10 +817,6 @@ class ASH_EXPORT AccessibilityController
   void UpdateShortcutsEnabledFromPref();
   void UpdateTabletModeShelfNavigationButtonsFromPref();
 
-  // UpdateCursorColorFromPrefs helpers.
-  void UpdateCursorColor(SkColor cursor_color, bool notify);
-  void TrackCursorColorEnabledDuration(SkColor cursor_color);
-
   void SwitchAccessDisableDialogClosed(bool disable_dialog_accepted);
   void MaybeCreateSelectToSpeakEventHandler();
   void ActivateSwitchAccess();
@@ -836,6 +843,10 @@ class ASH_EXPORT AccessibilityController
                                      const std::string& behavior_pref,
                                      bool dialog_accepted);
 
+  // Callback that is run when the user interacts with the disable FaceGaze
+  // dialog.
+  void OnRequestDisableFaceGazeAction(bool dialog_accepted);
+
   void RecordSelectToSpeakSpeechDuration(SelectToSpeakState old_state,
                                          SelectToSpeakState new_state);
 
@@ -849,19 +860,14 @@ class ASH_EXPORT AccessibilityController
   raw_ptr<AccessibilityControllerClient> client_ = nullptr;
 
   // Features are indexed by A11yFeatureType cast to int.
-  std::unique_ptr<Feature> features_[kA11yFeatureTypeCount];
+  std::array<std::unique_ptr<Feature>, kA11yFeatureTypeCount> features_;
 
   base::TimeDelta autoclick_delay_;
   int large_cursor_size_in_dip_ = kDefaultLargeCursorSize;
 
   bool dictation_active_ = false;
-  bool cursor_color_enabled_ = false;
   bool shortcuts_enabled_ = true;
   bool tablet_mode_shelf_navigation_buttons_enabled_ = false;
-
-  // The time at which the cursor color feature was last enabled. Used for
-  // metrics.
-  base::Time last_cursor_color_enabled_time_;
 
   SelectToSpeakState select_to_speak_state_ =
       SelectToSpeakState::kSelectToSpeakStateInactive;

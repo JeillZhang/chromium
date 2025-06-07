@@ -405,6 +405,15 @@ suite('CupsSavedPrintersTests', () => {
     addressField.value = expectedAddress;
     addressField.dispatchEvent(
         new CustomEvent('input', {bubbles: true, composed: true}));
+
+    // Managed printer PPD textbox should be hidden.
+    const managedPrinterPPD =
+        editDialog.shadowRoot!.querySelector<HTMLElement>('#managedPrinterPPD');
+    assertTrue(!!managedPrinterPPD);
+    const parentElement = managedPrinterPPD.parentElement;
+    assertTrue(!!parentElement);
+    assertTrue(parentElement.hidden);
+
     const cancelButton =
         editDialog.shadowRoot!.querySelector<HTMLButtonElement>(
             '.cancel-button');
@@ -1624,7 +1633,7 @@ suite('CupsEnterprisePrintersTests', () => {
   // Verifies that enterprise printers are not editable.
   test('EnterprisePrinterDialog', async () => {
     createCupsPrinterPage([
-      createCupsPrinterInfo('test1', '1', 'id1', true),
+      createCupsPrinterInfo('test1', '1', 'id1', true, '/foo/bar/bazppd'),
     ]);
     await cupsPrintersBrowserProxy.whenCalled('getCupsEnterprisePrintersList');
     // Wait for enterprise printers to populate.
@@ -1636,12 +1645,14 @@ suite('CupsEnterprisePrintersTests', () => {
     const enterprisePrinterEntries:
         NodeListOf<SettingsCupsPrintersEntryElement> =
             getPrinterEntries(enterprisePrintersElement);
+
     // Users are not allowed to remove enterprise printers.
     const removeButton =
         enterprisePrintersElement.shadowRoot!.querySelector<HTMLButtonElement>(
             '#removeButton');
     assertTrue(!!removeButton);
     assertTrue(removeButton.disabled);
+
     const button = enterprisePrinterEntries[0]!.shadowRoot!
                        .querySelector<HTMLButtonElement>('.icon-more-vert');
     assertTrue(!!button);
@@ -1676,6 +1687,7 @@ suite('CupsEnterprisePrintersTests', () => {
             '#printerPPDManufacturer');
     assertTrue(!!printerPPDManufacturer);
     assertTrue(printerPPDManufacturer.readonly);
+
     // The "specify PDD" section should be hidden.
     const browseButton =
         editDialog.shadowRoot!.querySelector<HTMLButtonElement>(
@@ -1684,10 +1696,29 @@ suite('CupsEnterprisePrintersTests', () => {
     const parentElement = browseButton.parentElement;
     assertTrue(!!parentElement);
     assertTrue(parentElement.hidden);
+
+    // Managed printer PPD textbox should be visible.
+    const managedPrinterPPD =
+        editDialog.shadowRoot!.querySelector<CrInputElement>(
+            '#managedPrinterPPD');
+    assertTrue(!!managedPrinterPPD);
+    assertFalse(managedPrinterPPD.hidden);
+    assertEquals('bazppd', managedPrinterPPD.value);
+
+    // View printer PPD button should be visible. Help text should be hidden.
     const ppdLabel =
         editDialog.shadowRoot!.querySelector<HTMLElement>('#ppdLabel');
     assertTrue(!!ppdLabel);
-    assertTrue(ppdLabel.hidden);
+    assertFalse(ppdLabel.hidden);
+    const ppdButton =
+        editDialog.shadowRoot!.querySelector<HTMLElement>('.ppd-button');
+    assertTrue(!!ppdButton);
+    assertFalse(ppdButton.hidden);
+    const localizedLink =
+        editDialog.shadowRoot!.querySelector<HTMLElement>('localized-link');
+    assertTrue(!!localizedLink);
+    assertTrue(localizedLink.hidden);
+
     // Save and Cancel buttons should be hidden. Close button should be
     // visible.
     const cancelButton =

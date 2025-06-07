@@ -8,6 +8,7 @@
 
 #include "base/functional/callback_forward.h"
 #include "base/metrics/histogram_functions.h"
+#include "third_party/blink/public/mojom/ai/ai_common.mojom-blink.h"
 #include "third_party/blink/public/mojom/ai/model_streaming_responder.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/dom/abort_signal.h"
@@ -79,23 +80,12 @@ class Responder final : public GarbageCollected<Responder>,
   }
 
   // `mojom::blink::ModelStreamingResponder` implementation.
-  void OnStreaming(
-      const String& text,
-      mojom::blink::ModelStreamingResponderAction action) override {
+  void OnStreaming(const String& text) override {
     RecordResponseStatusMetrics(
         mojom::blink::ModelStreamingResponseStatus::kOngoing);
     response_callback_count_++;
     // Update the response with the latest value.
-    switch (action) {
-      case mojom::blink::ModelStreamingResponderAction::kAppend: {
-        response_ = response_ + text;
-        break;
-      }
-      case mojom::blink::ModelStreamingResponderAction::kReplace: {
-        response_ = text;
-        break;
-      }
-    }
+    response_ = response_ + text;
   }
 
   void OnCompletion(
@@ -112,15 +102,17 @@ class Responder final : public GarbageCollected<Responder>,
     Cleanup();
   }
 
-  void OnError(mojom::blink::ModelStreamingResponseStatus status) override {
+  void OnError(mojom::blink::ModelStreamingResponseStatus status,
+               mojom::blink::QuotaErrorInfoPtr quota_error_info) override {
     RecordResponseStatusMetrics(status);
     response_callback_count_++;
-    resolver_->Reject(ConvertModelStreamingResponseErrorToDOMException(status));
+    resolver_->Reject(ConvertModelStreamingResponseErrorToDOMException(
+        status, std::move(quota_error_info)));
     RecordResponseMetrics();
     Cleanup();
   }
 
-  void OnContextOverflow() override {
+  void OnQuotaOverflow() override {
     if (overflow_callback_) {
       overflow_callback_.Run();
     }
@@ -247,9 +239,7 @@ class StreamingResponder final
   }
 
   // `blink::mojom::blink::ModelStreamingResponder` implementation.
-  void OnStreaming(
-      const String& text,
-      mojom::blink::ModelStreamingResponderAction action) override {
+  void OnStreaming(const String& text) override {
     RecordResponseStatusMetrics(
         mojom::blink::ModelStreamingResponseStatus::kOngoing);
     // Update the response info and enqueue the latest response.
@@ -273,16 +263,17 @@ class StreamingResponder final
     return;
   }
 
-  void OnError(ModelStreamingResponseStatus status) override {
+  void OnError(ModelStreamingResponseStatus status,
+               mojom::blink::QuotaErrorInfoPtr quota_error_info) override {
     RecordResponseStatusMetrics(status);
     response_callback_count_++;
-    Controller()->Error(
-        ConvertModelStreamingResponseErrorToDOMException(status));
+    Controller()->Error(ConvertModelStreamingResponseErrorToDOMException(
+        status, std::move(quota_error_info)));
     RecordResponseMetrics();
     Cleanup();
   }
 
-  void OnContextOverflow() override {
+  void OnQuotaOverflow() override {
     if (overflow_callback_) {
       overflow_callback_.Run();
     }

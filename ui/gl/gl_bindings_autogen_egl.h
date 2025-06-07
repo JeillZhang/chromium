@@ -397,6 +397,7 @@ struct GL_EXPORT DisplayExtensionsEGL {
   bool b_EGL_ANGLE_context_virtualization;
   bool b_EGL_ANGLE_create_context_backwards_compatible;
   bool b_EGL_ANGLE_create_context_client_arrays;
+  bool b_EGL_ANGLE_create_context_passthrough_shaders;
   bool b_EGL_ANGLE_create_context_webgl_compatibility;
   bool b_EGL_ANGLE_d3d_share_handle_client_buffer;
   bool b_EGL_ANGLE_device_vulkan;
@@ -867,6 +868,7 @@ class GL_EXPORT EGLApi {
 
 }  // namespace gl
 
+#if BINDINGS_EGL_PROTOTYPES
 #define eglAcquireExternalContextANGLE \
   ::gl::g_current_egl_context->eglAcquireExternalContextANGLEFn
 #define eglBindAPI ::gl::g_current_egl_context->eglBindAPIFn
@@ -1012,5 +1014,6 @@ class GL_EXPORT EGLApi {
 #define eglWaitSyncKHR ::gl::g_current_egl_context->eglWaitSyncKHRFn
 #define eglWaitUntilWorkScheduledANGLE \
   ::gl::g_current_egl_context->eglWaitUntilWorkScheduledANGLEFn
+#endif  // BINDINGS_EGL_PROTOTYPES
 
 #endif  // UI_GL_GL_BINDINGS_AUTOGEN_EGL_H_

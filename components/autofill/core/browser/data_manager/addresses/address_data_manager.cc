@@ -170,17 +170,6 @@ std::vector<const AutofillProfile*> AddressDataManager::GetProfiles(
     ProfileOrder order) const {
   std::vector<const AutofillProfile*> profiles =
       base::ToVector(profiles_, [](const AutofillProfile& p) { return &p; });
-  // Filter incomplete H/W addresses.
-  std::erase_if(profiles, [&](const AutofillProfile* p) {
-    switch (p->record_type()) {
-      case AutofillProfile::RecordType::kLocalOrSyncable:
-      case AutofillProfile::RecordType::kAccount:
-        return false;
-      case AutofillProfile::RecordType::kAccountHome:
-      case AutofillProfile::RecordType::kAccountWork:
-        return !IsMinimumAddress(*p);
-    }
-  });
   OrderProfiles(profiles, order);
   return profiles;
 }
@@ -197,9 +186,20 @@ std::vector<const AutofillProfile*> AddressDataManager::GetProfilesByRecordType(
 
 std::vector<const AutofillProfile*> AddressDataManager::GetProfilesToSuggest()
     const {
-  return IsAutofillProfileEnabled()
-             ? GetProfiles(ProfileOrder::kHighestFrecencyDesc)
-             : std::vector<const AutofillProfile*>{};
+  if (!IsAutofillProfileEnabled()) {
+    return std::vector<const AutofillProfile*>{};
+  }
+  std::vector<const AutofillProfile*> profiles =
+      GetProfiles(ProfileOrder::kHighestFrecencyDesc);
+  // H/W addresses are prioritized for suggestion purposes.
+  std::ranges::stable_partition(profiles,
+                                &AutofillProfile::IsHomeAndWorkProfile);
+  if (profiles.size() >= 2 &&
+      profiles[0]->record_type() == AutofillProfile::RecordType::kAccountWork &&
+      profiles[1]->record_type() == AutofillProfile::RecordType::kAccountHome) {
+    std::swap(profiles[0], profiles[1]);
+  }
+  return profiles;
 }
 
 std::vector<const AutofillProfile*> AddressDataManager::GetProfilesForSettings()
@@ -239,9 +239,9 @@ void AddressDataManager::UpdateProfile(const AutofillProfile& profile) {
     return;
   }
 
-  // If the profile is empty, remove it unconditionally.
-  if (profile.IsEmpty(app_locale_)) {
-    RemoveProfile(profile.guid());
+  if (base::FeatureList::IsEnabled(
+          features::kAutofillDeduplicateAccountAddresses)) {
+    UpdateProfileInDB(profile);
     return;
   }
 
@@ -273,27 +273,9 @@ void AddressDataManager::UpdateProfile(const AutofillProfile& profile) {
   UpdateProfileInDB(profile);
 }
 
-void AddressDataManager::RemoveProfile(const std::string& guid) {
-  if (!webdata_service_) {
-    return;
-  }
-
-  // Find the profile to remove.
-  // TODO(crbug.com/40258814): This shouldn't be necessary. Providing a `guid`
-  // to the `AutofillProfileChange()` should suffice for removals.
-  const AutofillProfile* profile =
-      ProfileChangesAreOngoing(guid)
-          ? &ongoing_profile_changes_[guid].back().first.data_model()
-          : GetProfileByGUID(guid);
-  if (!profile) {
-    NotifyObservers();
-    return;
-  }
-
-  ongoing_profile_changes_[guid].emplace_back(
-      AutofillProfileChange(AutofillProfileChange::REMOVE, guid, *profile),
-      /*is_ongoing=*/false);
-  HandleNextProfileChange(guid);
+void AddressDataManager::RemoveProfile(const std::string& guid,
+                                       bool is_deduplication_initiated) {
+  RemoveProfileImpl(guid, is_deduplication_initiated);
 }
 
 void AddressDataManager::RemoveLocalProfilesModifiedBetween(base::Time begin,
@@ -315,17 +297,6 @@ bool AddressDataManager::IsEligibleForAddressAccountStorage() const {
   // The CONTACT_INFO data type is only running for eligible users. See
   // ContactInfoDataTypeController.
   return sync_service_->GetActiveDataTypes().Has(syncer::CONTACT_INFO);
-}
-
-bool AddressDataManager::IsCountryEligibleForAccountStorage(
-    std::string_view country_code) const {
-  if (base::FeatureList::IsEnabled(
-          features::kAutofillEnableAccountStorageForIneligibleCountries)) {
-    return true;
-  }
-  constexpr char const* kUnsupportedCountries[] = {"CU", "IR", "KP", "SD",
-                                                   "SY"};
-  return !base::Contains(kUnsupportedCountries, country_code);
 }
 
 void AddressDataManager::MigrateProfileToAccount(
@@ -367,10 +338,8 @@ void AddressDataManager::RecordUseOf(const AutofillProfile& profile) {
 
 AddressCountryCode AddressDataManager::GetDefaultCountryCodeForNewAddress()
     const {
-  std::string country = variation_country_code_->empty()
-                            ? AutofillCountry::CountryCodeForLocale(app_locale_)
-                            : variation_country_code_.value();
-  return AddressCountryCode(country);
+  return AutofillCountry::GetDefaultCountryCodeForNewAddress(
+      variation_country_code_, app_locale_);
 }
 
 bool AddressDataManager::IsProfileMigrationBlocked(
@@ -685,6 +654,7 @@ void AddressDataManager::OnAutofillProfileChanged(
         profiles_.push_back(profile);
       }
       break;
+    case AutofillProfileChange::HIDE_IN_AUTOFILL:
     case AutofillProfileChange::REMOVE:
       if (existing_profile) {
         profiles_.erase(std::ranges::find(profiles_, existing_profile->guid(),
@@ -728,14 +698,16 @@ void AddressDataManager::HandleNextProfileChange(const std::string& guid) {
   DCHECK(guid == profile.guid());
 
   switch (change.type()) {
+    case AutofillProfileChange::HIDE_IN_AUTOFILL:
     case AutofillProfileChange::REMOVE: {
       if (!existing_profile) {
         OnProfileChangeDone(guid);
         return;
       }
       webdata_service_->RemoveAutofillProfile(
-          guid, base::BindOnce(&AddressDataManager::OnAutofillProfileChanged,
-                               weak_ptr_factory_.GetWeakPtr()));
+          guid, change.type(),
+          base::BindOnce(&AddressDataManager::OnAutofillProfileChanged,
+                         weak_ptr_factory_.GetWeakPtr()));
       break;
     }
     case AutofillProfileChange::ADD: {
@@ -806,8 +778,41 @@ void AddressDataManager::LogStoredDataMetrics() const {
   autofill_metrics::LogStoredProfileMetrics(profile_pointers);
   autofill_metrics::LogStoredProfileTokenQualityMetrics(profile_pointers);
   autofill_metrics::LogStoredProfileCountWithAlternativeName(profile_pointers);
-  autofill_metrics::LogLocalProfileSupersetMetrics(std::move(profile_pointers),
-                                                   app_locale_);
+  // TODO(crbug.com/357074792): Once the feature is launched, remove the
+  // code inside the if-statement, it won't be needed anymore.
+  if (!base::FeatureList::IsEnabled(
+          features::kAutofillDeduplicateAccountAddresses)) {
+    autofill_metrics::LogLocalProfileSupersetMetrics(
+        std::move(profile_pointers), app_locale_);
+  }
+}
+
+void AddressDataManager::RemoveProfileImpl(const std::string& guid,
+                                           bool is_deduplication_initiated) {
+  if (!webdata_service_) {
+    return;
+  }
+
+  // Find the profile to remove.
+  // TODO(crbug.com/40258814): This shouldn't be necessary. Providing a `guid`
+  // to the `AutofillProfileChange()` should suffice for removals.
+  const AutofillProfile* profile =
+      ProfileChangesAreOngoing(guid)
+          ? &ongoing_profile_changes_[guid].back().first.data_model()
+          : GetProfileByGUID(guid);
+  if (!profile) {
+    NotifyObservers();
+    return;
+  }
+
+  ongoing_profile_changes_[guid].emplace_back(
+      AutofillProfileChange(
+          profile->IsAccountProfile() && is_deduplication_initiated
+              ? AutofillProfileChange::HIDE_IN_AUTOFILL
+              : AutofillProfileChange::REMOVE,
+          guid, *profile),
+      /*is_ongoing=*/false);
+  HandleNextProfileChange(guid);
 }
 
 }  // namespace autofill

@@ -51,18 +51,21 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
 
     virtual void AddPendingRequest(std::unique_ptr<ViewTransitionRequest>) = 0;
     virtual void OnTransitionFinished(ViewTransition*) = 0;
+    virtual void OnSkipTransitionWithPendingCallback(ViewTransition*) = 0;
+    virtual void OnSkippedTransitionDOMCallback(ViewTransition*) = 0;
   };
 
   // Creates and starts a same-document ViewTransition initiated using the
   // script API.
   static ViewTransition* CreateFromScript(
-      Document*,
+      Element*,
       V8ViewTransitionCallback*,
       const std::optional<Vector<String>>& types,
-      Delegate*);
+      Delegate*,
+      ViewTransition* previously_active);
 
   // Creates a skipped transition that still runs the specified callbacks.
-  static ViewTransition* CreateSkipped(Document*, V8ViewTransitionCallback*);
+  static ViewTransition* CreateSkipped(Element*, V8ViewTransitionCallback*);
 
   // Creates a ViewTransition to cache the state of a Document before a
   // navigation. The cached state is provided to the caller using the
@@ -85,12 +88,13 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
 
   // Script-based constructor.
   ViewTransition(PassKey,
-                 Document*,
+                 Element*,
                  V8ViewTransitionCallback*,
                  const std::optional<Vector<String>>& types,
-                 Delegate*);
+                 Delegate*,
+                 ViewTransition* previously_active);
   // Skipped transition constructor.
-  ViewTransition(PassKey, Document*, V8ViewTransitionCallback*);
+  ViewTransition(PassKey, Element*, V8ViewTransitionCallback*);
   // Navigation-initiated for-snapshot constructor.
   ViewTransition(PassKey,
                  Document*,
@@ -201,6 +205,10 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
            style_tracker_->IsTransitionElement(*document_->documentElement());
   }
 
+  void RecalcTransitionPseudoTreeStyle() const;
+
+  void RebuildTransitionPseudoLayoutTree() const;
+
   // In physical pixels. See comments on equivalent methods in
   // ViewTransitionStyleTracker for info.
   gfx::Size GetSnapshotRootSize() const;
@@ -261,6 +269,26 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   // Returns true if `pseudo_element` is generated for this transition.
   bool IsGeneratingPseudo(
       const ViewTransitionPseudoElementBase& pseudo_element) const;
+
+  Element* Scope() const { return scope_.Get(); }
+
+  // The start of a VT cancels the previous transition; however, first VT's
+  // DOM callback must still run. To avoid capturing its DOM changes are part
+  // of the new VT, we postpone advancement of the state until the fist VT's
+  // has started the DOM callback. We do not wait for completion as the callback
+  // may be asynchronous and might never complete.
+  void NotifySkippedTransitionDOMCallbackScheduled();
+  void NotifyInvokeDOMChangeCallback();
+  bool PendingDomCallback();
+
+  // Notifies the view transition object when we start or stop style processing
+  // for getComputedStyle.
+  void WillEnterGetComputedStyleScope();
+  void WillExitGetComputedStyleScope();
+
+  // If this transition is in a phase that has non-web exposed view transition
+  // pseudo elements, then this invalidates the style for those pseudo elements.
+  void InvalidateInternalPseudoStyle();
 
  private:
   friend class ViewTransitionTest;
@@ -350,10 +378,21 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   // API are never cross frame sink.
   bool MaybeCrossFrameSink() const;
 
+  void LogIfDocumentElementChanged() const;
+
   State state_ = State::kInitial;
   const CreationType creation_type_;
 
   Member<Document> document_;
+
+  // For a scoped transition, this is the element scope.
+  // For a document transition, this is the document element at the time the
+  // ViewTransition was created.
+  // TODO(crbug.com/394052227): Consider skipping the transition if the identity
+  // of the document element changes.
+  Member<Element> scope_;
+  bool has_document_scope_ = false;
+
   Delegate* const delegate_ = nullptr;
 
   // Each transition is assigned a unique ID. For cross-document navigations
@@ -372,7 +411,7 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   // selectively pausing animations for a CC instance is difficult.
   class ScopedPauseRendering {
    public:
-    explicit ScopedPauseRendering(const Document& document);
+    explicit ScopedPauseRendering(const Element&);
     ~ScopedPauseRendering();
 
     bool ShouldThrottleRendering() const;
@@ -389,6 +428,14 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   Member<DOMViewTransition> script_delegate_;
 
   Member<ViewTransitionTypeSet> types_;
+
+  // Synchronization of view-transitions. When starting a view transition, we
+  // cancel the previously active one. These members are used to ensure proper
+  // synchronization of the old and new transition. The old VT's DOM callback
+  // must run before the new VT can start.
+  Member<ViewTransition> blocked_on_;
+  Member<ViewTransition> blocking_;
+  bool pending_dom_callback_ = false;
 
   bool in_main_lifecycle_update_ = false;
   bool dom_callback_succeeded_ = false;

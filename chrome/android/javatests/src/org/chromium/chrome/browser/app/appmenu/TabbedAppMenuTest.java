@@ -24,7 +24,8 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.task.PostTask;
@@ -33,9 +34,11 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.browser.bookmarks.PowerBookmarkUtils;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.layouts.animation.CompositorAnimationHandler;
 import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridge;
@@ -48,17 +51,18 @@ import org.chromium.chrome.browser.ui.appmenu.AppMenuHandler;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuItemProperties;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuTestSupport;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
 import org.chromium.components.content_settings.ContentSettingsType;
+import org.chromium.components.signin.test.util.TestAccounts;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.modelutil.PropertyModel;
-import org.chromium.ui.test.util.GmsCoreVersionRestriction;
 
 import java.io.IOException;
 import java.util.concurrent.Callable;
@@ -74,9 +78,11 @@ public class TabbedAppMenuTest {
 
     private static final String TEST_URL = UrlUtils.encodeHtmlDataUri("<html>foo</html>");
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     @Rule
-    public final ChromeTabbedActivityTestRule mActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    public final FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule public final SigninTestRule mSigninTestRule = new SigninTestRule();
 
@@ -94,7 +100,6 @@ public class TabbedAppMenuTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         // Prevent "GmsCore outdated" error from being exposed in bots with old version.
         PasswordManagerUtilBridgeJni.setInstanceForTesting(mPasswordManagerUtilBridgeJniMock);
         when(mPasswordManagerUtilBridgeJniMock.isGmsCoreUpdateRequired(any(), any()))
@@ -107,7 +112,7 @@ public class TabbedAppMenuTest {
 
         CompositorAnimationHandler.setTestingMode(true);
 
-        mActivityTestRule.startMainActivityWithURL(TEST_URL);
+        mActivityTestRule.startOnUrl(TEST_URL);
 
         AppMenuTestSupport.overrideOnOptionItemSelectedListener(
                 mActivityTestRule.getAppMenuCoordinator(), unused -> {});
@@ -198,6 +203,7 @@ public class TabbedAppMenuTest {
     @SmallTest
     @Feature({"Browser", "Main", "Bookmark", "RenderTest"})
     @Restriction(DeviceFormFactor.PHONE)
+    @DisableFeatures({ChromeFeatureList.ANDROID_THEME_MODULE})
     public void testBookmarkMenuItem() throws IOException {
         PropertyModel bookmarkStarPropertyModel =
                 AppMenuTestSupport.getMenuItemPropertyModel(
@@ -242,8 +248,7 @@ public class TabbedAppMenuTest {
 
         int requestDesktopSiteIndex =
                 AppMenuTestSupport.findIndexOfMenuItemById(
-                        mActivityTestRule.getAppMenuCoordinator(),
-                        R.id.request_desktop_site_row_menu_id);
+                        mActivityTestRule.getAppMenuCoordinator(), R.id.request_desktop_site_id);
         Assert.assertNotEquals("No request desktop site row found.", -1, requestDesktopSiteIndex);
 
         Callable<Boolean> isVisible =
@@ -321,7 +326,7 @@ public class TabbedAppMenuTest {
         // Fake an identity error.
         fakeSyncService.setRequiresClientUpgrade(true);
         // Sign in and wait for sync machinery to be active.
-        mSigninTestRule.addTestAccountThenSignin();
+        mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
 
         showAppMenuAndAssertMenuShown();
         View view = getSettingsMenuItemView();
@@ -338,53 +343,12 @@ public class TabbedAppMenuTest {
     public void testSettingsMenuItem_NoBadgeShownForSignedInUsersIfNoError() throws IOException {
         ThreadUtils.runOnUiThreadBlocking(() -> mAppMenuHandler.hideAppMenu());
         // Sign in and wait for sync machinery to be active.
-        mSigninTestRule.addTestAccountThenSignin();
+        mSigninTestRule.addAccountThenSignin(TestAccounts.ACCOUNT1);
 
         showAppMenuAndAssertMenuShown();
         View view = getSettingsMenuItemView();
         Assert.assertNull(view.findViewById(R.id.menu_item_text).getContentDescription());
         mRenderTestRule.render(view, "settings_menu_item_signed_in_user_no_error");
-    }
-
-    @Test
-    @LargeTest
-    @Feature({"Browser", "Main", "RenderTest"})
-    public void testSettingsMenuItem_BadgeShownForSyncingUsersOnSyncError() throws IOException {
-        ThreadUtils.runOnUiThreadBlocking(() -> mAppMenuHandler.hideAppMenu());
-        FakeSyncServiceImpl fakeSyncService =
-                ThreadUtils.runOnUiThreadBlocking(
-                        () -> {
-                            FakeSyncServiceImpl fakeSyncServiceImpl = new FakeSyncServiceImpl();
-                            SyncServiceFactory.setInstanceForTesting(fakeSyncServiceImpl);
-                            return fakeSyncServiceImpl;
-                        });
-        // Fake an identity error.
-        fakeSyncService.setRequiresClientUpgrade(true);
-        // Sign in and wait for sync machinery to be active.
-        mSigninTestRule.addTestAccountThenSigninAndEnableSync();
-
-        showAppMenuAndAssertMenuShown();
-        View view = getSettingsMenuItemView();
-        assertEquals(
-                "Content description should mention an error.",
-                view.findViewById(R.id.menu_item_text).getContentDescription(),
-                mActivityTestRule.getActivity().getString(R.string.menu_settings_account_error));
-        mRenderTestRule.render(view, "settings_menu_item_syncing_user_sync_error");
-    }
-
-    @Test
-    @LargeTest
-    @Restriction(GmsCoreVersionRestriction.RESTRICTION_TYPE_VERSION_GE_22W30)
-    @Feature({"Browser", "Main", "RenderTest"})
-    public void testSettingsMenuItem_NoBadgeShownForSyncingUsersIfNoError() throws IOException {
-        ThreadUtils.runOnUiThreadBlocking(() -> mAppMenuHandler.hideAppMenu());
-        // Sign in and wait for sync machinery to be active.
-        mSigninTestRule.addTestAccountThenSigninAndEnableSync();
-
-        showAppMenuAndAssertMenuShown();
-        View view = getSettingsMenuItemView();
-        Assert.assertNull(view.findViewById(R.id.menu_item_text).getContentDescription());
-        mRenderTestRule.render(view, "settings_menu_item_syncing_user_no_error");
     }
 
     private void showAppMenuAndAssertMenuShown() {

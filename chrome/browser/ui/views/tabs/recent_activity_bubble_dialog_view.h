@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_VIEWS_TABS_RECENT_ACTIVITY_BUBBLE_DIALOG_VIEW_H_
 
 #include "base/scoped_observation.h"
+#include "chrome/browser/ui/views/controls/hover_button.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
 #include "components/collaboration/public/messaging/activity_log.h"
 #include "components/favicon_base/favicon_types.h"
@@ -28,16 +29,26 @@ DECLARE_ELEMENT_IDENTIFIER_VALUE(kRecentActivityBubbleDialogId);
 
 // The bubble dialog view housing the Shared Tab Group Recent Activity.
 // Shows at most kMaxNumberRows of the activity_log parameter.
-class RecentActivityBubbleDialogView : public LocationBarBubbleDelegateView {
+class RecentActivityBubbleDialogView : public LocationBarBubbleDelegateView,
+                                       public ui::SimpleMenuModel::Delegate {
   METADATA_HEADER(RecentActivityBubbleDialogView, LocationBarBubbleDelegateView)
 
  public:
-  RecentActivityBubbleDialogView(View* anchor_view,
-                                 content::WebContents* web_contents,
-                                 std::optional<int> current_tab_activity_index,
-                                 std::vector<ActivityLogItem> activity_log,
-                                 Profile* profile);
+  enum OptionsMenuItem { SEE_ALL_ACTIVITY };
+
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kCloseButtonId);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kSeeAllActivityId);
+
+  RecentActivityBubbleDialogView(
+      View* anchor_view,
+      content::WebContents* web_contents,
+      std::vector<ActivityLogItem> tab_activity_log,
+      std::vector<ActivityLogItem> group_activity_log,
+      Profile* profile);
   ~RecentActivityBubbleDialogView() override;
+
+  // ui::SimpleMenuModel::Delegate:
+  void ExecuteCommand(int command_id, int event_flags) override;
 
   // The maximum number of rows that can be displayed in this dialog.
   static constexpr int kMaxNumberRows = 5;
@@ -51,6 +62,10 @@ class RecentActivityBubbleDialogView : public LocationBarBubbleDelegateView {
   // Creates a view containing the most recent activity for the group.
   void CreateGroupActivity();
 
+  // Returns the title view container including the title, the menu button, and
+  // the close button.
+  std::u16string GetTitleForTesting();
+
   // Returns the row's view at the given index. This will look in both
   // the tab activity container and the group activity container.
   RecentActivityRowView* GetRowForTesting(int n);
@@ -63,16 +78,39 @@ class RecentActivityBubbleDialogView : public LocationBarBubbleDelegateView {
   }
 
  private:
+  // View IDs used for selecting views in tests.
+  enum RecentActivityViewID {
+    TITLE_VIEW_ID,
+    TITLE_ID,
+  };
+
   // Close this bubble.
   void Close();
+
+  // Creates a button view for the close button.
+  std::unique_ptr<views::Button> CreateCloseButton();
+
+  // Creates a button view for the 3-dot menu button.
+  std::unique_ptr<views::Button> CreateOptionsMenuButton();
+
+  // Creates the top row of the dialog, including the title of the dialog, the
+  // 3-dot menu button, and the close button.
+  void CreateTitleView();
+
+  // Displays a context menu anchored to |source|, allowing users to access
+  // additional actions like "See All Activity".
+  void ShowOptionsMenu(views::Button* source);
+
+  std::unique_ptr<ui::SimpleMenuModel> options_menu_model_;
+  std::unique_ptr<views::MenuRunner> options_menu_runner_;
 
   // Containers will always be non-null. Visibility is toggled based on
   // whether rows are added to each container.
   raw_ptr<views::View> tab_activity_container_ = nullptr;
   raw_ptr<views::View> group_activity_container_ = nullptr;
 
-  std::vector<ActivityLogItem> activity_log_;
-  std::optional<int> current_tab_activity_index_;
+  std::vector<ActivityLogItem> tab_activity_log_;
+  std::vector<ActivityLogItem> group_activity_log_;
   const raw_ptr<Profile> profile_;
 
   base::WeakPtrFactory<RecentActivityBubbleDialogView> weak_factory_{this};
@@ -80,22 +118,19 @@ class RecentActivityBubbleDialogView : public LocationBarBubbleDelegateView {
 
 // View containing a single ActivityLogItem. Each row shows activity
 // text, metadata text, and an avatar/favicon view.
-class RecentActivityRowView : public views::View {
+class RecentActivityRowView : public HoverButton {
   METADATA_HEADER(RecentActivityRowView, View)
 
  public:
   RecentActivityRowView(ActivityLogItem item,
-                        bool is_current_tab,
                         Profile* profile,
                         base::OnceCallback<void()> close_callback);
   ~RecentActivityRowView() override;
 
-  // views::Views
-  bool OnMousePressed(const ui::MouseEvent& event) override;
+  // HoverButton
+  void ButtonPressed();
 
   RecentActivityRowImageView* image_view() const { return image_view_; }
-  const std::u16string& activity_text() const { return activity_text_; }
-  const std::u16string& metadata_text() const { return metadata_text_; }
 
   // RecentActivityAction handlers.
   // Focuses the open tab in the tab strip.
@@ -108,8 +143,6 @@ class RecentActivityRowView : public views::View {
   void ManageSharing();
 
  private:
-  std::u16string activity_text_;
-  std::u16string metadata_text_;
   raw_ptr<RecentActivityRowImageView> image_view_ = nullptr;
   ActivityLogItem item_;
   const raw_ptr<Profile> profile_ = nullptr;
@@ -126,7 +159,7 @@ class RecentActivityRowImageView : public views::View {
   ~RecentActivityRowImageView() override;
 
   // Returns whether there is an avatar image to show.
-  bool ShouldShowAvatar() const { return !avatar_image_.isNull(); }
+  bool ShouldShowAvatar() const { return avatar_request_complete_; }
 
   // Returns whether there is a favicon image to show.
   bool ShouldShowFavicon() const { return !resized_favicon_image_.isNull(); }
@@ -135,14 +168,21 @@ class RecentActivityRowImageView : public views::View {
   // views::View
   void OnPaint(gfx::Canvas* canvas) override;
 
-  // Perform the avatar fetch, calling |SetAvatar| when complete.
+  // Perform the avatar fetch, calling `SetAvatar` when complete.
   void FetchAvatar();
   void SetAvatar(const gfx::Image& avatar);
 
-  // Perform the favicon fetch, calling |SetFavicon| when complete.
+  // Perform the favicon fetch, calling `SetFavicon` when complete.
   void FetchFavicon();
   void SetFavicon(const favicon_base::FaviconImageResult& favicon);
-  void PaintFavicon(gfx::Canvas* canvas, gfx::Rect avatar_bounds);
+  void PaintFavicon(gfx::Canvas* canvas, const gfx::Rect& avatar_bounds);
+  void PaintPlaceholderBackground(gfx::Canvas* canvas, const gfx::Rect& bounds);
+  void PaintFallbackIcon(gfx::Canvas* canvas, const gfx::Rect& bounds);
+
+  // When the avatar request is complete (or there is no avatar to
+  // request), this will be set to true. While the value is false, we
+  // will paint the background color as a placeholder for the avatar.
+  bool avatar_request_complete_ = false;
 
   base::CancelableTaskTracker favicon_fetching_task_tracker_;
   gfx::ImageSkia avatar_image_;
@@ -176,7 +216,8 @@ class RecentActivityBubbleCoordinator : public views::WidgetObserver {
   // TOP_RIGHT arrow.
   void ShowForCurrentTab(views::View* anchor_view,
                          content::WebContents* web_contents,
-                         std::vector<ActivityLogItem> activity_log,
+                         std::vector<ActivityLogItem> tab_activity_log,
+                         std::vector<ActivityLogItem> group_activity_log,
                          Profile* profile);
   void Hide();
 

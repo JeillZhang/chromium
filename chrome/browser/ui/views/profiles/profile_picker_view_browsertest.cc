@@ -9,11 +9,13 @@
 
 #include "base/barrier_closure.h"
 #include "base/cfi_buildflags.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/json/values_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/test/bind.h"
@@ -23,6 +25,7 @@
 #include "base/test/test_future.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "base/version_info/version_info.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_browser_main.h"
@@ -63,6 +66,7 @@
 #include "chrome/browser/ui/profiles/profile_ui_test_utils.h"
 #include "chrome/browser/ui/startup/first_run_service.h"
 #include "chrome/browser/ui/tab_dialogs.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/profiles/avatar_toolbar_button.h"
 #include "chrome/browser/ui/views/profiles/profile_picker_dice_reauth_provider.h"
 #include "chrome/browser/ui/views/profiles/profile_picker_test_base.h"
@@ -79,6 +83,7 @@
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/url_constants.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/profile_deletion_observer.h"
@@ -397,8 +402,9 @@ class ProfilePickerCreationFlowBrowserTest
 
     // Avoid showing the What's New page. These tests assume this isn't the
     // first update and the NTP opens after sign in.
-    g_browser_process->local_state()->SetInteger(prefs::kLastWhatsNewVersion,
-                                                 CHROME_VERSION_MAJOR);
+    g_browser_process->local_state()->SetInteger(
+        prefs::kLastWhatsNewVersion,
+        version_info::GetMajorVersionNumberAsInt());
   }
 
   virtual void OnWillCreateBrowserContextServices(
@@ -517,12 +523,16 @@ class ProfilePickerCreationFlowBrowserTest
     return account_info;
   }
 
+  static bool HasPromoBeenShown(Browser* browser,
+                                const base::Feature& feature) {
+    return browser->window()->IsFeaturePromoActive(feature) ||
+           browser->window()->IsFeaturePromoQueued(feature);
+  }
+
   // Returns true if the profile switch IPH has been shown.
-  bool ProfileSwitchPromoHasBeenShown(Browser* browser) {
-    return feature_engagement::TrackerFactory::GetForBrowserContext(
-               browser->profile())
-        ->HasEverTriggered(feature_engagement::kIPHProfileSwitchFeature,
-                           /*from_window=*/false);
+  static bool ProfileSwitchPromoHasBeenShown(Browser* browser) {
+    return HasPromoBeenShown(browser,
+                             feature_engagement::kIPHProfileSwitchFeature);
   }
 
   // Simulates a click on a profile card. The profile picker must be already
@@ -549,8 +559,6 @@ class ProfilePickerCreationFlowBrowserTest
     profile_manager->CreateProfileAsync(
         path, base::BindLambdaForTesting([&run_loop](Profile* profile) {
           ASSERT_TRUE(profile);
-          // Avoid showing the welcome page.
-          profile->GetPrefs()->SetBoolean(prefs::kHasSeenWelcomePage, true);
           run_loop.Quit();
         }));
     run_loop.Run();
@@ -1018,6 +1026,72 @@ IN_PROC_BROWSER_TEST_F(ForceSigninProfilePickerCreationFlowBrowserTest,
   EXPECT_FALSE(entry->IsSigninRequired());
   histogram_tester()->ExpectUniqueSample(
       kReauthResultHistogramName, ProfilePickerReauthResult::kSuccess, 1);
+}
+
+IN_PROC_BROWSER_TEST_F(ForceSigninProfilePickerCreationFlowBrowserTest,
+                       ForceSigninReauthInGlicModeShowsErrorDialog) {
+  size_t initial_browser_count = BrowserList::GetInstance()->size();
+  ASSERT_EQ(initial_browser_count, 0u);
+
+  const std::vector<Profile*> profiles =
+      g_browser_process->profile_manager()->GetLoadedProfiles();
+  ASSERT_GE(profiles.size(), 1u);
+  Profile* profile = profiles[0];
+  ProfileAttributesEntry* entry =
+      g_browser_process->profile_manager()
+          ->GetProfileAttributesStorage()
+          .GetProfileAttributesWithPath(profile->GetPath());
+
+  ASSERT_TRUE(entry->IsSigninRequired());
+
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(profile);
+
+  const std::string email("test@managedchrome.com");
+  signin::MakePrimaryAccountAvailable(identity_manager, email,
+                                      signin::ConsentLevel::kSignin);
+  // Only managed accounts are allowed to reauth.
+  entry->SetUserAcceptedAccountManagement(true);
+  // Only glic eligible profiles are shown in the Glic version of the picker.
+  entry->SetIsGlicEligible(true);
+
+  CoreAccountId primary_account =
+      identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSignin);
+  ASSERT_FALSE(primary_account.empty());
+
+  // Simulate an invalid account.
+  signin::SetInvalidRefreshTokenForPrimaryAccount(identity_manager);
+
+  // Ensure picker is closed and open the picker in the Glic Version.
+  ProfilePicker::Hide();
+  base::MockCallback<base::OnceCallback<void(Profile*)>> mock_callback;
+  ProfilePicker::Show(
+      ProfilePicker::Params::ForGlicManager(mock_callback.Get()));
+  WaitForPickerClosedAndReopenedImmediately();
+
+  EXPECT_CALL(mock_callback, Run(testing::_)).Times(0);
+  ASSERT_TRUE(ProfilePicker::IsOpen());
+  ASSERT_FALSE(IsForceSigninErrorDialogShown());
+
+  // Attempt to open the locked profile that can be reauthed.
+  OpenProfileFromPicker(entry->GetPath(), false);
+
+  // Profile remains locked and an error message is displayed as Glic does not
+  // support the reauth step.
+  EXPECT_TRUE(ProfilePicker::IsOpen());
+  EXPECT_TRUE(IsForceSigninErrorDialogShown());
+  // Check error dialog content.
+  ForceSigninUIError::UiTexts errors =
+      ForceSigninUIError::ReauthNotSupportedByGlicFlow().GetErrorTexts();
+  EXPECT_EQ(GetForceSigninErrorDialogTitleText(), errors.first);
+  EXPECT_EQ(GetForceSigninErrorDialogBodyText(), errors.second);
+  EXPECT_EQ(BrowserList::GetInstance()->size(), initial_browser_count);
+  EXPECT_TRUE(entry->IsSigninRequired());
+
+  testing::Mock::VerifyAndClearExpectations(&mock_callback);
+  EXPECT_CALL(mock_callback, Run(nullptr)).Times(1);
+  ProfilePicker::Hide();
+  WaitForPickerClosed();
 }
 
 IN_PROC_BROWSER_TEST_F(ForceSigninProfilePickerCreationFlowBrowserTest,
@@ -2304,11 +2378,8 @@ class SupervisedUserProfileIPHTest
 
   // Returns true if the supervised user profile IPH has been shown.
   bool SupervisedProfilePromoHasBeenShown(Browser* browser) {
-    return feature_engagement::TrackerFactory::GetForBrowserContext(
-               browser->profile())
-        ->HasEverTriggered(
-            feature_engagement::kIPHSupervisedUserProfileSigninFeature,
-            /*from_window=*/false);
+    return HasPromoBeenShown(
+        browser, feature_engagement::kIPHSupervisedUserProfileSigninFeature);
   }
 
   static bool ShouldIphShow(
@@ -2413,6 +2484,10 @@ class ProfilePickerEnterpriseCreationFlowBrowserTest
         context, base::BindRepeating(
                      &policy::FakeUserPolicySigninService::BuildForEnterprise));
   }
+  // `GetLocalProfileName` assertions would fail without enabling the feature
+  // in non-fieldtrial tests.
+  base::test::ScopedFeatureList feature_list_{
+      features::kEnterpriseProfileBadgingForAvatar};
 };
 
 IN_PROC_BROWSER_TEST_F(ProfilePickerEnterpriseCreationFlowBrowserTest,
@@ -3093,10 +3168,40 @@ IN_PROC_BROWSER_TEST_F(ProfilePickerCreationFlowBrowserTest, GlicPickProfile) {
   EXPECT_EQ(initial_browser_count, BrowserList::GetInstance()->size());
 }
 
-IN_PROC_BROWSER_TEST_F(ProfilePickerCreationFlowBrowserTest,
+struct GlicTestParam {
+  bool profiles_are_glic_eligible;
+  std::string expected_learn_more_url;
+};
+
+const GlicTestParam kGlicTestParams[] = {
+    {
+        .profiles_are_glic_eligible = false,
+        .expected_learn_more_url = chrome::kSigninOnDesktopLearnMoreURL,
+    },
+    {
+        .profiles_are_glic_eligible = true,
+        .expected_learn_more_url = chrome::kAddNewProfileOnDesktopLearnMoreURL,
+    },
+};
+
+class ProfilePickerWithGlicParamBrowserTest
+    : public ProfilePickerCreationFlowBrowserTest,
+      public testing::WithParamInterface<GlicTestParam> {};
+
+IN_PROC_BROWSER_TEST_P(ProfilePickerWithGlicParamBrowserTest,
                        GlicLearnMoreClicked) {
   ScopedKeepAlive keep_alive{KeepAliveOrigin::BACKGROUND_MODE_MANAGER,
                              KeepAliveRestartOption::DISABLED};
+
+  std::vector<ProfileAttributesEntry*> entries =
+      g_browser_process->profile_manager()
+          ->GetProfileAttributesStorage()
+          .GetAllProfilesAttributes();
+  ASSERT_EQ(entries.size(), 1u);
+  ProfileAttributesEntry* profile_entry = entries[0];
+  ASSERT_TRUE(profile_entry);
+  profile_entry->SetIsGlicEligible(GetParam().profiles_are_glic_eligible);
+
   base::FilePath initial_profile_path = browser()->profile()->GetPath();
   // Destroy the current profile to make sure no profiles are loaded.
   ProfileDestructionWaiter profile_destruction_waiter(browser()->profile());
@@ -3106,20 +3211,25 @@ IN_PROC_BROWSER_TEST_F(ProfilePickerCreationFlowBrowserTest,
   ASSERT_THAT(g_browser_process->profile_manager()->GetLoadedProfiles(),
               testing::IsEmpty());
 
-  // Create a second profile.
-  base::FilePath other_path = CreateNewProfileWithoutBrowser();
-
   // Open the picker with Glic version.
   ProfilePicker::Show(ProfilePicker::Params::ForGlicManager(base::DoNothing()));
   WaitForLoadStop(GURL("chrome://profile-picker/"));
 
   profile_picker_handler()->HandleOnLearnMoreClicked(base::Value::List());
-
   Browser* new_browser = ui_test_utils::WaitForBrowserToOpen();
   EXPECT_TRUE(new_browser);
   EXPECT_EQ(new_browser->profile()->GetPath(), initial_profile_path);
 
   ui_test_utils::TabAddedWaiter tab_waiter(new_browser);
   content::WebContents* learn_more_content = tab_waiter.Wait();
-  EXPECT_EQ(learn_more_content->GetURL(), chrome::kSigninOnDesktopLearnMoreURL);
+  EXPECT_EQ(learn_more_content->GetURL(), GetParam().expected_learn_more_url);
 }
+
+INSTANTIATE_TEST_SUITE_P(,
+                         ProfilePickerWithGlicParamBrowserTest,
+                         testing::ValuesIn(kGlicTestParams),
+                         [](const auto& info) {
+                           return info.param.profiles_are_glic_eligible
+                                      ? "GlicEligibleProfiles"
+                                      : "GlicIneligibleProfiles";
+                         });

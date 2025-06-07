@@ -4,6 +4,8 @@
 
 package org.chromium.components.external_intents;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Context;
@@ -28,8 +30,6 @@ import android.webkit.MimeTypeMap;
 import android.webkit.WebView;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.CommandLine;
@@ -43,6 +43,8 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.components.embedder_support.util.UrlUtilitiesJni;
@@ -85,6 +87,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * This feature supports conversion of certain navigations to Android Intents allowing
  * applications like Youtube to direct users clicking on a http(s) link to their native app.
  */
+@NullMarked
 public class ExternalNavigationHandler {
     private static final String TAG = "UrlHandler";
 
@@ -144,28 +147,27 @@ public class ExternalNavigationHandler {
 
     // Helper class to return a boolean by reference.
     private static class MutableBoolean {
-        private Boolean mValue;
+        private @Nullable Boolean mValue;
 
         public void set(boolean value) {
             mValue = value;
         }
 
-        public Boolean get() {
+        public @Nullable Boolean get() {
             return mValue;
         }
     }
 
     // A Supplier that only evaluates when needed then caches the value.
     protected static class LazySupplier<T> implements Supplier<T> {
-        private T mValue;
-        private Supplier<T> mInnerSupplier;
+        private @Nullable T mValue;
+        private @Nullable Supplier<T> mInnerSupplier;
 
         public LazySupplier(Supplier<T> innerSupplier) {
             assert innerSupplier != null : "innerSupplier cannot be null";
             mInnerSupplier = innerSupplier;
         }
 
-        @Nullable
         @Override
         public T get() {
             if (mInnerSupplier != null) {
@@ -175,7 +177,7 @@ public class ExternalNavigationHandler {
                 // references it may have held.
                 mInnerSupplier = null;
             }
-            return mValue;
+            return assumeNonNull(mValue);
         }
 
         @Override
@@ -184,9 +186,9 @@ public class ExternalNavigationHandler {
         }
     }
 
-    private static class IntentBasedSupplier<T> extends LazySupplier<T> {
+    private static class IntentBasedSupplier<T extends @Nullable Object> extends LazySupplier<T> {
         protected final Intent mIntent;
-        private Intent mIntentCopy;
+        private @Nullable Intent mIntentCopy;
 
         public IntentBasedSupplier(Intent intent, Supplier<T> innerSupplier) {
             super(innerSupplier);
@@ -204,7 +206,6 @@ public class ExternalNavigationHandler {
             }
         }
 
-        @Nullable
         @Override
         public T get() {
             assertIntentMatches();
@@ -224,13 +225,10 @@ public class ExternalNavigationHandler {
         // with multiple results chosen.
         private final AtomicBoolean mDialogResultChosen = new AtomicBoolean(false);
 
-        private PropertyModel mPropertyModel;
+        private @Nullable PropertyModel mPropertyModel;
 
         IncognitoDialogDelegate(
-                @NonNull Context context,
-                @NonNull ExternalNavigationParams params,
-                @NonNull Intent intent,
-                @NonNull GURL fallbackUrl) {
+                Context context, ExternalNavigationParams params, Intent intent, GURL fallbackUrl) {
             mContext = context;
             mParams = params;
             mIntent = intent;
@@ -239,7 +237,7 @@ public class ExternalNavigationHandler {
 
         @Override
         public void onClick(
-                @NonNull PropertyModel model, @ModalDialogProperties.ButtonType int buttonType) {
+                @Nullable PropertyModel model, @ModalDialogProperties.ButtonType int buttonType) {
             if (ModalDialogProperties.ButtonType.POSITIVE == buttonType) {
                 if (mDialogResultChosen.get()) return;
                 mDialogResultChosen.set(true);
@@ -360,7 +358,9 @@ public class ExternalNavigationHandler {
         }
     }
 
-    protected static class ResolveActivitySupplier extends IntentBasedSupplier<ResolveInfo> {
+    protected static class ResolveActivitySupplier
+            extends IntentBasedSupplier<@Nullable ResolveInfo> {
+        @SuppressWarnings("NullAway") // https://github.com/uber/NullAway/issues/1209
         public ResolveActivitySupplier(Intent intent) {
             super(
                     intent,
@@ -379,12 +379,14 @@ public class ExternalNavigationHandler {
      * <p>NOTE: NUM_ENTRIES must be added inside the IntDef{} to work around crbug.com/1300585. It
      * should be removed from the IntDef{} if an alternate solution for that bug is found.
      */
+    // LINT.IfChange
     @IntDef({
         OverrideUrlLoadingResultType.OVERRIDE_WITH_EXTERNAL_INTENT,
         OverrideUrlLoadingResultType.OVERRIDE_WITH_NAVIGATE_TAB,
         OverrideUrlLoadingResultType.OVERRIDE_WITH_ASYNC_ACTION,
         OverrideUrlLoadingResultType.NO_OVERRIDE,
         OverrideUrlLoadingResultType.OVERRIDE_CLOSING_AFTER_AUTH,
+        OverrideUrlLoadingResultType.OVERRIDE_WITH_REPARENT_TO_BROWSER,
         OverrideUrlLoadingResultType.NUM_ENTRIES
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -400,9 +402,13 @@ public class ExternalNavigationHandler {
         int NO_OVERRIDE = 3;
 
         int OVERRIDE_CLOSING_AFTER_AUTH = 4;
+        /* We should move the navigation to a browser window. */
+        int OVERRIDE_WITH_REPARENT_TO_BROWSER = 5;
 
-        int NUM_ENTRIES = 5;
+        int NUM_ENTRIES = 6;
     }
+
+    // LINT.ThenChange(:printDebugShouldOverrideUrlLoadingResultType)
 
     /** Types of async action that can be taken for a navigation. */
     @IntDef({
@@ -428,8 +434,8 @@ public class ExternalNavigationHandler {
 
         boolean mWasExternalFallbackUrlLaunch;
 
-        GURL mTargetUrl;
-        ExternalNavigationParams mExternalNavigationParams;
+        @Nullable GURL mTargetUrl;
+        @Nullable ExternalNavigationParams mExternalNavigationParams;
 
         private OverrideUrlLoadingResult(@OverrideUrlLoadingResultType int resultType) {
             this(resultType, false);
@@ -461,12 +467,12 @@ public class ExternalNavigationHandler {
 
         public GURL getTargetUrl() {
             assert mResultType == OverrideUrlLoadingResultType.OVERRIDE_WITH_NAVIGATE_TAB;
-            return mTargetUrl;
+            return assumeNonNull(mTargetUrl);
         }
 
         public ExternalNavigationParams getExternalNavigationParams() {
             assert mResultType == OverrideUrlLoadingResultType.OVERRIDE_WITH_NAVIGATE_TAB;
-            return mExternalNavigationParams;
+            return assumeNonNull(mExternalNavigationParams);
         }
 
         /**
@@ -515,12 +521,18 @@ public class ExternalNavigationHandler {
             return new OverrideUrlLoadingResult(
                     OverrideUrlLoadingResultType.OVERRIDE_CLOSING_AFTER_AUTH);
         }
+
+        /** Use this result when the navigation should be moved from a PWA to a browser window. */
+        public static OverrideUrlLoadingResult forReparentToBrowser() {
+            return new OverrideUrlLoadingResult(
+                    OverrideUrlLoadingResultType.OVERRIDE_WITH_REPARENT_TO_BROWSER);
+        }
     }
 
     public static boolean sAllowIntentsToSelfForTesting;
     private final ExternalNavigationDelegate mDelegate;
     private final ModalDialogManager mModalDialogManager;
-    @VisibleForTesting protected IncognitoDialogDelegate mIncognitoDialogDelegate;
+    @VisibleForTesting protected @Nullable IncognitoDialogDelegate mIncognitoDialogDelegate;
 
     /**
      * Constructs a new instance of {@link ExternalNavigationHandler}, using the injected {@link
@@ -528,7 +540,7 @@ public class ExternalNavigationHandler {
      */
     public ExternalNavigationHandler(ExternalNavigationDelegate delegate) {
         mDelegate = delegate;
-        mModalDialogManager = mDelegate.getWindowAndroid().getModalDialogManager();
+        mModalDialogManager = assumeNonNull(mDelegate.getWindowAndroid().getModalDialogManager());
     }
 
     private static boolean debug() {
@@ -647,6 +659,7 @@ public class ExternalNavigationHandler {
 
     private void printDebugShouldOverrideUrlLoadingResultType(OverrideUrlLoadingResult result) {
         String resultString;
+        // LINT.IfChange(printDebugShouldOverrideUrlLoadingResultType)
         switch (result.getResultType()) {
             case OverrideUrlLoadingResultType.OVERRIDE_WITH_EXTERNAL_INTENT:
                 resultString = "OVERRIDE_WITH_EXTERNAL_INTENT";
@@ -657,15 +670,23 @@ public class ExternalNavigationHandler {
             case OverrideUrlLoadingResultType.OVERRIDE_WITH_ASYNC_ACTION:
                 resultString = "OVERRIDE_WITH_ASYNC_ACTION";
                 break;
+            case OverrideUrlLoadingResultType.OVERRIDE_CLOSING_AFTER_AUTH:
+                resultString = "OVERRIDE_CLOSING_AFTER_AUTH";
+                break;
+            case OverrideUrlLoadingResultType.OVERRIDE_WITH_REPARENT_TO_BROWSER:
+                resultString = "OVERRIDE_WITH_REPARENT_TO_BROWSER";
+                break;
             case OverrideUrlLoadingResultType.NO_OVERRIDE: // Fall through.
             default:
                 resultString = "NO_OVERRIDE";
                 break;
         }
+        // LINT.ThenChange()
         Log.i(TAG, "shouldOverrideUrlLoading result: " + resultString);
     }
 
-    private boolean resolversSubsetOf(List<ResolveInfo> infos, List<ResolveInfo> container) {
+    private boolean resolversSubsetOf(
+            List<ResolveInfo> infos, @Nullable List<ResolveInfo> container) {
         if (container == null) return false;
         HashSet<ComponentName> containerSet = new HashSet<>();
         for (ResolveInfo info : container) {
@@ -874,12 +895,12 @@ public class ExternalNavigationHandler {
         return false;
     }
 
-    private static boolean isInternalScheme(String scheme) {
+    private static boolean isInternalScheme(@Nullable String scheme) {
         if (TextUtils.isEmpty(scheme)) return false;
-        return scheme.equals(ContentUrlConstants.ABOUT_SCHEME)
-                || scheme.equals(UrlConstants.CHROME_SCHEME)
-                || scheme.equals(UrlConstants.CHROME_NATIVE_SCHEME)
-                || scheme.equals(UrlConstants.DEVTOOLS_SCHEME);
+        return scheme.equalsIgnoreCase(ContentUrlConstants.ABOUT_SCHEME)
+                || scheme.equalsIgnoreCase(UrlConstants.CHROME_SCHEME)
+                || scheme.equalsIgnoreCase(UrlConstants.CHROME_NATIVE_SCHEME)
+                || scheme.equalsIgnoreCase(UrlConstants.DEVTOOLS_SCHEME);
     }
 
     /**
@@ -890,9 +911,10 @@ public class ExternalNavigationHandler {
         boolean hasContentScheme = false;
         if (UrlUtilities.hasIntentScheme(targetUrl) && targetIntent.getData() != null) {
             hasContentScheme =
-                    UrlConstants.CONTENT_SCHEME.equals(targetIntent.getData().getScheme());
+                    UrlConstants.CONTENT_SCHEME.equalsIgnoreCase(
+                            targetIntent.getData().getScheme());
         } else {
-            hasContentScheme = UrlConstants.CONTENT_SCHEME.equals(targetUrl.getScheme());
+            hasContentScheme = UrlConstants.CONTENT_SCHEME.equalsIgnoreCase(targetUrl.getScheme());
         }
         if (debug() && hasContentScheme) Log.i(TAG, "Navigation to content: URL");
         return hasContentScheme;
@@ -928,9 +950,9 @@ public class ExternalNavigationHandler {
      */
     private boolean hasFidoScheme(GURL targetUrl, Intent targetIntent) {
         if (UrlUtilities.hasIntentScheme(targetUrl) && targetIntent.getData() != null) {
-            return UrlConstants.FIDO_SCHEME.equals(targetIntent.getData().getScheme());
+            return UrlConstants.FIDO_SCHEME.equalsIgnoreCase(targetIntent.getData().getScheme());
         }
-        return UrlConstants.FIDO_SCHEME.equals(targetUrl.getScheme());
+        return UrlConstants.FIDO_SCHEME.equalsIgnoreCase(targetUrl.getScheme());
     }
 
     /**
@@ -1160,8 +1182,17 @@ public class ExternalNavigationHandler {
      * This is the catch-all path for any intent that the app can handle that doesn't have a
      * specialized external app handling it.
      */
-    private OverrideUrlLoadingResult fallBackToHandlingInApp() {
+    private OverrideUrlLoadingResult fallBackToHandlingInApp(ExternalNavigationParams params) {
         if (debug()) Log.i(TAG, "No specialized handler for URL");
+        // The default behavior for Desktop windowing should be to open a browser tab. In case
+        // the navigation starts in a PWA, we should reparent the tab to the browser.
+        if (ExternalIntentsFeatures.REPARENT_TOP_LEVEL_NAVIGATION_FROM_PWA.isEnabled()
+                && params.isInDesktopWindowingMode()
+                && params.isInitialNavigationInFrame()
+                && params.isTabInPWA()) {
+            if (debug()) Log.i(TAG, "No specialized handler found, reparent to browser.");
+            return OverrideUrlLoadingResult.forReparentToBrowser();
+        }
         return OverrideUrlLoadingResult.forNoOverride();
     }
 
@@ -1181,9 +1212,10 @@ public class ExternalNavigationHandler {
         }
         if (!isExternalProtocol) return false;
         if (!resolveInfoContainsSelf(resolvingInfos.get())) return false;
-        if (resolveActivity.get() == null) return false;
+        ResolveInfo intentResolveInfo = resolveActivity.get();
+        if (intentResolveInfo == null) return false;
 
-        ActivityInfo info = resolveActivity.get().activityInfo;
+        ActivityInfo info = intentResolveInfo.activityInfo;
         if (info != null && mDelegate.getContext().getPackageName().equals(info.packageName)) {
             if (debug()) Log.i(TAG, "Navigation to self.");
             return true;
@@ -1191,7 +1223,7 @@ public class ExternalNavigationHandler {
 
         // We don't want the user seeing the chooser and choosing the browser, but resolving to
         // another app is fine.
-        if (resolvesToChooser(resolveActivity.get(), resolvingInfos)) {
+        if (resolvesToChooser(intentResolveInfo, resolvingInfos)) {
             if (debug()) Log.i(TAG, "Navigation to chooser including self.");
             return true;
         }
@@ -1246,11 +1278,12 @@ public class ExternalNavigationHandler {
             }
         }
         if (!matchesBrowser) return false;
-        if (resolveActivity.get().activityInfo == null) return false;
+        ResolveInfo intentResolveInfo = resolveActivity.get();
+        if (intentResolveInfo == null || intentResolveInfo.activityInfo == null) return false;
 
         // If the intent resolves to a non-browser even through a browser is included in
         // queryIntentActivities, it's not really targeting a browser.
-        return browserPackages.contains(resolveActivity.get().activityInfo.packageName);
+        return browserPackages.contains(intentResolveInfo.activityInfo.packageName);
     }
 
     private static Set<String> getInstalledBrowserPackages() {
@@ -1309,8 +1342,6 @@ public class ExternalNavigationHandler {
      * performing a navigation when it's actually a background tab doing the navigation.
      */
     private boolean isHiddenCrossFrameRenavigation(ExternalNavigationParams params) {
-        if (!ExternalIntentsFeatures.BLOCK_FRAME_RENAVIGATIONS.isEnabled()) return false;
-
         if (params.getRedirectHandler().navigationChainPerformedHiddenCrossFrameNavigation()) {
             if (debug()) Log.i(TAG, "Navigation chain used cross-frame re-navigation.");
             return true;
@@ -1534,6 +1565,7 @@ public class ExternalNavigationHandler {
             Intent targetIntent,
             GURL browserFallbackUrl,
             MutableBoolean canLaunchExternalFallbackResult) {
+
         sanitizeQueryIntentActivitiesIntent(targetIntent);
 
         // Any subsequent navigations should cancel the existing dialog.
@@ -1557,6 +1589,17 @@ public class ExternalNavigationHandler {
         if (selfScheme != null && intentTargetUrl.getScheme().equals(selfScheme)) {
             intentTargetUrl =
                     new GURL(getUrlFromSelfSchemeUrl(selfScheme, intentTargetUrl.getSpec()));
+        }
+
+        if (params.isIncognito() && params.getUrl() != null) {
+            // Accessing chrome://extensions in incognito is not allowed, and causes sending an
+            // intent to chrome to open the same page on a regular tab. On non-android desktop, the
+            // same logic is implemented in browser_navigator.cc, but the file is not compiled on
+            // android.
+            Intent intent = mDelegate.createIntentToPreventIncognitoAccess(params.getUrl());
+            if (intent != null) {
+                return startActivity(intent, params);
+            }
         }
 
         // Needs to be checked first as a failure for this reason is persisted through the
@@ -1666,7 +1709,7 @@ public class ExternalNavigationHandler {
 
         boolean hasSpecializedHandler = countSpecializedHandlers(resolvingInfos.get()) > 0;
         if (!isExternalProtocol && !hasSpecializedHandler && !intentMatchesNonDefaultWebApk) {
-            return fallBackToHandlingInApp();
+            return fallBackToHandlingInApp(params);
         }
 
         if (shouldStayWithinHost(params, resolvingInfos.get(), isExternalProtocol)) {
@@ -1823,8 +1866,8 @@ public class ExternalNavigationHandler {
      *     NO_OVERRIDE otherwise.
      */
     private OverrideUrlLoadingResult sendIntentToMarket(
-            String packageName,
-            String marketReferrer,
+            @Nullable String packageName,
+            @Nullable String marketReferrer,
             ExternalNavigationParams params,
             GURL fallbackUrl) {
         Uri.Builder builder = new Uri.Builder().scheme("market").authority("details");
@@ -1880,7 +1923,7 @@ public class ExternalNavigationHandler {
      * If the given URL is to Google Play, extracts the package name and referrer tracking code from
      * the {@param url} and returns as a Pair in that order. Otherwise returns null.
      */
-    private String maybeGetPlayStoreAppId(GURL url) {
+    private @Nullable String maybeGetPlayStoreAppId(GURL url) {
         if (!PLAY_HOSTNAME.equals(url.getHost()) || !url.getPath().startsWith(PLAY_APP_PATH)) {
             return null;
         }
@@ -1915,7 +1958,7 @@ public class ExternalNavigationHandler {
      *
      * @param resolvingComponentNames The list of ComponentName that resolves the current intent.
      */
-    private String getDefaultSmsPackageName(List<ResolveInfo> resolvingComponentNames) {
+    private @Nullable String getDefaultSmsPackageName(List<ResolveInfo> resolvingComponentNames) {
         String defaultSmsPackageName = getDefaultSmsPackageNameFromSystem();
         if (defaultSmsPackageName == null) return null;
         // Makes sure that the default SMS app actually resolves the intent.
@@ -1961,8 +2004,7 @@ public class ExternalNavigationHandler {
         return resolvingInfos.get();
     }
 
-    @Nullable
-    private String pickWebApkIfSoleIntentHandler(
+    private @Nullable String pickWebApkIfSoleIntentHandler(
             ExternalNavigationParams params, QueryIntentActivitiesSupplier resolvingInfos) {
         ArrayList<String> packages =
                 getSpecializedHandlers(getResolveInfosForWebApks(params, resolvingInfos));
@@ -1977,7 +2019,6 @@ public class ExternalNavigationHandler {
     }
 
     /** See {@link PackageManagerUtils#queryIntentActivities(Intent, int)} */
-    @NonNull
     private List<ResolveInfo> queryIntentActivities(Intent intent) {
         return PackageManagerUtils.queryIntentActivities(
                 intent, PackageManager.GET_RESOLVED_FILTER | PackageManager.MATCH_DEFAULT_ONLY);
@@ -1986,7 +2027,7 @@ public class ExternalNavigationHandler {
     private static boolean intentResolutionMatches(Intent intent, Intent other) {
         return intent.filterEquals(other)
                 && (intent.getSelector() == other.getSelector()
-                        || intent.getSelector().filterEquals(other.getSelector()));
+                        || assumeNonNull(intent.getSelector()).filterEquals(other.getSelector()));
     }
 
     /** @return Whether the URL is a file download. */
@@ -2079,8 +2120,8 @@ public class ExternalNavigationHandler {
      *
      * @param intent The intent we want to send.
      */
-    private void startActivity(Intent intent, ExternalNavigationParams params) {
-        startActivity(intent, params, false, null, null, null, null);
+    private OverrideUrlLoadingResult startActivity(Intent intent, ExternalNavigationParams params) {
+        return startActivity(intent, params, false, null, null, null, null);
     }
 
     /**
@@ -2102,10 +2143,10 @@ public class ExternalNavigationHandler {
             Intent intent,
             ExternalNavigationParams params,
             boolean requiresIntentChooser,
-            QueryIntentActivitiesSupplier resolvingInfos,
-            ResolveActivitySupplier resolveActivity,
-            GURL browserFallbackUrl,
-            GURL intentTargetUrl) {
+            @Nullable QueryIntentActivitiesSupplier resolvingInfos,
+            @Nullable ResolveActivitySupplier resolveActivity,
+            @Nullable GURL browserFallbackUrl,
+            @Nullable GURL intentTargetUrl) {
         // https://crbug.com/330555390. If we've launched an app on the current redirect chain, we
         // should never launch a second one.
         if (params.getRedirectHandler().isOnNavigation()) {
@@ -2122,6 +2163,8 @@ public class ExternalNavigationHandler {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             }
             if (requiresIntentChooser) {
+                assumeNonNull(resolvingInfos);
+                assumeNonNull(resolveActivity);
                 return startActivityWithChooser(
                         intent,
                         resolvingInfos,
@@ -2164,7 +2207,7 @@ public class ExternalNavigationHandler {
     // If the |resolvingInfos| from queryIntentActivities don't contain the result of
     // resolveActivity, it means the intent is resolving to the ResolverActivity.
     private boolean resolvesToChooser(
-            @NonNull ResolveInfo resolveActivity, QueryIntentActivitiesSupplier resolvingInfos) {
+            ResolveInfo resolveActivity, QueryIntentActivitiesSupplier resolvingInfos) {
         return !resolversSubsetOf(Arrays.asList(resolveActivity), resolvingInfos.get());
     }
 
@@ -2174,8 +2217,8 @@ public class ExternalNavigationHandler {
             final Intent intent,
             QueryIntentActivitiesSupplier resolvingInfos,
             ResolveActivitySupplier resolveActivity,
-            GURL browserFallbackUrl,
-            GURL intentTargetUrl,
+            @Nullable GURL browserFallbackUrl,
+            @Nullable GURL intentTargetUrl,
             final ExternalNavigationParams params,
             Context context) {
         ResolveInfo intentResolveInfo = resolveActivity.get();
@@ -2248,7 +2291,8 @@ public class ExternalNavigationHandler {
 
                                 // Quirk of how we use the ActivityChooser - if the embedding app is
                                 // chosen we get an intent back with ACTION_CREATE_SHORTCUT.
-                                if (data.getAction().equals(Intent.ACTION_CREATE_SHORTCUT)) {
+                                if (assumeNonNull(data.getAction())
+                                        .equals(Intent.ACTION_CREATE_SHORTCUT)) {
                                     // Ensure we don't loop asking the user to choose an app, then
                                     // re-asking when we navigate to the same URL.
                                     if (params.getRedirectHandler().isOnNavigation()) {
@@ -2267,7 +2311,7 @@ public class ExternalNavigationHandler {
                                         callback.onResult(
                                                 AsyncActionTakenParams.forNavigate(
                                                         intentTargetUrl, params));
-                                    } else if (!browserFallbackUrl.isEmpty()) {
+                                    } else if (!assumeNonNull(browserFallbackUrl).isEmpty()) {
                                         callback.onResult(
                                                 AsyncActionTakenParams.forNavigate(
                                                         browserFallbackUrl, params));
@@ -2281,7 +2325,8 @@ public class ExternalNavigationHandler {
                                 // start it. Note that a selector cannot be set at the same time
                                 // as a package.
                                 intent.setSelector(null);
-                                intent.setPackage(data.getComponent().getPackageName());
+                                intent.setPackage(
+                                        assumeNonNull(data.getComponent()).getPackageName());
                                 startActivity(intent, params);
                                 callback.onResult(
                                         AsyncActionTakenParams.forExternalIntentLaunched(
@@ -2401,12 +2446,12 @@ public class ExternalNavigationHandler {
     }
 
     /** Returns the subset of {@params infos} that are specialized intent handlers. */
-    private ArrayList<String> getSpecializedHandlers(List<ResolveInfo> infos) {
+    private ArrayList<String> getSpecializedHandlers(@Nullable List<ResolveInfo> infos) {
         return getSpecializedHandlersWithFilter(infos, null);
     }
 
     private static boolean matchResolveInfoExceptWildCardHost(
-            ResolveInfo info, String filterPackageName) {
+            ResolveInfo info, @Nullable String filterPackageName) {
         IntentFilter intentFilter = info.filter;
         if (intentFilter == null) {
             // Error on the side of classifying ResolveInfo as generic.
@@ -2450,7 +2495,7 @@ public class ExternalNavigationHandler {
     }
 
     public static ArrayList<String> getSpecializedHandlersWithFilter(
-            List<ResolveInfo> infos, String filterPackageName) {
+            @Nullable List<ResolveInfo> infos, @Nullable String filterPackageName) {
         ArrayList<String> result = new ArrayList<>();
         if (infos == null) {
             return result;
@@ -2507,7 +2552,7 @@ public class ExternalNavigationHandler {
 
     /** @return The last committed URL from the WebContents. */
     @VisibleForTesting
-    protected GURL getLastCommittedUrl() {
+    protected @Nullable GURL getLastCommittedUrl() {
         if (mDelegate.getWebContents() == null) return null;
         return mDelegate.getWebContents().getLastCommittedUrl();
     }
@@ -2570,7 +2615,7 @@ public class ExternalNavigationHandler {
      * @return The string with the scheme and prefixes chopped off, if a valid prefix was used.
      *         Otherwise returns null.
      */
-    public static String getUrlFromSelfSchemeUrl(String selfScheme, String url) {
+    public static @Nullable String getUrlFromSelfSchemeUrl(String selfScheme, String url) {
         String prefix = selfScheme + SELF_SCHEME_NAVIGATE_PREFIX;
         if (url.toLowerCase(Locale.US).startsWith(prefix)) {
             String parsedUrl = url.substring(prefix.length());
@@ -2593,7 +2638,7 @@ public class ExternalNavigationHandler {
      * "j$a$r". See: http://crbug.com/248398
      * @return The sanitized URL scheme or null if no scheme is specified.
      */
-    public static String getSanitizedUrlScheme(String url) {
+    public static @Nullable String getSanitizedUrlScheme(String url) {
         if (url == null) {
             return null;
         }

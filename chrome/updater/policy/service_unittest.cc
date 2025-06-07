@@ -205,6 +205,30 @@ class FakePolicyManager : public PolicyManagerInterface {
     target_version_prefixes_[app_id] = std::move(target_version_prefix);
   }
 
+  std::optional<int> GetMajorVersionRolloutPolicy(
+      const std::string& app_id) const override {
+    auto value = major_version_rollout_policies_.find(app_id);
+    return value == major_version_rollout_policies_.end()
+               ? std::nullopt
+               : std::make_optional(value->second);
+  }
+
+  void SetMajorVersionRolloutPolicy(const std::string& app_id, int policy) {
+    major_version_rollout_policies_[app_id] = policy;
+  }
+
+  std::optional<int> GetMinorVersionRolloutPolicy(
+      const std::string& app_id) const override {
+    auto value = minor_version_rollout_policies_.find(app_id);
+    return value == minor_version_rollout_policies_.end()
+               ? std::nullopt
+               : std::make_optional(value->second);
+  }
+
+  void SetMinorVersionRolloutPolicy(const std::string& app_id, int policy) {
+    minor_version_rollout_policies_[app_id] = policy;
+  }
+
   std::optional<std::vector<std::string>> GetForceInstallApps() const override {
     return std::nullopt;
   }
@@ -243,6 +267,8 @@ class FakePolicyManager : public PolicyManagerInterface {
   std::map<std::string, int> update_policies_;
   std::map<std::string, std::string> channels_;
   std::map<std::string, std::string> target_version_prefixes_;
+  std::map<std::string, int> major_version_rollout_policies_;
+  std::map<std::string, int> minor_version_rollout_policies_;
 };
 
 class PolicyServiceTest : public ::testing::Test {
@@ -251,8 +277,7 @@ class PolicyServiceTest : public ::testing::Test {
       PolicyManagers managers) {
     auto policy_service = base::MakeRefCounted<PolicyService>(
         /*external_constants=*/nullptr,
-        /*persisted_data=*/nullptr,
-        /*is_ceca_experiment_enabled=*/false);
+        /*persisted_data=*/nullptr);
     policy_service->SetManagersForTesting(std::move(managers));
     return policy_service;
   }
@@ -288,6 +313,14 @@ TEST_F(PolicyServiceTest, DefaultPolicyValue) {
       policy_service->IsRollbackToTargetVersionAllowed("test1");
   ASSERT_TRUE(rollback_allowed);
   EXPECT_EQ(rollback_allowed.policy(), false);
+
+  PolicyStatus<int> major_version_rollout_policy =
+      policy_service->GetMajorVersionRolloutPolicy("test1");
+  EXPECT_FALSE(major_version_rollout_policy);
+
+  PolicyStatus<int> minor_version_rollout_policy =
+      policy_service->GetMinorVersionRolloutPolicy("test1");
+  EXPECT_FALSE(minor_version_rollout_policy);
 }
 
 TEST_F(PolicyServiceTest, ValidatePolicyValues) {
@@ -894,8 +927,8 @@ class PolicyManagersTest : public ::testing::Test {
 #if BUILDFLAG(IS_MAC)
     const base::FilePath policy_file_path =
         GetLibraryFolderPath(UpdaterScope::kSystem)
-            ->AppendASCII("Managed Preferences")
-            .AppendASCII(LEGACY_GOOGLE_UPDATE_APPID ".plist");
+            ->AppendUTF8("Managed Preferences")
+            .AppendUTF8(LEGACY_GOOGLE_UPDATE_APPID ".plist");
 
     if (!base::PathExists(policy_file_path)) {
       RunCommand(std::vector<std::string>({"/usr/bin/sudo", "/usr/bin/plutil",

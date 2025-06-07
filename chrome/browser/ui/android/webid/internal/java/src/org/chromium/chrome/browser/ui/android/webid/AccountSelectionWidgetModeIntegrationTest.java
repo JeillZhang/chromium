@@ -60,9 +60,8 @@ public class AccountSelectionWidgetModeIntegrationTest extends AccountSelectionI
                 () -> {
                     mAccountSelection.showAccounts(
                             EXAMPLE_ETLD_PLUS_ONE,
-                            Arrays.asList(NEW_BOB),
+                            Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
-                            /* isAutoReauthn= */ false,
                             /* newAccounts= */ Collections.EMPTY_LIST);
                     mAccountSelection.getMediator().setComponentShowTime(-1000);
                 });
@@ -93,7 +92,7 @@ public class AccountSelectionWidgetModeIntegrationTest extends AccountSelectionI
         Espresso.pressBack();
 
         waitForEvent(mMockBridge).onDismissed(IdentityRequestDialogDismissReason.BACK_PRESS);
-        verify(mMockBridge, never()).onAccountSelected(any(), any());
+        verify(mMockBridge, never()).onAccountSelected(any());
     }
 
     @Test
@@ -115,6 +114,6 @@ public class AccountSelectionWidgetModeIntegrationTest extends AccountSelectionI
                     sheetSupport.suppressSheet(BottomSheetController.StateChangeReason.SWIPE);
                 });
         waitForEvent(mMockBridge).onDismissed(IdentityRequestDialogDismissReason.SWIPE);
-        verify(mMockBridge, never()).onAccountSelected(any(), any());
+        verify(mMockBridge, never()).onAccountSelected(any());
     }
 }

@@ -4,7 +4,6 @@
 
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#import "components/reading_list/features/reading_list_switches.h"
 #import "components/signin/public/base/consent_level.h"
 #import "components/signin/public/base/signin_pref_names.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_constants.h"
@@ -184,9 +183,8 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   [[EarlGrey selectElementWithMatcher:SignedInSnackbar(fakeIdentity.userEmail)]
       performAction:grey_tap()];
 
-  // Verify that the identity is signed-in without sync and the promo is hidden.
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  // Verify that the identity is signed-in and the promo is hidden.
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity.userEmail];
   [SigninEarlGreyUI verifySigninPromoNotVisible];
 }
 
@@ -206,8 +204,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   [ChromeEarlGrey
       waitForUIElementToAppearWithMatcher:SignedInSnackbar(
                                               fakeIdentity.userEmail)];
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity.userEmail];
   // Tap on "Undo".
   [[EarlGrey
       selectElementWithMatcher:grey_allOf(SignedInSnackbarUndoButton(),
@@ -239,10 +236,8 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
   [[EarlGrey selectElementWithMatcher:IdentityCellMatcherForEmail(
                                           fakeIdentity2.userEmail)]
       performAction:grey_tap()];
-  // Verify that the identity2 is signed-in without sync, and that the promo is
-  // hidden.
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity2.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  // Verify that the identity2 is signed-in and that the promo is hidden.
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity2.userEmail];
   [SigninEarlGreyUI verifySigninPromoNotVisible];
 }
 
@@ -271,8 +266,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
                                           grey_sufficientlyVisible(), nil)]
       performAction:grey_tap()];
   // Verify that identity1 is signed-in and the promo is hidden.
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity1.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity1.userEmail];
   [SigninEarlGreyUI verifySigninPromoNotVisible];
 
   // Dismiss the sign-in snackbar.
@@ -324,8 +318,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
       performAction:grey_tap()];
 
   // Verify that the second account is signed-in.
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity2.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity2.userEmail];
 }
 
 // Tests that the signin promo is shown again when last signed-in user removes
@@ -376,8 +369,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
       performAction:grey_tap()];
 
   // Result: the sign-in is successful without any issue.
-  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity1.userEmail
-                                        consent:signin::ConsentLevel::kSignin];
+  [SigninEarlGrey verifyPrimaryAccountWithEmail:fakeIdentity1.userEmail];
 }
 
 // Tests that if the data is reloaded after the account storage promo is shown,

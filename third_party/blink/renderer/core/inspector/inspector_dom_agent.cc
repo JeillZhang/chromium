@@ -70,6 +70,7 @@
 #include "third_party/blink/renderer/core/frame/remote_frame.h"
 #include "third_party/blink/renderer/core/html/fenced_frame/document_fenced_frames.h"
 #include "third_party/blink/renderer/core/html/fenced_frame/html_fenced_frame_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_button_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html/html_document.h"
 #include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
@@ -189,12 +190,12 @@ void InspectorRevalidateDOMTask::Trace(Visitor* visitor) const {
 protocol::Response InspectorDOMAgent::ToResponse(
     DummyExceptionStateForTesting& exception_state) {
   if (exception_state.HadException()) {
-    String name_prefix = IsDOMExceptionCode(exception_state.Code())
-                             ? DOMException::GetErrorName(
-                                   exception_state.CodeAs<DOMExceptionCode>()) +
-                                   " "
-                             : g_empty_string;
-    String msg = name_prefix + exception_state.Message();
+    String msg = exception_state.Message();
+    if (IsDOMExceptionCode(exception_state.Code())) {
+      msg = WTF::StrCat({DOMException::GetErrorName(
+                             exception_state.CodeAs<DOMExceptionCode>()),
+                         " ", msg});
+    }
     return protocol::Response::ServerError(msg.Utf8());
   }
   return protocol::Response::Success();
@@ -269,6 +270,8 @@ protocol::DOM::PseudoType InspectorDOMAgent::ProtocolPseudoElementType(
       return protocol::DOM::PseudoTypeEnum::FileSelectorButton;
     case kPseudoIdDetailsContent:
       return protocol::DOM::PseudoTypeEnum::DetailsContent;
+    case kPseudoIdPermissionIcon:
+      return protocol::DOM::PseudoTypeEnum::PermissionIcon;
     case kPseudoIdPickerSelect:
       return protocol::DOM::PseudoTypeEnum::Picker;
     case kPseudoIdViewTransition:
@@ -277,6 +280,8 @@ protocol::DOM::PseudoType InspectorDOMAgent::ProtocolPseudoElementType(
       return protocol::DOM::PseudoTypeEnum::ViewTransitionGroup;
     case kPseudoIdViewTransitionImagePair:
       return protocol::DOM::PseudoTypeEnum::ViewTransitionImagePair;
+    case kPseudoIdViewTransitionGroupChildren:
+      return protocol::DOM::PseudoTypeEnum::ViewTransitionGroupChildren;
     case kPseudoIdViewTransitionNew:
       return protocol::DOM::PseudoTypeEnum::ViewTransitionNew;
     case kPseudoIdViewTransitionOld:
@@ -377,6 +382,9 @@ PseudoId InspectorDOMAgent::ProtocolPseudoTypeToPseudoId(
   if (type == protocol::DOM::PseudoTypeEnum::ViewTransitionImagePair) {
     return kPseudoIdViewTransitionImagePair;
   }
+  if (type == protocol::DOM::PseudoTypeEnum::ViewTransitionGroupChildren) {
+    return kPseudoIdViewTransitionGroupChildren;
+  }
   if (type == protocol::DOM::PseudoTypeEnum::ViewTransitionOld) {
     return kPseudoIdViewTransitionOld;
   }
@@ -391,6 +399,9 @@ PseudoId InspectorDOMAgent::ProtocolPseudoTypeToPseudoId(
   }
   if (type == protocol::DOM::PseudoTypeEnum::DetailsContent) {
     return kPseudoIdDetailsContent;
+  }
+  if (type == protocol::DOM::PseudoTypeEnum::PermissionIcon) {
+    return kPseudoIdPermissionIcon;
   }
   if (type == protocol::DOM::PseudoTypeEnum::Picker) {
     return kPseudoIdPickerSelect;
@@ -1080,10 +1091,10 @@ protocol::Response InspectorDOMAgent::setAttributesAsText(
   auto getParsedElement = [](Element* element, Element* contextElement,
                              const String& text, bool is_html_document) {
     String markup = element->IsSVGElement()
-                        ? "<svg " + text + "></svg>"
-                        : element->IsMathMLElement()
-                              ? "<math " + text + "></math>"
-                              : "<span " + text + "></span>";
+                        ? WTF::StrCat({"<svg ", text, "></svg>"})
+                    : element->IsMathMLElement()
+                        ? WTF::StrCat({"<math ", text, "></math>"})
+                        : WTF::StrCat({"<span ", text, "></span>"});
     DocumentFragment* fragment =
         element->GetDocument().createDocumentFragment();
     if (is_html_document && contextElement)
@@ -1441,9 +1452,10 @@ protocol::Response InspectorDOMAgent::performSearch(
   }
 
   *search_id = IdentifiersFactory::CreateIdentifier();
-  HeapVector<Member<Node>>* results_it =
+  GCedHeapVector<Member<Node>>* results_it =
       search_results_
-          .insert(*search_id, MakeGarbageCollected<HeapVector<Member<Node>>>())
+          .insert(*search_id,
+                  MakeGarbageCollected<GCedHeapVector<Member<Node>>>())
           .stored_value->value;
 
   for (auto& result : result_collector)
@@ -1487,6 +1499,9 @@ protocol::Response InspectorDOMAgent::NodeForRemoteObjectId(
   v8::Local<v8::Value> value;
   v8::Local<v8::Context> context;
   std::unique_ptr<v8_inspector::StringBuffer> error;
+  if (!v8_session_) {
+    return protocol::Response::ServerError("The agent has been detached");
+  }
   if (!v8_session_->unwrapObject(&error, ToV8InspectorStringView(object_id),
                                  &value, &context, nullptr)) {
     return protocol::Response::ServerError(
@@ -1655,8 +1670,7 @@ protocol::Response InspectorDOMAgent::getNodeStackTraces(
 
   auto it = node_to_creation_source_location_map_.find(node);
   if (it != node_to_creation_source_location_map_.end()) {
-    SourceLocation& source_location = it->value->GetSourceLocation();
-    *creation = source_location.BuildInspectorObject();
+    *creation = it->value->BuildInspectorObject();
   }
   return protocol::Response::Success();
 }
@@ -1758,6 +1772,8 @@ protocol::Response InspectorDOMAgent::resolveNode(
 
   if (!node)
     return protocol::Response::ServerError("No node with given id found");
+  // This should only be called via CDP, so agent should not be detached.
+  CHECK(v8_session_);
   *result = ResolveNode(v8_session_, node, object_group_name,
                         std::move(execution_context_id));
   if (!*result) {
@@ -1832,8 +1848,8 @@ protocol::Response InspectorDOMAgent::getContainerForNode(
   Element* container = style_resolver.FindContainerForElement(
       element,
       ContainerSelector(AtomicString(container_name.value_or(g_null_atom)),
-                        physical, logical,
-                        queries_scroll_state.value_or(false)),
+                        physical, logical, queries_scroll_state.value_or(false),
+                        /* anchored_query */ false),
       nullptr /* selector_tree_scope */);
   if (container)
     *container_node_id = PushNodePathToFrontend(container);
@@ -1877,7 +1893,12 @@ protocol::Response InspectorDOMAgent::getElementByRelation(
   } else if (relation == protocol::DOM::GetElementByRelation::RelationEnum::
                              InterestTarget) {
     if (auto* invoker = DynamicTo<Element>(node)) {
-      element = invoker->interestTargetElement();
+      element = invoker->InterestTargetElement();
+    }
+  } else if (relation ==
+             protocol::DOM::GetElementByRelation::RelationEnum::CommandFor) {
+    if (auto* invoker = DynamicTo<HTMLButtonElement>(node)) {
+      element = invoker->commandForElement();
     }
   }
 
@@ -1963,7 +1984,7 @@ bool InspectorDOMAgent::ContainerQueriedByElement(Element* container,
     return false;
   }
   for (auto it = matched_rules->rbegin(); it != matched_rules->rend(); ++it) {
-    CSSRule* parent_rule = it->first;
+    CSSRule* parent_rule = it->rule.Get();
     while (parent_rule) {
       auto* container_rule = DynamicTo<CSSContainerRule>(parent_rule);
       if (container_rule) {
@@ -2041,8 +2062,10 @@ std::unique_ptr<protocol::DOM::Node> InspectorDOMAgent::BuildObjectForNode(
     case Node::kCommentNode:
     case Node::kCdataSectionNode:
       node_value = node->nodeValue();
-      if (node_value.length() > kMaxTextSize)
-        node_value = node_value.Left(kMaxTextSize) + kEllipsisUChar;
+      if (node_value.length() > kMaxTextSize) {
+        node_value = WTF::StrCat(
+            {node_value.Left(kMaxTextSize), StringView(kEllipsisUChar)});
+      }
       break;
     case Node::kAttributeNode:
       local_name = To<Attr>(node)->localName();
@@ -2682,12 +2705,10 @@ void InspectorDOMAgent::NodeCreated(Node* node) {
   if (!capture_node_stack_traces_.Get())
     return;
 
-  std::unique_ptr<SourceLocation> creation_source_location =
+  SourceLocation* creation_source_location =
       SourceLocation::CaptureWithFullStackTrace();
   if (creation_source_location) {
-    node_to_creation_source_location_map_.Set(
-        node, MakeGarbageCollected<InspectorSourceLocation>(
-                  std::move(creation_source_location)));
+    node_to_creation_source_location_map_.Set(node, creation_source_location);
   }
 }
 
@@ -2824,6 +2845,8 @@ protocol::Response InspectorDOMAgent::setInspectedNode(int node_id) {
   protocol::Response response = AssertNode(node_id, node);
   if (!response.IsSuccess())
     return response;
+  // Method should only be called from CDP, so won't happen after detach.
+  CHECK(v8_session_);
   v8_session_->addInspectedObject(std::make_unique<InspectableNode>(node));
   return protocol::Response::Success();
 }
@@ -2957,6 +2980,9 @@ protocol::Response InspectorDOMAgent::getFrameOwner(
 
 protocol::Response InspectorDOMAgent::getFileInfo(const String& object_id,
                                                   String* path) {
+  // Method is only called from CDP, so will not be called after Detach().
+  CHECK(isolate_);
+  CHECK(v8_session_);
   v8::HandleScope handles(isolate_);
   v8::Local<v8::Value> value;
   v8::Local<v8::Context> context;
@@ -3051,6 +3077,12 @@ void InspectorDOMAgent::Trace(Visitor* visitor) const {
   visitor->Trace(dom_editor_);
   visitor->Trace(node_to_creation_source_location_map_);
   InspectorBaseAgent::Trace(visitor);
+}
+
+void InspectorDOMAgent::Dispose() {
+  InspectorBaseAgent<protocol::DOM::Metainfo>::Dispose();
+  isolate_ = nullptr;
+  v8_session_ = nullptr;
 }
 
 }  // namespace blink

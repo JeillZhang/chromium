@@ -10,6 +10,7 @@
 #include <string>
 
 @protocol GREYMatcher;
+class GURL;
 
 namespace chrome_test_util {
 
@@ -197,6 +198,9 @@ id<GREYMatcher> TabShareButton();
 // `[ChromeEarlGrey  showTabSwitcher]` or `[ChromeEarlGreyUI openTabGrid]`.
 id<GREYMatcher> ShowTabsButton();
 
+// Returns a matcher for the blue dot on the show tabs button.
+id<GREYMatcher> BlueDotOnShowTabsButton();
+
 // Returns a matcher for Add to reading list button.
 id<GREYMatcher> AddToReadingListButton();
 
@@ -236,6 +240,10 @@ id<GREYMatcher> BookmarksNavigationBarDoneButton();
 
 // Returns a matcher for the back button on the Bookmarks navigation bar.
 id<GREYMatcher> BookmarksNavigationBarBackButton();
+
+// Returns a matcher for the back button on the Managed profile creation
+// navigation bar.
+id<GREYMatcher> ManagedProfileCreationNavigationBarBackButton();
 
 // Returns a matcher for the add account accounts button.
 id<GREYMatcher> AddAccountButton();
@@ -551,13 +559,37 @@ id<GREYMatcher> TabStripCellAtIndex(unsigned int index);
 // Returns a matcher for the group cell at `index` in the tab strip.
 id<GREYMatcher> TabStripGroupCellAtIndex(unsigned int index);
 
+// Returns a matcher for the blue dot view on the cell at `index` in the tab
+// strip.
+id<GREYMatcher> BlueDotOnTabStripCellAtIndex(unsigned int index);
+
+// Returns a matcher for the notification dot view on the group cell at `index`
+// in the tab strip.
+id<GREYMatcher> NotificationDotOnTabStripGroupCellAtIndex(unsigned int index);
+
+// Returns a matcher for the notification cell at `index` in the tab groups
+// panel.
+id<GREYMatcher> TabGroupsPanelNotificationCellAtIndex(unsigned int index);
+
 // Returns a matcher for the group cell at `index` in the tab groups panel.
 id<GREYMatcher> TabGroupsPanelCellAtIndex(unsigned int index);
 
-// Returns a matcher for the group cell created just now in the tab groups panel
+// Returns a matcher for the group cell created just now in the Tab Groups panel
 // for the given `group_name` and `tab_count`.
 id<GREYMatcher> TabGroupsPanelCellWithName(NSString* group_name,
                                            NSInteger tab_count);
+
+// Returns a matcher for the recent activity log cell at `index` in the recent
+// activity in the tab group.
+id<GREYMatcher> TabGroupRecentActivityCellAtIndex(unsigned int index);
+
+// Returns a matcher for the activity label on the group cell at `index` in the
+// tab grid.
+id<GREYMatcher> TabGroupActivityLabelOnGroupCellAtIndex(unsigned int index);
+
+// Returns a matcher for the activity label on the grid cell at `index` in the
+// tab grid.
+id<GREYMatcher> TabGroupActivityLabelOnGridCellAtIndex(unsigned int index);
 
 // Returns a matcher for the button that closes the tab grid.
 id<GREYMatcher> TabGridDoneButton();
@@ -629,6 +661,9 @@ id<GREYMatcher> RegularTabGrid();
 // Returns a matcher for the incognito tab grid.
 id<GREYMatcher> IncognitoTabGrid();
 
+// Returns a matcher for the Inactive Tabs tab grid.
+id<GREYMatcher> InactiveTabGrid();
+
 // Returns a matcher for the button to close the cell at `index` in the
 // tab grid.
 id<GREYMatcher> TabGridCloseButtonForCellAtIndex(unsigned int index);
@@ -668,9 +703,13 @@ id<GREYMatcher> ContentViewSmallerThanScrollView();
 
 // Returns a matcher for a history entry with `url` and `title`.
 id<GREYMatcher> HistoryEntry(const std::string& url, const std::string& title);
+id<GREYMatcher> HistoryEntry(const GURL& url, const std::string& title);
 
 // Returns a matcher to the add button in the toolbar in the settings view.
 id<GREYMatcher> SettingsToolbarAddButton();
+
+// Returns a matcher to the edit button in the toolbar in the settings view.
+id<GREYMatcher> SettingsToolbarEditButton();
 
 // Returns a matcher matching cells that can be swiped-to-dismiss.
 id<GREYMatcher> CellCanBeSwipedToDismissed();
@@ -696,10 +735,10 @@ id<GREYMatcher> UseSuggestedPasswordMatcher();
 #pragma mark - Promo style view controller
 
 // Returns matcher for the primary action button.
-id<GREYMatcher> PromoStylePrimaryActionButtonMatcher();
+id<GREYMatcher> PromoScreenPrimaryButtonMatcher();
 
 // Returns matcher for the secondary action button.
-id<GREYMatcher> PromoStyleSecondaryActionButtonMatcher();
+id<GREYMatcher> PromoScreenSecondaryButtonMatcher();
 
 #pragma mark - Incognito Interstitial
 
@@ -828,8 +867,15 @@ id<GREYMatcher> TabGroupViewTitle(NSString* title);
 // Returns the matcher for the overflow menu button in the tab group view.
 id<GREYMatcher> TabGroupOverflowMenuButton();
 
-// Returns the matcher for the back button in the tab group view.
-id<GREYMatcher> TabGroupBackButton();
+// Returns the matcher for the button to close the tab group view.
+id<GREYMatcher> CloseTabGroupButton();
+
+// Returns the matcher for the activity summary cell in the tab group view.
+id<GREYMatcher> TabGroupActivitySummaryCell();
+
+// Returns the matcher for the close button in the activity summary cell in the
+// tab group view.
+id<GREYMatcher> TabGroupActivitySummaryCellCloseButton();
 
 #pragma mark - Tab Groups Context Menus
 
@@ -870,6 +916,10 @@ id<GREYMatcher> ShareGroupButton();
 // Returns the matcher for the manage group button in the context menu of a tab
 // group.
 id<GREYMatcher> ManageGroupButton();
+
+// Returns the matcher for the recent activity button in the context menu of a
+// tab group.
+id<GREYMatcher> RecentActivityButton();
 
 // Returns the matcher for `Leave Group` button in the context menu of a shared
 // tab group.

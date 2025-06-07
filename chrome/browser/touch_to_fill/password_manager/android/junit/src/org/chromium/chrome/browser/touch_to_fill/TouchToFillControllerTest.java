@@ -21,7 +21,6 @@ import static org.mockito.Mockito.verify;
 
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.CredentialProperties.CREDENTIAL;
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.CredentialProperties.FAVICON_OR_FALLBACK;
-import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.CredentialProperties.FORMATTED_ORIGIN;
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.CredentialProperties.ON_CLICK_LISTENER;
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.CredentialProperties.SHOW_SUBMIT_BUTTON;
 import static org.chromium.chrome.browser.touch_to_fill.TouchToFillProperties.DISMISS_HANDLER;
@@ -133,10 +132,24 @@ public class TouchToFillControllerTest {
                     "example.xyz",
                     GetLoginMatchType.EXACT,
                     0);
+    private static final Credential CARL_BACKUP =
+            new Credential(
+                    "Carl",
+                    "G3h3!m",
+                    "Carl",
+                    TEST_URL.getSpec(),
+                    "example.xyz",
+                    GetLoginMatchType.EXACT,
+                    0,
+                    false,
+                    /* senderName= */ null,
+                    null,
+                    /* sharingNotificationDisplayed= */ false,
+                    /* isBackupCredential= */ true);
     private static final WebauthnCredential DINO =
             new WebauthnCredential("dinos.com", new byte[] {1}, new byte[] {2}, "dino@example.com");
     private static final @Px int DESIRED_FAVICON_SIZE = 64;
-    private Bitmap mBitmapFromImageFetcher =
+    private final Bitmap mBitmapFromImageFetcher =
             Bitmap.createBitmap(/* width= */ 1, /* height= */ 1, Bitmap.Config.ARGB_8888);
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
@@ -147,7 +160,7 @@ public class TouchToFillControllerTest {
     // Can't be local, as it has to be initialized by initMocks.
     @Captor private ArgumentCaptor<LargeIconBridge.LargeIconCallback> mCallbackArgumentCaptor;
 
-    private TestImageFetcher mImageFetcher = spy(new TestImageFetcher());
+    private final TestImageFetcher mImageFetcher = spy(new TestImageFetcher());
     private final Context mContext = ContextUtils.getApplicationContext();
     private final TouchToFillMediator mMediator = new TouchToFillMediator();
     private final PropertyModel mModel =
@@ -207,12 +220,10 @@ public class TouchToFillControllerTest {
         assertThat(itemList.get(1).type, is(ItemType.CREDENTIAL));
         assertThat(itemList.get(1).model.get(CREDENTIAL), is(ANA));
         assertNotNull(itemList.get(1).model.get(ON_CLICK_LISTENER));
-        assertThat(itemList.get(1).model.get(FORMATTED_ORIGIN), is(ANA.getDisplayName()));
 
         assertThat(itemList.get(2).type, is(ItemType.CREDENTIAL));
         assertThat(itemList.get(2).model.get(CREDENTIAL), is(CARL));
         assertNotNull(itemList.get(2).model.get(ON_CLICK_LISTENER));
-        assertThat(itemList.get(2).model.get(FORMATTED_ORIGIN), is(CARL.getDisplayName()));
         assertThat(itemList.get(0).model.get(IMAGE_DRAWABLE_ID), is(R.drawable.ic_vpn_key_blue));
     }
 
@@ -241,7 +252,6 @@ public class TouchToFillControllerTest {
         assertThat(itemList.get(1).type, is(ItemType.CREDENTIAL));
         assertThat(itemList.get(1).model.get(CREDENTIAL), is(ANA));
         assertNotNull(itemList.get(1).model.get(ON_CLICK_LISTENER));
-        assertThat(itemList.get(1).model.get(FORMATTED_ORIGIN), is(ANA.getDisplayName()));
 
         assertThat(itemList.get(2).type, is(ItemType.FILL_BUTTON));
         assertThat(itemList.get(2).model.get(SHOW_SUBMIT_BUTTON), is(false));
@@ -307,7 +317,6 @@ public class TouchToFillControllerTest {
         assertThat(itemList.get(2).type, is(ItemType.CREDENTIAL));
         assertThat(itemList.get(2).model.get(CREDENTIAL), is(ANA));
         assertNotNull(itemList.get(2).model.get(ON_CLICK_LISTENER));
-        assertThat(itemList.get(2).model.get(FORMATTED_ORIGIN), is(ANA.getDisplayName()));
     }
 
     @Test
@@ -392,10 +401,11 @@ public class TouchToFillControllerTest {
                         "m.a.xyz",
                         GetLoginMatchType.PSL,
                         0,
-                        true,
+                        /* isShared */ true,
                         "Sender Name",
                         new GURL("https://sender-profile-image.xyz/"),
-                        false);
+                        /* sharingNotificationDisplayed */ false,
+                        /* isBackupCredential */ false);
         mMediator.showCredentials(
                 TEST_URL,
                 true,
@@ -454,10 +464,11 @@ public class TouchToFillControllerTest {
                         "m.a.xyz",
                         GetLoginMatchType.PSL,
                         0,
-                        true,
+                        /* isShared */ true,
                         "Sender Name",
                         new GURL("https://sender-profile-image.xyz/"),
-                        false);
+                        /* sharingNotificationDisplayed */ false,
+                        /* isBackupCredential */ false);
         Credential sharedCredential2 =
                 new Credential(
                         "Bob",
@@ -467,10 +478,11 @@ public class TouchToFillControllerTest {
                         "m.a.xyz",
                         GetLoginMatchType.PSL,
                         0,
-                        true,
+                        /* isShared */ true,
                         "Sender Name",
                         new GURL("https://sender-profile-image.xyz/"),
-                        false);
+                        /* sharingNotificationDisplayed */ false,
+                        /* isBackupCredential */ false);
         mMediator.showCredentials(
                 TEST_URL,
                 true,
@@ -537,6 +549,46 @@ public class TouchToFillControllerTest {
     }
 
     @Test
+    public void testNoFaviconForBackupCredential() {
+        mMediator.showCredentials(
+                TEST_URL,
+                true,
+                Collections.emptyList(),
+                Arrays.asList(CARL, CARL_BACKUP),
+                /* showMorePasskeys= */ false,
+                /* triggerSubmission= */ false,
+                /* managePasskeysHidesPasswords= */ false,
+                /* showHybridPasskeyOption= */ false);
+        ListModel<MVCListAdapter.ListItem> itemList = mModel.get(SHEET_ITEMS);
+        assertThat(itemList.size(), is(4)); // Header + 2 credentials + Footer.
+        assertThat(itemList.get(1).type, is(ItemType.CREDENTIAL));
+        assertThat(itemList.get(1).model.get(CREDENTIAL), is(CARL));
+        assertThat(itemList.get(1).model.get(FAVICON_OR_FALLBACK), is(nullValue()));
+
+        assertThat(itemList.get(2).type, is(ItemType.CREDENTIAL));
+        assertThat(itemList.get(2).model.get(CREDENTIAL), is(CARL_BACKUP));
+        assertThat(itemList.get(2).model.get(FAVICON_OR_FALLBACK), is(nullValue()));
+
+        // CARL and CARL_BACKUP both have TEST_URL as their origin URL
+        verify(mMockIconBridge)
+                .getLargeIconForStringUrl(
+                        eq(TEST_URL.getSpec()),
+                        eq(DESIRED_FAVICON_SIZE),
+                        mCallbackArgumentCaptor.capture());
+        LargeIconBridge.LargeIconCallback callback = mCallbackArgumentCaptor.getValue();
+        Bitmap bitmap =
+                Bitmap.createBitmap(
+                        DESIRED_FAVICON_SIZE, DESIRED_FAVICON_SIZE, Bitmap.Config.ARGB_8888);
+        callback.onLargeIconAvailable(bitmap, 333, true, IconType.FAVICON);
+
+        // The main credential should still get a favicon
+        assertThat(itemList.get(1).model.get(FAVICON_OR_FALLBACK), is(notNullValue()));
+
+        // The backup credentials shouldn't get one, since it displays the history icon instead.
+        assertThat(itemList.get(2).model.get(FAVICON_OR_FALLBACK), is(nullValue()));
+    }
+
+    @Test
     public void testShowCredentialsFormatPslOrigins() {
         mMediator.showCredentials(
                 TEST_URL,
@@ -549,13 +601,7 @@ public class TouchToFillControllerTest {
                 /* showHybridPasskeyOption= */ false);
         assertThat(mModel.get(SHEET_ITEMS).size(), is(4)); // Header + 2 Credentials + Footer.
         assertThat(mModel.get(SHEET_ITEMS).get(1).type, is(ItemType.CREDENTIAL));
-        assertThat(
-                mModel.get(SHEET_ITEMS).get(1).model.get(FORMATTED_ORIGIN),
-                is(ANA.getDisplayName()));
         assertThat(mModel.get(SHEET_ITEMS).get(2).type, is(ItemType.CREDENTIAL));
-        assertThat(
-                mModel.get(SHEET_ITEMS).get(2).model.get(FORMATTED_ORIGIN),
-                is(BOB.getDisplayName()));
     }
 
     @Test

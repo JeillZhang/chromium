@@ -37,6 +37,15 @@ bool CGDisplayStreamCreateIsAvailable() {
 }
 #endif  // BUILDFLAG(IS_MAC)
 
+// Enabled-by-default, but exists as a kill-switch.
+// TODO(crbug.com/409473386): Remove this flag once it has been in stable for a
+// few milestones.
+#if BUILDFLAG(IS_WIN)
+BASE_FEATURE(kUseHeuristicForWindowsFullScreenPowerPoint,
+             "UseHeuristicForWindowsFullScreenPowerPoint",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif
+
 namespace content::desktop_capture {
 
 webrtc::DesktopCaptureOptions CreateDesktopCaptureOptions() {
@@ -44,6 +53,10 @@ webrtc::DesktopCaptureOptions CreateDesktopCaptureOptions() {
   // Leave desktop effects enabled during WebRTC captures.
   options.set_disable_effects(false);
 #if BUILDFLAG(IS_WIN)
+  options.full_screen_window_detector()
+      ->SetUseHeuristicFullscreenPowerPointWindows(base::FeatureList::IsEnabled(
+          kUseHeuristicForWindowsFullScreenPowerPoint));
+
   // TODO(crbug.com/webrtc/15045): Possibly remove this flag. Keeping for now
   // to force fallback to GDI.
   static BASE_FEATURE(kDirectXCapturer, "DirectXCapturer",
@@ -71,25 +84,22 @@ webrtc::DesktopCaptureOptions CreateDesktopCaptureOptions() {
 }
 
 std::unique_ptr<webrtc::DesktopCapturer> CreateScreenCapturer(
-    bool allow_wgc_screen_capturer) {
+    webrtc::DesktopCaptureOptions options,
+    bool for_snapshot) {
 #if BUILDFLAG(IS_CHROMEOS)
-  return std::make_unique<DesktopCapturerAsh>();
-#else
-  auto options = desktop_capture::CreateDesktopCaptureOptions();
-#if defined(RTC_ENABLE_WIN_WGC)
-  if (allow_wgc_screen_capturer) {
-    options.set_allow_wgc_screen_capturer(true);
+  if (for_snapshot) {
+    return std::make_unique<DesktopCapturerAsh>();
   }
-#endif  // defined(RTC_ENABLE_WIN_WGC)
+#endif  // BUILDFLAG(IS_CHROMEOS)
   return webrtc::DesktopCapturer::CreateScreenCapturer(options);
-#endif
 }
 
-std::unique_ptr<webrtc::DesktopCapturer> CreateWindowCapturer() {
-  auto options = desktop_capture::CreateDesktopCaptureOptions();
+std::unique_ptr<webrtc::DesktopCapturer> CreateWindowCapturer(
+    webrtc::DesktopCaptureOptions options) {
 #if defined(RTC_ENABLE_WIN_WGC)
   options.set_allow_wgc_capturer_fallback(true);
-#endif
+#endif  // defined(RTC_ENABLE_WIN_WGC)
+
   return webrtc::DesktopCapturer::CreateWindowCapturer(options);
 }
 

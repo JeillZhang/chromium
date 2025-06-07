@@ -19,7 +19,7 @@ class MockBrowserWindowInterface : public BrowserWindowInterface {
               OpenGURL,
               (const GURL& gurl, WindowOpenDisposition disposition),
               (override));
-  MOCK_METHOD(const SessionID&, GetSessionID, (), (override));
+  MOCK_METHOD(const SessionID&, GetSessionID, (), (const override));
   MOCK_METHOD(TabStripModel*, GetTabStripModel, (), (override));
   MOCK_METHOD(bool, IsTabStripVisible, (), (override));
   MOCK_METHOD(bool, ShouldHideUIForFullscreen, (), (const, override));
@@ -27,19 +27,28 @@ class MockBrowserWindowInterface : public BrowserWindowInterface {
               RegisterBrowserDidClose,
               (BrowserDidCloseCallback callback),
               (override));
-  MOCK_METHOD(bool, IsAttemptingToCloseBrowser, (), (const, override));
   MOCK_METHOD(views::View*, TopContainer, (), (override));
+  MOCK_METHOD(base::WeakPtr<BrowserWindowInterface>,
+              GetWeakPtr,
+              (),
+              (override));
+  MOCK_METHOD(views::View*, LensOverlayView, (), (override));
   MOCK_METHOD(base::CallbackListSubscription,
               RegisterActiveTabDidChange,
               (ActiveTabChangeCallback callback),
               (override));
   MOCK_METHOD(tabs::TabInterface*, GetActiveTabInterface, (), (override));
   MOCK_METHOD(BrowserWindowFeatures&, GetFeatures, (), (override));
+  MOCK_METHOD(UnownedUserDataHost&, GetUnownedUserDataHost, (), (override));
+  MOCK_METHOD(const UnownedUserDataHost&,
+              GetUnownedUserDataHost,
+              (),
+              (const, override));
   MOCK_METHOD(web_modal::WebContentsModalDialogHost*,
               GetWebContentsModalDialogHostForWindow,
               (),
               (override));
-  MOCK_METHOD(bool, IsActive, (), (override));
+  MOCK_METHOD(bool, IsActive, (), (const, override));
   MOCK_METHOD(base::CallbackListSubscription,
               RegisterDidBecomeActive,
               (DidBecomeActiveCallback callback),
@@ -50,6 +59,10 @@ class MockBrowserWindowInterface : public BrowserWindowInterface {
               (override));
   MOCK_METHOD(ExclusiveAccessManager*,
               GetExclusiveAccessManager,
+              (),
+              (override));
+  MOCK_METHOD(ImmersiveModeController*,
+              GetImmersiveModeController,
               (),
               (override));
   MOCK_METHOD(BrowserActions*, GetActions, (), (override));
@@ -71,6 +84,13 @@ class MockBrowserWindowInterface : public BrowserWindowInterface {
               SetWebContentsBlocked,
               (content::WebContents*, bool),
               (override));
+  MOCK_METHOD(bool, IsTabModalPopupDeprecated, (), (const, override));
+  MOCK_METHOD(ui::BaseWindow*, GetWindow, (), (override));
+  MOCK_METHOD(DesktopBrowserWindowCapabilities*, capabilities, (), (override));
+  MOCK_METHOD(const DesktopBrowserWindowCapabilities*,
+              capabilities,
+              (),
+              (const, override));
 
   // PageNavigator methods
   MOCK_METHOD(content::WebContents*,
@@ -78,6 +98,12 @@ class MockBrowserWindowInterface : public BrowserWindowInterface {
               (const content::OpenURLParams& params,
                base::OnceCallback<void(content::NavigationHandle&)>
                    navigation_handle_callback),
+              (override));
+
+  MOCK_METHOD(bool, CanShowCallToAction, (), (const, override));
+  MOCK_METHOD(std::unique_ptr<ScopedWindowCallToAction>,
+              ShowCallToAction,
+              (),
               (override));
 };
 

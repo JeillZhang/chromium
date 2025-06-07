@@ -34,6 +34,7 @@ import {OpenWindowProxyImpl} from 'chrome://resources/js/open_window_proxy.js';
 import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 import type {PropertyValues} from 'chrome://resources/lit/v3_0/lit.rollup.js';
 import type {Uuid} from 'chrome://resources/mojo/mojo/public/mojom/base/uuid.mojom-webui.js';
+import type {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
 
 import {getCss} from './app.css.js';
 import {getHtml} from './app.html.js';
@@ -245,17 +246,18 @@ export class ProductSpecificationsElement extends CrLitElement {
     };
   }
 
-  protected appState_: AppState = AppState.NO_CONTENT;
-  protected id_: Uuid|null = null;
-  protected loadingState_: LoadingState = {loading: false, urlCount: 0};
-  protected productSpecificationsFeatureState_:
+  protected accessor appState_: AppState = AppState.NO_CONTENT;
+  protected accessor id_: Uuid|null = null;
+  protected accessor loadingState_:
+      LoadingState = {loading: false, urlCount: 0};
+  protected accessor productSpecificationsFeatureState_:
       ProductSpecificationsFeatureState|null = null;
-  protected setName_: string|null = null;
-  protected sets_: ProductSpecificationsSet[] = [];
-  protected showComparisonTableList_: boolean = false;
-  private showEmptyState_: boolean = false;
-  protected showTableDataUnavailableContainer_: boolean = false;
-  protected tableColumns_: TableColumn[] = [];
+  protected accessor setName_: string|null = null;
+  protected accessor sets_: ProductSpecificationsSet[] = [];
+  protected accessor showComparisonTableList_: boolean = false;
+  private accessor showEmptyState_: boolean = false;
+  protected accessor showTableDataUnavailableContainer_: boolean = false;
+  protected accessor tableColumns_: TableColumn[] = [];
 
   private callbackRouter_: PageCallbackRouter;
   private eventTracker_: EventTracker = new EventTracker();
@@ -314,33 +316,20 @@ export class ProductSpecificationsElement extends CrLitElement {
         this.callbackRouter_.onProductSpecificationsSetRemoved.addListener(
             (uuid: Uuid) => this.onSetRemoved_(uuid)),
         this.callbackRouter_.onProductSpecificationsSetUpdated.addListener(
-            (set: ProductSpecificationsSet) => this.onSetUpdated_(set)));
+            (set: ProductSpecificationsSet) => this.onSetUpdated_(set)),
+        this.callbackRouter_.onSyncStateChanged.addListener(
+            () => this.updateFeatureState_()));
 
-    // TODO: b/358131415 - use listeners to update. Temporary workaround uses
-    // window focus to update the feature state, to check signin.
-    window.addEventListener('focus', async () => {
+    window.addEventListener('focus', () => {
       this.isWindowFocused_ = true;
 
-      const previousState = this.productSpecificationsFeatureState_;
-      const {state} =
-          await this.shoppingApi_.getProductSpecificationsFeatureState();
-      if (!state || areStatesEqual(previousState, state)) {
-        if (this.pendingSetUpdate_) {
-          this.pendingSetUpdate_();
-          this.pendingSetUpdate_ = null;
-        }
-        return;
+      if (this.pendingSetUpdate_) {
+        this.pendingSetUpdate_();
       }
 
       // If there is a set update, the new set will be fetched when the table
       // is reloaded.
       this.pendingSetUpdate_ = null;
-
-      // States have changed, so we need to reload the table.
-      // Update the featureState after loadTable_(), so that the loading
-      // state will animate first.
-      await this.loadTable_(state);
-      this.productSpecificationsFeatureState_ = state;
     });
 
     window.addEventListener('blur', () => {
@@ -370,15 +359,7 @@ export class ProductSpecificationsElement extends CrLitElement {
       return;
     }
 
-    // TODO(b/358131415): update after we use listener/ observers and no longer
-    // need the featureState
-    const {state} =
-        await this.shoppingApi_.getProductSpecificationsFeatureState();
-    if (!state) {
-      return;
-    }
-    await this.loadTable_(state);
-    this.productSpecificationsFeatureState_ = state;
+    await this.updateFeatureState_();
   }
 
   override disconnectedCallback() {
@@ -429,6 +410,20 @@ export class ProductSpecificationsElement extends CrLitElement {
     await this.createNewSet_(urls);
   }
 
+  private async updateFeatureState_() {
+    const {state} =
+        await this.shoppingApi_.getProductSpecificationsFeatureState();
+    if (!state) {
+      return;
+    }
+
+    if (!this.productSpecificationsFeatureState_ ||
+        !areStatesEqual(state, this.productSpecificationsFeatureState_)) {
+      await this.loadTable_(state);
+      this.productSpecificationsFeatureState_ = state;
+    }
+  }
+
   private computeAppState_() {
     if (this.productSpecificationsFeatureState_) {
       if (!this.productSpecificationsFeatureState_.isSyncingTabCompare) {
@@ -469,10 +464,6 @@ export class ProductSpecificationsElement extends CrLitElement {
   }
 
   private computeShowComparisonTableList_() {
-    if (!loadTimeData.getBoolean('comparisonTableListEnabled')) {
-      return false;
-    }
-
     return this.showEmptyState_ && this.id_ === null && this.sets_.length > 0 &&
         this.appState_ === AppState.TABLE_EMPTY;
   }
@@ -606,11 +597,13 @@ export class ProductSpecificationsElement extends CrLitElement {
 
   private async getProductInfoForUrls_(urls: string[]):
       Promise<Map<string, ProductInfo>> {
+    const urlList: Url[] = urls.map((url) => ({url}));
+    const {productInfos} =
+        await this.shoppingApi_.getProductInfoForUrls(urlList);
     const infoMap: Map<string, ProductInfo> = new Map();
-    for (const url of urls) {
-      const {productInfo} = await this.shoppingApi_.getProductInfoForUrl({url});
-      if (productInfo && productInfo.clusterId) {
-        infoMap.set(url, productInfo);
+    for (const info of productInfos) {
+      if (info && info.clusterId) {
+        infoMap.set(info.productUrl.url, info);
       }
     }
     return infoMap;
@@ -698,13 +691,7 @@ export class ProductSpecificationsElement extends CrLitElement {
   }
 
   protected seeAllSets_() {
-    if (loadTimeData.getBoolean('comparisonTableListEnabled')) {
-      this.productSpecificationsProxy_.showComparePage(true);
-      return;
-    }
-
-    OpenWindowProxyImpl.getInstance().openUrl(
-        loadTimeData.getString('productSpecificationsManagementUrl'));
+    this.productSpecificationsProxy_.showComparePage(true);
   }
 
   protected async onUrlAdd_(
@@ -1037,8 +1024,7 @@ export class ProductSpecificationsElement extends CrLitElement {
 
     // If we show the empty state and there are no comparison tables, try to
     // fetch them.
-    if (loadTimeData.getBoolean('comparisonTableListEnabled') &&
-        this.showEmptyState_ && this.sets_.length === 0) {
+    if (this.showEmptyState_ && this.sets_.length === 0) {
       const {sets} = await this.shoppingApi_.getAllProductSpecificationsSets();
       this.sets_ = sets;
     }

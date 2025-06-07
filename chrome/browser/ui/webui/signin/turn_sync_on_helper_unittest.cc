@@ -17,6 +17,7 @@
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_command_line.h"
 #include "base/test/test_file_util.h"
@@ -1302,6 +1303,28 @@ TEST_F(TurnSyncOnHelperTest, EnterpriseConfirmationAbort) {
   // Configure the test.
   user_policy_signin_service()->set_dm_token("foo");
   user_policy_signin_service()->set_client_id("bar");
+  // Signin flow.
+  CreateTurnOnSyncHelper(TurnSyncOnHelper::SigninAbortedMode::REMOVE_ACCOUNT);
+  WaitUntilFlowCompletion();
+
+  // Check expectations.
+  EXPECT_FALSE(
+      identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSync));
+  EXPECT_TRUE(identity_manager()->HasAccountWithRefreshToken(account_id()));
+  CheckDelegateCalls();
+  CheckSigninMetrics({});
+}
+
+// Abort after the enterprise confirmation prompt.
+TEST_F(TurnSyncOnHelperTest, EnterpriseConfirmationAbortSeparationEnforced) {
+  // Set expectations.
+  expected_enterprise_confirmation_email_ = kEmail;
+  // Configure the test.
+  user_policy_signin_service()->set_dm_token("foo");
+  user_policy_signin_service()->set_client_id("bar");
+
+  SetIsProfileCreationRequiredByPolicy(true);
+
   // Signin flow.
   CreateTurnOnSyncHelper(TurnSyncOnHelper::SigninAbortedMode::REMOVE_ACCOUNT);
   WaitUntilFlowCompletion();

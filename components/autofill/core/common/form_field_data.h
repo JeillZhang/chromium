@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "base/i18n/rtl.h"
@@ -100,7 +101,7 @@ class Section {
     HtmlFieldMode mode = HtmlFieldMode::kNone;
   };
 
-  using Default = absl::monostate;
+  using Default = std::monostate;
 
   struct FieldIdentifier {
     FieldIdentifier() = default;
@@ -130,11 +131,7 @@ class Section {
   Section(const Section& section);
   ~Section();
 
-  // `absl::variant` does not implement `operator<=>` - therefore the ordering
-  // needs to be specified manually. Once `absl::variant` is `std::variant`,
-  // this return type can become `auto`.
-  friend std::strong_ordering operator<=>(const Section& lhs,
-                                          const Section& rhs) = default;
+  friend auto operator<=>(const Section& lhs, const Section& rhs) = default;
   friend bool operator==(const Section& lhs, const Section& rhs) = default;
   explicit operator bool() const;
 
@@ -155,7 +152,7 @@ class Section {
   //     attribute,
   //  - `FieldIdentifier` represents a section generated based on the first
   //     field in the section.
-  using SectionValue = absl::variant<Default, Autocomplete, FieldIdentifier>;
+  using SectionValue = std::variant<Default, Autocomplete, FieldIdentifier>;
 
   friend struct mojo::StructTraits<autofill::mojom::SectionDataView,
                                    autofill::Section>;
@@ -220,8 +217,8 @@ class FormFieldData {
   //
   // It does *not* uniquely identify this FormFieldData object (there is no such
   // kind of identifier because FormFieldData is a value type). In particular,
-  // they're not guaranteed to be unique FormData::fields; see FormData::fields
-  // for details.
+  // it does uniquely identify an element of FormData::fields; see
+  // FormData::fields for details.
   //
   // Must not be leaked to renderer process. See FieldGlobalId for details.
   FieldGlobalId global_id() const { return {host_frame(), renderer_id()}; }
@@ -292,7 +289,7 @@ class FormFieldData {
   // FormFieldData::form_control_type().
   //
   // To get a field's initial value or the value for submission, see
-  // AutofillField::value() and AutofillField::value_for_import().
+  // AutofillField::initial_value() and AutofillField::value_for_import().
   //
   // A note on FormFieldData objects of type FormControlType::kSelect*, i.e.,
   // <select> elements:
@@ -321,7 +318,7 @@ class FormFieldData {
   // mismatch all `options()`, e.g., when JavaScript set the value to a
   // different value or when the number or string length of the options exceeded
   // limits during extraction.
-  base::optional_ref<const SelectOption> selected_option() const;
+  base::optional_ref<const SelectOption> selected_option() const LIFETIME_BOUND;
 
   // The selected text, or the empty string if no text is selected.
   // Truncated at `50 * kMaxStringLength`.
@@ -441,8 +438,7 @@ class FormFieldData {
   // overflows when doing arithmetic with FormFieldData::max_length.
   //
   // Changes to the default value also must be reflected in
-  // form_autofill_util.cc's GetMaxLength() and
-  // FormFieldData::has_no_max_length().
+  // form_autofill_util.cc's GetMaxLength().
   //
   // We use uint64_t instead of size_t because this struct is sent over IPC
   // which could span 32 & 64 bit processes. We chose uint64_t instead of
@@ -663,11 +659,17 @@ void SerializeFormFieldData(const FormFieldData& form_field_data,
 bool DeserializeFormFieldData(base::PickleIterator* pickle_iterator,
                               FormFieldData* form_field_data);
 
-// So we can compare FormFieldDatas with EXPECT_EQ().
 std::ostream& operator<<(std::ostream& os, const FormFieldData& field);
 
 // Produces a <table> element with information about the form.
 LogBuffer& operator<<(LogBuffer& buffer, const FormFieldData& form);
+
+namespace internal {
+std::ostream& PrintWithIndentation(std::ostream& os,
+                                   const FormFieldData& field,
+                                   int indentation = 0,
+                                   std::string_view title = "FormFieldData");
+}  // namespace internal
 
 }  // namespace autofill
 

@@ -54,15 +54,13 @@ public class ModalDialogProperties {
     @IntDef({
         ModalDialogProperties.ButtonType.POSITIVE,
         ModalDialogProperties.ButtonType.NEGATIVE,
-        ModalDialogProperties.ButtonType.TITLE_ICON,
         ButtonType.POSITIVE_EPHEMERAL
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface ButtonType {
         int POSITIVE = 0;
         int NEGATIVE = 1;
-        int TITLE_ICON = 2;
-        int POSITIVE_EPHEMERAL = 3;
+        int POSITIVE_EPHEMERAL = 2;
     }
 
     /**
@@ -289,22 +287,6 @@ public class ModalDialogProperties {
     public static final WritableObjectPropertyKey<Rect> PADDING = new WritableObjectPropertyKey();
 
     /**
-     * Whether the positive button should draw an indeterminate spinner within the button while
-     * awaiting a pending result. Only one of the positive or negative buttons should have the
-     * loading state applied with the spinner active.
-     */
-    public static final WritableBooleanPropertyKey POSITIVE_BUTTON_LOADING =
-            new WritableBooleanPropertyKey();
-
-    /**
-     * Whether the negative button should draw an indeterminate spinner within the button while
-     * awaiting a pending result. Only one of the positive or negative buttons should have the
-     * loading state applied with the spinner active.
-     */
-    public static final WritableBooleanPropertyKey NEGATIVE_BUTTON_LOADING =
-            new WritableBooleanPropertyKey();
-
-    /**
      * Block all inputs on the rest of the dialog view. Note that this does not override any
      * existing behaviour for touching the scrim or system backpress handling.
      */
@@ -345,8 +327,6 @@ public class ModalDialogProperties {
                 HORIZONTAL_MARGIN,
                 VERTICAL_MARGIN,
                 PADDING,
-                POSITIVE_BUTTON_LOADING,
-                NEGATIVE_BUTTON_LOADING,
                 BLOCK_INPUTS,
             };
 }

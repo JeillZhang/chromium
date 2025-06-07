@@ -264,7 +264,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxFocusInteractiveTest,
                               "history.pushState({}, '', '/push-state')");
   nav_observer.Wait();
   EXPECT_EQ(2, web_contents->GetController().GetEntryCount());
-  EXPECT_EQ(extension->GetResourceURL("/push-state"),
+  EXPECT_EQ(extension->ResolveExtensionURL("push-state"),
             web_contents->GetController().GetLastCommittedEntry()->GetURL());
 
   // Verify that pushState didn't make the focus move away from the omnibox.
@@ -335,7 +335,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxFocusInteractiveTest, OmniboxFocusStealing) {
   ASSERT_TRUE(extension);
 
   // Navigate to an extension resource.
-  GURL ext_url = extension->GetResourceURL("ext.html");
+  GURL ext_url = extension->ResolveExtensionURL("ext.html");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), ext_url));
 
   // Focus the location bar / omnibox.
@@ -550,7 +550,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxFocusInteractiveFencedFrameTest,
   EXPECT_TRUE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_TAB_CONTAINER));
 
   // FencedFrameTestHelper uses eval() function that is blocked by the
-  // document's CSP on this page. So need to maually create a fenced frame for
+  // document's CSP on this page. So need to manually create a fenced frame for
   // avoiding the CSP policy.
   constexpr char kAddFencedFrameScript[] = R"({
       const fenced_frame = document.createElement('fencedframe');

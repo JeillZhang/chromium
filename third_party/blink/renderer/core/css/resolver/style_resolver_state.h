@@ -175,6 +175,7 @@ class CORE_EXPORT StyleResolverState {
   StyleImage* GetStyleImage(CSSPropertyID property_id, const CSSValue& value) {
     return element_style_resources_.GetStyleImage(property_id, value);
   }
+  SVGResource* GetSVGResource(CSSPropertyID, const cssvalue::CSSURIValue&);
 
   FontBuilder& GetFontBuilder() { return font_builder_; }
   const FontBuilder& GetFontBuilder() const { return font_builder_; }
@@ -276,6 +277,8 @@ class CORE_EXPORT StyleResolverState {
 
   // See StyleRequest.pseudo_id.
   PseudoId GetPseudoId() const { return pseudo_id_; }
+
+  void SetComputedStyleFlagsFromAuthorFlags(CSSProperty::Flags author_flags);
 
  private:
   CSSToLengthConversionData UnzoomedLengthConversionData(const FontSizeStyle&);

@@ -13,7 +13,7 @@ load("//lib/chrome_settings.star", "chrome_settings")
 load("//project.star", "settings")
 
 lucicfg.check_version(
-    min = "1.43.13",
+    min = "1.44.1",
     message = "Update depot_tools",
 )
 
@@ -131,7 +131,7 @@ luci.project(
         # Role for builder health indicators
         luci.binding(
             roles = "role/buildbucket.healthUpdater",
-            users = ["guterman@google.com", "generate-builder@cr-builder-health-indicators.iam.gserviceaccount.com", "tne@google.com"],
+            users = ["generate-builder@cr-builder-health-indicators.iam.gserviceaccount.com"],
         ),
     ],
 )
@@ -305,7 +305,7 @@ exec("//notifiers.star")
 exec("//subprojects/build/subproject.star")
 exec("//subprojects/chrome/subproject.star")
 exec("//subprojects/chromium/subproject.star")
-exec("//subprojects/infra.star")
+exec("//subprojects/infra/subproject.star")
 branches.exec("//subprojects/codesearch/subproject.star")
 branches.exec("//subprojects/findit/subproject.star")
 branches.exec("//subprojects/flakiness/subproject.star")

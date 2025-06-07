@@ -4,11 +4,15 @@
 
 package org.chromium.chrome.browser.dom_distiller;
 
+import static org.chromium.components.embedder_support.util.UrlConstants.CHROME_NATIVE_SCHEME;
+import static org.chromium.components.embedder_support.util.UrlConstants.CHROME_SCHEME;
+
 import android.app.Activity;
 import android.content.Intent;
 import android.content.res.Resources;
 import android.net.Uri;
 import android.os.SystemClock;
+import android.util.Pair;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.NonNull;
@@ -22,6 +26,7 @@ import org.chromium.base.RequiredCallback;
 import org.chromium.base.SysUtils;
 import org.chromium.base.UserData;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.IntentHandler;
@@ -32,6 +37,7 @@ import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
 import org.chromium.chrome.browser.customtabs.IncognitoCustomTabIntentDataProvider;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.dom_distiller.TabDistillabilityProvider.DistillabilityObserver;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.fullscreen.BrowserControlsManager;
 import org.chromium.chrome.browser.fullscreen.BrowserControlsManagerSupplier;
@@ -42,6 +48,7 @@ import org.chromium.chrome.browser.tab.Tab.LoadUrlResult;
 import org.chromium.chrome.browser.tab.TabHidingType;
 import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tab.TabUtils;
+import org.chromium.components.dom_distiller.core.DomDistillerFeatures;
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtils;
 import org.chromium.components.messages.DismissReason;
 import org.chromium.components.messages.MessageBannerProperties;
@@ -51,6 +58,7 @@ import org.chromium.components.messages.MessageIdentifier;
 import org.chromium.components.messages.MessageScopeType;
 import org.chromium.components.messages.PrimaryActionClickBehavior;
 import org.chromium.components.navigation_interception.InterceptNavigationDelegate;
+import org.chromium.components.ukm.UkmRecorder;
 import org.chromium.content_public.browser.LoadCommittedDetails;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.NavigationController;
@@ -68,9 +76,9 @@ import java.lang.annotation.RetentionPolicy;
 import java.util.LinkedHashSet;
 
 /**
- * Manages UI effects for reader mode including hiding and showing the
- * reader mode and reader mode preferences toolbar icon and hiding the
- * browser controls when a reader mode page has finished loading.
+ * Manages UI effects for reader mode including hiding and showing the reader mode and reader mode
+ * preferences toolbar icon and hiding the browser controls when a reader mode page has finished
+ * loading.
  */
 public class ReaderModeManager extends EmptyTabObserver implements UserData {
     /** Possible states that the distiller can be in on a web page. */
@@ -101,11 +109,19 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
     public static final String EXTRA_READER_MODE_PARENT =
             "org.chromium.chrome.browser.dom_distiller.EXTRA_READER_MODE_PARENT";
 
-    /** The url of the last page visited if the last page was reader mode page.  Otherwise null. */
+    /** Histogram name for the state of the reader mode accessibility setting. */
+    public static final String ACCESSIBILITY_SETTING_HISTOGRAM =
+            "DomDistiller.Android.OnDistillableResult.AccessibilitySettingEnabled";
+
+    /** Histogram name for the end distillability result. */
+    public static final String PAGE_DISTILLATION_RESULT_HISTOGRAM =
+            "DomDistiller.Android.OnDistillableResult.PageDistillationResult";
+
+    /** The url of the last page visited if the last page was reader mode page. Otherwise null. */
     private GURL mReaderModePageUrl;
 
-    /** Whether the fact that the current web page was distillable or not has been recorded. */
-    private boolean mIsUmaRecorded;
+    /** Whether the current web page was distillable or not has been determined. */
+    private boolean mIsCurrentPageDistillationStatusDetermined;
 
     /** The WebContentsObserver responsible for updates to the distillation status of the tab. */
     private WebContentsObserver mWebContentsObserver;
@@ -160,6 +176,13 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
     /** Property Model of Reader mode message. */
     private PropertyModel mMessageModel;
 
+    /** Whether the reader mode button is currently being shown on the toolbar. */
+    private boolean mIsReaderModeButtonShowingOnToolbar;
+
+    // Whether the manager has been notified that a contextual page action has been shown for the
+    // current navigation.
+    private boolean mHasBeenNotifiedOfCpa;
+
     ReaderModeManager(Tab tab, Supplier<MessageDispatcher> messageDispatcherSupplier) {
         super();
         mTab = tab;
@@ -183,6 +206,8 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
     @Override
     public void destroy() {
         if (mWebContentsObserver != null) mWebContentsObserver.observe(null);
+        mHasBeenNotifiedOfCpa = false;
+        mIsReaderModeButtonShowingOnToolbar = false;
         mIsDestroyed = true;
     }
 
@@ -246,14 +271,30 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
     }
 
     @Override
+    public void onPageLoadFinished(Tab tab, GURL url) {
+        if (!DomDistillerFeatures.sReaderModeAutoDistill.isEnabled()
+                || url.getScheme().equals(DOM_DISTILLER_SCHEME)
+                || url.getScheme().equals(CHROME_SCHEME)
+                || url.getScheme().equals(CHROME_NATIVE_SCHEME)) {
+            return;
+        }
+
+        distillInCustomTab();
+    }
+
+    @Override
     public void onShown(Tab shownTab, @TabSelectionType int type) {
         // If the reader mode prompt was dismissed, stop here.
         if (mIsDismissed) return;
 
+        mHasBeenNotifiedOfCpa = false;
+        mIsReaderModeButtonShowingOnToolbar = false;
         mDistillationStatus = DistillationStatus.NOT_POSSIBLE;
         mDistillerUrl = shownTab.getUrl();
 
-        if (mDistillabilityObserver == null) setDistillabilityObserver(shownTab);
+        if (mDistillabilityObserver == null) {
+            setDistillabilityObserver(shownTab);
+        }
 
         if (DomDistillerUrlUtils.isDistilledPage(shownTab.getUrl()) && !mIsViewingReaderModePage) {
             onStartedReaderMode();
@@ -276,6 +317,8 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
 
     @Override
     public void onDestroyed(Tab tab) {
+        mHasBeenNotifiedOfCpa = false;
+        mIsReaderModeButtonShowingOnToolbar = false;
         if (tab == null) return;
 
         // If the prompt was not shown for the previous navigation, record it now.
@@ -305,11 +348,15 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
         mDistillerUrl = null;
         mShowPromptRecorded = false;
         mIsViewingReaderModePage = false;
+        mHasBeenNotifiedOfCpa = false;
+        mIsReaderModeButtonShowingOnToolbar = false;
         mDistillabilityObserver = null;
     }
 
     @Override
     public void onContentChanged(Tab tab) {
+        mHasBeenNotifiedOfCpa = false;
+        mIsReaderModeButtonShowingOnToolbar = false;
         // If the content change was because of distiller switching web contents or Reader Mode has
         // already been dismissed for this tab do nothing.
         if (mIsDismissed && !DomDistillerUrlUtils.isDistilledPage(tab.getUrl())) return;
@@ -332,6 +379,11 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
     private void onStartedReaderMode() {
         mIsViewingReaderModePage = true;
         mViewStartTimeMs = SystemClock.elapsedRealtime();
+
+        new UkmRecorder(mTab.getWebContents(), "DomDistiller.Android.ReaderModeShown")
+                .addBooleanMetric("Shown")
+                .record();
+        RecordUserAction.record("DomDistiller.Android.OnStartedReaderMode");
     }
 
     /**
@@ -415,11 +467,15 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
                                         DomDistillerUrlUtils.getOriginalUrlFromDistillerUrl(
                                                 mReaderModePageUrl))) {
                     mDistillationStatus = DistillationStatus.NOT_POSSIBLE;
-                    mIsUmaRecorded = false;
+                    mIsCurrentPageDistillationStatusDetermined = false;
                 }
                 mReaderModePageUrl = null;
 
-                if (mDistillationStatus == DistillationStatus.POSSIBLE) tryShowingPrompt();
+                if (mDistillationStatus == DistillationStatus.POSSIBLE) {
+                    mHasBeenNotifiedOfCpa = false;
+                    mIsReaderModeButtonShowingOnToolbar = false;
+                    tryShowingPrompt();
+                }
             }
 
             @Override
@@ -428,6 +484,8 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
                 // Reset closed state of reader mode in this tab once we know a navigation is
                 // happening.
                 mIsDismissed = false;
+                mHasBeenNotifiedOfCpa = false;
+                mIsReaderModeButtonShowingOnToolbar = false;
                 mMessageRequestedForNavigation = false;
 
                 // If the prompt was not shown for the previous navigation, record it now.
@@ -461,7 +519,13 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
 
         // This prompt should only be shown on incognito or custom tabs, in other cases we'll show a
         // toolbar button (contextual page action) instead.
-        if (!mTab.isCustomTab() && !mTab.isIncognito()) return;
+        if (!shouldUseReaderModeMessages(mTab)) return;
+
+        if (mTab.isCustomTab() && ChromeFeatureList.sCctAdaptiveButton.isEnabled()) {
+            // If the manager hasn't been notified of the CPA yet, or the reader mode button is
+            // already showing on the toolbar, don't show the prompt.
+            if (!mHasBeenNotifiedOfCpa || mIsReaderModeButtonShowingOnToolbar) return;
+        }
 
         // Test if the user is requesting the desktop site. Ignore this if distiller is set to
         // ALWAYS_TRUE.
@@ -650,8 +714,9 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
     }
 
     /**
-     * Set the observer for updating reader mode status based on whether or not the page should
-     * be viewed in reader mode.
+     * Set the observer for updating reader mode status based on whether or not the page should be
+     * viewed in reader mode.
+     *
      * @param tabToObserve The tab to attach the observer to.
      */
     private void setDistillabilityObserver(final Tab tabToObserve) {
@@ -659,25 +724,79 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
                 (tab, isDistillable, isLast, isMobileOptimized) -> {
                     // Make sure the page didn't navigate while waiting for a response.
                     if (!tab.getUrl().equals(mDistillerUrl)) return;
+                    // Make sure the page distillation status hasn't already been determined.
+                    if (mIsCurrentPageDistillationStatusDetermined) return;
+                    // Make sure that reader mode messages infra should be used.
+                    if (!shouldUseReaderModeMessages(tab)) return;
 
-                    if (isDistillable
-                            && !(isMobileOptimized
-                                    && DomDistillerTabUtils.shouldExcludeMobileFriendly(
-                                            tabToObserve))) {
-                        mDistillationStatus = DistillationStatus.POSSIBLE;
+                    Pair<Boolean, Integer> result =
+                            ReaderModeManager.computeDistillationStatus(
+                                    tab, isDistillable, isMobileOptimized, isLast);
+                    mIsCurrentPageDistillationStatusDetermined = result.first;
+                    mDistillationStatus = result.second;
+                    if (mIsCurrentPageDistillationStatusDetermined) {
+                        mHasBeenNotifiedOfCpa = false;
+                        mIsReaderModeButtonShowingOnToolbar = false;
                         tryShowingPrompt();
-                    } else {
-                        mDistillationStatus = DistillationStatus.NOT_POSSIBLE;
-                    }
-                    if (!mIsUmaRecorded
-                            && (mDistillationStatus == DistillationStatus.POSSIBLE || isLast)) {
-                        mIsUmaRecorded = true;
-                        RecordHistogram.recordBooleanHistogram(
-                                "DomDistiller.PageDistillable",
-                                mDistillationStatus == DistillationStatus.POSSIBLE);
                     }
                 };
         TabDistillabilityProvider.get(tabToObserve).addObserver(mDistillabilityObserver);
+    }
+
+    // Returns whether reader mode should trigger through messages. This happens for CCTs and
+    // incognito tabs.
+    private boolean shouldUseReaderModeMessages(Tab tab) {
+        return tab != null && (tab.isCustomTab() || tab.isIncognito());
+    }
+
+    /**
+     * Gets the distillation status for the given arguments, and records metrics if distillability
+     * has been fully determined.
+     *
+     * @param tab The {@link Tab} to determine distillability for.
+     * @param isDistillable Whether the tab is considered distillable.
+     * @param isMobileOptimized Whether the tab is considered optimized for mobile.
+     * @param isLast Whether this is the last signal we'll get for the tab.
+     * @returns A pair which contains: pair.first - Whether distillability has been fully
+     *     determined. pair.second - The current distillation status.
+     */
+    public static Pair<Boolean, Integer> computeDistillationStatus(
+            Tab tab, boolean isDistillable, boolean isMobileOptimized, boolean isLast) {
+        // Compute if mobile friendly pages should be excluded for use in distillation status as
+        // well as metrics recording.
+        boolean shouldExcludeMobileFriendly = DomDistillerTabUtils.shouldExcludeMobileFriendly(tab);
+        boolean excludeCurrentMobilePage = isMobileOptimized && shouldExcludeMobileFriendly;
+        // Test if the user is requesting the desktop site. Ignore this if distiller is set to
+        // ALWAYS_TRUE.
+        // TODO(crbug.com/405186704): Add histogram when RDS results in a RM exclusion.
+        boolean excludeRequestDesktopSite =
+                tab.getWebContents() != null
+                        && tab.getWebContents().getNavigationController().getUseDesktopUserAgent()
+                        && !DomDistillerTabUtils.isHeuristicAlwaysTrue();
+
+        // Determine and store distillation status.
+        @DistillationStatus int distillationStatus;
+        if (isDistillable && !excludeCurrentMobilePage && !excludeRequestDesktopSite) {
+            distillationStatus = DistillationStatus.POSSIBLE;
+        } else {
+            distillationStatus = DistillationStatus.NOT_POSSIBLE;
+        }
+
+        // If we get a positive distillation status, or a signal that this is the last distillation
+        // signal we'll receive, record metrics and inform the user.
+        if (distillationStatus == DistillationStatus.POSSIBLE || isLast) {
+            RecordHistogram.recordBooleanHistogram(
+                    ACCESSIBILITY_SETTING_HISTOGRAM,
+                    DomDistillerTabUtils.isReaderModeAccessibilitySettingEnabled(tab.getProfile()));
+            recordDistillationResult(
+                    tab,
+                    distillationStatus,
+                    isDistillable,
+                    excludeCurrentMobilePage,
+                    excludeRequestDesktopSite);
+            return new Pair<>(true, distillationStatus);
+        }
+        return new Pair<>(false, distillationStatus);
     }
 
     private int urlToHash(GURL url) {
@@ -722,13 +841,92 @@ public class ReaderModeManager extends EmptyTabObserver implements UserData {
     }
 
     /**
-     * Notify that a reader mode UI was shown for the current tab and URL. Used when the contextual
-     * page action UI is enabled to update the rate limiting logic.
+     * Notify that a contextual page action was shown for the current tab and URL. Used when the
+     * contextual page action UI is enabled to update the rate limiting logic and to suppress the
+     * message prompt if the current tab is a CCT.
+     *
+     * @param isReaderMode Whether the reader mode UI is the current CPA being shown.
      */
-    public void setReaderModeUiShown() {
+    public void onContextualPageActionShown(boolean isReaderMode) {
+        // If the feature is enabled and the tab is a custom tab, the manager should be aware if the
+        // displayed contextual page action is the reader one. Once determined, #tryShowingPrompt
+        // can successfully decide between showing a message prompt or suppressing it in favor of
+        // the contextual page action's UI.
+        if (ChromeFeatureList.sCctAdaptiveButton.isEnabled() && mTab.isCustomTab()) {
+            mHasBeenNotifiedOfCpa = true;
+            mIsReaderModeButtonShowingOnToolbar = isReaderMode;
+            tryShowingPrompt();
+        }
         // Contextual page actions can't be dismissed, so we consider an unused button as
         // "dismissed". Interacting with the button will undo this "mute" logic.
-        addUrlToMutedSites(mDistillerUrl);
-        mMessageShown = true;
+        if (isReaderMode) {
+            addUrlToMutedSites(mDistillerUrl);
+            mMessageShown = true;
+        }
+    }
+
+    // Describes the end-state of the distillation result, used for metrics reporting. Do not
+    // change/reorder existing entries, and keep in sync with accessibility/histograms.xml.
+    // LINT.IfChange(DistillationResult)
+    @IntDef({
+        DistillationResult.NOT_DISTILLABLE,
+        DistillationResult.DISTILLABLE,
+        DistillationResult.DISTILLABLE_BUT_EXCLUDED_UNKNOWN,
+        DistillationResult.DISTILLABLE_BUT_EXCLUDED_MOBILE,
+        DistillationResult.DISTILLABLE_BUT_EXCLUDED_RDS,
+        DistillationResult.MAX
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    @VisibleForTesting
+    @interface DistillationResult {
+        // Native signals that the page isn't distillable.
+        int NOT_DISTILLABLE = 0;
+
+        // Determined to distillability.
+        int DISTILLABLE = 1;
+
+        // Distillable, but excluded for an unknown reason.
+        int DISTILLABLE_BUT_EXCLUDED_UNKNOWN = 2;
+
+        // Distillable, but excluded because the web page is mobile friendly.
+        int DISTILLABLE_BUT_EXCLUDED_MOBILE = 3;
+
+        // Distillable, but excluded because the user is requesting the desktop version.
+        int DISTILLABLE_BUT_EXCLUDED_RDS = 4;
+
+        int MAX = 5;
+    }
+
+    // LINT.ThenChange(/tools/metrics/histograms/metadata/accessibility/enums.xml:DistillationResult)
+
+    private static void recordDistillationResult(
+            Tab tab,
+            @DistillationStatus int status,
+            boolean isDistillable,
+            boolean excludeMobileFriendly,
+            boolean excludeRequestDesktopSite) {
+        @DistillationResult int result;
+        if (status == DistillationStatus.POSSIBLE) {
+            result = DistillationResult.DISTILLABLE;
+        } else {
+            if (isDistillable) {
+                if (excludeMobileFriendly) {
+                    result = DistillationResult.DISTILLABLE_BUT_EXCLUDED_MOBILE;
+                } else if (excludeRequestDesktopSite) {
+                    result = DistillationResult.DISTILLABLE_BUT_EXCLUDED_RDS;
+                } else {
+                    result = DistillationResult.DISTILLABLE_BUT_EXCLUDED_UNKNOWN;
+                }
+            } else {
+                result = DistillationResult.NOT_DISTILLABLE;
+            }
+        }
+        RecordHistogram.recordEnumeratedHistogram(
+                PAGE_DISTILLATION_RESULT_HISTOGRAM, result, DistillationResult.MAX);
+        if (tab.getWebContents() != null) {
+            new UkmRecorder(tab.getWebContents(), "DomDistiller.Android.DistillabilityResult")
+                    .addMetric("Result", result)
+                    .record();
+        }
     }
 }

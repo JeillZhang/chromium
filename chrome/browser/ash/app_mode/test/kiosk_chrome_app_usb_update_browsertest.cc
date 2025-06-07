@@ -30,6 +30,8 @@
 
 namespace ash {
 
+using kiosk::test::WaitKioskLaunched;
+
 namespace {
 
 using kiosk::test::CachedChromeAppVersion;
@@ -181,7 +183,6 @@ class KioskChromeAppUsbUpdateTest
       public testing::WithParamInterface<TestParam> {
  public:
   KioskChromeAppUsbUpdateTest() = default;
-
   KioskChromeAppUsbUpdateTest(const KioskChromeAppUsbUpdateTest&) = delete;
   KioskChromeAppUsbUpdateTest& operator=(const KioskChromeAppUsbUpdateTest&) =
       delete;
@@ -190,7 +191,7 @@ class KioskChromeAppUsbUpdateTest
 
   void SetUpOnMainThread() override {
     MixinBasedInProcessBrowserTest::SetUpOnMainThread();
-    ASSERT_TRUE(kiosk_.WaitSessionLaunched());
+    ASSERT_TRUE(WaitKioskLaunched());
   }
 
   FakeUsbMountHelper usb_helper_;

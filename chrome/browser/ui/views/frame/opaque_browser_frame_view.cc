@@ -229,7 +229,7 @@ void OpaqueBrowserFrameView::InitViews() {
     window_title_->SetSubpixelRenderingEnabled(false);
     window_title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
     window_title_->SetID(VIEW_ID_WINDOW_TITLE);
-    AddChildView(window_title_.get());
+    AddChildViewRaw(window_title_.get());
   }
 
 #if BUILDFLAG(IS_WIN)
@@ -480,7 +480,7 @@ int OpaqueBrowserFrameView::GetIconSize() const {
 #if BUILDFLAG(IS_WIN)
   // This metric scales up if either the titlebar height or the titlebar font
   // size are increased.
-  return display::win::ScreenWin::GetSystemMetricsInDIP(SM_CYSMICON);
+  return display::win::GetScreenWin()->GetSystemMetricsInDIP(SM_CYSMICON);
 #else
   // The icon never shrinks below 16 px on a side.
   const int kIconMinimumSize = 16;
@@ -720,7 +720,7 @@ void OpaqueBrowserFrameView::InitWindowCaptionButton(
   button->GetViewAccessibility().SetName(
       l10n_util::GetStringUTF16(accessibility_string_id));
   button->SetID(view_id);
-  AddChildView(button);
+  AddChildViewRaw(button);
 }
 
 gfx::Size OpaqueBrowserFrameView::GetThemeImageSize(int image_id) {

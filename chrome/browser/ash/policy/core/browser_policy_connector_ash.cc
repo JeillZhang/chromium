@@ -19,7 +19,6 @@
 #include "base/containers/contains.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
-#include "base/functional/overloaded.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
 #include "base/notreached.h"
@@ -38,7 +37,6 @@
 #include "chrome/browser/ash/policy/enrollment/device_cloud_policy_initializer.h"
 #include "chrome/browser/ash/policy/enrollment/enrollment_requisition_manager.h"
 #include "chrome/browser/ash/policy/external_data/device_policy_cloud_external_data_manager.h"
-#include "chrome/browser/ash/policy/external_data/handlers/crostini_ansible_playbook_external_data_handler.h"
 #include "chrome/browser/ash/policy/external_data/handlers/device_print_servers_external_data_handler.h"
 #include "chrome/browser/ash/policy/external_data/handlers/device_printers_external_data_handler.h"
 #include "chrome/browser/ash/policy/external_data/handlers/device_wallpaper_image_external_data_handler.h"
@@ -108,6 +106,7 @@
 #include "components/variations/pref_names.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace policy {
 
@@ -190,6 +189,12 @@ auto CreateServiceProviderOrListenersForProjects(
   return invalidation_service_provider_or_listener_per_project;
 }
 
+scoped_refptr<base::SequencedTaskRunner> CreateUserVisibleTaskRunner() {
+  return base::ThreadPool::CreateUpdateableSequencedTaskRunner(
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
+}
+
 }  // namespace
 
 // static
@@ -205,8 +210,8 @@ BrowserPolicyConnectorAsh::BrowserPolicyConnectorAsh() {
 
   crd_admin_session_controller_ = std::make_unique<CrdAdminSessionController>();
 
-  // DBusThreadManager or DeviceSettingsService may be
-  // uninitialized on unit tests.
+  // DBusThreadManager or DeviceSettingsService may be uninitialized (e.g.
+  // during unit tests).
   if (ash::DBusThreadManager::IsInitialized() &&
       ash::DeviceSettingsService::IsInitialized()) {
     std::unique_ptr<DeviceCloudPolicyStoreAsh> device_cloud_policy_store =
@@ -279,7 +284,10 @@ void BrowserPolicyConnectorAsh::Init(
           invalidation::UniquePointerVariantToPointer(
               invalidation_service_provider_or_listener_per_project_
                   [device_local_account_policy_project_number]),
-          CreateBackgroundTaskRunner(), CreateBackgroundTaskRunner(),
+          /*store_background_task_runner=*/CreateBackgroundTaskRunner(),
+          /*store_first_load_task_runner=*/CreateUserVisibleTaskRunner(),
+          /*extension_cache_task_runner=*/CreateBackgroundTaskRunner(),
+          /*external_data_service_backend_task_runner=*/
           CreateBackgroundTaskRunner(), url_loader_factory);
   device_local_account_policy_service_->Connect(device_management_service());
 
@@ -289,7 +297,7 @@ void BrowserPolicyConnectorAsh::Init(
     CHECK(base::Contains(invalidation_service_provider_or_listener_per_project_,
                          device_policy_project_number))
         << "Missing invalidation for project: " << device_policy_project_number;
-    std::visit(base::Overloaded{
+    std::visit(absl::Overload{
                    [this](AffiliatedInvalidationServiceProvider* provider) {
                      device_cloud_policy_invalidator_ =
                          std::make_unique<AffiliatedCloudPolicyInvalidator>(
@@ -319,7 +327,7 @@ void BrowserPolicyConnectorAsh::Init(
     CHECK(base::Contains(invalidation_service_provider_or_listener_per_project_,
                          device_remote_commands_project_number))
         << "Missing: " << device_remote_commands_project_number;
-    std::visit(base::Overloaded{
+    std::visit(absl::Overload{
                    [this](AffiliatedInvalidationServiceProvider* provider) {
                      device_remote_commands_invalidator_ =
                          std::make_unique<AffiliatedRemoteCommandsInvalidator>(
@@ -427,7 +435,7 @@ void BrowserPolicyConnectorAsh::Init(
       std::make_unique<AdbSideloadingAllowanceModePolicyHandler>(
           ash::CrosSettings::Get(), local_state,
           chromeos::PowerManagerClient::Get(),
-          new ash::AdbSideloadingPolicyChangeNotification());
+          std::make_unique<ash::AdbSideloadingPolicyChangeNotification>(this));
 
   reboot_notifications_scheduler_ =
       std::make_unique<RebootNotificationsScheduler>();
@@ -499,7 +507,7 @@ void BrowserPolicyConnectorAsh::Shutdown() {
   }
 
   std::visit(
-      base::Overloaded{
+      absl::Overload{
           [](std::unique_ptr<AffiliatedCloudPolicyInvalidator>& invalidator) {
             invalidator.reset();
           },
@@ -508,7 +516,7 @@ void BrowserPolicyConnectorAsh::Shutdown() {
             invalidator.reset();
           }},
       device_cloud_policy_invalidator_);
-  std::visit(base::Overloaded{
+  std::visit(absl::Overload{
                  [](std::unique_ptr<AffiliatedRemoteCommandsInvalidator>&
                         invalidator) { invalidator.reset(); },
                  [](std::unique_ptr<RemoteCommandsInvalidator>& invalidator) {
@@ -519,7 +527,7 @@ void BrowserPolicyConnectorAsh::Shutdown() {
 
   device_fm_registration_token_uploaders_.clear();
 
-  // `InvalidationListener` must be destroyed after its dependants
+  // `InvalidationListener` must be destroyed after its dependents
   // (`device_cert_provisioning_scheduler_`,
   // `device_local_account_policy_service_`, `device_cloud_policy_invalidator_`,
   // `device_remote_commands_invalidator_`, and
@@ -697,12 +705,6 @@ void BrowserPolicyConnectorAsh::OnUserManagerCreated(
           cros_settings, device_local_account_policy_service_.get(),
           policy::key::kExternalPrintServers, user_manager,
           std::make_unique<policy::PrintServersExternalDataHandler>()));
-  cloud_external_data_policy_observers_.push_back(
-      std::make_unique<policy::CloudExternalDataPolicyObserver>(
-          cros_settings, device_local_account_policy_service_.get(),
-          policy::key::kCrostiniAnsiblePlaybook, user_manager,
-          std::make_unique<
-              policy::CrostiniAnsiblePlaybookExternalDataHandler>()));
   cloud_external_data_policy_observers_.push_back(
       std::make_unique<policy::CloudExternalDataPolicyObserver>(
           cros_settings, device_local_account_policy_service_.get(),

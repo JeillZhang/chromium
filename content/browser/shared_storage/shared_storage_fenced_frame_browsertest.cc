@@ -8,13 +8,13 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_forward.h"
-#include "base/functional/overloaded.h"
 #include "base/location.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
@@ -29,9 +29,11 @@
 #include "content/browser/renderer_host/navigation_request.h"
 #include "content/browser/shared_storage/shared_storage_browsertest_base.h"
 #include "content/browser/shared_storage/shared_storage_document_service_impl.h"
+#include "content/browser/shared_storage/shared_storage_event_params.h"
 #include "content/browser/shared_storage/shared_storage_features.h"
 #include "content/browser/shared_storage/shared_storage_runtime_manager.h"
 #include "content/browser/shared_storage/shared_storage_worklet_host.h"
+#include "content/browser/shared_storage/test_shared_storage_observer.h"
 #include "content/browser/shared_storage/test_shared_storage_runtime_manager.h"
 #include "content/browser/shared_storage/test_shared_storage_worklet_host.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -57,9 +59,10 @@
 #include "net/base/schemeful_site.h"
 #include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/request_handler_util.h"
+#include "services/network/public/cpp/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/chrome_debug_urls.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/features_generated.h"
@@ -73,6 +76,13 @@ namespace content {
 
 using testing::Pair;
 using testing::UnorderedElementsAre;
+using SharedStorageReportingMap = base::flat_map<std::string, ::GURL>;
+using SharedStorageUrlSpecWithMetadata =
+    SharedStorageEventParams::SharedStorageUrlSpecWithMetadata;
+using Access = TestSharedStorageObserver::Access;
+using AccessScope = blink::SharedStorageAccessScope;
+using AccessMethod = TestSharedStorageObserver::AccessMethod;
+using OperationFinishedInfo = TestSharedStorageObserver::OperationFinishedInfo;
 
 namespace {
 
@@ -93,7 +103,7 @@ bool IsInfoMessage(const content::WebContentsConsoleObserver::Message& msg) {
 class SharedStorageFencedFrameInteractionBrowserTestBase
     : public SharedStorageBrowserTestBase {
  public:
-  using FencedFrameNavigationTarget = absl::variant<GURL, std::string>;
+  using FencedFrameNavigationTarget = std::variant<GURL, std::string>;
 
   // TODO(crbug.com/40256120): This function should be removed. Use
   // `CreateFencedFrame` in fenced_frame_test_util.h instead.
@@ -126,16 +136,16 @@ class SharedStorageFencedFrameInteractionBrowserTestBase
                                    const FencedFrameNavigationTarget& target) {
     return EvalJs(
         root,
-        absl::visit(base::Overloaded{
-                        [](const GURL& url) {
-                          return JsReplace(
-                              "f.config = new FencedFrameConfig($1);", url);
-                        },
-                        [](const std::string& config) {
-                          return JsReplace("f.config = window[$1]", config);
-                        },
-                    },
-                    target));
+        std::visit(absl::Overload{
+                       [](const GURL& url) {
+                         return JsReplace(
+                             "f.config = new FencedFrameConfig($1);", url);
+                       },
+                       [](const std::string& config) {
+                         return JsReplace("f.config = window[$1]", config);
+                       },
+                   },
+                   target));
   }
 
   // Precondition: There is exactly one existing fenced frame.
@@ -1677,6 +1687,14 @@ IN_PROC_BROWSER_TEST_F(
       get_result.error,
       testing::HasSubstr("Cannot call get() in a fenced frame with feature "
                          "FencedFramesLocalUnpartitionedDataAccess disabled."));
+
+  // Check that a histogram was logged for the failed get() operation.
+  content::FetchHistogramsFromChildProcesses();
+  histogram_tester_.ExpectTotalCount(
+      blink::kSharedStorageGetInFencedFrameOutcome, 1);
+  histogram_tester_.ExpectBucketCount(
+      blink::kSharedStorageGetInFencedFrameOutcome,
+      blink::SharedStorageGetInFencedFrameOutcome::kFeatureDisabled, 1);
 }
 
 class SharedStorageFencedFrameDocumentGetBrowserTest
@@ -1720,6 +1738,14 @@ IN_PROC_BROWSER_TEST_F(SharedStorageFencedFrameDocumentGetBrowserTest,
   )");
 
   EXPECT_EQ(get_result, "apple");
+
+  // Check that a histogram was logged for the get() result.
+  content::FetchHistogramsFromChildProcesses();
+  histogram_tester_.ExpectTotalCount(
+      blink::kSharedStorageGetInFencedFrameOutcome, 1);
+  histogram_tester_.ExpectBucketCount(
+      blink::kSharedStorageGetInFencedFrameOutcome,
+      blink::SharedStorageGetInFencedFrameOutcome::kSuccess, 1);
 }
 
 IN_PROC_BROWSER_TEST_F(SharedStorageFencedFrameDocumentGetBrowserTest,
@@ -1744,6 +1770,14 @@ IN_PROC_BROWSER_TEST_F(SharedStorageFencedFrameDocumentGetBrowserTest,
           "sharedStorage.get() is not allowed in a fenced frame until network "
           "access for it and all descendent frames has been revoked with "
           "window.fence.disableUntrustedNetwork()"));
+
+  // Check that a histogram was logged for the get() result.
+  content::FetchHistogramsFromChildProcesses();
+  histogram_tester_.ExpectTotalCount(
+      blink::kSharedStorageGetInFencedFrameOutcome, 1);
+  histogram_tester_.ExpectBucketCount(
+      blink::kSharedStorageGetInFencedFrameOutcome,
+      blink::SharedStorageGetInFencedFrameOutcome::kWithoutRevokeNetwork, 1);
 }
 
 IN_PROC_BROWSER_TEST_F(SharedStorageFencedFrameDocumentGetBrowserTest,
@@ -1793,6 +1827,12 @@ IN_PROC_BROWSER_TEST_F(SharedStorageFencedFrameDocumentGetBrowserTest,
   EXPECT_THAT(
       get_result_main_frame.error,
       testing::HasSubstr("Cannot call get() outside of a fenced frame."));
+
+  // The "Blink.FencedFrame.SharedStorageGetInFencedFrameOutcome" histogram
+  // should not log since get() was not called from within a fenced frame.
+  content::FetchHistogramsFromChildProcesses();
+  histogram_tester_.ExpectTotalCount(
+      blink::kSharedStorageGetInFencedFrameOutcome, 0);
 }
 
 IN_PROC_BROWSER_TEST_F(SharedStorageFencedFrameDocumentGetBrowserTest,
@@ -1814,6 +1854,12 @@ IN_PROC_BROWSER_TEST_F(SharedStorageFencedFrameDocumentGetBrowserTest,
   EXPECT_THAT(
       get_result_iframe.error,
       testing::HasSubstr("Cannot call get() outside of a fenced frame."));
+
+  // The "Blink.FencedFrame.SharedStorageGetInFencedFrameOutcome" histogram
+  // should not log since get() was not called from within a fenced frame.
+  content::FetchHistogramsFromChildProcesses();
+  histogram_tester_.ExpectTotalCount(
+      blink::kSharedStorageGetInFencedFrameOutcome, 0);
 }
 
 IN_PROC_BROWSER_TEST_F(
@@ -1865,6 +1911,13 @@ IN_PROC_BROWSER_TEST_F(SharedStorageFencedFrameDocumentGetBrowserTest,
 
   EXPECT_THAT(get_result.error,
               testing::HasSubstr("is not allowed in an opaque origin context"));
+
+  // The "Blink.FencedFrame.SharedStorageGetInFencedFrameOutcome" histogram
+  // should not log since opaque origins are treated as being outside of a
+  // fenced frame tree.
+  content::FetchHistogramsFromChildProcesses();
+  histogram_tester_.ExpectTotalCount(
+      blink::kSharedStorageGetInFencedFrameOutcome, 0);
 }
 
 IN_PROC_BROWSER_TEST_F(
@@ -1909,6 +1962,14 @@ IN_PROC_BROWSER_TEST_F(
           "sharedStorage.get() is not allowed in a fenced frame until network "
           "access for it and all descendent frames has been revoked with "
           "window.fence.disableUntrustedNetwork()"));
+
+  // Check that a histogram was logged for the get() result.
+  content::FetchHistogramsFromChildProcesses();
+  histogram_tester_.ExpectTotalCount(
+      blink::kSharedStorageGetInFencedFrameOutcome, 1);
+  histogram_tester_.ExpectBucketCount(
+      blink::kSharedStorageGetInFencedFrameOutcome,
+      blink::SharedStorageGetInFencedFrameOutcome::kWithoutRevokeNetwork, 1);
 }
 
 class SharedStorageSelectURLNotAllowedInFencedFrameBrowserTest
@@ -1917,7 +1978,7 @@ class SharedStorageSelectURLNotAllowedInFencedFrameBrowserTest
   SharedStorageSelectURLNotAllowedInFencedFrameBrowserTest() {
     shared_storage_feature_.InitWithFeaturesAndParameters(
         /*enabled_features=*/
-        {{blink::features::kSharedStorageAPI,
+        {{network::features::kSharedStorageAPI,
           {{"SharedStorageBitBudget", base::NumberToString(kBudgetAllowed)},
            {"SharedStorageMaxAllowedFencedFrameDepthForSelectURL", "0"}}}},
         /*disabled_features=*/{});
@@ -2909,6 +2970,30 @@ class SharedStorageSelectURLSavedQueryBrowserTest
     EXPECT_EQ(num_new_messages, 2);
   }
 
+  std::vector<SharedStorageUrlSpecWithMetadata> GetExpectedUrlsWithMetadata(
+      const std::string& host,
+      size_t num_urls) {
+    std::vector<SharedStorageUrlSpecWithMetadata> expected_urls_with_metadata;
+    for (size_t i = 0; i < num_urls; ++i) {
+      expected_urls_with_metadata.push_back(
+          {https_server()->GetURL(
+               host, base::StrCat({"/fenced_frames/title",
+                                   base::NumberToString(i), ".html"})),
+           {{"click", https_server()
+                          ->GetURL(host, base::StrCat({"/fenced_frames/report",
+                                                       base::NumberToString(i),
+                                                       ".html"}))
+                          .spec()},
+            {"mouse interaction",
+             https_server()
+                 ->GetURL(host,
+                          base::StrCat({"/fenced_frames/report",
+                                        base::NumberToString(i + 1), ".html"}))
+                 .spec()}}});
+    }
+    return expected_urls_with_metadata;
+  }
+
  private:
   base::test::ScopedFeatureList select_url_limit_feature_list_;
   base::test::ScopedFeatureList select_url_saved_query_feature_;
@@ -2978,6 +3063,77 @@ IN_PROC_BROWSER_TEST_F(SharedStorageSelectURLSavedQueryBrowserTest,
       blink::SharedStorageSelectUrlBudgetStatus::
           kInsufficientSitePageloadBudget,
       1);
+
+  std::string origin_str = url::Origin::Create(main_url).Serialize();
+
+  std::vector<SharedStorageUrlSpecWithMetadata> expected_urls_with_metadata =
+      GetExpectedUrlsWithMetadata("a.test", /*num_urls=*/8);
+
+  ASSERT_EQ(static_cast<int>(urn_uuids_observed().size()), 2 * call_limit + 1);
+
+  std::vector<Access> expected_accesses;
+  expected_accesses.push_back(
+      {AccessScope::kWindow, AccessMethod::kAddModule, MainFrameId(),
+       origin_str,
+       SharedStorageEventParams::CreateForAddModule(
+           https_server()->GetURL("a.test", "/shared_storage/simple_module.js"),
+           /*worklet_ordinal=*/0, GetFirstWorkletHostDevToolsToken())});
+
+  std::vector<OperationFinishedInfo> expected_finished_infos;
+  for (int call = 0; call < call_limit; call++) {
+    expected_accesses.push_back(
+        {AccessScope::kWindow, AccessMethod::kSelectURL, MainFrameId(),
+         origin_str,
+         SharedStorageEventParams::CreateForSelectURLForTesting(
+             "test-url-selection-operation", /*operation_id=*/call,
+             /*keep_alive=*/true,
+             SharedStorageEventParams::PrivateAggregationConfigWrapper(),
+             blink::CloneableMessage(), expected_urls_with_metadata,
+             ResolveSelectURLToConfig(),
+             /*saved_query=*/
+             base::StrCat({"query", base::NumberToString(call)}),
+             urn_uuids_observed()[call], GetFirstWorkletHostDevToolsToken())});
+    expected_finished_infos.push_back(
+        {base::TimeDelta(), AccessMethod::kSelectURL, /*operation_id=*/call,
+         GetFirstWorkletHostDevToolsToken(), MainFrameId(), origin_str});
+  }
+  expected_accesses.push_back(
+      {AccessScope::kWindow, AccessMethod::kSelectURL, MainFrameId(),
+       origin_str,
+       SharedStorageEventParams::CreateForSelectURLForTesting(
+           "test-url-selection-operation", /*operation_id=*/call_limit,
+           /*keep_alive=*/true,
+           SharedStorageEventParams::PrivateAggregationConfigWrapper(),
+           blink::CloneableMessage(), expected_urls_with_metadata,
+           ResolveSelectURLToConfig(),
+           /*saved_query=*/std::string(), urn_uuids_observed()[call_limit],
+           GetFirstWorkletHostDevToolsToken())});
+  expected_finished_infos.push_back(
+      {base::TimeDelta(), AccessMethod::kSelectURL, /*operation_id=*/call_limit,
+       GetFirstWorkletHostDevToolsToken(), MainFrameId(), origin_str});
+  for (int call = 0; call < call_limit; call++) {
+    expected_accesses.push_back(
+        {AccessScope::kWindow, AccessMethod::kSelectURL, MainFrameId(),
+         origin_str,
+         SharedStorageEventParams::CreateForSelectURLForTesting(
+             "test-url-selection-operation",
+             /*operation_id=*/call_limit + 1 + call,
+             /*keep_alive=*/true,
+             SharedStorageEventParams::PrivateAggregationConfigWrapper(),
+             blink::CloneableMessage(), expected_urls_with_metadata,
+             ResolveSelectURLToConfig(),
+             /*saved_query=*/
+             base::StrCat({"query", base::NumberToString(call)}),
+             urn_uuids_observed()[call_limit + 1 + call],
+             GetFirstWorkletHostDevToolsToken())});
+    expected_finished_infos.push_back(
+        {base::TimeDelta(), AccessMethod::kSelectURL,
+         /*operation_id=*/call_limit + 1 + call,
+         GetFirstWorkletHostDevToolsToken(), MainFrameId(), origin_str});
+  }
+
+  ExpectAccessObserved(expected_accesses);
+  ExpectOperationFinishedInfosObserved(expected_finished_infos);
 }
 
 IN_PROC_BROWSER_TEST_F(
@@ -3066,6 +3222,99 @@ IN_PROC_BROWSER_TEST_F(
       blink::SharedStorageSelectUrlBudgetStatus::
           kInsufficientSitePageloadBudget,
       1);
+
+  ASSERT_EQ(static_cast<int>(urn_uuids_observed().size()), 2 * call_limit + 1);
+
+  std::map<int, base::UnguessableToken>& cached_worklet_devtools_tokens =
+      GetCachedWorkletHostDevToolsTokens();
+  ASSERT_EQ(static_cast<int>(cached_worklet_devtools_tokens.size()),
+            2 * call_limit + 1);
+
+  std::vector<Access> expected_accesses;
+  std::vector<OperationFinishedInfo> expected_finished_infos;
+  std::string host;
+  std::string origin_str;
+  for (int call = 0; call < call_limit; call++) {
+    host = base::StrCat({"subdomain", base::NumberToString(call), ".b.test"});
+    origin_str = https_server()->GetOrigin(host).Serialize();
+    expected_accesses.push_back(
+        {AccessScope::kWindow, AccessMethod::kAddModule, MainFrameId(),
+         origin_str,
+         SharedStorageEventParams::CreateForAddModule(
+             https_server()->GetURL(host, "/shared_storage/simple_module.js"),
+             /*worklet_ordinal=*/call, cached_worklet_devtools_tokens[call])});
+    expected_accesses.push_back(
+        {AccessScope::kWindow, AccessMethod::kSelectURL, MainFrameId(),
+         origin_str,
+         SharedStorageEventParams::CreateForSelectURLForTesting(
+             "test-url-selection-operation", /*operation_id=*/0,
+             /*keep_alive=*/true,
+             SharedStorageEventParams::PrivateAggregationConfigWrapper(),
+             blink::CloneableMessage(),
+             GetExpectedUrlsWithMetadata(host, /*num_urls=*/8),
+             ResolveSelectURLToConfig(),
+             /*saved_query=*/
+             base::StrCat({"query", base::NumberToString(call)}),
+             urn_uuids_observed()[call],
+             cached_worklet_devtools_tokens[call])});
+    expected_finished_infos.push_back(
+        {base::TimeDelta(), AccessMethod::kSelectURL, /*operation_id=*/0,
+         cached_worklet_devtools_tokens[call], MainFrameId(), origin_str});
+  }
+  origin_str = https_server()->GetOrigin("b.test").Serialize();
+  expected_accesses.push_back(
+      {AccessScope::kWindow, AccessMethod::kAddModule, MainFrameId(),
+       origin_str,
+       SharedStorageEventParams::CreateForAddModule(
+           https_server()->GetURL("b.test", "/shared_storage/simple_module.js"),
+           /*worklet_ordinal=*/call_limit,
+           cached_worklet_devtools_tokens[call_limit])});
+  expected_accesses.push_back(
+      {AccessScope::kWindow, AccessMethod::kSelectURL, MainFrameId(),
+       origin_str,
+       SharedStorageEventParams::CreateForSelectURLForTesting(
+           "test-url-selection-operation", /*operation_id=*/0,
+           /*keep_alive=*/true,
+           SharedStorageEventParams::PrivateAggregationConfigWrapper(),
+           blink::CloneableMessage(),
+           GetExpectedUrlsWithMetadata("b.test", /*num_urls=*/8),
+           ResolveSelectURLToConfig(),
+           /*saved_query=*/std::string(), urn_uuids_observed()[call_limit],
+           cached_worklet_devtools_tokens[call_limit])});
+  expected_finished_infos.push_back(
+      {base::TimeDelta(), AccessMethod::kSelectURL, /*operation_id=*/0,
+       cached_worklet_devtools_tokens[call_limit], MainFrameId(), origin_str});
+  for (int call = 0; call < call_limit; call++) {
+    host = base::StrCat({"subdomain", base::NumberToString(call), ".b.test"});
+    origin_str = https_server()->GetOrigin(host).Serialize();
+    expected_accesses.push_back(
+        {AccessScope::kWindow, AccessMethod::kAddModule, MainFrameId(),
+         origin_str,
+         SharedStorageEventParams::CreateForAddModule(
+             https_server()->GetURL(host, "/shared_storage/simple_module.js"),
+             /*worklet_ordinal=*/call_limit + 1 + call,
+             cached_worklet_devtools_tokens[call_limit + 1 + call])});
+    expected_accesses.push_back(
+        {AccessScope::kWindow, AccessMethod::kSelectURL, MainFrameId(),
+         origin_str,
+         SharedStorageEventParams::CreateForSelectURLForTesting(
+             "test-url-selection-operation", /*operation_id=*/0,
+             /*keep_alive=*/true,
+             SharedStorageEventParams::PrivateAggregationConfigWrapper(),
+             blink::CloneableMessage(),
+             GetExpectedUrlsWithMetadata(host, /*num_urls=*/8),
+             ResolveSelectURLToConfig(),
+             /*saved_query=*/
+             base::StrCat({"query", base::NumberToString(call)}),
+             urn_uuids_observed()[call_limit + 1 + call],
+             cached_worklet_devtools_tokens[call_limit + 1 + call])});
+    expected_finished_infos.push_back(
+        {base::TimeDelta(), AccessMethod::kSelectURL, /*operation_id=*/0,
+         cached_worklet_devtools_tokens[call_limit + 1 + call], MainFrameId(),
+         origin_str});
+  }
+
+  ExpectAccessObserved(expected_accesses);
 }
 
 class SharedStorageContextBrowserTest

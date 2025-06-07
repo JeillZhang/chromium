@@ -5,15 +5,15 @@
 #include "chrome/browser/ash/system_web_apps/apps/terminal_source.h"
 
 #include <optional>
+#include <string_view>
 
 #include "ash/constants/ash_features.h"
-#include "base/containers/flat_map.h"
+#include "base/containers/fixed_flat_map.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/no_destructor.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_util.h"
 #include "base/task/task_traits.h"
@@ -27,7 +27,6 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/ui/tabs/public/tab_interface.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/url_constants.h"
@@ -35,6 +34,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/prefs/pref_service.h"
+#include "components/tabs/public/tab_interface.h"
 #include "components/version_info/channel.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -109,15 +109,15 @@ void ReadFile(const base::FilePath downloads,
   // Terminal gets files from /usr/share/chromeos-assets/crosh-builtin.
   // In chromium tests, these files don't exist, so we serve dummy values.
   if (!result) {
-    static const base::NoDestructor<base::flat_map<std::string, std::string>>
-        kTestFiles({
+    static constexpr auto kTestFiles =
+        base::MakeFixedFlatMap<std::string_view, std::string_view>({
             {"html/crosh.html", ""},
             {"html/terminal.html", "<script src='/js/terminal.js'></script>"},
             {"js/terminal.js",
              "chrome.terminalPrivate.openVmshellProcess([], () => {})"},
         });
-    auto it = kTestFiles->find(relative_path);
-    if (it != kTestFiles->end()) {
+    auto it = kTestFiles.find(relative_path);
+    if (it != kTestFiles.end()) {
       content = it->second;
       result = true;
     }
@@ -157,13 +157,12 @@ TerminalSource::TerminalSource(Profile* profile,
   auto* webui_allowlist = WebUIAllowlist::GetOrCreate(profile);
   const url::Origin terminal_origin = url::Origin::Create(GURL(source));
   CHECK(!terminal_origin.opaque());
-  for (auto permission :
-       {ContentSettingsType::CLIPBOARD_READ_WRITE, ContentSettingsType::COOKIES,
-        ContentSettingsType::IMAGES, ContentSettingsType::JAVASCRIPT,
-        ContentSettingsType::NOTIFICATIONS, ContentSettingsType::POPUPS,
-        ContentSettingsType::SOUND}) {
-    webui_allowlist->RegisterAutoGrantedPermission(terminal_origin, permission);
-  }
+  webui_allowlist->RegisterAutoGrantedPermissions(
+      terminal_origin,
+      {ContentSettingsType::CLIPBOARD_READ_WRITE, ContentSettingsType::COOKIES,
+       ContentSettingsType::IMAGES, ContentSettingsType::JAVASCRIPT,
+       ContentSettingsType::NOTIFICATIONS, ContentSettingsType::POPUPS,
+       ContentSettingsType::SOUND});
   webui_allowlist->RegisterAutoGrantedThirdPartyCookies(
       terminal_origin, {ContentSettingsPattern::Wildcard()});
 }
@@ -213,11 +212,12 @@ void TerminalSource::StartDataRequest(
 }
 
 std::string TerminalSource::GetMimeType(const GURL& url) {
-  std::string mime_type(kDefaultMime);
-  std::string ext = base::FilePath(url.path_piece()).Extension();
-  if (!ext.empty()) {
-    net::GetWellKnownMimeTypeFromExtension(ext.substr(1), &mime_type);
+  std::string mime_type;
+  if (!net::GetWellKnownMimeTypeFromFile(base::FilePath(url.path_piece()),
+                                         &mime_type)) {
+    return kDefaultMime;
   }
+
   return mime_type;
 }
 

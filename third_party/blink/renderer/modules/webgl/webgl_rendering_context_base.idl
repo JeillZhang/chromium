@@ -645,6 +645,13 @@ interface mixin WebGLRenderingContextBase {
         GLenum target, GLint level, GLint internalformat,
         GLenum format, GLenum type, VideoFrame frame);
 
+    [RuntimeEnabled=CanvasDrawElement, RaisesException]
+    void texElement2D(GLenum target, GLint level, GLint internalformat,
+                      GLenum format, GLenum type, Element element);
+
+    [RuntimeEnabled=CanvasDrawElement, RaisesException]
+    void setHitTestRegions(sequence<CanvasElementHitTestRegion> hitTestRegions);
+
     void texSubImage2D(
         GLenum target, GLint level, GLint xoffset, GLint yoffset,
         GLsizei width, GLsizei height, GLenum format, GLenum type,

@@ -7,9 +7,11 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/no_destructor.h"
+#include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_adaptation_loader.h"
+#include "components/optimization_guide/core/model_execution/on_device_model_component.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_feature_adapter.h"
 #include "components/optimization_guide/core/model_execution/test/feature_config_builder.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
@@ -21,6 +23,8 @@
 
 namespace optimization_guide {
 
+FakeBaseModelAsset::FakeBaseModelAsset()
+    : FakeBaseModelAsset(FakeBaseModelAsset::Content{}) {}
 FakeBaseModelAsset::FakeBaseModelAsset(Content&& content)
     : version_(content.version) {
   CHECK(temp_dir_.CreateUniqueTempDir());
@@ -36,9 +40,24 @@ FakeBaseModelAsset::~FakeBaseModelAsset() = default;
 void FakeBaseModelAsset::Write(Content&& content) {
   CHECK(base::WriteFile(temp_dir_.GetPath().Append(kWeightsFile),
                         base::NumberToString(content.weight)));
+  if (content.cache_weight) {
+    CHECK(base::WriteFile(temp_dir_.GetPath().Append(kExperimentalCacheFile),
+                          base::NumberToString(content.cache_weight)));
+  }
   CHECK(base::WriteFile(
       temp_dir_.GetPath().Append(kOnDeviceModelExecutionConfigFile),
       content.config.SerializeAsString()));
+}
+
+base::Value::Dict FakeBaseModelAsset::Manifest() const {
+  return base::Value::Dict().Set(
+      "BaseModelSpec",
+      base::Value::Dict().Set("version", "0.0.1").Set("name", "Test"));
+}
+
+void FakeBaseModelAsset::SetReadyIn(
+    OnDeviceModelComponentStateManager& manager) const {
+  manager.SetReady(base::Version(version()), path(), Manifest());
 }
 
 FakeAdaptationAsset::FakeAdaptationAsset(FakeAdaptationAsset::Content&& content)
@@ -57,6 +76,11 @@ FakeAdaptationAsset::FakeAdaptationAsset(FakeAdaptationAsset::Content&& content)
           std::move(content.config)));
 }
 FakeAdaptationAsset::~FakeAdaptationAsset() = default;
+
+void FakeAdaptationAsset::SendTo(
+    OnDeviceModelServiceController& controller) const {
+  controller.MaybeUpdateModelAdaptation(feature(), metadata());
+}
 
 FakeLanguageModelAsset::FakeLanguageModelAsset() {
   CHECK(temp_dir_.CreateUniqueTempDir());
@@ -82,6 +106,7 @@ FakeSafetyModelAsset::FakeSafetyModelAsset(
   CHECK(base::WriteFile(data_path, on_device_model::FakeTsData()));
   CHECK(base::WriteFile(model_path, on_device_model::FakeTsSpModel()));
   model_info_ = TestModelInfoBuilder()
+                    .SetVersion(content.model_info_version)
                     .SetAdditionalFiles({data_path, model_path})
                     .SetModelMetadata(AnyWrapProto(content.metadata))
                     .Build();

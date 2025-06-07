@@ -43,7 +43,6 @@ CONTENT_EXPORT extern const char
 CONTENT_EXPORT extern const char kDisableBackgroundTimerThrottling[];
 CONTENT_EXPORT extern const char kDisableBackForwardCache[];
 CONTENT_EXPORT extern const char kDisableBlinkFeatures[];
-CONTENT_EXPORT extern const char kDisableDatabases[];
 CONTENT_EXPORT extern const char kDisableDisplayList2dCanvas[];
 extern const char kDisableDomainBlockingFor3DAPIs[];
 CONTENT_EXPORT extern const char kDisableInProcessStackTraces[];
@@ -74,6 +73,7 @@ CONTENT_EXPORT extern const char kDisableNotifications[];
 CONTENT_EXPORT extern const char kDisableNv12DxgiVideo[];
 CONTENT_EXPORT extern const char kDisableOriginTrialControlledBlinkFeatures[];
 extern const char kDisablePepper3d[];
+CONTENT_EXPORT extern const char kDisablePlatformAccessibilityIntegration[];
 CONTENT_EXPORT extern const char kDisablePresentationAPI[];
 CONTENT_EXPORT extern const char kDisablePushStateThrottle[];
 CONTENT_EXPORT extern const char kDisableReadingFromCanvas[];
@@ -173,6 +173,7 @@ CONTENT_EXPORT extern const char kProcessType[];
 CONTENT_EXPORT extern const char kProtectedAudiencesConsentedDebugToken[];
 CONTENT_EXPORT extern const char kPullToRefresh[];
 CONTENT_EXPORT extern const char kReduceAcceptLanguage[];
+CONTENT_EXPORT extern const char kReduceAcceptLanguageHTTP[];
 CONTENT_EXPORT extern const char kReduceUserAgentMinorVersion[];
 CONTENT_EXPORT extern const char kReduceUserAgentPlatformOsCpu[];
 CONTENT_EXPORT extern const char kRegisterPepperPlugins[];
@@ -212,7 +213,6 @@ CONTENT_EXPORT extern const char kVideoImageTextureTarget[];
 #if BUILDFLAG(IS_ANDROID) && BUILDFLAG(INCLUDE_BOTH_V8_SNAPSHOTS)
 CONTENT_EXPORT extern const char kUseContextSnapshotSwitch[];
 #endif
-CONTENT_EXPORT extern const char kUseMobileUserAgent[];
 CONTENT_EXPORT extern const char kUseMockCertVerifierForTesting[];
 extern const char kUtilityCmdPrefix[];
 CONTENT_EXPORT extern const char kUtilityProcess[];

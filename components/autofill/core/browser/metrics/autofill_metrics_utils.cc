@@ -5,6 +5,7 @@
 #include "components/autofill/core/browser/metrics/autofill_metrics_utils.h"
 
 #include "base/check.h"
+#include "base/strings/string_number_conversions.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/field_type_utils.h"
 #include "components/autofill/core/browser/form_structure.h"
@@ -105,12 +106,14 @@ AutofillProfileRecordTypeCategory GetCategoryOfProfile(
     case AutofillProfile::RecordType::kLocalOrSyncable:
       return AutofillProfileRecordTypeCategory::kLocalOrSyncable;
     case AutofillProfile::RecordType::kAccount:
-    case AutofillProfile::RecordType::kAccountHome:
-    case AutofillProfile::RecordType::kAccountWork:
       return profile.initial_creator_id() ==
                      AutofillProfile::kInitialCreatorOrModifierChrome
                  ? AutofillProfileRecordTypeCategory::kAccountChrome
                  : AutofillProfileRecordTypeCategory::kAccountNonChrome;
+    case AutofillProfile::RecordType::kAccountHome:
+      return AutofillProfileRecordTypeCategory::kAccountHome;
+    case AutofillProfile::RecordType::kAccountWork:
+      return AutofillProfileRecordTypeCategory::kAccountWork;
   }
 }
 
@@ -123,6 +126,10 @@ const char* GetProfileCategorySuffix(
       return "AccountChrome";
     case AutofillProfileRecordTypeCategory::kAccountNonChrome:
       return "AccountNonChrome";
+    case AutofillProfileRecordTypeCategory::kAccountHome:
+      return "AccountHome";
+    case AutofillProfileRecordTypeCategory::kAccountWork:
+      return "AccountWork";
   }
 }
 
@@ -162,6 +169,9 @@ SettingsVisibleFieldTypeForMetrics ConvertSettingsVisibleFieldTypeForMetrics(
     case ADDRESS_HOME_ADMIN_LEVEL2:
       return SettingsVisibleFieldTypeForMetrics::kAdminLevel2;
 
+    case ALTERNATIVE_FULL_NAME:
+      return SettingsVisibleFieldTypeForMetrics::kAlternativeName;
+
     default:
       return SettingsVisibleFieldTypeForMetrics::kUndefined;
   }
@@ -192,7 +202,6 @@ bool ShouldLogAutofillSuggestionShown(
     case AutofillSuggestionTriggerSource::kTextFieldDidReceiveKeyDown:
     case AutofillSuggestionTriggerSource::kOpenTextDataListChooser:
     case AutofillSuggestionTriggerSource::kComposeDialogLostFocus:
-    case AutofillSuggestionTriggerSource::kShowCardsFromAccount:
     case AutofillSuggestionTriggerSource::kPasswordManager:
     case AutofillSuggestionTriggerSource::kiOS:
     case AutofillSuggestionTriggerSource::
@@ -223,6 +232,18 @@ int GetDuplicationRank(
   return min_incompatible_sets.empty()
              ? std::numeric_limits<int>::max()
              : min_incompatible_sets.back().field_type_set.size();
+}
+
+uint64_t FormGlobalIdToHash64Bit(const FormGlobalId& form_global_id) {
+  return StrToHash64Bit(
+      base::NumberToString(form_global_id.renderer_id.value()) +
+      form_global_id.frame_token.ToString());
+}
+
+uint64_t FieldGlobalIdToHash64Bit(const FieldGlobalId& field_global_id) {
+  return StrToHash64Bit(
+      base::NumberToString(field_global_id.renderer_id.value()) +
+      field_global_id.frame_token.ToString());
 }
 
 }  // namespace autofill::autofill_metrics

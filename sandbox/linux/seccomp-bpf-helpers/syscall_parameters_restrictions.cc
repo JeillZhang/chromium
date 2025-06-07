@@ -21,6 +21,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "base/allocator/partition_alloc_features.h"
+#include "base/android/background_thread_pool_field_trial.h"
+#include "base/feature_list.h"
+#include "base/features.h"
 #include "base/notreached.h"
 #include "base/synchronization/synchronization_buildflags.h"
 #include "build/build_config.h"
@@ -216,6 +220,10 @@ ResultExpr RestrictPrctl() {
              Allow())
       .Cases({PR_SET_VMA},
              If(arg == PR_SET_VMA_ANON_NAME, Allow()).Else(CrashSIGSYSPrctl()))
+#if defined(ARCH_CPU_ARM64)
+      // This is required by TFLite. EINVAL means that it is not supported.
+      .Cases({PR_SME_GET_VL}, Error(EINVAL))
+#endif
       .Default(
           If(option == PR_SET_PTRACER, Error(EPERM)).Else(CrashSIGSYSPrctl()));
 }
@@ -339,17 +347,26 @@ ResultExpr RestrictKillTarget(pid_t target_pid, int sysno) {
 
 ResultExpr RestrictFutex() {
   const uint64_t kAllowedFutexFlags = FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME;
+  ResultExpr error = IsBuggyGlibcSemPost() ? Error(EINVAL) : CrashSIGSYSFutex();
   const Arg<int> op(1);
   return Switch(op & ~kAllowedFutexFlags)
       .Cases({FUTEX_WAIT, FUTEX_WAKE, FUTEX_REQUEUE, FUTEX_CMP_REQUEUE,
-#if BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)
-              // Enable priority-inheritance operations.
-              FUTEX_LOCK_PI, FUTEX_UNLOCK_PI, FUTEX_TRYLOCK_PI,
-              FUTEX_WAIT_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI,
-#endif  // BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)
               FUTEX_WAKE_OP, FUTEX_WAIT_BITSET, FUTEX_WAKE_BITSET},
              Allow())
-      .Default(IsBuggyGlibcSemPost() ? Error(EINVAL) : CrashSIGSYSFutex());
+#if BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE) && BUILDFLAG(IS_ANDROID)
+      // Priority-inheritance futex operations are enabled only on Android
+      // kernels 6.1+. Bionic uses the PI variants of the futex operations
+      // (FUTEX_LOCK_PI2, FUTEX_UNLOCK_PI) to implement priority inheriting
+      // mutexes.
+      .Cases({FUTEX_LOCK_PI, FUTEX_UNLOCK_PI, FUTEX_TRYLOCK_PI,
+              FUTEX_WAIT_REQUEUE_PI, FUTEX_CMP_REQUEUE_PI, FUTEX_LOCK_PI2},
+             base::android::BackgroundThreadPoolFieldTrial::
+                     ShouldUsePriorityInheritanceLocks()
+                 ? Allow()
+                 : error)
+#endif  // BUILDFLAG(ENABLE_MUTEX_PRIORITY_INHERITANCE)  &&
+        // BUILDFLAG(IS_ANDROID)
+      .Default(error);
 }
 
 ResultExpr RestrictGetSetpriority(pid_t target_pid) {

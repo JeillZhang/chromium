@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "base/check_deref.h"
@@ -14,8 +15,10 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/timer/timer.h"
 #include "components/autofill/core/browser/filling/filling_product.h"
 #include "components/autofill/core/browser/foundations/autofill_client.h"
+#include "components/autofill/core/browser/integrators/password_manager/password_manager_delegate.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "components/autofill/core/browser/suggestions/suggestion_type.h"
 #include "components/autofill/core/browser/ui/autofill_suggestion_delegate.h"
@@ -26,7 +29,6 @@
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_suggestion_flow.h"
 #include "components/password_manager/core/browser/password_suggestion_generator.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "ui/gfx/image/image.h"
 
 namespace favicon_base {
@@ -45,7 +47,8 @@ class PasswordManualFallbackMetricsRecorder;
 class PasswordSuggestionGenerator;
 
 // This class is responsible for filling password forms.
-class PasswordAutofillManager : public autofill::AutofillSuggestionDelegate {
+class PasswordAutofillManager : public autofill::AutofillSuggestionDelegate,
+                                public autofill::PasswordManagerDelegate {
  public:
   PasswordAutofillManager(PasswordManagerDriver* password_manager_driver,
                           autofill::AutofillClient* autofill_client,
@@ -56,8 +59,16 @@ class PasswordAutofillManager : public autofill::AutofillSuggestionDelegate {
 
   ~PasswordAutofillManager() override;
 
+  // PasswordManagerDelegate:
+#if BUILDFLAG(IS_ANDROID)
+  void ShowKeyboardReplacingSurface(
+      const autofill::PasswordSuggestionRequest& request) override;
+#endif  // BUILDFLAG(IS_ANDROID)
+  void ShowSuggestions(
+      const autofill::TriggeringField& triggering_field) override;
+
   // AutofillSuggestionDelegate implementation.
-  absl::variant<autofill::AutofillDriver*, PasswordManagerDriver*> GetDriver()
+  std::variant<autofill::AutofillDriver*, PasswordManagerDriver*> GetDriver()
       override;
   void OnSuggestionsShown(
       base::span<const autofill::Suggestion> suggestions) override;
@@ -86,6 +97,7 @@ class PasswordAutofillManager : public autofill::AutofillSuggestionDelegate {
       base::i18n::TextDirection text_direction,
       const std::u16string& typed_username,
       ShowWebAuthnCredentials show_webauthn_credentials,
+      ShowIdentityCredentials show_identity_credentials,
       const gfx::RectF& bounds);
 
   // If there are relevant credentials for the current frame show them and
@@ -121,6 +133,9 @@ class PasswordAutofillManager : public autofill::AutofillSuggestionDelegate {
   inline PasswordSuggestionFlow* manual_fallback_flow() {
     return manual_fallback_flow_.get();
   }
+
+  // If there is a popup waiting to be displayed with a delay, this cancels it.
+  void FocusedInputChanged();
 
   base::WeakPtr<PasswordAutofillManager> GetWeakPtr();
 
@@ -195,6 +210,15 @@ class PasswordAutofillManager : public autofill::AutofillSuggestionDelegate {
   // Hides the popup.
   void HidePopup();
 
+  // Completion of `OnShowPasswordSuggestions`, which can sometimes be deferred.
+  void ContinueShowingPasswordSuggestions(
+      autofill::FieldRendererId element_id,
+      base::i18n::TextDirection text_direction,
+      const std::u16string& typed_username,
+      ShowWebAuthnCredentials show_webauthn_credentials,
+      ShowIdentityCredentials show_identity_credentials,
+      const gfx::RectF& bounds);
+
   std::unique_ptr<autofill::PasswordFormFillData> fill_data_;
 
   password_manager::PasswordSuggestionGenerator suggestion_generator_;
@@ -236,6 +260,10 @@ class PasswordAutofillManager : public autofill::AutofillSuggestionDelegate {
   // `manual_fallback_flow_` and dies when `manual_fallback_flow_` dies.
   std::unique_ptr<PasswordManualFallbackMetricsRecorder>
       manual_fallback_metrics_recorder_;
+
+  // This timer is used to delay showing the suggestions popup if passkey
+  // suggestions are allowed but the passkey list has not yet arrived.
+  base::OneShotTimer wait_for_passkeys_timer_;
 
   // Stores the controller of warning popup UI on cross domain filling.
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS) || \

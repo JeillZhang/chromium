@@ -135,7 +135,7 @@ class KioskChromeAppManager : public KioskAppManagerBase,
 
   // Gets app data for the given app id. Returns true if `app_id` is known and
   // `app` is populated. Otherwise, return false.
-  bool GetApp(const std::string& app_id, App* app) const;
+  std::optional<App> GetApp(const std::string& app_id) const;
 
   // Clears locally cached Gdata.
   void ClearAppData(const std::string& app_id);
@@ -212,7 +212,6 @@ class KioskChromeAppManager : public KioskAppManagerBase,
   friend class GlobalManager;
   friend class ChromeAppKioskAppManagerTest;
   friend class KioskAutoLaunchViewsTest;
-  friend class KioskBaseTest;
 
   // Gets KioskAppData for the given app id.
   const KioskAppData* GetAppData(const std::string& app_id) const;

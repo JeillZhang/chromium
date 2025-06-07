@@ -154,7 +154,8 @@ InlineBoxState* LogicalLineBuilder::HandleItemResults(
       if (item_result.is_hyphenated) [[unlikely]] {
         DCHECK(item_result.hyphen);
         LayoutUnit hyphen_inline_size = item_result.hyphen.InlineSize();
-        line_box->AddChild(item_result, box->text_top,
+        line_box->AddChild(item, item_result, item_result.TextOffset(),
+                           box->text_top,
                            item_result.inline_size - hyphen_inline_size,
                            box->text_height, item.BidiLevel());
         PlaceHyphen(item_result, hyphen_inline_size, line_box, box);
@@ -164,10 +165,12 @@ InlineBoxState* LogicalLineBuilder::HandleItemResults(
         const auto one_em = item.Style()->ComputedFontSizeAsFixed();
         const auto text_height = one_em;
         const auto text_top = LayoutUnit();
-        line_box->AddChild(item_result, text_top, item_result.inline_size,
-                           text_height, item.BidiLevel());
+        line_box->AddChild(item, item_result, item_result.TextOffset(),
+                           text_top, item_result.inline_size, text_height,
+                           item.BidiLevel());
       } else {
-        line_box->AddChild(item_result, box->text_top, item_result.inline_size,
+        line_box->AddChild(item, item_result, item_result.TextOffset(),
+                           box->text_top, item_result.inline_size,
                            box->text_height, item.BidiLevel());
       }
 
@@ -204,7 +207,7 @@ InlineBoxState* LogicalLineBuilder::HandleItemResults(
       // Adds a LogicalLineItem with an InlineItem to check its
       // InlineItemType later.
       line_box->AddChild(
-          item_result,
+          item, item_result, item_result.TextOffset(),
           /* block_offset */ LayoutUnit(),
           item_result.inline_size + start_overhang + end_overhang,
           /* text_height */ LayoutUnit(), item.BidiLevel());
@@ -216,12 +219,14 @@ InlineBoxState* LogicalLineBuilder::HandleItemResults(
       // An inline-level OOF child positions itself based on its direction, a
       // block-level OOF child positions itself based on the direction of its
       // block-level container.
-      TextDirection direction =
+      WritingDirectionMode writing_direction =
           item.GetLayoutObject()->StyleRef().IsOriginalDisplayInlineType()
-              ? item.Direction()
-              : constraint_space_.Direction();
+              ? WritingDirectionMode(constraint_space_.GetWritingMode(),
+                                     item.Direction())
+              : constraint_space_.GetWritingDirection();
 
-      line_box->AddChild(item.GetLayoutObject(), item.BidiLevel(), direction);
+      line_box->AddChild(item.GetLayoutObject(), item.BidiLevel(),
+                         writing_direction);
       has_out_of_flow_positioned_items_ = true;
     } else if (item.Type() == InlineItem::kFloating) {
       if (item_result.positioned_float) {
@@ -334,7 +339,7 @@ void LogicalLineBuilder::PlaceControlItem(const InlineItem& item,
     box->EnsureTextMetrics(*item.Style(), *box->font, baseline_type_);
   }
 
-  line_box->AddChild(*item_result->item, std::move(item_result->shape_result),
+  line_box->AddChild(item, std::move(item_result->shape_result),
                      item_result->TextOffset(), box->text_top,
                      item_result->inline_size, box->text_height,
                      item.BidiLevel());
@@ -487,6 +492,11 @@ InlineBoxState* LogicalLineBuilder::PlaceRubyColumn(
   box = HandleItemResults(line_info, *ruby_column.base_line.MutableResults(),
                           &line_box,
                           /* main_line_helper */ nullptr, box);
+  if (start_index == line_box.size() && node_.IsBidiEnabled()) {
+    // If the base is empty, we need to add a placeholder so that a ruby column
+    // can track the corresponding base position after BiDi reorder.
+    line_box.AddChild(item_result.item->BidiLevel());
+  }
   wtf_size_t column_base_size = line_box.size() - start_index;
 
   for (wtf_size_t i = 0; i < ruby_column.annotation_line_list.size(); ++i) {

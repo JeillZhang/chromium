@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/omnibox/browser/featured_search_provider.h"
 
 #include <stddef.h>
@@ -30,6 +25,7 @@
 #include "components/omnibox/browser/fake_autocomplete_provider_client.h"
 #include "components/omnibox/browser/omnibox_prefs.h"
 #include "components/omnibox/browser/test_scheme_classifier.h"
+#include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
@@ -55,6 +51,7 @@ const std::string kBookmarksUrl =
 const std::string kHistoryUrl =
     TemplateURLStarterPackData::history.destination_url;
 const std::string kTabsUrl = TemplateURLStarterPackData::tabs.destination_url;
+const std::string kPageUrl = TemplateURLStarterPackData::page.destination_url;
 const std::string kGeminiUrl =
     TemplateURLStarterPackData::Gemini.destination_url;
 
@@ -168,7 +165,7 @@ class FeaturedSearchProviderTest : public testing::Test {
     template_url_data.SetShortName(keyword + u" Name");
     template_url_data.SetURL(url);
     template_url_data.policy_origin = policy_origin;
-    template_url_data.enforced_by_policy = false;
+    template_url_data.enforced_by_policy = true;
     template_url_data.featured_by_policy = true;
     template_url_data.safe_for_autoreplace = false;
 
@@ -295,7 +292,11 @@ TEST_F(FeaturedSearchProviderTest, StarterPackExpansion) {
 
 TEST_F(FeaturedSearchProviderTest, StarterPackExpansionRelevance) {
   base::test::ScopedFeatureList features;
-  features.InitAndEnableFeature(omnibox::kStarterPackExpansion);
+  features.InitWithFeatures({omnibox::kStarterPackExpansion}, {});
+  omnibox_feature_configs::ScopedConfigForTesting<
+      omnibox_feature_configs::ContextualSearch>
+      scoped_config;
+  scoped_config.Get().starter_pack_page = true;
 
   AddStarterPackEntriesToTemplateUrlService();
 
@@ -318,6 +319,7 @@ TEST_F(FeaturedSearchProviderTest, StarterPackExpansionRelevance) {
       kGeminiUrl,
       kBookmarksUrl,
       kHistoryUrl,
+      kPageUrl,
       kTabsUrl,
   });
   for (size_t i = 0; i < matches.size(); i++) {
@@ -665,10 +667,7 @@ TEST_F(FeaturedSearchProviderTest, HistoryEmbedding_Iphs) {
   // feature is enabled).
   {
     base::test::ScopedFeatureList features;
-    features.InitWithFeatures(
-        {{history_embeddings::kHistoryEmbeddings},
-         {optimization_guide::features::kAiSettingsPageRefresh}},
-        {});
+    features.InitWithFeatures({{history_embeddings::kHistoryEmbeddings}}, {});
     mock_setting(false, false);
     {
       SCOPED_TRACE("");
@@ -769,44 +768,6 @@ TEST_F(FeaturedSearchProviderTest, HistoryEmbedding_Iphs) {
       RunAndVerifyIph(scope_input, {});
     }
   }
-
-  // TODO(crbug.com/362225975): Remove after AiSettingsPageRefresh is launched.
-  //   History Embeddings Promo points to chrome://settings/historySearch when
-  //   AI refresh flag is disabled.
-  {
-    base::test::ScopedFeatureList features_without_ai_refresh;
-    features_without_ai_refresh.InitWithFeatures(
-        {history_embeddings::kHistoryEmbeddings},
-        {optimization_guide::features::kAiSettingsPageRefresh});
-    mock_setting(true, false);
-    {
-      SCOPED_TRACE("");
-      RunAndVerifyIph(
-          scope_input,
-          {{IphType::kHistoryEmbeddingsSettingsPromo,
-            // Should end with whitespace since there's a link following it.
-            u"For a more powerful way to search your browsing history, turn "
-            u"on ",
-            u"History search, powered by AI",
-            GURL("chrome://settings/historySearch")}});
-    }
-
-    // History Embeddings Disclaimer points to chrome://settings/historySearch
-    // when AI refresh flag is disabled.
-    mock_setting(true, true);
-    {
-      SCOPED_TRACE("");
-      RunAndVerifyIph(
-          scope_input,
-          {{IphType::kHistoryEmbeddingsDisclaimer,
-            // Should end with whitespace since there's a link following it.
-            u"Your searches, best matches, and their page contents are sent to "
-            u"Google and may be seen by human reviewers to improve this "
-            u"feature. "
-            u"This is an experimental feature and won't always get it right. ",
-            u"Learn more", GURL("chrome://settings/historySearch")}});
-    }
-  }
 }
 
 TEST_F(FeaturedSearchProviderTest, IphShownLimit) {
@@ -866,7 +827,7 @@ TEST_F(FeaturedSearchProviderTest, IphShownLimit) {
   }
 }
 
-TEST_F(FeaturedSearchProviderTest, OffTheRecord) {
+TEST_F(FeaturedSearchProviderTest, OffTheRecord_HistoryEmbeddings) {
   base::test::ScopedFeatureList features;
   features.InitWithFeatures({history_embeddings::kHistoryEmbeddings},
                             {omnibox::kStarterPackIPH});
@@ -881,4 +842,32 @@ TEST_F(FeaturedSearchProviderTest, OffTheRecord) {
   // doesn't make sense to promote it in these windows.
   EXPECT_CALL(*client_, IsOffTheRecord()).WillRepeatedly(testing::Return(true));
   RunAndVerifyIphTypes(input, {});
+}
+
+TEST_F(FeaturedSearchProviderTest, OffTheRecord_FeaturedEnterpriseSearch) {
+  base::test::ScopedFeatureList features;
+  features.InitWithFeatures({omnibox::kStarterPackExpansion},
+                            {omnibox::kStarterPackIPH});
+  AddStarterPackEntriesToTemplateUrlService();
+  AddFeaturedEnterpriseSearchEngine(FeaturedKeywordN(1), FeaturedUrlN(1),
+                                    TemplateURLData::PolicyOrigin::kSiteSearch);
+  AddFeaturedEnterpriseSearchEngine(
+      FeaturedKeywordN(2), FeaturedUrlN(2),
+      TemplateURLData::PolicyOrigin::kSearchAggregator);
+  AutocompleteInput input;
+  input.set_focus_type(metrics::INTERACTION_FOCUS);
+
+  // The enterprise search aggregator scope doesn't work in Incognito or guest
+  // mode. However, the match and IPH for enterprise site search engine should
+  // still show.
+  EXPECT_CALL(*client_, IsOffTheRecord()).WillRepeatedly(testing::Return(true));
+  RunAndVerifyIph(input, {{IphType::kFeaturedEnterpriseSearch,
+                           u"Type @ to search featured1.com"}});
+
+  // "@" state.
+  std::vector<TestData> typing_scheme_cases = {
+      // Typing '@' should give all the starter pack suggestions (excluding
+      // history), featured site search engine, and no IPH.
+      {u"@", {kBookmarksUrl, FeaturedUrlN(1), kGeminiUrl, kTabsUrl}}};
+  RunTest(typing_scheme_cases);
 }

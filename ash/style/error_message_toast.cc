@@ -55,7 +55,7 @@ class ActionLabelButton : public views::LabelButton {
     SetText(l10n_util::GetStringUTF16(string_id));
     SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_RIGHT);
     SetProperty(views::kMarginsKey, kButtonInsets);
-    SetEnabledTextColorIds(cros_tokens::kCrosSysPrimary);
+    SetEnabledTextColors(cros_tokens::kCrosSysPrimary);
     TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosButton2,
                                           *label());
     label()->SetAutoColorReadabilityEnabled(false);
@@ -75,12 +75,12 @@ ErrorMessageToast::ErrorMessageToast(views::Button::PressedCallback callback,
   SetPaintToLayer();
   layer()->SetRoundedCornerRadius(
       gfx::RoundedCornersF(kErrorMessageRoundedCornerRadius));
-  SetBackground(views::CreateThemedSolidBackground(background_color_id));
+  SetBackground(views::CreateSolidBackground(background_color_id));
 
   const auto* const typography_provider = TypographyProvider::Get();
   error_message_label_ = AddChildView(
       views::Builder<views::Label>()
-          .SetEnabledColorId(cros_tokens::kCrosSysOnSurface)
+          .SetEnabledColor(cros_tokens::kCrosSysOnSurface)
           .SetFontList(typography_provider->ResolveTypographyToken(
               TypographyToken::kCrosAnnotation1))
           .SetLineHeight(typography_provider->ResolveLineHeight(

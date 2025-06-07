@@ -10,6 +10,7 @@
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/histogram_macros.h"
 #import "base/metrics/user_metrics.h"
+#import "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/crash/core/common/crash_key.h"
 #import "components/password_manager/core/browser/password_manager_metrics_util.h"
@@ -49,10 +50,8 @@
 #import "ios/chrome/grit/ios_strings.h"
 #import "ui/base/l10n/l10n_util_mac.h"
 
-using base::UmaHistogramEnumeration;
 using password_manager::GetWarningTypeForDetailsContext;
 using password_manager::constants::kMaxPasswordNoteLength;
-using password_manager::constants::kPasswordManagerAuthValidity;
 using password_manager::metrics_util::LogPasswordNoteActionInSettings;
 using password_manager::metrics_util::PasswordNoteAction;
 
@@ -159,7 +158,7 @@ bool ShouldAllowToRestoreWarning(DetailsContext context, bool is_muted) {
 // Array of credentials that are shown on the screen.
 @property(nonatomic, strong) NSArray<CredentialDetails*>* credentials;
 
-@property(nonatomic, strong) NSString* pageTitle;
+@property(nonatomic, copy) NSString* pageTitle;
 
 // Whether the password is shown in plain text form or in masked form.
 @property(nonatomic, assign, getter=isPasswordShown) BOOL passwordShown;
@@ -653,7 +652,7 @@ bool ShouldAllowToRestoreWarning(DetailsContext context, bool is_muted) {
     }
     case PasswordDetailsItemTypeChangePasswordButton:
       if (!self.tableView.editing) {
-        DCHECK(self.applicationCommandsHandler);
+        CHECK(self.applicationHandler);
         CredentialDetails* passwordDetails =
             self.credentials[indexPath.section];
         DCHECK(passwordDetails.changePasswordURL.has_value());
@@ -666,7 +665,7 @@ bool ShouldAllowToRestoreWarning(DetailsContext context, bool is_muted) {
 
         OpenNewTabCommand* command = [OpenNewTabCommand
             commandWithURLFromChrome:passwordDetails.changePasswordURL.value()];
-        [self.applicationCommandsHandler closePresentedViewsAndOpenURL:command];
+        [self.applicationHandler closePresentedViewsAndOpenURL:command];
       }
       break;
     case PasswordDetailsItemTypeNote: {
@@ -888,7 +887,7 @@ bool ShouldAllowToRestoreWarning(DetailsContext context, bool is_muted) {
               andTitle:(NSString*)title {
   BOOL hadCredentials = [_credentials count];
   _credentials = credentials;
-  _pageTitle = title;
+  _pageTitle = [title copy];
 
   [self updateNavigationTitle];
   // Update the model even if all credentials are deleted and the view
@@ -927,6 +926,10 @@ bool ShouldAllowToRestoreWarning(DetailsContext context, bool is_muted) {
   _shareButton = shareButton;
   self.navigationItem.rightBarButtonItems =
       @[ self.navigationItem.rightBarButtonItem, shareButton ];
+}
+
+- (void)hideShareButton {
+  _shareButton.hidden = YES;
 }
 
 #pragma mark - TableViewTextEditItemDelegate
@@ -1083,10 +1086,10 @@ bool ShouldAllowToRestoreWarning(DetailsContext context, bool is_muted) {
   TriggerHapticFeedbackForNotification(success
                                            ? UINotificationFeedbackTypeSuccess
                                            : UINotificationFeedbackTypeError);
-  [self.snackbarCommandsHandler showSnackbarWithMessage:message
-                                             buttonText:nil
-                                          messageAction:nil
-                                       completionAction:nil];
+  [self.snackbarHandler showSnackbarWithMessage:message
+                                     buttonText:nil
+                                  messageAction:nil
+                               completionAction:nil];
 
   if ([self.tableView indexPathForSelectedRow]) {
     [self.tableView
@@ -1158,18 +1161,6 @@ bool ShouldAllowToRestoreWarning(DetailsContext context, bool is_muted) {
     }
   }
   return YES;
-}
-
-// Removes the given section if it exists.
-- (void)removeSectionWithIdentifier:(NSInteger)sectionIdentifier
-                   withRowAnimation:(UITableViewRowAnimation)animation {
-  TableViewModel* model = self.tableViewModel;
-  if ([model hasSectionForSectionIdentifier:sectionIdentifier]) {
-    NSInteger section = [model sectionForSectionIdentifier:sectionIdentifier];
-    [model removeSectionWithIdentifier:sectionIdentifier];
-    [[self tableView] deleteSections:[NSIndexSet indexSetWithIndex:section]
-                    withRowAnimation:animation];
-  }
 }
 
 // Enables/Disables the right bar button item in the navigation bar.
@@ -1692,7 +1683,7 @@ bool ShouldAllowToRestoreWarning(DetailsContext context, bool is_muted) {
       }
     }
   }
-  [self.delegate didFinishEditingPasswordDetails];
+  [self.delegate didFinishEditingCredentialDetails];
   [super editButtonPressed];
   [self reloadData];
 }

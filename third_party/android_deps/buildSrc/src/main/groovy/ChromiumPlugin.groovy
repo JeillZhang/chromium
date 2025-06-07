@@ -5,7 +5,7 @@
 
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import org.gradle.api.artifacts.DependencyResolveDetails
+import org.gradle.api.artifacts.*
 import org.gradle.api.attributes.Attribute
 import org.gradle.api.attributes.AttributeCompatibilityRule
 import org.gradle.api.attributes.CompatibilityCheckDetails
@@ -38,7 +38,7 @@ class ChromiumPlugin implements Plugin<Project> {
             /** Main type of configuration, use it for libraries that the APK depends on. */
             compile
 
-            /** Same as compile, but uses the latest versions of androidx deps. */
+            /** Same as compile, but uses the latest versions of the deps. */
             compileLatest
 
             /**
@@ -50,8 +50,14 @@ class ChromiumPlugin implements Plugin<Project> {
             /** Libraries that are for testing only. */
             testCompile
 
+            /** Same as testCompile, but uses the latest versions of the deps. */
+            testCompileLatest
+
             /** Libraries that are only used during build. These support android. */
             buildCompile
+
+            /** Same as buildCompile, but uses the latest versions of the deps. */
+            buildCompileLatest
 
             /** Libraries that are only used during build but should not automatically retrieve their dependencies. */
             buildCompileNoDeps
@@ -59,8 +65,17 @@ class ChromiumPlugin implements Plugin<Project> {
             /** Libraries that are used for testing only and support android. */
             androidTestCompile
 
-            /** Same as androidTestCompile, but uses the latest versions of androidx deps. */
+            /** Same as androidTestCompile, but uses the latest versions of the deps. */
             androidTestCompileLatest
+        }
+
+        def constraintAndroid = {
+            attribute(TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE,
+                    project.objects.named(TargetJvmEnvironment, TargetJvmEnvironment.ANDROID))
+        }
+        def constraintJvm = {
+            attribute(TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE,
+                    project.objects.named(TargetJvmEnvironment, TargetJvmEnvironment.STANDARD_JVM))
         }
 
         project.dependencies.attributesSchema {
@@ -69,33 +84,40 @@ class ChromiumPlugin implements Plugin<Project> {
             }
         }
 
-        project.configurations.configureEach {
+        // Helps gradle disambiguate between different variants of the same
+        // dependency. We usually want the same thing for all deps, a java
+        // implementation not an API, source files, docs, etc. Sometimes we want
+        // the android variant if available and sometimes the desktop JVM
+        // variant depending on the configuration.
+        project.configurations.configureEach { Configuration config ->
             attributes {
                 attribute(Attribute.of("org.gradle.category", String), "library")
                 attribute(Attribute.of("org.gradle.usage", String), "java-runtime")
-                attribute(TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE,
-                        project.objects.named(TargetJvmEnvironment, TargetJvmEnvironment.ANDROID))
+            }
+            // testCompile config is for host side tests (Robolectric) so we prefer
+            // the non-android versions of deps if available.
+            if (config.name.startsWith('testCompile')) {
+                attributes constraintJvm
+            } else {
+                attributes constraintAndroid
             }
         }
 
-        project.configurations.compileLatest {
-            resolutionStrategy.eachDependency { DependencyResolveDetails details ->
-                overrideVersionIfNecessary(details)
+        def latestResolutionStrategy = {
+            if (project.hasProperty('versionCache') && project.versionCache) {
+                project.ext.versionCache.each { String selector, String version ->
+                    force "${selector}:${version}"
+                }
+            } else {
+                eachDependency { DependencyResolveDetails details ->
+                    overrideVersionIfNecessary(project, details)
+                }
             }
         }
 
-        project.configurations.androidTestCompileLatest {
-            resolutionStrategy.eachDependency { DependencyResolveDetails details ->
-                overrideVersionIfNecessary(details)
-            }
-        }
-
-        // testCompile config is for host side tests (Robolectric) so we prefer
-        // the non-android versions of deps if available.
-        project.configurations.testCompile {
-            attributes {
-                attribute(TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE,
-                        project.objects.named(TargetJvmEnvironment, TargetJvmEnvironment.STANDARD_JVM))
+        project.configurations.each { Configuration configuration ->
+            if (configuration.name.endsWith('Latest')) {
+                configuration.resolutionStrategy(latestResolutionStrategy)
             }
         }
 
@@ -106,10 +128,10 @@ class ChromiumPlugin implements Plugin<Project> {
 
     }
 
-    private static void overrideVersionIfNecessary(DependencyResolveDetails details) {
+    private static void overrideVersionIfNecessary(Project project, DependencyResolveDetails details) {
         String group = details.requested.group
-        String version = details.requested.version
-        if (group.startsWith('androidx') && version != '+' && !version.contains('-SNAPSHOT')) {
+        String requestedVersion = details.requested.version
+        if (group.startsWith('androidx') && requestedVersion != '+' && !requestedVersion.contains('-SNAPSHOT')) {
             details.useVersion '+'
         }
     }

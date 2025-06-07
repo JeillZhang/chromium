@@ -45,6 +45,7 @@
 #include "media/base/audio_capturer_source.h"
 #include "media/base/audio_codecs.h"
 #include "media/base/audio_parameters.h"
+#include "media/base/media_switches.h"
 #include "media/base/video_codecs.h"
 #include "media/capture/video_capture_types.h"
 #include "media/cast/common/openscreen_conversion_helpers.h"
@@ -91,10 +92,8 @@ constexpr char kLogPrefix[] = "OpenscreenSessionHost";
 // Note: listed in order of priority. Support must also be determined using
 // the encoding_support logic.
 constexpr std::array kSupportedVideoCodecs{
-    media::VideoCodec::kAV1,
-    media::VideoCodec::kVP9,
-    media::VideoCodec::kH264,
-    media::VideoCodec::kVP8,
+    media::VideoCodec::kHEVC, media::VideoCodec::kAV1, media::VideoCodec::kVP9,
+    media::VideoCodec::kH264, media::VideoCodec::kVP8,
 };
 
 int NumberOfEncodeThreads() {
@@ -334,13 +333,15 @@ OpenscreenSessionHost::OpenscreenSessionHost(
 OpenscreenSessionHost::~OpenscreenSessionHost() {
   StopSession();
 
+  // Tear down the cast environment now that the session has been stopped.
+  cast_environment_.reset();
+
   // If we provided access to our network context proxy, we need to clear it.
   if (set_network_context_proxy_) {
     openscreen_platform::ClearNetworkContextGetter();
   }
 
   if (deletion_cb_) {
-    CHECK(!cast_environment_);
     std::move(deletion_cb_).Run();
   }
 }
@@ -397,9 +398,9 @@ void OpenscreenSessionHost::OnNegotiated(
     }
     CHECK(video_config);
 
-    // Ultimately used by the video encoder that executes on
-    // `video_encode_thread_` to determine how many threads should be used to
-    // encode video content.
+    // Ultimately used by the video encoder that executes on the video encode
+    // thread to determine how many threads should be used to encode video
+    // content.
     video_config->video_codec_params.value().number_of_encode_threads =
         NumberOfEncodeThreads();
   }
@@ -408,20 +409,20 @@ void OpenscreenSessionHost::OnNegotiated(
   // instantiated once.
   const bool initially_starting_session = !cast_environment_;
   if (initially_starting_session) {
-    CHECK(!audio_encode_thread_ && !video_encode_thread_);
-    audio_encode_thread_ = base::ThreadPool::CreateSingleThreadTaskRunner(
+    auto audio_encode_thread = base::ThreadPool::CreateSingleThreadTaskRunner(
         {base::TaskPriority::USER_BLOCKING,
          base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
         base::SingleThreadTaskRunnerThreadMode::DEDICATED);
-    video_encode_thread_ = base::ThreadPool::CreateSingleThreadTaskRunner(
+    auto video_encode_thread = base::ThreadPool::CreateSingleThreadTaskRunner(
         {base::TaskPriority::USER_BLOCKING,
          base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN,
          base::WithBaseSyncPrimitives(), base::MayBlock()},
         base::SingleThreadTaskRunnerThreadMode::DEDICATED);
     cast_environment_ = base::MakeRefCounted<media::cast::CastEnvironment>(
         *base::DefaultTickClock::GetInstance(),
-        base::SingleThreadTaskRunner::GetCurrentDefault(), audio_encode_thread_,
-        video_encode_thread_, std::move(deletion_cb_));
+        base::SingleThreadTaskRunner::GetCurrentDefault(),
+        std::move(audio_encode_thread), std::move(video_encode_thread),
+        std::move(deletion_cb_));
   }
 
   if (state_ == State::kRemoting) {
@@ -462,13 +463,12 @@ void OpenscreenSessionHost::OnNegotiated(
         metrics_provider_pending_remote.InitWithNewPipeAndPassReceiver());
 
     media::GpuVideoAcceleratorFactories* gpu_factories = nullptr;
-    if (video_config->use_hardware_encoder) {
+    if (base::FeatureList::IsEnabled(media::kCastStreamingMediaVideoEncoder) &&
+        video_config->use_hardware_encoder) {
       gpu_factories_factory_ = std::make_unique<MirroringGpuFactoriesFactory>(
           cast_environment_, *gpu_,
-          base::BindRepeating(
-              &OpenscreenSessionHost::OnVideoEncoderStatus,
-              weak_factory_.GetWeakPtr(), *video_config,
-              media::cast::OperationalStatus::STATUS_CODEC_RUNTIME_ERROR));
+          base::BindOnce(&OpenscreenSessionHost::OnGpuFactoryContextLost,
+                         weak_factory_.GetWeakPtr(), *video_config));
       gpu_factories = &gpu_factories_factory_->GetInstance();
     }
 
@@ -506,7 +506,12 @@ void OpenscreenSessionHost::OnNegotiated(
             mirror_settings_.refresh_interval().InMilliseconds())));
 
     if (video_capture_client_ && video_stream_) {
-      ResumeCapturingVideo();
+      // NOTE: it is possible that we may renegotiate without pausing video
+      // capture, in which case we don't need to change the video capture client
+      // state.
+      if (is_video_capture_paused_) {
+        ResumeCapturingVideo();
+      }
     } else {
       StartCapturingVideo();
     }
@@ -767,8 +772,9 @@ void OpenscreenSessionHost::StopStreaming() {
   // The factory should be deleted on the VIDEO thread to ensure it is not
   // deleted before BindOnVideoThread() can be called.
   if (gpu_factories_factory_) {
-    video_encode_thread_->DeleteSoon(FROM_HERE,
-                                     std::move(gpu_factories_factory_));
+    cast_environment_
+        ->GetTaskRunner(media::cast::CastEnvironment::ThreadId::kVideo)
+        ->DeleteSoon(FROM_HERE, std::move(gpu_factories_factory_));
   }
 }
 
@@ -790,8 +796,6 @@ void OpenscreenSessionHost::StopSession() {
   // provider.
   media_remoter_.reset();
   rpc_dispatcher_.reset();
-  audio_encode_thread_.reset();
-  video_encode_thread_.reset();
   video_capture_client_.reset();
   resource_provider_.reset();
   gpu_.reset();
@@ -911,23 +915,32 @@ void OpenscreenSessionHost::OnVideoEncoderStatus(
       // If we used a hardware encoder and it failed, denylist it for the rest
       // of the browsing session and try renegotiating.
       if (config.use_hardware_encoder) {
-        PauseCapturingVideo();
         CHECK_EQ(state_, State::kMirroring);
-
-        media::cast::encoding_support::DenyListHardwareCodec(
-            config.video_codec());
-        StopStreaming();
-        Negotiate();
-
-        base::UmaHistogramEnumeration(
-            "MediaRouter.MirroringService.DisabledHardwareCodecAndRenegotiated",
-            config.video_codec());
+        MaybeDenylistHardwareCodecAndRenegotiate(config.video_codec());
         return;
       }
 
       ReportAndLogError(SessionError::ENCODING_ERROR, AsErrorMessage(status));
       break;
   }
+}
+
+void OpenscreenSessionHost::OnGpuFactoryContextLost(
+    const media::cast::FrameSenderConfig& config) {
+  // If we used a hardware encoder and it failed, denylist it for the rest
+  // of the browsing session and try renegotiating.
+  CHECK(config.use_hardware_encoder);
+  CHECK_EQ(state_, State::kMirroring);
+
+  // The factory's instance is no longer valid.
+  // TODO(crbug.com/402802379): instead of deleting the factory, we could just
+  // call GetInstance again and do a partial re-setup of the video stream stack.
+  gpu_factories_factory_.reset();
+  base::UmaHistogramEnumeration(
+      "MediaRouter.MirroringService.GpuFactoryContextLost",
+      config.video_codec());
+
+  MaybeDenylistHardwareCodecAndRenegotiate(config.video_codec());
 }
 
 void OpenscreenSessionHost::SetTargetPlayoutDelay(
@@ -1189,6 +1202,20 @@ base::Value::Dict OpenscreenSessionHost::GetMirroringStats() const {
 void OpenscreenSessionHost::SetSenderStatsForTest(
     const openscreen::cast::SenderStats& test_stats) {
   stats_client_->OnStatisticsUpdated(test_stats);
+}
+
+void OpenscreenSessionHost::MaybeDenylistHardwareCodecAndRenegotiate(
+    media::VideoCodec codec) {
+  // Only denylist and restart negotiation for this hardware codec once.
+  if (!media::cast::encoding_support::IsHardwareDenyListed(codec)) {
+    media::cast::encoding_support::DenyListHardwareCodec(codec);
+    StopStreaming();
+    Negotiate();
+    base::UmaHistogramEnumeration(
+        "MediaRouter.MirroringService."
+        "DisabledHardwareCodecAndRenegotiated",
+        codec);
+  }
 }
 
 }  // namespace mirroring

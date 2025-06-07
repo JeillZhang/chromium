@@ -4,11 +4,14 @@
 
 #import "ios/chrome/browser/omnibox/model/omnibox_position/omnibox_position_browser_agent.h"
 
-BROWSER_USER_DATA_KEY_IMPL(OmniboxPositionBrowserAgent)
-
-OmniboxPositionBrowserAgent::OmniboxPositionBrowserAgent(Browser* browser) {}
+OmniboxPositionBrowserAgent::OmniboxPositionBrowserAgent(Browser* browser)
+    : BrowserUserData(browser) {}
 
 OmniboxPositionBrowserAgent::~OmniboxPositionBrowserAgent() = default;
+
+BOOL OmniboxPositionBrowserAgent::IsOmniboxFocused() const {
+  return [omnibox_state_provider_ isOmniboxFocused];
+}
 
 bool OmniboxPositionBrowserAgent::IsCurrentLayoutBottomOmnibox() {
   return is_current_layout_bottom_omnibox_;

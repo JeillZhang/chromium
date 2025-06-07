@@ -15,6 +15,7 @@
 #include "base/types/pass_key.h"
 #include "content/browser/preloading/prerender/prerender_attributes.h"
 #include "content/browser/preloading/prerender/prerender_final_status.h"
+#include "content/browser/preloading/speculation_rules/speculation_rules_tags.h"
 #include "content/browser/renderer_host/frame_tree.h"
 #include "content/browser/renderer_host/navigation_controller_delegate.h"
 #include "content/common/content_export.h"
@@ -118,7 +119,10 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
     kNoVarySearchHeaderReceivedButNotMatched = 7,
     kNoVarySearchHeaderReceivedButDefaultValue = 8,
 
-    kMaxValue = kNoVarySearchHeaderReceivedButDefaultValue,
+    kUnknownFailure = 9,
+    kPrerenderNavigationFailed = 10,
+
+    kMaxValue = kPrerenderNavigationFailed,
   };
   // LINT.ThenChange(//tools/metrics/histograms/metadata/navigation/enums.xml:PrerenderWaitingForHeadersFinishedReason)
 
@@ -131,7 +135,7 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
 
     // Called from PrerenderHost::ReadyToCommitNavigation when headers are
     // received for the initial navigation.
-    virtual void OnHeadersReceived() {}
+    virtual void OnHeadersReceived(NavigationHandle& navigation_handle) {}
 
     // Called from PrerenderHost::OnWaitingForHeadersStarted when we start
     // blocking navigation waiting for headers.
@@ -142,7 +146,6 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
     // Called from PrerenderHost::OnWaitingForHeadersFinished when we are
     // done blocking navigation waiting for headers.
     virtual void OnWaitingForHeadersFinished(
-        NavigationHandle& navigation_handle,
         WaitingForHeadersFinishedReason reason) {}
 
     // Called from PrerenderHost::RecordFailedFinalStatusImpl when prerendering
@@ -181,6 +184,7 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
       const std::string& prerender_headers_str,
       PreloadingTriggerType trigger_type,
       const std::string& histogram_suffix,
+      bool allow_x_header_mismatch,
       PrerenderCancellationReason& reason);
 
   // Sets a callback to be called on PrerenderHost creation.
@@ -386,7 +390,7 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
   }
 
   std::optional<blink::mojom::SpeculationEagerness> eagerness() const {
-    return attributes_.eagerness;
+    return attributes_.GetEagerness();
   }
 
   base::WeakPtr<PreloadingAttempt> preloading_attempt() { return attempt_; }
@@ -421,8 +425,7 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
   void OnWaitingForHeadersStarted(NavigationHandle& navigation_handle,
                                   WaitingForHeadersStartedReason reason);
   // Called when we stop blocking navigation while waiting for headers.
-  void OnWaitingForHeadersFinished(NavigationHandle& navigation_handle,
-                                   WaitingForHeadersFinishedReason reason);
+  void OnWaitingForHeadersFinished(WaitingForHeadersFinishedReason reason);
 
   // Returns true iff prefetch ahead of prerender is not available for this
   // prerender and this prerender should be aborted.
@@ -434,6 +437,9 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
   // second fetch if the prefetch reached to fetch phase. To avoid the second
   // fetch, we need to abort the prerender. This method judges a condition.
   bool ShouldAbortNavigationBecausePrefetchUnavailable() const;
+
+  void AddAdditionalRequestHeaders(net::HttpRequestHeaders& headers,
+                                   FrameTreeNode& navigating_frame_tree_node);
 
  private:
   void RecordFailedFinalStatusImpl(const PrerenderCancellationReason& reason);
@@ -451,12 +457,12 @@ class CONTENT_EXPORT PrerenderHost : public FrameTree::Delegate,
   AreBeginNavigationParamsCompatibleWithNavigation(
       const GURL& potential_activation_url,
       const blink::mojom::BeginNavigationParams& potential_activation,
-      bool allow_initiator_and_transition_mismatch,
+      bool allow_partial_mismatch,
       PrerenderCancellationReason& reason);
   ActivationNavigationParamsMatch
   AreCommonNavigationParamsCompatibleWithNavigation(
       const blink::mojom::CommonNavigationParams& potential_activation,
-      bool allow_initiator_and_transition_mismatch);
+      bool allow_partial_mismatch);
 
   void MaybeSetNoVarySearch(network::mojom::NoVarySearchWithParseError&
                                 no_vary_search_with_parse_error);

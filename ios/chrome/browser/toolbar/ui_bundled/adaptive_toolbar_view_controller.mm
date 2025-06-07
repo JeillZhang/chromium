@@ -10,6 +10,7 @@
 #import "base/notreached.h"
 #import "base/time/time.h"
 #import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_animator.h"
+#import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_reason.h"
 #import "ios/chrome/browser/shared/public/commands/omnibox_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
@@ -27,6 +28,7 @@
 #import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_constants.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_utils.h"
 #import "ios/chrome/common/material_timing.h"
+#import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/ui_util.h"
 #import "ui/base/device_form_factor.h"
 
@@ -123,6 +125,13 @@ const CGFloat kFullscreenProgressFullyExpanded = 1.0;
 
 - (BOOL)hasOmnibox {
   return self.locationBarViewController != nil;
+}
+
+- (void)IPHHighlightTabGridButton:(BOOL)highlight {
+  self.view.tabGridButton.iphHighlighted = highlight;
+  // Needed so spotlightView can have correct frame.
+  [self.view.tabGridButton setNeedsLayout];
+  [self.view.tabGridButton layoutIfNeeded];
 }
 
 #pragma mark - UIViewController
@@ -407,7 +416,6 @@ const CGFloat kFullscreenProgressFullyExpanded = 1.0;
 }
 
 - (void)collapsedToolbarButtonTapped {
-  base::RecordAction(base::UserMetricsAction("MobileFullscreenExitedManually"));
   [self exitFullscreen];
 }
 
@@ -570,7 +578,7 @@ const CGFloat kFullscreenProgressFullyExpanded = 1.0;
 
 // Exits fullscreen.
 - (void)exitFullscreen {
-  [self.adaptiveDelegate exitFullscreen];
+  [self.adaptiveDelegate exitFullscreen:FullscreenExitReason::kUserTapped];
 }
 
 // Modifies the UI based on the UITraits that changed on the device.

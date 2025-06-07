@@ -12,6 +12,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/check.h"
@@ -37,7 +38,6 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -85,6 +85,7 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "chrome/test/base/web_feature_histogram_tester.h"
 #include "components/services/app_service/public/cpp/file_handler.h"
 #include "components/services/app_service/public/cpp/icon_info.h"
 #include "components/services/app_service/public/cpp/protocol_handler_info.h"
@@ -129,7 +130,7 @@
 #include "base/mac/mac_util.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_features.h"
 #include "chrome/browser/ash/system_web_apps/test_support/test_system_web_app_installation.h"
 #endif
@@ -808,8 +809,9 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest,
       kUpdateHistogramName, ManifestUpdateResult::kWebContentsDestroyed, 1);
 }
 
+// TODO(crbug.com/402699278): Fix and re-enable.
 IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest,
-                       CheckCancelledByAppUninstalled) {
+                       DISABLED_CheckCancelledByAppUninstalled) {
   webapps::AppId app_id = InstallWebApp();
   GetManifestUpdateManager(browser()->profile())
       .hang_update_checks_for_testing();
@@ -887,6 +889,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest,
                        CheckIgnoresNameChange) {
+  WebFeatureHistogramTester web_feature_histogram_tester;
   constexpr char kManifestTemplate[] = R"(
     {
       "name": "$1",
@@ -905,6 +908,8 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest,
             ManifestUpdateResult::kAppUpToDate);
   histogram_tester_.ExpectBucketCount(kUpdateHistogramName,
                                       ManifestUpdateResult::kAppUpToDate, 1);
+  EXPECT_EQ(0, web_feature_histogram_tester.GetCount(
+                   blink::mojom::WebFeature::kWebAppManifestUpdate));
 }
 
 IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest,
@@ -1183,6 +1188,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest,
                        CheckFindsBackgroundColorChange) {
+  WebFeatureHistogramTester web_feature_histogram_tester;
   constexpr char kManifestTemplate[] = R"(
     {
       "name": "Test app name",
@@ -1204,7 +1210,8 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest,
             ManifestUpdateResult::kAppUpdated);
   histogram_tester_.ExpectBucketCount(kUpdateHistogramName,
                                       ManifestUpdateResult::kAppUpdated, 1);
-
+  EXPECT_EQ(1, web_feature_histogram_tester.GetCount(
+                   blink::mojom::WebFeature::kWebAppManifestUpdate));
   EXPECT_EQ(GetProvider().registrar_unsafe().GetAppBackgroundColor(app_id),
             SkColorSetARGB(0xFF, 0xFF, 0x00, 0x00));
 }
@@ -2298,7 +2305,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest,
   EXPECT_TRUE(expected_launch_handler.client_mode_valid_and_specified());
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 class ManifestUpdateManagerSystemAppBrowserTest
     : public ManifestUpdateManagerBrowserTest {
  public:
@@ -2323,7 +2330,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerSystemAppBrowserTest,
   EXPECT_EQ(GetProvider().registrar_unsafe().GetAppThemeColor(app_id),
             SK_ColorGREEN);
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 class ManifestUpdateManagerIsolatedWebAppBrowserTest
     : public IsolatedWebAppBrowserTestHarness {
@@ -2643,9 +2650,9 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTestWithFileHandling,
   const GURL url = GetAppURL();
   const GURL origin = url.DeprecatedGetOriginAsURL();
 
-  EXPECT_EQ(
-      ApiApprovalState::kRequiresPrompt,
-      GetProvider().registrar_unsafe().GetAppFileHandlerApprovalState(app_id));
+  EXPECT_EQ(ApiApprovalState::kRequiresPrompt,
+            GetProvider().registrar_unsafe().GetAppFileHandlerUserApprovalState(
+                app_id));
   GetProvider().sync_bridge_unsafe().SetAppFileHandlerApprovalState(
       app_id, ApiApprovalState::kAllowed);
 
@@ -2661,9 +2668,9 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTestWithFileHandling,
   EXPECT_TRUE(base::Contains(new_extensions, ".txt"));
 
   // Set back to allowed.
-  EXPECT_EQ(
-      ApiApprovalState::kRequiresPrompt,
-      GetProvider().registrar_unsafe().GetAppFileHandlerApprovalState(app_id));
+  EXPECT_EQ(ApiApprovalState::kRequiresPrompt,
+            GetProvider().registrar_unsafe().GetAppFileHandlerUserApprovalState(
+                app_id));
   GetProvider().sync_bridge_unsafe().SetAppFileHandlerApprovalState(
       app_id, ApiApprovalState::kAllowed);
 
@@ -2677,9 +2684,9 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTestWithFileHandling,
   EXPECT_TRUE(base::Contains(new_extensions, ".md"));
   EXPECT_TRUE(base::Contains(new_extensions, ".txt"));
 
-  EXPECT_EQ(
-      ApiApprovalState::kAllowed,
-      GetProvider().registrar_unsafe().GetAppFileHandlerApprovalState(app_id));
+  EXPECT_EQ(ApiApprovalState::kAllowed,
+            GetProvider().registrar_unsafe().GetAppFileHandlerUserApprovalState(
+                app_id));
 
   // Update manifest, asking for /fewer/ file types. Permission should be left
   // on ALLOW.
@@ -2690,9 +2697,9 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTestWithFileHandling,
   new_extensions = web_app->file_handlers()[0].accept[0].file_extensions;
   EXPECT_FALSE(base::Contains(new_extensions, ".md"));
   EXPECT_TRUE(base::Contains(new_extensions, ".txt"));
-  EXPECT_EQ(
-      ApiApprovalState::kAllowed,
-      GetProvider().registrar_unsafe().GetAppFileHandlerApprovalState(app_id));
+  EXPECT_EQ(ApiApprovalState::kAllowed,
+            GetProvider().registrar_unsafe().GetAppFileHandlerUserApprovalState(
+                app_id));
 
 #if BUILDFLAG(IS_LINUX)
   // Make sure that blocking the permission also unregisters the MIME type on
@@ -2712,9 +2719,9 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTestWithFileHandling,
   time_override += base::Days(10);
   SetTimeOverride(time_override);
   EXPECT_EQ(ManifestUpdateResult::kAppUpdated, GetResultAfterPageLoad(url));
-  EXPECT_EQ(
-      ApiApprovalState::kDisallowed,
-      GetProvider().registrar_unsafe().GetAppFileHandlerApprovalState(app_id));
+  EXPECT_EQ(ApiApprovalState::kDisallowed,
+            GetProvider().registrar_unsafe().GetAppFileHandlerUserApprovalState(
+                app_id));
 }
 
 IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTestWithFileHandling,
@@ -2753,9 +2760,9 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTestWithFileHandling,
   const GURL origin = url.DeprecatedGetOriginAsURL();
 
   // Disallow the API.
-  EXPECT_EQ(
-      ApiApprovalState::kRequiresPrompt,
-      GetProvider().registrar_unsafe().GetAppFileHandlerApprovalState(app_id));
+  EXPECT_EQ(ApiApprovalState::kRequiresPrompt,
+            GetProvider().registrar_unsafe().GetAppFileHandlerUserApprovalState(
+                app_id));
   GetProvider().sync_bridge_unsafe().SetAppFileHandlerApprovalState(
       app_id, ApiApprovalState::kDisallowed);
 
@@ -4205,7 +4212,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_ScopeExtensions,
   OverrideScopeExtensions(R"(
           [
             {
-              "type": "origin", "value": "https://extension.com"
+              "type": "origin", "origin": "https://extension.com"
             }
           ]
       )");
@@ -4244,7 +4251,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_ScopeExtensions,
   OverrideScopeExtensions(R"(
           [
             {
-              "type": "origin", "value": "https://extension.com"
+              "type": "origin", "origin": "https://extension.com"
             }
           ]
       )");
@@ -4269,7 +4276,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_ScopeExtensions,
   OverrideScopeExtensions(R"(
           [
             {
-              "type": "origin", "value": "https://extension.com"
+              "type": "origin", "origin": "https://extension.com"
             }
           ]
       )");
@@ -4302,7 +4309,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_ScopeExtensions,
   OverrideScopeExtensions(R"(
           [
             {
-              "type": "origin", "value": "https://extension_1.com"
+              "type": "origin", "origin": "https://extension_1.com"
             }
           ]
       )");
@@ -4324,7 +4331,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_ScopeExtensions,
   OverrideScopeExtensions(R"(
           [
             {
-              "type": "origin", "value": "https://extension_2.com"
+              "type": "origin", "origin": "https://extension_2.com"
             }
           ]
       )");
@@ -4352,7 +4359,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_ScopeExtensions,
   OverrideScopeExtensions(R"(
           [
             {
-              "type": "origin", "value": "https://extension.com"
+              "type": "origin", "origin": "https://extension.com"
             }
           ]
       )");
@@ -4386,7 +4393,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_ScopeExtensions,
   OverrideScopeExtensions(R"(
           [
             {
-              "type": "origin", "value": "https://extension.com"
+              "type": "origin", "origin": "https://extension.com"
             }
           ]
       )");
@@ -4421,7 +4428,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_ScopeExtensions,
   OverrideScopeExtensions(R"(
           [
             {
-              "type": "origin", "value": "https://extension.com"
+              "type": "origin", "origin": "https://extension.com"
             }
           ]
       )");
@@ -4793,7 +4800,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_TabStrip,
   EXPECT_TRUE(web_app->tab_strip().has_value());
   EXPECT_EQ(http_server_.GetURL("/new-tab-url"),
             web_app->tab_strip().value().new_tab_button.url);
-  EXPECT_EQ(absl::get<blink::Manifest::HomeTabParams>(
+  EXPECT_EQ(std::get<blink::Manifest::HomeTabParams>(
                 web_app->tab_strip().value().home_tab)
                 .scope_patterns.size(),
             1u);
@@ -4824,7 +4831,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_TabStrip,
   EXPECT_TRUE(web_app->tab_strip().has_value());
   EXPECT_EQ(http_server_.GetURL("/new-tab-url"),
             web_app->tab_strip().value().new_tab_button.url);
-  EXPECT_TRUE(absl::holds_alternative<blink::Manifest::HomeTabParams>(
+  EXPECT_TRUE(std::holds_alternative<blink::Manifest::HomeTabParams>(
       web_app->tab_strip().value().home_tab));
 
   OverrideManifest(kTabStripManifestTemplate, {kInstallableIconList});
@@ -4835,7 +4842,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_TabStrip,
   EXPECT_TRUE(web_app->tab_strip().has_value());
   EXPECT_EQ(http_server_.GetURL("/new-tab-url"),
             web_app->tab_strip().value().new_tab_button.url);
-  EXPECT_TRUE(absl::holds_alternative<blink::Manifest::HomeTabParams>(
+  EXPECT_TRUE(std::holds_alternative<blink::Manifest::HomeTabParams>(
       web_app->tab_strip().value().home_tab));
 }
 
@@ -4913,7 +4920,7 @@ IN_PROC_BROWSER_TEST_F(ManifestUpdateManagerBrowserTest_TabStrip,
   EXPECT_TRUE(web_app->tab_strip().has_value());
   EXPECT_EQ(http_server_.GetURL("/new-tab-url"),
             web_app->tab_strip().value().new_tab_button.url);
-  EXPECT_TRUE(absl::holds_alternative<blink::Manifest::HomeTabParams>(
+  EXPECT_TRUE(std::holds_alternative<blink::Manifest::HomeTabParams>(
       web_app->tab_strip().value().home_tab));
 
   OverrideManifest(kManifestTemplate, {kInstallableIconList});

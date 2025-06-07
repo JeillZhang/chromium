@@ -6,11 +6,10 @@
 
 #include <map>
 
-#include "base/test/scoped_feature_list.h"
+#include "base/run_loop.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/startup/default_browser_prompt/default_browser_prompt_prefs.h"
-#include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "components/infobars/content/content_infobar_manager.h"
@@ -52,13 +51,6 @@ class DefaultBrowserPromptManagerTest : public BrowserWithTestWindowTest {
 
   void TearDown() override { BrowserWithTestWindowTest::TearDown(); }
 
-  void EnableDefaultBrowserPromptRefreshFeatureWithParams(
-      std::map<std::string, std::string> params) {
-    scoped_feature_list_.Reset();
-    scoped_feature_list_.InitAndEnableFeatureWithParameters(
-        features::kDefaultBrowserPromptRefresh, params);
-  }
-
   void TestShouldShowInfoBarPrompt(
       std::optional<base::TimeDelta> last_declined_time_delta,
       std::optional<int> declined_count,
@@ -85,10 +77,22 @@ class DefaultBrowserPromptManagerTest : public BrowserWithTestWindowTest {
             browser()->tab_strip_model()->GetWebContentsAt(0));
     infobar_observation_.Observe(infobar_manager);
 
-    EXPECT_CALL(infobar_manager_observer_, OnInfoBarAdded)
-        .Times(expect_infobar_exists ? 1 : 0);
-    manager()->MaybeShowPrompt();
+    base::RunLoop run_loop;
+    if (expect_infobar_exists) {
+      EXPECT_CALL(infobar_manager_observer_, OnInfoBarAdded)
+          .WillOnce(testing::Invoke(
+              [&](infobars::InfoBar* infobar) { run_loop.Quit(); }));
+    } else {
+      EXPECT_CALL(infobar_manager_observer_, OnInfoBarAdded).Times(0);
+    }
 
+    manager()->MaybeShowPrompt();
+    if (expect_infobar_exists) {
+      // The info bar shows asynchronously, after checking if Chrome can be
+      // pinned to the taskbar, so need to wait for it to be shown.
+      run_loop.Run();
+    }
+    // The decision not to show the info bar is synchronous; no need to wait.
     infobar_observation_.Reset();
   }
 
@@ -106,113 +110,60 @@ class DefaultBrowserPromptManagerTest : public BrowserWithTestWindowTest {
       infobar_observation_{&infobar_manager_observer_};
 };
 
-TEST_F(DefaultBrowserPromptManagerTest, ShowsAppMenuItemWithParamEnabled) {
-  EnableDefaultBrowserPromptRefreshFeatureWithParams(
-      {{features::kShowDefaultBrowserAppMenuItem.name, "true"}});
-
+TEST_F(DefaultBrowserPromptManagerTest, ShowsAppMenuItem) {
   auto* manager = DefaultBrowserPromptManager::GetInstance();
-  ASSERT_FALSE(manager->get_show_app_menu_item());
+  ASSERT_FALSE(manager->show_app_menu_item());
 
   manager->MaybeShowPrompt();
-  ASSERT_TRUE(manager->get_show_app_menu_item());
-}
-
-TEST_F(DefaultBrowserPromptManagerTest, HidesAppMenuItemWithParamDisabled) {
-  EnableDefaultBrowserPromptRefreshFeatureWithParams(
-      {{features::kShowDefaultBrowserAppMenuItem.name, "false"}});
-
-  auto* manager = DefaultBrowserPromptManager::GetInstance();
-  ASSERT_FALSE(manager->get_show_app_menu_item());
-
-  manager->MaybeShowPrompt();
-  ASSERT_FALSE(manager->get_show_app_menu_item());
+  ASSERT_TRUE(manager->show_app_menu_item());
 }
 
 TEST_F(DefaultBrowserPromptManagerTest, AppMenuItemHiddenOnPromptAccept) {
-  EnableDefaultBrowserPromptRefreshFeatureWithParams(
-      {{features::kShowDefaultBrowserAppMenuItem.name, "true"}});
-
   auto* manager = DefaultBrowserPromptManager::GetInstance();
   manager->MaybeShowPrompt();
-  ASSERT_TRUE(manager->get_show_app_menu_item());
+  ASSERT_TRUE(manager->show_app_menu_item());
 
   manager->CloseAllPrompts(DefaultBrowserPromptManager::CloseReason::kAccept);
-  ASSERT_FALSE(manager->get_show_app_menu_item());
+  ASSERT_FALSE(manager->show_app_menu_item());
 }
 
 TEST_F(DefaultBrowserPromptManagerTest, AppMenuItemPersistsOnPromptDismissed) {
-  EnableDefaultBrowserPromptRefreshFeatureWithParams(
-      {{features::kShowDefaultBrowserAppMenuItem.name, "true"}});
-
   auto* manager = DefaultBrowserPromptManager::GetInstance();
   manager->MaybeShowPrompt();
-  ASSERT_TRUE(manager->get_show_app_menu_item());
+  ASSERT_TRUE(manager->show_app_menu_item());
 
   manager->CloseAllPrompts(DefaultBrowserPromptManager::CloseReason::kDismiss);
-  ASSERT_TRUE(manager->get_show_app_menu_item());
+  ASSERT_TRUE(manager->show_app_menu_item());
 }
 
+constexpr int kMaxPromptCount = 5;
+constexpr int kRepromptDurationDays = 21;
+
 TEST_F(DefaultBrowserPromptManagerTest, InfoBarMaxPromptCount) {
-  // If max prompt count is negative, do not limit the number of times the
-  // prompt is shown.
-  EnableDefaultBrowserPromptRefreshFeatureWithParams(
-      {{features::kRepromptDuration.name, "1d"},
-       {features::kMaxPromptCount.name, "-1"}});
-  TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/base::Days(1) + base::Microseconds(1),
-      /*declined_count=*/12345,
-      /*expect_infobar_exists=*/true);
-
-  // Never show the prompt if max prompt count is zero.
-  EnableDefaultBrowserPromptRefreshFeatureWithParams(
-      {{features::kRepromptDuration.name, "1d"},
-       {features::kMaxPromptCount.name, "0"}});
-  TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/std::nullopt,
-      /*declined_count=*/std::nullopt,
-      /*expect_infobar_exists=*/false);
-
-  // If max prompt count is 1, only show the prompt if declined count is unset.
-  EnableDefaultBrowserPromptRefreshFeatureWithParams(
-      {{features::kRepromptDuration.name, "1d"},
-       {features::kMaxPromptCount.name, "1"}});
-  TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/std::nullopt,
-      /*declined_count=*/std::nullopt,
-      /*expect_infobar_exists=*/true);
-  TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/base::Days(1) + base::Microseconds(1),
-      /*declined_count=*/1,
-      /*expect_infobar_exists=*/false);
-
   // Show if the declined count is less than the max prompt count.
-  EnableDefaultBrowserPromptRefreshFeatureWithParams(
-      {{features::kRepromptDuration.name, "1d"},
-       {features::kMaxPromptCount.name, "5"}});
   TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/base::Days(1) + base::Microseconds(1),
-      /*declined_count=*/4,
+      /*last_declined_time_delta=*/base::Days(kRepromptDurationDays) +
+          base::Microseconds(1),
+      /*declined_count=*/kMaxPromptCount - 1,
       /*expect_infobar_exists=*/true);
   TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/base::Days(1) + base::Microseconds(1),
-      /*declined_count=*/5,
+      /*last_declined_time_delta=*/base::Days(kRepromptDurationDays) +
+          base::Microseconds(1),
+      /*declined_count=*/kMaxPromptCount,
       /*expect_infobar_exists=*/false);
 }
 
 TEST_F(DefaultBrowserPromptManagerTest, InfoBarRepromptDuration) {
-  EnableDefaultBrowserPromptRefreshFeatureWithParams(
-      {{features::kRepromptDuration.name, "1d"},
-       {features::kMaxPromptCount.name, "-1"}});
-
   // After the prompt is declined once, show the prompt again if the time since
   // the last time the prompt was declined is strictly longer than the base
   // reprompt duration.
   TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/base::Days(1),
+      /*last_declined_time_delta=*/base::Days(kRepromptDurationDays),
       /*declined_count=*/1,
       /*expect_infobar_exists=*/false);
   TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/base::Days(1) + base::Microseconds(1),
+      /*last_declined_time_delta=*/base::Days(kRepromptDurationDays) +
+          base::Microseconds(1),
       /*declined_count=*/1,
       /*expect_infobar_exists=*/true);
 
@@ -220,32 +171,22 @@ TEST_F(DefaultBrowserPromptManagerTest, InfoBarRepromptDuration) {
   // duration should be equal to the reprompt duration.
 
   TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/base::Days(1),
+      /*last_declined_time_delta=*/base::Days(kRepromptDurationDays),
       /*declined_count=*/2,
       /*expect_infobar_exists=*/false);
   TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/base::Days(1) + base::Microseconds(1),
+      /*last_declined_time_delta=*/base::Days(kRepromptDurationDays) +
+          base::Microseconds(1),
       /*declined_count=*/2,
       /*expect_infobar_exists=*/true);
 
   TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/base::Days(1),
+      /*last_declined_time_delta=*/base::Days(kRepromptDurationDays),
       /*declined_count=*/3,
       /*expect_infobar_exists=*/false);
   TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/base::Days(1) + base::Microseconds(1),
+      /*last_declined_time_delta=*/base::Days(kRepromptDurationDays) +
+          base::Microseconds(1),
       /*declined_count=*/3,
       /*expect_infobar_exists=*/true);
-}
-
-TEST_F(DefaultBrowserPromptManagerTest, PromptHiddenWhenFeatureParamDisabled) {
-  EnableDefaultBrowserPromptRefreshFeatureWithParams(
-      {{features::kRepromptDuration.name, "1d"},
-       {features::kMaxPromptCount.name, "-1"},
-       {features::kShowDefaultBrowserInfoBar.name, "false"}});
-
-  TestShouldShowInfoBarPrompt(
-      /*last_declined_time_delta=*/std::nullopt,
-      /*declined_count=*/std::nullopt,
-      /*expect_infobar_exists=*/false);
 }

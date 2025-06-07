@@ -57,19 +57,19 @@ public class MessageCardViewBinderTest {
     private ViewGroup mItemView;
     private PropertyModel mItemViewModel;
     private PropertyModelChangeProcessor mItemMCP;
-    private AtomicBoolean mReviewButtonClicked = new AtomicBoolean();
-    private AtomicBoolean mDismissButtonClicked = new AtomicBoolean();
+    private final AtomicBoolean mReviewButtonClicked = new AtomicBoolean();
+    private final AtomicBoolean mDismissButtonClicked = new AtomicBoolean();
 
-    private AtomicBoolean mMessageServiceReviewCallbackRan = new AtomicBoolean();
-    private AtomicBoolean mMessageServiceDismissCallbackRan = new AtomicBoolean();
+    private final AtomicBoolean mMessageServiceReviewCallbackRan = new AtomicBoolean();
+    private final AtomicBoolean mMessageServiceDismissCallbackRan = new AtomicBoolean();
 
-    private MessageCardView.ReviewActionProvider mUiReviewHandler =
+    private final MessageCardView.ReviewActionProvider mUiReviewHandler =
             () -> mReviewButtonClicked.set(true);
-    private MessageCardView.DismissActionProvider mUiDismissHandler =
+    private final MessageCardView.DismissActionProvider mUiDismissHandler =
             (int messageType) -> mDismissButtonClicked.set(true);
-    private MessageCardView.ReviewActionProvider mMessageServiceActionHandler =
+    private final MessageCardView.ReviewActionProvider mMessageServiceActionHandler =
             () -> mMessageServiceReviewCallbackRan.set(true);
-    private MessageCardView.DismissActionProvider mMessageServiceDismissHandler =
+    private final MessageCardView.DismissActionProvider mMessageServiceDismissHandler =
             (int messageType) -> mMessageServiceDismissCallbackRan.set(true);
 
     @BeforeClass
@@ -226,7 +226,7 @@ public class MessageCardViewBinderTest {
     @SmallTest
     public void testSetLeftMargin() {
         View messageCardView = mItemView.findViewById(R.id.tab_grid_message_item);
-        mItemViewModel.set(MessageCardViewProperties.LEFT_MARGIN_OVERRIDE, MARGIN_OVERRIDE);
+        mItemViewModel.set(MessageCardViewProperties.LEFT_MARGIN_OVERRIDE_PX, MARGIN_OVERRIDE);
         ViewGroup.MarginLayoutParams oldParams =
                 (ViewGroup.MarginLayoutParams) messageCardView.getLayoutParams();
 
@@ -243,7 +243,7 @@ public class MessageCardViewBinderTest {
     @SmallTest
     public void testSetTopMargin() {
         View messageCardView = mItemView.findViewById(R.id.tab_grid_message_item);
-        mItemViewModel.set(MessageCardViewProperties.TOP_MARGIN_OVERRIDE, MARGIN_OVERRIDE);
+        mItemViewModel.set(MessageCardViewProperties.TOP_MARGIN_OVERRIDE_PX, MARGIN_OVERRIDE);
         ViewGroup.MarginLayoutParams oldParams =
                 (ViewGroup.MarginLayoutParams) messageCardView.getLayoutParams();
 
@@ -260,7 +260,7 @@ public class MessageCardViewBinderTest {
     @SmallTest
     public void testSetRightMargin() {
         View messageCardView = mItemView.findViewById(R.id.tab_grid_message_item);
-        mItemViewModel.set(MessageCardViewProperties.RIGHT_MARGIN_OVERRIDE, MARGIN_OVERRIDE);
+        mItemViewModel.set(MessageCardViewProperties.RIGHT_MARGIN_OVERRIDE_PX, MARGIN_OVERRIDE);
         ViewGroup.MarginLayoutParams oldParams =
                 (ViewGroup.MarginLayoutParams) messageCardView.getLayoutParams();
 
@@ -277,7 +277,7 @@ public class MessageCardViewBinderTest {
     @SmallTest
     public void testSetBottomMargin() {
         View messageCardView = mItemView.findViewById(R.id.tab_grid_message_item);
-        mItemViewModel.set(MessageCardViewProperties.BOTTOM_MARGIN_OVERRIDE, MARGIN_OVERRIDE);
+        mItemViewModel.set(MessageCardViewProperties.BOTTOM_MARGIN_OVERRIDE_PX, MARGIN_OVERRIDE);
         ViewGroup.MarginLayoutParams oldParams =
                 (ViewGroup.MarginLayoutParams) messageCardView.getLayoutParams();
 

@@ -10,6 +10,7 @@
 #include "device/fido/enclave/enclave_protocol_utils.h"
 
 #include <array>
+#include <variant>
 
 #include "base/functional/callback.h"
 #include "base/json/json_reader.h"
@@ -26,6 +27,7 @@
 #include "components/cbor/writer.h"
 #include "components/device_event_log/device_event_log.h"
 #include "components/sync/protocol/webauthn_credential_specifics.pb.h"
+#include "crypto/hash.h"
 #include "crypto/random.h"
 #include "device/fido/attestation_statement.h"
 #include "device/fido/authenticator_data.h"
@@ -240,7 +242,7 @@ ErrorResponse::ErrorResponse(ErrorResponse&) = default;
 
 ErrorResponse::ErrorResponse(ErrorResponse&&) = default;
 
-absl::variant<AuthenticatorGetAssertionResponse, ErrorResponse>
+std::variant<AuthenticatorGetAssertionResponse, ErrorResponse>
 ParseGetAssertionResponse(cbor::Value response_value,
                           base::span<const uint8_t> credential_id) {
   if (!response_value.is_array() || response_value.GetArray().empty()) {
@@ -312,9 +314,9 @@ ParseGetAssertionResponse(cbor::Value response_value,
   return std::move(*response);
 }
 
-absl::variant<std::pair<AuthenticatorMakeCredentialResponse,
-                        sync_pb::WebauthnCredentialSpecifics>,
-              ErrorResponse>
+std::variant<std::pair<AuthenticatorMakeCredentialResponse,
+                       sync_pb::WebauthnCredentialSpecifics>,
+             ErrorResponse>
 ParseMakeCredentialResponse(cbor::Value response_value,
                             const CtapMakeCredentialRequest& request,
                             int32_t wrapped_secret_version,
@@ -437,7 +439,7 @@ ParseMakeCredentialResponse(cbor::Value response_value,
       break;
   }
   AuthenticatorData authenticator_data(
-      fido_parsing_utils::CreateSHA256Hash(request.rp.id), flags,
+      crypto::hash::Sha256(request.rp.id), flags,
       std::array<uint8_t, 4>({0, 0, 0, 0}), std::move(credential_data));
   AttestationObject attestation_object(
       std::move(authenticator_data),

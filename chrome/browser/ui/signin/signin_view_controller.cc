@@ -15,7 +15,6 @@
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/reauth_result.h"
 #include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
@@ -31,15 +30,19 @@
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/base/signin_prefs.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/tribool.h"
 #include "components/supervised_user/core/common/features.h"
+#include "components/sync/base/data_type_histogram.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/buildflags/buildflags.h"
 #include "google_apis/gaia/core_account_id.h"
+#include "google_apis/gaia/gaia_id.h"
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 #include "base/strings/utf_string_conversions.h"
@@ -73,6 +76,12 @@
 #include "ui/base/models/dialog_model.h"
 #include "url/url_constants.h"
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/extensions/account_extension_tracker.h"
+#include "chrome/browser/extensions/extension_sync_util.h"
+#include "extensions/common/extension.h"
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 namespace {
 
@@ -155,6 +164,21 @@ signin_metrics::PromoAction GetPromoActionForNewAccount(
                    PROMO_ACTION_NEW_ACCOUNT_NO_EXISTING_ACCOUNT;
 }
 
+// Returns if account extensions should be shown in the signout confirmation
+// prompt. If true, this will force the prompt to show before signing out.
+bool ShowAccountExtensionsOnSignout(Profile* profile) {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  // Do not sign out immediately if the user has account extensions.
+  if (extensions::sync_util::IsSyncingExtensionsInTransportMode(profile)) {
+    extensions::AccountExtensionTracker* tracker =
+        extensions::AccountExtensionTracker::Get(profile);
+    return !tracker->GetSignedInAccountExtensions().empty();
+  }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+
+  return false;
+}
+
 // Called from `SignoutOrReauthWithPrompt()` after the user made a choice on the
 // confirmation dialog.
 void HandleSignoutConfirmationChoice(
@@ -162,7 +186,8 @@ void HandleSignoutConfirmationChoice(
     signin_metrics::AccessPoint reauth_access_point,
     signin_metrics::ProfileSignout profile_signout_source,
     signin_metrics::SourceForRefreshTokenOperation token_signout_source,
-    ChromeSignoutConfirmationChoice user_choice) {
+    ChromeSignoutConfirmationChoice user_choice,
+    bool uninstall_account_extensions_on_signout) {
   if (!browser) {
     return;
   }
@@ -176,6 +201,12 @@ void HandleSignoutConfirmationChoice(
           profile, reauth_access_point);
       return;
     case ChromeSignoutConfirmationChoice::kSignout: {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+      extensions::AccountExtensionTracker::Get(profile)
+          ->set_uninstall_account_extensions_on_signout(
+              uninstall_account_extensions_on_signout);
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+
       signin::IdentityManager* identity_manager =
           IdentityManagerFactory::GetForProfile(profile);
       // Sign out from all accounts on the web if needed.
@@ -233,11 +264,27 @@ GURL GetSigninUrlForDiceSigninTab(
 
 }  // namespace
 
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(SigninViewController,
+                                      kSignoutConfirmationDialogViewElementId);
+
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(SigninViewController,
+                                      kHistorySyncOptinViewId);
+
 SigninViewController::SigninViewController(Browser* browser)
     : browser_(browser) {}
 
 SigninViewController::~SigninViewController() {
   CloseModalSignin();
+}
+
+void SigninViewController::AddObserver(
+    SigninViewController::Observer* observer) {
+  observer_list_.AddObserver(observer);
+}
+
+void SigninViewController::RemoveObserver(
+    SigninViewController::Observer* observer) {
+  observer_list_.RemoveObserver(observer);
 }
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
@@ -283,8 +330,8 @@ void SigninViewController::SignoutOrReauthWithPrompt(
   CHECK(profile->IsRegularProfile());
   syncer::SyncService* sync_service =
       SyncServiceFactory::GetForProfile(profile);
-  base::OnceCallback<void(syncer::DataTypeSet)> signout_prompt_with_datatypes =
-      base::BindOnce(
+  base::OnceCallback<void(absl::flat_hash_map<syncer::DataType, size_t>)>
+      signout_prompt_with_datatypes = base::BindOnce(
           &SigninViewController::SignoutOrReauthWithPromptWithUnsyncedDataTypes,
           weak_ptr_factory_.GetWeakPtr(), reauth_access_point,
           profile_signout_source, token_signout_source);
@@ -298,7 +345,8 @@ void SigninViewController::SignoutOrReauthWithPrompt(
     return;
   }
   // Dice users don't see the prompt, pass empty datatypes.
-  std::move(signout_prompt_with_datatypes).Run(syncer::DataTypeSet());
+  std::move(signout_prompt_with_datatypes)
+      .Run(absl::flat_hash_map<syncer::DataType, size_t>());
 }
 
 void SigninViewController::MaybeShowChromeSigninDialogForExtensions(
@@ -367,9 +415,7 @@ void SigninViewController::MaybeShowChromeSigninDialogForExtensions(
   new_tab_web_contents_observer_ = std::make_unique<NewTabWebContentsObserver>(
       web_contents, std::move(callback));
 }
-#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
 void SigninViewController::ShowModalProfileCustomizationDialog(
     bool is_local_profile_creation) {
   CloseModalSignin();
@@ -408,6 +454,16 @@ void SigninViewController::ShowModalSyncConfirmationDialog(
       GetOnModalDialogClosedCallback());
 }
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+void SigninViewController::ShowModalHistorySyncOptInDialog() {
+  CHECK(base::FeatureList::IsEnabled(switches::kEnableHistorySyncOptin));
+  CloseModalSignin();
+  dialog_ = std::make_unique<SigninModalDialogImpl>(
+      SigninViewControllerDelegate::CreateSyncHistoryOptInDelegate(browser_),
+      GetOnModalDialogClosedCallback());
+}
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
 void SigninViewController::ShowModalManagedUserNoticeDialog(
     std::unique_ptr<signin::EnterpriseProfileCreationDialogParams>
         create_param) {
@@ -436,6 +492,9 @@ bool SigninViewController::ShowsModalDialog() {
 void SigninViewController::CloseModalSignin() {
   if (dialog_) {
     dialog_->CloseModalDialog();
+    for (Observer& observer : observer_list_) {
+      observer.OnModalSigninDialogClosed();
+    }
   }
 
   DCHECK(!dialog_);
@@ -550,6 +609,7 @@ void SigninViewController::ShowDiceSigninTab(
       signin_url, access_point, signin_reason, promo_action, redirect_url,
       /*record_signin_started_metrics=*/true,
       DiceTabHelper::GetEnableSyncCallbackForBrowser(),
+      DiceTabHelper::GetHistorySyncOptinCallbackForBrowser(),
       DiceTabHelper::OnSigninHeaderReceived(),
       DiceTabHelper::GetShowSigninErrorCallbackForBrowser());
 }
@@ -624,7 +684,7 @@ void SigninViewController::SignoutOrReauthWithPromptWithUnsyncedDataTypes(
     signin_metrics::AccessPoint reauth_access_point,
     signin_metrics::ProfileSignout profile_signout_source,
     signin_metrics::SourceForRefreshTokenOperation token_signout_source,
-    syncer::DataTypeSet unsynced_datatypes) {
+    absl::flat_hash_map<syncer::DataType, size_t> unsynced_datatypes) {
   Profile* profile = browser_->profile();
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
@@ -645,13 +705,17 @@ void SigninViewController::SignoutOrReauthWithPromptWithUnsyncedDataTypes(
     sign_out_immediately = true;
   }
 
-  base::OnceCallback<void(ChromeSignoutConfirmationChoice)> callback =
-      base::BindOnce(&HandleSignoutConfirmationChoice, browser_->AsWeakPtr(),
-                     reauth_access_point, profile_signout_source,
-                     token_signout_source);
+  if (ShowAccountExtensionsOnSignout(profile)) {
+    sign_out_immediately = false;
+  }
+
+  SignoutConfirmationCallback callback = base::BindOnce(
+      &HandleSignoutConfirmationChoice, browser_->AsWeakPtr(),
+      reauth_access_point, profile_signout_source, token_signout_source);
 
   if (sign_out_immediately) {
-    std::move(callback).Run(ChromeSignoutConfirmationChoice::kSignout);
+    std::move(callback).Run(ChromeSignoutConfirmationChoice::kSignout,
+                            /*uninstall_account_extensions_on_signout=*/false);
     return;
   }
 
@@ -671,6 +735,23 @@ void SigninViewController::SignoutOrReauthWithPromptWithUnsyncedDataTypes(
           signin::Tribool::kTrue) {
     prompt_variant =
         ChromeSignoutConfirmationPromptVariant::kProfileWithParentalControls;
+  }
+
+  switch (prompt_variant) {
+    case ChromeSignoutConfirmationPromptVariant::kNoUnsyncedData:
+    case ChromeSignoutConfirmationPromptVariant::kProfileWithParentalControls:
+      break;
+    case ChromeSignoutConfirmationPromptVariant::kUnsyncedData:
+      syncer::SyncRecordDataTypeNumUnsyncedEntitiesFromDataCounts(
+          syncer::UnsyncedDataRecordingEvent::kOnSignoutConfirmation,
+          std::move(unsynced_datatypes));
+      break;
+    case ChromeSignoutConfirmationPromptVariant::kUnsyncedDataWithReauthButton:
+      syncer::SyncRecordDataTypeNumUnsyncedEntitiesFromDataCounts(
+          syncer::UnsyncedDataRecordingEvent::
+              kOnSignoutConfirmationFromPendingState,
+          std::move(unsynced_datatypes));
+      break;
   }
 
   ShowSignoutConfirmationPrompt(prompt_variant, std::move(callback));
@@ -739,15 +820,7 @@ void SigninViewController::ShowChromeSigninDialogForExtensions(
 
 void SigninViewController::ShowSignoutConfirmationPrompt(
     ChromeSignoutConfirmationPromptVariant prompt_variant,
-    base::OnceCallback<void(ChromeSignoutConfirmationChoice)> callback) {
-  if (!switches::IsImprovedSigninUIOnDesktopEnabled() &&
-      prompt_variant ==
-          ChromeSignoutConfirmationPromptVariant::kNoUnsyncedData) {
-    // This variant is not enabled. Skip the UI and sign out immediately.
-    std::move(callback).Run(ChromeSignoutConfirmationChoice::kSignout);
-    return;
-  }
-
+    SignoutConfirmationCallback callback) {
   CloseModalSignin();
   dialog_ = std::make_unique<SigninModalDialogImpl>(
       SigninViewControllerDelegate::CreateSignoutConfirmationDelegate(

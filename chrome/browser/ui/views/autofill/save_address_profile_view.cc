@@ -18,7 +18,7 @@
 #include "chrome/browser/ui/views/autofill/autofill_bubble_utils.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/theme_resources.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/geo/address_i18n.h"
 #include "components/autofill/core/browser/ui/addresses/autofill_address_util.h"
@@ -184,7 +184,7 @@ SaveAddressProfileView::SaveAddressProfileView(
           .SetOrientation(views::BoxLayout::Orientation::kVertical)
           .SetBetweenChildSpacing(
               ChromeLayoutProvider::Get()->GetDistanceMetric(
-                  DISTANCE_CONTROL_LIST_VERTICAL))
+                  views::DISTANCE_CONTROL_LIST_VERTICAL))
           .Build());
 
   edit_button_ = details_section->AddChildView(CreateEditButton(

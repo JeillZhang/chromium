@@ -23,6 +23,7 @@
 #include "ash/constants/ash_switches.h"
 #include "ash/shell.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -179,19 +180,6 @@ std::vector<std::string> GenerateUpgradeProps(
           "%s.preferred_languages=%s", prefix.c_str(),
           base::JoinString(upgrade_params.preferred_languages, ",").c_str()));
     }
-  }
-
-  if (upgrade_params.enable_priority_app_lmk_delay &&
-      !upgrade_params.priority_app_lmk_delay_list.empty()) {
-    result.push_back(base::StringPrintf(
-        "%s.arc.lmk.enable_priority_app_delay=%d", prefix.c_str(),
-        upgrade_params.enable_priority_app_lmk_delay));
-    result.push_back(
-        base::StringPrintf("%s.arc.lmk.priority_apps=%s", prefix.c_str(),
-                           upgrade_params.priority_app_lmk_delay_list.c_str()));
-    result.push_back(base::StringPrintf(
-        "%s.arc.lmk.priority_app_delay_duration_sec=%d", prefix.c_str(),
-        upgrade_params.priority_app_lmk_delay_second));
   }
 
   if (upgrade_params.enable_lmk_perceptible_min_state_update) {
@@ -407,8 +395,7 @@ vm_tools::concierge::StartArcVmRequest CreateStartArcVmRequest(
   request.set_lock_guest_memory(base::FeatureList::IsEnabled(kLockGuestMemory));
 
   // Controls whether WebView Zygote is lazily initialized in ARC.
-  request.set_enable_web_view_zygote_lazy_init(
-      base::FeatureList::IsEnabled(arc::kEnableLazyWebViewInit));
+  request.set_enable_web_view_zygote_lazy_init(false);
 
   // Specify VM Memory.
   if (base::FeatureList::IsEnabled(kVmMemorySize)) {
@@ -1376,10 +1363,11 @@ void SetArcVmBootNotificationServerAddressForTesting(
   DCHECK_GE(sizeof(address->sun_path), new_address.size());
   DCHECK_GT(connect_timeout_limit, connect_sleep_duration_initial);
 
-  memset(address->sun_path, 0, sizeof(address->sun_path));
+  UNSAFE_TODO(memset(address->sun_path, 0, sizeof(address->sun_path)));
   // |new_address| may contain '\0' if it is an abstract socket address, so use
   // memcpy instead of strcpy.
-  memcpy(address->sun_path, new_address.data(), new_address.size());
+  UNSAFE_TODO(
+      memcpy(address->sun_path, new_address.data(), new_address.size()));
 
   g_connect_timeout_limit_for_testing = connect_timeout_limit;
   g_connect_sleep_duration_initial_for_testing = connect_sleep_duration_initial;

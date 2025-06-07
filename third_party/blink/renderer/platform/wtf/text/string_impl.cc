@@ -36,6 +36,7 @@
 #include "base/functional/callback.h"
 #include "base/i18n/string_search.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partitions.h"
 #include "third_party/blink/renderer/platform/wtf/dynamic_annotations.h"
 #include "third_party/blink/renderer/platform/wtf/leak_annotations.h"
@@ -167,9 +168,8 @@ void StringImpl::DestroyIfNeeded() const {
 }
 
 unsigned StringImpl::ComputeASCIIFlags() const {
-  ASCIIStringAttributes ascii_attributes =
-      Is8Bit() ? CharacterAttributes(Characters8(), length())
-               : CharacterAttributes(Characters16(), length());
+  ASCIIStringAttributes ascii_attributes = VisitCharacters(
+      *this, [](auto chars) { return CharacterAttributes(chars); });
   uint32_t new_flags = ASCIIStringAttributesToFlags(ascii_attributes);
   const uint32_t previous_flags =
       hash_and_flags_.fetch_or(new_flags, std::memory_order_relaxed);
@@ -277,7 +277,8 @@ StringImpl* StringImpl::CreateStatic(base::span<const char> string) {
 
   StaticStringsTable::const_iterator it = StaticStrings().find(hash);
   if (it != StaticStrings().end()) {
-    DCHECK_EQ(it->value->Span8(), base::as_bytes(string));
+    DCHECK_EQ(base::as_string_view(it->value->Span8()),
+              base::as_string_view(string));
     return it->value;
   }
   const wtf_size_t narrowed_length = static_cast<wtf_size_t>(string.size());
@@ -1529,32 +1530,15 @@ bool Equal(const StringImpl* a, base::span<const UChar> b) {
 template <typename StringType>
 bool EqualToCString(const StringType* a, const LChar* b) {
   DCHECK(b);
-  wtf_size_t length = a->length();
-
-  if (a->Is8Bit()) {
-    const LChar* a_ptr = a->Characters8();
-    for (wtf_size_t i = 0; i != length; ++i) {
-      LChar bc = b[i];
-      LChar ac = a_ptr[i];
-      if (!bc)
+  return VisitCharacters(*a, [b](auto chars) {
+    for (wtf_size_t i = 0; auto ac : chars) {
+      LChar bc = b[i++];
+      if (!bc || ac != bc) {
         return false;
-      if (ac != bc)
-        return false;
+      }
     }
-
-    return !b[length];
-  }
-
-  const UChar* a_ptr = a->Characters16();
-  for (wtf_size_t i = 0; i != length; ++i) {
-    LChar bc = b[i];
-    if (!bc)
-      return false;
-    if (a_ptr[i] != bc)
-      return false;
-  }
-
-  return !b[length];
+    return !b[chars.size()];
+  });
 }
 
 bool EqualToCString(const StringImpl* a, const char* latin1) {

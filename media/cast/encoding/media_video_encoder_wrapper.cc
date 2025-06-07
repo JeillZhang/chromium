@@ -24,11 +24,11 @@
 #include "media/cast/constants.h"
 #include "media/cast/encoding/fake_software_video_encoder.h"
 #include "media/cast/encoding/video_encoder.h"
+#include "media/media_buildflags.h"
 #include "media/video/gpu_video_accelerator_factories.h"
 #include "media/video/video_encode_accelerator_adapter.h"
 #include "media/video/video_encoder_info.h"
 #include "media_video_encoder_wrapper.h"
-#include "third_party/libaom/libaom_buildflags.h"
 
 #if BUILDFLAG(ENABLE_LIBVPX)
 #include "media/video/vpx_video_encoder.h"
@@ -185,6 +185,12 @@ MediaVideoEncoderWrapper::MediaVideoEncoderWrapper(
   encode_options_.key_frame = true;
   options_.bitrate = Bitrate::ConstantBitrate(
       base::checked_cast<uint32_t>(video_config.start_bitrate));
+
+  // NOTE: the H264 encoder can produce either AVC or annexb formatted frames.
+  // Annexb is better supported by Cast receivers.
+  if (codec_ == media::VideoCodec::kH264) {
+    options_.avc.produce_annexb = true;
+  }
 
   // NOTE: since we don't actually know the frame size until the first
   // frame, the encoder will not get created until the first call to

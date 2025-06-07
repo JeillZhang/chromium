@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.Window;
@@ -24,7 +25,6 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.back_press.SecondaryActivityBackPressUma;
 import org.chromium.chrome.browser.device_lock.DeviceLockActivityLauncherImpl;
 import org.chromium.chrome.browser.firstrun.FirstRunActivityBase;
 import org.chromium.chrome.browser.init.ActivityProfileProvider;
@@ -70,10 +70,7 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
     private static final String ARGUMENT_ACCESS_POINT = "SigninAndHistorySyncActivity.AccessPoint";
     private static final String ARGUMENT_IS_FULLSCREEN_SIGNIN =
             "SigninAndHistorySyncActivity.IsFullscreenSignin";
-    private static final String ARGUMENT_FULLSCREEN_SIGNIN_CONFIG =
-            "SigninAndHistoryOptInActivity.FullscreenSigninAndHistorySyncConfig";
-    private static final String ARGUMENT_BOTTOM_SHEET_SIGNIN_CONFIG =
-            "SigninAndHistoryOptInActivity.BottomSheetSigninAndHistorySyncConfig";
+    private static final String ARGUMENT_CONFIG = "SigninAndHistorySyncActivity.Config";
 
     private static final int ADD_ACCOUNT_REQUEST_CODE = 1;
 
@@ -104,15 +101,16 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
         super.triggerLayoutInflation();
 
         Intent intent = getIntent();
-        int signinAccessPoint = intent.getIntExtra(ARGUMENT_ACCESS_POINT,
-                                                   SigninAccessPoint.MAX_VALUE);
-        assert signinAccessPoint <= SigninAccessPoint.MAX_VALUE :
-          "Cannot find SigninAccessPoint!";
+        int signinAccessPoint =
+                intent.getIntExtra(ARGUMENT_ACCESS_POINT, SigninAccessPoint.MAX_VALUE);
+        assert signinAccessPoint <= SigninAccessPoint.MAX_VALUE : "Cannot find SigninAccessPoint!";
 
         if (intent.getBooleanExtra(ARGUMENT_IS_FULLSCREEN_SIGNIN, false)) {
             updateSystemUiForFullscreenSignin();
+
             FullscreenSigninAndHistorySyncConfig config =
-                    intent.getParcelableExtra(ARGUMENT_FULLSCREEN_SIGNIN_CONFIG);
+                    SigninAndHistorySyncBundleHelper.getFullscreenConfig(
+                            intent.getBundleExtra(ARGUMENT_CONFIG));
             mIsFullscreenPromo = true;
 
             RecordHistogram.recordTimesHistogram(
@@ -121,6 +119,7 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
 
             mCoordinator =
                     new FullscreenSigninAndHistorySyncCoordinator(
+                            getWindowAndroid(),
                             this,
                             getModalDialogManager(),
                             getProfileProviderSupplier(),
@@ -128,7 +127,8 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
                             config,
                             signinAccessPoint,
                             this,
-                            getStartTime());
+                            getStartTime(),
+                            DeviceLockActivityLauncherImpl.get());
 
             setInitialContentView(mCoordinator.getView());
             onInitialLayoutInflationComplete();
@@ -140,8 +140,10 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
         }
 
         setStatusBarColor(Color.TRANSPARENT);
+
         BottomSheetSigninAndHistorySyncConfig config =
-                intent.getParcelableExtra(ARGUMENT_BOTTOM_SHEET_SIGNIN_CONFIG);
+                SigninAndHistorySyncBundleHelper.getBottomSheetConfig(
+                        intent.getBundleExtra(ARGUMENT_CONFIG));
         mCoordinator =
                 new BottomSheetSigninAndHistorySyncCoordinator(
                         getWindowAndroid(),
@@ -179,7 +181,7 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
                     @Nullable
                     @Override
                     protected OtrProfileId createOffTheRecordProfileId() {
-                        throw new IllegalStateException(
+                        throw new IllegalArgumentException(
                                 "Attempting to access incognito in the sign-in & history sync"
                                         + " opt-in flow");
                     }
@@ -240,7 +242,9 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
     @Override
     public void setStatusBarColor(int statusBarColor) {
         StatusBarColorController.setStatusBarColor(
-                getEdgeToEdgeManager().getEdgeToEdgeSystemBarColorHelper(),
+                (getEdgeToEdgeManager() != null)
+                        ? getEdgeToEdgeManager().getEdgeToEdgeSystemBarColorHelper()
+                        : null,
                 getWindow(),
                 statusBarColor);
     }
@@ -287,17 +291,13 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
         return mCoordinator.handleBackPress();
     }
 
-    @Override
-    public @SecondaryActivityBackPressUma.SecondaryActivity int getSecondaryActivity() {
-        return SecondaryActivityBackPressUma.SecondaryActivity.SIGNIN_AND_HISTORY_SYNC;
-    }
-
     public static @NonNull Intent createIntent(
             @NonNull Context context,
             @NonNull BottomSheetSigninAndHistorySyncConfig config,
             @SigninAccessPoint int signinAccessPoint) {
         Intent intent = new Intent(context, SigninAndHistorySyncActivity.class);
-        intent.putExtra(ARGUMENT_BOTTOM_SHEET_SIGNIN_CONFIG, config);
+        Bundle bundle = SigninAndHistorySyncBundleHelper.getBundle(config);
+        intent.putExtra(ARGUMENT_CONFIG, bundle);
         intent.putExtra(ARGUMENT_ACCESS_POINT, signinAccessPoint);
         return intent;
     }
@@ -308,7 +308,8 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
             @SigninAccessPoint int signinAccessPoint) {
         Intent intent = new Intent(context, SigninAndHistorySyncActivity.class);
         intent.putExtra(ARGUMENT_IS_FULLSCREEN_SIGNIN, true);
-        intent.putExtra(ARGUMENT_FULLSCREEN_SIGNIN_CONFIG, config);
+        Bundle bundle = SigninAndHistorySyncBundleHelper.getBundle(config);
+        intent.putExtra(ARGUMENT_CONFIG, bundle);
         intent.putExtra(ARGUMENT_ACCESS_POINT, signinAccessPoint);
         return intent;
     }

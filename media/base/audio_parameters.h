@@ -227,6 +227,8 @@ class MEDIA_SHMEM_EXPORT AudioParameters {
     VOICE_ISOLATION = 1 << 20,  // Enable/Disable platform voice isolation.
                                 // Only meaningful when
                                 // CLIENT_CONTROLLED_VOICE_ISOLATION is set.
+
+    DEEP_NOISE_SUPPRESSION = 1 << 21,  // Also called Voice Focus on Windows.
   };
 
   struct HardwareCapabilities {
@@ -266,6 +268,10 @@ class MEDIA_SHMEM_EXPORT AudioParameters {
     // Require audio processing offload.
     bool require_audio_offload = false;
   };
+
+  // Returns a string which contains the full bitmask for the given `mask`.
+  // Example: mask=3 => returns "ECHO_CANCELLER | DUCKING".
+  static std::string EffectsMaskToString(int mask);
 
   AudioParameters();
 

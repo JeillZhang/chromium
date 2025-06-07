@@ -33,7 +33,7 @@ class MockInputRouterClient : public input::InputRouterClient,
   void IncrementInFlightEventCount() override;
   void DecrementInFlightEventCount(
       blink::mojom::InputEventResultSource ack_source) override;
-  void DidOverscroll(const ui::DidOverscrollParams& params) override;
+  void DidOverscroll(blink::mojom::DidOverscrollParamsPtr params) override;
   void OnSetCompositorAllowedTouchAction(cc::TouchAction touch_action) override;
   void DidStartScrollingViewport() override;
   void ForwardWheelEventWithLatencyInfo(
@@ -58,8 +58,7 @@ class MockInputRouterClient : public input::InputRouterClient,
   void OnImeCancelComposition() override {}
   void OnImeCompositionRangeChanged(
       const gfx::Range& range,
-      const std::optional<std::vector<gfx::Rect>>& character_bounds,
-      const std::optional<std::vector<gfx::Rect>>& line_bounds) override {}
+      const std::optional<std::vector<gfx::Rect>>& character_bounds) override {}
   input::StylusInterface* GetStylusInterface() override;
   void OnStartStylusWriting() override;
   input::DispatchToRendererCallback GetDispatchToRendererCallback() override;

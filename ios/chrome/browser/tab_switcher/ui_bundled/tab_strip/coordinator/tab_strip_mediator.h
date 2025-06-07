@@ -9,9 +9,11 @@
 
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_collection_drag_drop_handler.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_strip/ui/tab_strip_mutator.h"
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_switcher_item_snapshot_and_favicon_data_source.h"
 
 class Browser;
 class BrowserList;
+class FaviconLoader;
 class ProfileIOS;
 enum class TabGroupActionType;
 @protocol TabStripCommands;
@@ -30,10 +32,6 @@ class MessagingBackendService;
 }  // namespace messaging
 }  // namespace collaboration
 
-namespace data_sharing {
-class DataSharingService;
-}  // namespace data_sharing
-
 namespace tab_groups {
 class TabGroupId;
 class TabGroupSyncService;
@@ -46,7 +44,9 @@ class WebStateID;
 
 // This mediator used to manage model interaction for its consumer.
 @interface TabStripMediator
-    : NSObject <TabCollectionDragDropHandler, TabStripMutator>
+    : NSObject <TabCollectionDragDropHandler,
+                TabSwitcherItemSnapShotAndFaviconDataSource,
+                TabStripMutator>
 
 // The WebStateList that this mediator listens for any changes on the total
 // number of Webstates.
@@ -69,12 +69,12 @@ class WebStateID;
 - (instancetype)
         initWithConsumer:(id<TabStripConsumer>)consumer
      tabGroupSyncService:(tab_groups::TabGroupSyncService*)tabGroupSyncService
-      dataSharingService:(data_sharing::DataSharingService*)dataSharingService
              browserList:(BrowserList*)browserList
         messagingService:
             (collaboration::messaging::MessagingBackendService*)messagingService
     collaborationService:
         (collaboration::CollaborationService*)collaborationService
+           faviconLoader:(FaviconLoader*)faviconLoader
     NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 
@@ -106,6 +106,11 @@ class WebStateID;
 
 // Deletes the shared group in `tabGroupItem`.
 - (void)deleteSharedGroup:(TabGroupItem*)tabGroupItem;
+
+// Completes the final removal of the last tab from its shared group. The last
+// tab is temporarily saved until this function is triggered upon user
+// confirmation.
+- (void)closeSavedTabFromGroup:(TabGroupItem*)tabGroupItem;
 
 @end
 

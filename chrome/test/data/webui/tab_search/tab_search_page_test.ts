@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'chrome://tab-search.top-chrome/tab_search.js';
+
 import {MetricsReporterImpl} from 'chrome://resources/js/metrics_reporter/metrics_reporter.js';
 import type {ProfileData, RecentlyClosedTab, Tab, TabSearchItemElement, TabSearchPageElement} from 'chrome://tab-search.top-chrome/tab_search.js';
-import {TabGroupColor, TabSearchApiProxyImpl} from 'chrome://tab-search.top-chrome/tab_search.js';
+import {SEARCH_QUERY_MAX_LENGTH, TabGroupColor, TabSearchApiProxyImpl} from 'chrome://tab-search.top-chrome/tab_search.js';
 import {assertEquals, assertFalse, assertGT, assertNotEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {keyDownOn} from 'chrome://webui-test/keyboard_mock_interactions.js';
 import {MockedMetricsReporter} from 'chrome://webui-test/mocked_metrics_reporter.js';
@@ -77,6 +79,7 @@ suite('TabSearchAppTest', () => {
         {
           windows: [{
             active: true,
+            isHostWindow: true,
             height: SAMPLE_WINDOW_HEIGHT,
             tabs: generateSampleTabsFromSiteNames(['OpenTab1'], true),
           }],
@@ -121,6 +124,7 @@ suite('TabSearchAppTest', () => {
         createProfileData({
           windows: [{
             active: true,
+            isHostWindow: true,
             height: SAMPLE_WINDOW_HEIGHT,
             tabs: generateSampleTabsFromSiteNames(['OpenTab1'], true),
           }],
@@ -141,6 +145,16 @@ suite('TabSearchAppTest', () => {
     assertNotEquals(
         -1, tabSearchPage.getSelectedTabIndex(),
         'No default selection in the presence of data');
+  });
+
+  test('Search text has an upper limit', async () => {
+    await setupTest(createProfileData());
+    // Ensure an upper limit exists, to prevent errors like
+    // "SyntaxError: Invalid regular expression: ..."
+    assertEquals(
+        SEARCH_QUERY_MAX_LENGTH,
+        Number.parseInt(
+            tabSearchPage.getSearchInput().getAttribute('maxlength')!, 10));
   });
 
   test('Search text changes tab items', async () => {
@@ -166,6 +180,7 @@ suite('TabSearchAppTest', () => {
         createProfileData({
           windows: [{
             active: true,
+            isHostWindow: true,
             height: SAMPLE_WINDOW_HEIGHT,
             tabs: generateSampleTabsFromSiteNames(['Open sample tab'], true),
           }],
@@ -210,7 +225,12 @@ suite('TabSearchAppTest', () => {
       lastActiveTimeTicks: {internalValue: BigInt(4)},
     });
     await setupTest(createProfileData({
-      windows: [{active: true, height: SAMPLE_WINDOW_HEIGHT, tabs: [tabData]}],
+      windows: [{
+        active: true,
+        isHostWindow: true,
+        height: SAMPLE_WINDOW_HEIGHT,
+        tabs: [tabData],
+      }],
     }));
 
     const tabSearchItem =
@@ -220,7 +240,7 @@ suite('TabSearchAppTest', () => {
     assertEquals(tabData.tabId, tabInfo.tabId);
 
     const tabSearchItemCloseButton =
-        tabSearchItem.shadowRoot!.querySelector('cr-icon-button')!;
+        tabSearchItem.shadowRoot.querySelector('cr-icon-button')!;
     tabSearchItemCloseButton.click();
     const [tabId] = await testProxy.whenCalled('closeTab');
     assertEquals(tabData.tabId, tabId);
@@ -239,6 +259,7 @@ suite('TabSearchAppTest', () => {
     await setupTest(createProfileData({
       windows: [{
         active: true,
+        isHostWindow: true,
         height: SAMPLE_WINDOW_HEIGHT,
         tabs: [createTab({
           title: 'Google',
@@ -275,6 +296,7 @@ suite('TabSearchAppTest', () => {
     await setupTest(createProfileData({
       windows: [{
         active: true,
+        isHostWindow: true,
         height: SAMPLE_WINDOW_HEIGHT,
         tabs: [createTab({
           title: 'Google',
@@ -299,7 +321,12 @@ suite('TabSearchAppTest', () => {
 
   test('Keyboard navigation on an empty list', async () => {
     await setupTest(createProfileData({
-      windows: [{active: true, height: SAMPLE_WINDOW_HEIGHT, tabs: []}],
+      windows: [{
+        active: true,
+        isHostWindow: true,
+        height: SAMPLE_WINDOW_HEIGHT,
+        tabs: [],
+      }],
     }));
 
     const searchField = tabSearchPage.$.searchField;
@@ -411,6 +438,7 @@ suite('TabSearchAppTest', () => {
     testProxy.getCallbackRouterRemote().tabsChanged(createProfileData({
       windows: [{
         active: true,
+        isHostWindow: true,
         height: SAMPLE_WINDOW_HEIGHT,
         tabs: [testData.windows[0]!.tabs[0]!],
       }],
@@ -432,6 +460,7 @@ suite('TabSearchAppTest', () => {
     });
     const tabUpdateInfo = {
       inActiveWindow: true,
+      inHostWindow: true,
       tab: updatedTab,
     };
     testProxy.getCallbackRouterRemote().tabUpdated(tabUpdateInfo);
@@ -449,6 +478,7 @@ suite('TabSearchAppTest', () => {
     await setupTest(createProfileData({
       windows: [{
         active: true,
+        isHostWindow: true,
         height: SAMPLE_WINDOW_HEIGHT,
         tabs: generateSampleTabsFromSiteNames(['OpenTab1'], true),
       }],
@@ -461,6 +491,7 @@ suite('TabSearchAppTest', () => {
     });
     const tabUpdateInfo = {
       inActiveWindow: true,
+      inHostWindow: true,
       tab: updatedTab,
     };
     testProxy.getCallbackRouterRemote().tabUpdated(tabUpdateInfo);
@@ -487,13 +518,14 @@ suite('TabSearchAppTest', () => {
         {tabIds: [3, 4, 5, 6], recentlyClosedTabs: []});
     await microtasksFinished();
     assertNotEquals(
-        null, tabSearchPage.shadowRoot!.querySelector('#no-results'));
+        null, tabSearchPage.shadowRoot.querySelector('#no-results'));
   });
 
   test('Closed tab appears in recently closed section', async () => {
     await setupTest(createProfileData({
       windows: [{
         active: true,
+        isHostWindow: true,
         height: SAMPLE_WINDOW_HEIGHT,
         tabs:
             generateSampleTabsFromSiteNames(['SampleTab', 'SampleTab2'], true),
@@ -648,12 +680,22 @@ suite('TabSearchAppTest', () => {
         tabId: 2,
         title: 'Bing',
         url: {url: 'https://www.bing.com'},
-        lastActiveTimeTicks: {internalValue: BigInt(4)},
+        lastActiveTimeTicks: {internalValue: BigInt(5)},
         active: true,
+        visible: true,
       }),
       createTab({
         index: 2,
         tabId: 3,
+        title: 'Gmail',
+        url: {url: 'https://www.gmail.com'},
+        lastActiveTimeTicks: {internalValue: BigInt(4)},
+        active: false,
+        visible: true,
+      }),
+      createTab({
+        index: 3,
+        tabId: 4,
         title: 'Yahoo',
         url: {url: 'https://www.yahoo.com'},
         lastActiveTimeTicks: {internalValue: BigInt(3)},
@@ -662,9 +704,14 @@ suite('TabSearchAppTest', () => {
 
     // Move active tab to the bottom of the list.
     await setupTest(createProfileData({
-      windows: [{active: true, height: SAMPLE_WINDOW_HEIGHT, tabs}],
+      windows: [{
+        active: true,
+        isHostWindow: true,
+        height: SAMPLE_WINDOW_HEIGHT,
+        tabs,
+      }],
     }));
-    verifyTabIds(queryRows(), [3, 1, 2]);
+    verifyTabIds(queryRows(), [4, 1, 2, 3]);
   });
 
   test('Tab associated with TabGroup data', async () => {
@@ -684,7 +731,12 @@ suite('TabSearchAppTest', () => {
     };
 
     await setupTest(createProfileData({
-      windows: [{active: true, height: SAMPLE_WINDOW_HEIGHT, tabs}],
+      windows: [{
+        active: true,
+        isHostWindow: true,
+        height: SAMPLE_WINDOW_HEIGHT,
+        tabs,
+      }],
       tabGroups: [tabGroup],
     }));
 
@@ -699,6 +751,7 @@ suite('TabSearchAppTest', () => {
     await setupTest(createProfileData({
       windows: [{
         active: true,
+        isHostWindow: true,
         height: SAMPLE_WINDOW_HEIGHT,
         tabs: generateSampleTabsFromSiteNames(['SampleOpenTab'], true),
       }],
@@ -711,7 +764,7 @@ suite('TabSearchAppTest', () => {
     assertTrue(!!recentlyClosedTitleItem);
 
     const recentlyClosedTitleExpandButton =
-        recentlyClosedTitleItem!.querySelector('cr-expand-button');
+        recentlyClosedTitleItem.querySelector('cr-expand-button');
     assertTrue(!!recentlyClosedTitleExpandButton);
 
     // Collapse the `Recently Closed` section and assert item count.

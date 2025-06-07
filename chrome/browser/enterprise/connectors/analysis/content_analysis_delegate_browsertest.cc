@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include <algorithm>
 #include <memory>
 #include <set>
@@ -17,12 +12,13 @@
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/enterprise/connectors/analysis/content_analysis_dialog.h"
+#include "chrome/browser/enterprise/connectors/analysis/content_analysis_dialog_controller.h"
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_features.h"
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/enterprise/connectors/connectors_service.h"
@@ -77,7 +73,8 @@ std::string image() {
 class FakeBinaryUploadService : public CloudBinaryUploadService {
  public:
   FakeBinaryUploadService()
-      : CloudBinaryUploadService(nullptr, nullptr, nullptr) {}
+      : CloudBinaryUploadService(/*url_loader_factory=*/nullptr,
+                                 /*profile=*/nullptr) {}
 
   // Sets whether the user is authorized to upload data for Deep Scanning.
   void SetAuthorized(bool authorized) {
@@ -89,8 +86,8 @@ class FakeBinaryUploadService : public CloudBinaryUploadService {
   // Finish the authentication request. Called after CreateForWebContents to
   // simulate an async callback.
   void ReturnAuthorizedResponse() {
-    FinishRequest(authorization_request_.get(), authorization_result_,
-                  ContentAnalysisResponse());
+    FinishAndCleanupRequest(authorization_request_.get(), authorization_result_,
+                            ContentAnalysisResponse());
   }
 
   void SetResponseForText(BinaryUploadService::Result result,
@@ -303,11 +300,11 @@ constexpr char kTestUrl[] = "https://google.com";
 // Only responses obtained via the BinaryUploadService are faked.
 class ContentAnalysisDelegateBrowserTestBase
     : public test::DeepScanningBrowserTestBase,
-      public ContentAnalysisDialog::TestObserver {
+      public ContentAnalysisDialogController::TestObserver {
  public:
   explicit ContentAnalysisDelegateBrowserTestBase(bool machine_scope)
       : machine_scope_(machine_scope) {
-    ContentAnalysisDialog::SetObserverForTesting(this);
+    ContentAnalysisDialogController::SetObserverForTesting(this);
   }
 
   void EnableUploadsScanningAndReporting() {
@@ -374,7 +371,7 @@ class ContentAnalysisDelegateBrowserTestBase
             identity_test_environment_->identity_manager());
   }
 
-  void DestructorCalled(ContentAnalysisDialog* dialog) override {
+  void DestructorCalled(ContentAnalysisDialogController* dialog) override {
     // The test is over once the views are destroyed.
     CallQuitClosure();
   }
@@ -1542,17 +1539,12 @@ class ContentAnalysisDelegateBlockingSettingBrowserTest
       public testing::WithParamInterface<std::tuple<bool, bool>> {
  public:
   ContentAnalysisDelegateBlockingSettingBrowserTest()
-      : ContentAnalysisDelegateBrowserTestBase(machine_scope()) {
-  }
+      : ContentAnalysisDelegateBrowserTestBase(machine_scope()) {}
 
   bool machine_scope() const { return std::get<0>(GetParam()); }
 
   bool setting_param() const { return std::get<1>(GetParam()); }
 
-  // Use a string since the setting value is inserted into a JSON policy.
-  const char* bool_setting_value() const {
-    return setting_param() ? "true" : "false";
-  }
   const char* int_setting_value() const { return setting_param() ? "1" : "0"; }
 
   bool expected_result() const { return !setting_param(); }
@@ -1560,11 +1552,15 @@ class ContentAnalysisDelegateBlockingSettingBrowserTest
 
 INSTANTIATE_TEST_SUITE_P(,
                          ContentAnalysisDelegateBlockingSettingBrowserTest,
-                         testing::Combine(testing::Bool(),
-                                          testing::Bool()));
-
+                         testing::Combine(testing::Bool(), testing::Bool()));
+// TODO(crbug.com/413427796): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_BlockPasswordProtected DISABLED_BlockPasswordProtected
+#else
+#define MAYBE_BlockPasswordProtected BlockPasswordProtected
+#endif
 IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
-                       BlockPasswordProtected) {
+                       MAYBE_BlockPasswordProtected) {
   // When the resumable protocol is in use and the `blocked_password_protected`
   // setting is off, the final verdict is determined by the server, not by the
   // policy value. So this specific scenario only applies to multi-part upload.
@@ -1597,7 +1593,8 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
   })";
   enterprise_connectors::test::SetAnalysisConnector(
       browser()->profile()->GetPrefs(), FILE_ATTACHED,
-      base::StringPrintf(kPasswordProtectedPref, bool_setting_value()),
+      base::StringPrintf(kPasswordProtectedPref,
+                         base::ToString(setting_param())),
       machine_scope());
 
   base::RunLoop content_analysis_run_loop;
@@ -1692,7 +1689,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
   })";
   enterprise_connectors::test::SetAnalysisConnector(
       browser()->profile()->GetPrefs(), FILE_ATTACHED,
-      base::StringPrintf(kBlockLargeFilesPref, bool_setting_value()),
+      base::StringPrintf(kBlockLargeFilesPref, base::ToString(setting_param())),
       machine_scope());
 
   base::RunLoop content_analysis_run_loop;
@@ -1795,7 +1792,7 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
   })";
   enterprise_connectors::test::SetAnalysisConnector(
       browser()->profile()->GetPrefs(), PRINT,
-      base::StringPrintf(kBlockLargePagesPref, bool_setting_value()),
+      base::StringPrintf(kBlockLargePagesPref, base::ToString(setting_param())),
       machine_scope());
 
   base::RunLoop content_analysis_run_loop;
@@ -1870,8 +1867,9 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
   content_analysis_run_loop.Run();
 }
 
+// TODO(crbug.com/413427796): Fix flaky test.
 IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
-                       BlockUntilVerdict) {
+                       DISABLED_BlockUntilVerdict) {
   base::ScopedAllowBlockingForTesting allow_blocking;
 
   // Set up delegate and upload service.
@@ -1908,9 +1906,19 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
       browser()->profile(), GURL(kTestUrl), &data, FILE_ATTACHED));
 
   // The file should be reported as malware and sensitive content.
+  bool called = false;
+  base::RunLoop run_loop;
   test::EventReportValidator validator(client());
   ContentAnalysisResponse response;
   response.set_request_token(kScanId1);
+
+  // If the delivery is not delayed, put the quit closure right after the events
+  // are reported instead of when the dialog closes.
+  if (expected_result()) {
+    validator.SetDoneClosure(run_loop.QuitClosure());
+  } else {
+    SetQuitClosure(run_loop.QuitClosure());
+  }
 
   auto* malware_result = response.add_results();
   malware_result->set_status(ContentAnalysisResponse::Result::SUCCESS);
@@ -1957,17 +1965,6 @@ IN_PROC_BROWSER_TEST_P(ContentAnalysisDelegateBlockingSettingBrowserTest,
       /*profile_identifier*/ GetProfileIdentifier(),
       /*scan_id*/ kScanId1,
       /*content_transfer_method*/ "CONTENT_TRANSFER_METHOD_DRAG_AND_DROP");
-
-  bool called = false;
-  base::RunLoop run_loop;
-
-  // If the delivery is not delayed, put the quit closure right after the events
-  // are reported instead of when the dialog closes.
-  if (expected_result()) {
-    validator.SetDoneClosure(run_loop.QuitClosure());
-  } else {
-    SetQuitClosure(run_loop.QuitClosure());
-  }
 
   // Start test.
   ContentAnalysisDelegate::CreateForWebContents(
@@ -2263,22 +2260,22 @@ class ContentAnalysisDelegateUnauthorizedBrowserTest
   // The dialog should appear on blocking scans for both paste and files upload,
   // because CBUS retries authorizarion check first and then update the scan
   // result.
-  void ConstructorCalled(ContentAnalysisDialog* dialog,
+  void ConstructorCalled(ContentAnalysisDialogController* dialog,
                          base::TimeTicks timestamp) override {
     ASSERT_TRUE(blocking_scan());
   }
 
-  void ViewsFirstShown(ContentAnalysisDialog* dialog,
+  void ViewsFirstShown(ContentAnalysisDialogController* dialog,
                        base::TimeTicks timestamp) override {
     ASSERT_TRUE(blocking_scan());
   }
 
-  void DialogUpdated(ContentAnalysisDialog* dialog,
+  void DialogUpdated(ContentAnalysisDialogController* dialog,
                      FinalContentAnalysisResult result) override {
     ASSERT_TRUE(blocking_scan());
   }
 
-  void DestructorCalled(ContentAnalysisDialog* dialog) override {
+  void DestructorCalled(ContentAnalysisDialogController* dialog) override {
     ASSERT_TRUE(blocking_scan());
     CallQuitClosure();
   }

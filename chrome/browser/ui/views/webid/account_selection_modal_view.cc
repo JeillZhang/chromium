@@ -13,15 +13,14 @@
 #include "base/functional/bind.h"
 #include "base/i18n/case_conversion.h"
 #include "chrome/app/vector_icons/vector_icons.h"
-#include "chrome/browser/accessibility/accessibility_state_utils.h"
 #include "chrome/browser/image_fetcher/image_decoder_impl.h"
 #include "chrome/browser/net/system_network_context_manager.h"
-#include "chrome/browser/ui/monogram_utils.h"
 #include "chrome/browser/ui/views/controls/hover_button.h"
 #include "chrome/browser/ui/views/extensions/security_dialog_tracker.h"
 #include "chrome/browser/ui/views/webid/account_selection_view_base.h"
 #include "chrome/browser/ui/views/webid/fedcm_account_selection_view_desktop.h"
 #include "chrome/browser/ui/views/webid/webid_utils.h"
+#include "chrome/browser/ui/webid/identity_ui_utils.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -31,6 +30,7 @@
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
 #include "content/public/browser/identity_request_dialog_controller.h"
+#include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
 #include "skia/ext/image_operations.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -41,6 +41,7 @@
 #include "ui/base/ui_base_types.h"
 #include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
+#include "ui/compositor/compositor.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/insets.h"
@@ -139,16 +140,20 @@ std::unique_ptr<views::View> CreateButtonContainer() {
 }  // namespace
 
 AccountSelectionModalView::AccountSelectionModalView(
-    const std::u16string& rp_for_display,
+    const content::RelyingPartyData& rp_data,
     const std::optional<std::u16string>& idp_title,
     blink::mojom::RpContext rp_context,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     FedCmAccountSelectionView* owner)
     : AccountSelectionViewBase(owner,
                                std::move(url_loader_factory),
-                               rp_for_display) {
+                               rp_data,
+                               owner->web_contents()
+                                   ->GetPrimaryMainFrame()
+                                   ->GetRenderWidgetHost()
+                                   ->GetDeviceScaleFactor()) {
   SetModalType(ui::mojom::ModalType::kChild);
-  SetOwnedByWidget(true);
+  SetOwnedByWidget(OwnedByWidgetPassKey());
   SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   set_fixed_width(kDialogWidth);
   SetShowTitle(false);
@@ -158,8 +163,10 @@ AccountSelectionModalView::AccountSelectionModalView(
       kBetweenChildSpacing));
   SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
 
-  title_ = GetTitle(rp_for_display_, idp_title, rp_context);
+  title_ = GetTitle(rp_data_, idp_title, rp_context);
   SetTitle(title_);
+
+  subtitle_ = GetSubtitle(rp_data_);
 
   header_view_ = AddChildView(CreateHeader());
   AddChildView(CreatePlaceholderAccountRow());
@@ -181,10 +188,10 @@ AccountSelectionModalView::CreatePlaceholderAccountRow() {
   std::unique_ptr<views::View> placeholder_account_icon =
       std::make_unique<views::View>();
   placeholder_account_icon->SetPreferredSize(
-      gfx::Size(kModalAvatarSize, kModalAvatarSize));
+      gfx::Size(webid::kModalAvatarSize, webid::kModalAvatarSize));
   placeholder_account_icon->SizeToPreferredSize();
-  placeholder_account_icon->SetBackground(
-      views::CreateRoundedRectBackground(kPlaceholderColor, kModalAvatarSize));
+  placeholder_account_icon->SetBackground(views::CreateRoundedRectBackground(
+      kPlaceholderColor, webid::kModalAvatarSize));
 
   constexpr int kPlaceholderAccountRowPadding = 16;
   auto row = std::make_unique<views::View>();
@@ -317,7 +324,17 @@ std::unique_ptr<views::View> AccountSelectionModalView::CreateHeader() {
   title_label_ = header->AddChildView(
       std::make_unique<views::Label>(title_, views::style::CONTEXT_DIALOG_TITLE,
                                      views::style::STYLE_HEADLINE_4));
+
   SetLabelProperties(title_label_);
+
+  if (!subtitle_.empty()) {
+    // Add the subtitle.
+    views::Label* subtitle =
+        header->AddChildView(std::make_unique<views::Label>(
+            subtitle_, views::style::CONTEXT_DIALOG_BODY_TEXT,
+            views::style::STYLE_BODY_4));
+    SetLabelProperties(subtitle);
+  }
 
   return header;
 }
@@ -379,8 +396,8 @@ std::unique_ptr<views::View> AccountSelectionModalView::CreateAccountRows(
 void AccountSelectionModalView::ShowMultiAccountPicker(
     const std::vector<IdentityRequestAccountPtr>& accounts,
     const std::vector<IdentityProviderDataPtr>& idp_list,
-    bool show_back_button,
-    bool is_choose_an_account) {
+    const gfx::Image& rp_icon,
+    bool show_back_button) {
   DCHECK(!show_back_button);
   CHECK_EQ(idp_list.size(), 1u);
   ShowAccounts(accounts, /*is_single_account_chooser=*/false);
@@ -395,7 +412,10 @@ void AccountSelectionModalView::ShowAccounts(
       accounts[0]->identity_provider->idp_metadata;
   // If `brand_decoded_icon` is empty, a globe icon is shown instead.
   if (!idp_metadata.brand_decoded_icon.IsEmpty()) {
-    idp_brand_icon_->CropAndSetImage(idp_metadata.brand_decoded_icon);
+    if (idp_brand_icon_->SetBrandIconImage(idp_metadata.brand_decoded_icon,
+                                           /*should_circle_crop=*/true)) {
+      OnIdpBrandIconSet();
+    }
   } else {
     idp_brand_icon_->SetImage(ui::ImageModel::FromVectorIcon(
         kWebidGlobeIcon, ui::kColorIconSecondary, kModalIdpIconSize));
@@ -543,7 +563,7 @@ void AccountSelectionModalView::ShowErrorDialog(
   std::u16string summary_text;
   std::u16string description_text;
   std::tie(summary_text, description_text) =
-      GetErrorDialogText(error, rp_for_display_, idp_for_display);
+      GetErrorDialogText(error, idp_for_display);
 
   title_ = summary_text;
   title_label_->SetText(title_);
@@ -577,23 +597,17 @@ void AccountSelectionModalView::ShowErrorDialog(
   AddChildView(std::move(button_container));
 }
 
-void AccountSelectionModalView::OnIdpBrandIconFetched() {
-  if (!idp_brand_icon_) {
-    return;
-  }
+void AccountSelectionModalView::OnIdpBrandIconSet() {
   header_icon_spinner_->Stop();
-  header_icon_spinner_->SetVisible(/*visible=*/false);
-  idp_brand_icon_->SetVisible(/*visible=*/true);
+  header_icon_spinner_->SetVisible(false);
+  idp_brand_icon_->SetVisible(true);
 }
 
-void AccountSelectionModalView::OnCombinedIconsFetched() {
-  if (!combined_icons_) {
-    return;
-  }
+void AccountSelectionModalView::OnCombinedIconsSet() {
   header_icon_spinner_->Stop();
-  header_icon_spinner_->SetVisible(/*visible=*/false);
-  idp_brand_icon_->SetVisible(/*visible=*/false);
-  combined_icons_->SetVisible(/*visible=*/true);
+  header_icon_spinner_->SetVisible(false);
+  idp_brand_icon_->SetVisible(false);
+  combined_icons_->SetVisible(true);
 }
 
 void AccountSelectionModalView::ShowRequestPermissionDialog(
@@ -609,12 +623,20 @@ void AccountSelectionModalView::ShowRequestPermissionDialog(
   if (!idp_brand_icon.IsEmpty() && !rp_brand_icon.IsEmpty()) {
     combined_icons_ =
         header_icon_view_->AddChildView(CreateCombinedIconsView());
-    combined_icons_idp_brand_icon_->CropAndSetImage(idp_brand_icon);
-    combined_icons_rp_brand_icon_->CropAndSetImage(rp_brand_icon);
+    bool idp_icon_set = combined_icons_idp_brand_icon_->SetBrandIconImage(
+        idp_brand_icon, /*should_circle_crop=*/true);
+    bool rp_icon_set = combined_icons_rp_brand_icon_->SetBrandIconImage(
+        rp_brand_icon, /*should_circle_crop=*/true);
+    if (idp_icon_set && rp_icon_set) {
+      OnCombinedIconsSet();
+    }
   } else {
     // If `idp_brand_icon` is empty, a globe icon is shown instead.
     if (!idp_brand_icon.IsEmpty()) {
-      idp_brand_icon_->CropAndSetImage(idp_brand_icon);
+      if (idp_brand_icon_->SetBrandIconImage(idp_brand_icon,
+                                             /*should_circle_crop=*/true)) {
+        OnIdpBrandIconSet();
+      }
     } else {
       idp_brand_icon_->SetImage(ui::ImageModel::FromVectorIcon(
           kWebidGlobeIcon, ui::kColorIconSecondary, kModalIdpIconSize));
@@ -692,13 +714,6 @@ void AccountSelectionModalView::OnUseOtherAccountButtonClicked(
   owner_->OnLoginToIdP(idp_config_url, idp_login_url, event);
 }
 
-void AccountSelectionModalView::ShowSingleReturningAccountDialog(
-    const std::vector<IdentityRequestAccountPtr>& accounts,
-    const std::vector<IdentityProviderDataPtr>& idp_list) {
-  NOTREACHED() << "ShowSingleReturningAccountDialog is only implemented for "
-                  "AccountSelectionBubbleView";
-}
-
 std::unique_ptr<views::View> AccountSelectionModalView::CreateIconHeaderView() {
   // Create background image view.
   std::unique_ptr<BackgroundImageView> background_image_view =
@@ -742,19 +757,9 @@ AccountSelectionModalView::CreateSpinnerIconView() {
 
 std::unique_ptr<views::BoxLayoutView>
 AccountSelectionModalView::CreateIdpIconView() {
-  constexpr int kNumIconsInIdpIconView = 1;
-  base::RepeatingClosure on_image_set = BarrierClosure(
-      kNumIconsInIdpIconView,
-      base::BindOnce(&AccountSelectionModalView::OnIdpBrandIconFetched,
-                     weak_ptr_factory_.GetWeakPtr()));
-
   // Create IDP brand icon image view.
-  std::unique_ptr<BrandIconImageView> idp_brand_icon_image_view =
-      std::make_unique<BrandIconImageView>(
-          kModalIdpIconSize, /*should_circle_crop=*/true,
-          /*background_color=*/std::nullopt, on_image_set);
-  idp_brand_icon_image_view->SetImageSize(
-      gfx::Size(kModalIdpIconSize, kModalIdpIconSize));
+  auto idp_brand_icon_image_view =
+      std::make_unique<BrandIconImageView>(kModalIdpIconSize);
   idp_brand_icon_image_view->SetVisible(/*visible=*/false);
 
   // Put IDP icon into a BoxLayout container so that it can be stacked on top of
@@ -771,20 +776,10 @@ AccountSelectionModalView::CreateIdpIconView() {
 
 std::unique_ptr<views::BoxLayoutView>
 AccountSelectionModalView::CreateCombinedIconsView() {
-  constexpr int kNumIconsInCombinedIconsView = 2;
-  base::RepeatingClosure on_image_set = BarrierClosure(
-      kNumIconsInCombinedIconsView,
-      base::BindOnce(&AccountSelectionModalView::OnCombinedIconsFetched,
-                     weak_ptr_factory_.GetWeakPtr()));
-
   // Create IDP brand icon image view.
-  std::unique_ptr<BrandIconImageView> idp_brand_icon_image_view =
-      std::make_unique<BrandIconImageView>(
-          kModalCombinedIconSize, /*should_circle_crop=*/true,
-          /*background_color=*/std::nullopt, on_image_set);
+  auto idp_brand_icon_image_view =
+      std::make_unique<BrandIconImageView>(kModalCombinedIconSize);
   combined_icons_idp_brand_icon_ = idp_brand_icon_image_view.get();
-  idp_brand_icon_image_view->SetImageSize(
-      gfx::Size(kModalCombinedIconSize, kModalCombinedIconSize));
   idp_brand_icon_image_view->SetVisible(/*visible=*/true);
 
   // Create arrow icon image view.
@@ -794,13 +789,9 @@ AccountSelectionModalView::CreateCombinedIconsView() {
       kWebidArrowIcon, ui::kColorIconSecondary, kModalCombinedIconSize));
 
   // Create RP brand icon image view.
-  std::unique_ptr<BrandIconImageView> rp_brand_icon_image_view =
-      std::make_unique<BrandIconImageView>(
-          kModalCombinedIconSize, /*should_circle_crop=*/true,
-          /*background_color=*/std::nullopt, on_image_set);
+  auto rp_brand_icon_image_view =
+      std::make_unique<BrandIconImageView>(kModalCombinedIconSize);
   combined_icons_rp_brand_icon_ = rp_brand_icon_image_view.get();
-  rp_brand_icon_image_view->SetImageSize(
-      gfx::Size(kModalCombinedIconSize, kModalCombinedIconSize));
   rp_brand_icon_image_view->SetVisible(/*visible=*/true);
 
   // Put IDP icon, arrow icon and RP icon into a BoxLayout container, in that
@@ -855,6 +846,14 @@ std::string AccountSelectionModalView::GetDialogTitle() const {
   return base::UTF16ToUTF8(title_label_->GetText());
 }
 
+std::optional<std::string> AccountSelectionModalView::GetDialogSubtitle()
+    const {
+  if (subtitle_.empty()) {
+    return std::nullopt;
+  }
+  return base::UTF16ToUTF8(subtitle_);
+}
+
 std::u16string AccountSelectionModalView::GetQueuedAnnouncementForTesting() {
   return queued_announcement_;
 }
@@ -907,8 +906,7 @@ void AccountSelectionModalView::
       children();
   for (views::View* child_view : child_views) {
     if (child_view != header_view_) {
-      RemoveChildView(child_view);
-      delete child_view;
+      RemoveChildViewT(child_view);
     }
   }
 }

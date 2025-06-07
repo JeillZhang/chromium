@@ -28,15 +28,10 @@
 #include "components/optimization_guide/core/prediction_model_download_observer.h"
 #include "components/optimization_guide/core/prediction_model_store.h"
 #include "components/services/unzip/public/cpp/unzip.h"
-#include "crypto/sha2.h"
+#include "components/services/unzip/public/mojom/unzipper.mojom.h"
+#include "crypto/hash.h"
 #include "google_apis/common/api_key_request_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-
-#if BUILDFLAG(IS_IOS)
-#include "components/services/unzip/in_process_unzipper.h"  // nogncheck
-#else
-#include "components/services/unzip/content/unzip_service.h"  // nogncheck
-#endif
 
 namespace optimization_guide {
 
@@ -44,7 +39,7 @@ namespace {
 
 // The SHA256 hash of the public key for the Optimization Guide Server that
 // we require models to come from.
-constexpr uint8_t kPublisherKeyHash[] = {
+constexpr std::array<uint8_t, crypto::hash::kSha256Size> kPublisherKeyHash = {
     0x66, 0xa1, 0xd9, 0x3e, 0x4e, 0x5a, 0x66, 0x8a, 0x0f, 0xd3, 0xfa,
     0xa3, 0x70, 0x71, 0x42, 0x16, 0x0d, 0x2d, 0x68, 0xb0, 0x53, 0x02,
     0x5c, 0x7f, 0xd0, 0x0c, 0xa1, 0x6e, 0xef, 0xdd, 0x63, 0x7a};
@@ -102,12 +97,14 @@ const char kPredictionModelOptimizationTargetCustomDataKey[] =
 PredictionModelDownloadManager::PredictionModelDownloadManager(
     download::BackgroundDownloadService* download_service,
     GetBaseModelDirForDownloadCallback get_base_model_dir_for_download_callback,
+    unzip::UnzipperFactory unzipper_factory,
     scoped_refptr<base::SequencedTaskRunner> background_task_runner)
     : download_service_(download_service),
       is_available_for_downloads_(true),
       api_key_(features::GetOptimizationGuideServiceAPIKey()),
       get_base_model_dir_for_download_callback_(
           get_base_model_dir_for_download_callback),
+      unzipper_factory_(std::move(unzipper_factory)),
       background_task_runner_(background_task_runner) {}
 
 PredictionModelDownloadManager::~PredictionModelDownloadManager() = default;
@@ -284,14 +281,8 @@ bool PredictionModelDownloadManager::VerifyDownload(
     }
 
     // Verify that the CRX3 file is from a publisher we trust.
-    std::vector<uint8_t> publisher_key_hash(std::begin(kPublisherKeyHash),
-                                            std::end(kPublisherKeyHash));
-
-    std::vector<uint8_t> public_key_hash(crypto::kSHA256Length);
-    crypto::SHA256HashString(public_key, public_key_hash.data(),
-                             public_key_hash.size());
-
-    if (publisher_key_hash != public_key_hash) {
+    auto public_key_hash = crypto::hash::Sha256(public_key);
+    if (kPublisherKeyHash != public_key_hash) {
       RecordPredictionModelDownloadStatus(
           PredictionModelDownloadStatus::kFailedCrxInvalidPublisher);
       if (delete_file_on_error) {
@@ -330,13 +321,8 @@ void PredictionModelDownloadManager::StartUnzipping(
     return;
   }
 
-#if BUILDFLAG(IS_IOS)
-  auto unzipper = unzip::LaunchInProcessUnzipper();
-#else
-  auto unzipper = unzip::LaunchUnzipper();
-#endif
   unzip::Unzip(
-      std::move(unzipper), download_file_path, base_model_dir,
+      unzipper_factory_.Run(), download_file_path, base_model_dir,
       unzip::mojom::UnzipOptions::New(), unzip::AllContents(),
       base::DoNothing(),
       base::BindOnce(&PredictionModelDownloadManager::OnDownloadUnzipped,

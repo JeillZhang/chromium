@@ -34,7 +34,6 @@ import {Router} from '../router.js';
 
 import {getTemplate} from './autofill_page.html.js';
 import {PasswordManagerImpl, PasswordManagerPage} from './password_manager_proxy.js';
-import {UserAnnotationsManagerProxyImpl} from './user_annotations_manager_proxy.js';
 
 const SettingsAutofillPageElementBase =
     PrefsMixin(I18nMixin(BaseMixin(PolymerElement)));
@@ -74,63 +73,26 @@ export class SettingsAutofillPageElement extends
         },
       },
 
-      plusAddressIcon_: {
-        type: String,
-        value() {
-          // <if expr="_google_chrome">
-          return 'settings-internal:plus-address-logo-medium';
-          // </if>
-          // <if expr="not _google_chrome">
-          return 'settings:email';
-          // </if>
-        },
-      },
-
       userEligibleForAutofillAi_: {
         type: Boolean,
-        value: false,
-      },
-
-
-      userHasAutofillAiEntries_: {
-        type: Boolean,
-        value: false,
+        value() {
+          return loadTimeData.getBoolean('userEligibleForAutofillAi');
+        },
       },
 
       autofillAiAvailable_: {
         type: Boolean,
-        computed: 'computeAutofillAiAvailable_(userEligibleForAutofillAi_, ' +
-            'userHasAutofillAiEntries_)',
+        value() {
+          return loadTimeData.getBoolean('showAutofillAiControl');
+        },
       },
     };
   }
 
-  private passkeyFilter_: string;
-  private userEligibleForAutofillAi_: boolean;
-  private userHasAutofillAiEntries_: boolean;
-  private autofillAiAvailable_: boolean;
-  private focusConfig_: Map<string, string>;
-
-  override connectedCallback() {
-    super.connectedCallback();
-    // TODO(crbug.com/368565649): Consider updating on sign-in state changes.
-    UserAnnotationsManagerProxyImpl.getInstance().isUserEligible().then(
-        eligible => {
-          this.userEligibleForAutofillAi_ = eligible;
-        });
-    UserAnnotationsManagerProxyImpl.getInstance().hasEntries().then(value => {
-      this.userHasAutofillAiEntries_ = value;
-    });
-  }
-
-  /**
-   * Computes `autofillAiAvailable_`.
-   */
-  private computeAutofillAiAvailable_(): boolean {
-    return loadTimeData.getBoolean('autofillAiEnabled') &&
-        (this.userEligibleForAutofillAi_ || this.userHasAutofillAiEntries_);
-  }
-
+  declare private passkeyFilter_: string;
+  declare private userEligibleForAutofillAi_: boolean;
+  declare private autofillAiAvailable_: boolean;
+  declare private focusConfig_: Map<string, string>;
 
   /**
    * Shows the manage addresses sub page.

@@ -5,6 +5,8 @@
 #include "chrome/browser/android/compositor/scene_layer/tab_strip_scene_layer.h"
 
 #include "base/android/jni_android.h"
+#include "base/android/scoped_java_ref.h"
+#include "base/android/token_android.h"
 #include "cc/slim/layer.h"
 #include "cc/slim/solid_color_layer.h"
 #include "cc/slim/ui_resource_layer.h"
@@ -36,12 +38,15 @@ TabStripSceneLayer::TabStripSceneLayer(JNIEnv* env,
       foreground_group_titles_(cc::slim::Layer::Create()),
       new_tab_button_(cc::slim::UIResourceLayer::Create()),
       new_tab_button_background_(cc::slim::UIResourceLayer::Create()),
+      new_tab_button_keyboard_focus_ring_(cc::slim::UIResourceLayer::Create()),
       left_fade_(cc::slim::UIResourceLayer::Create()),
       right_fade_(cc::slim::UIResourceLayer::Create()),
       left_padding_layer_(cc::slim::SolidColorLayer::Create()),
       right_padding_layer_(cc::slim::SolidColorLayer::Create()),
       model_selector_button_(cc::slim::UIResourceLayer::Create()),
       model_selector_button_background_(cc::slim::UIResourceLayer::Create()),
+      model_selector_button_keyboard_focus_ring_(
+          cc::slim::UIResourceLayer::Create()),
       scrim_layer_(cc::slim::SolidColorLayer::Create()),
       content_tree_(nullptr) {
   new_tab_button_->SetIsDrawable(true);
@@ -84,6 +89,8 @@ TabStripSceneLayer::TabStripSceneLayer(JNIEnv* env,
   tab_strip_layer_->AddChild(new_tab_button_background_);
   tab_strip_layer_->AddChild(model_selector_button_);
   tab_strip_layer_->AddChild(new_tab_button_);
+  tab_strip_layer_->AddChild(model_selector_button_keyboard_focus_ring_);
+  tab_strip_layer_->AddChild(new_tab_button_keyboard_focus_ring_);
 
   layer()->AddChild(background_layer_);
 }
@@ -93,12 +100,12 @@ TabStripSceneLayer::~TabStripSceneLayer() = default;
 void TabStripSceneLayer::SetConstants(JNIEnv* env,
                                       jint reorder_background_top_margin,
                                       jint reorder_background_bottom_margin,
-                                      jint reorder_background_padding_start,
-                                      jint reorder_background_padding_end,
+                                      jint reorder_background_padding_short,
+                                      jint reorder_background_padding_long,
                                       jint reorder_background_corner_radius) {
   GroupIndicatorLayer::SetConstants(
       reorder_background_top_margin, reorder_background_bottom_margin,
-      reorder_background_padding_start, reorder_background_padding_end,
+      reorder_background_padding_short, reorder_background_padding_long,
       reorder_background_corner_radius);
 }
 
@@ -124,17 +131,25 @@ void TabStripSceneLayer::SetContentTree(
   }
 }
 
-void TabStripSceneLayer::BeginBuildingFrame(JNIEnv* env,
-                                            const JavaParamRef<jobject>& jobj,
-                                            jboolean visible) {
+void TabStripSceneLayer::BeginBuildingFrame(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& jobj,
+    jboolean visible,
+    const JavaParamRef<jobject>& jresource_manager,
+    const JavaParamRef<jobject>& jlayer_title_cache) {
   write_index_ = 0;
   group_write_index_ = 0;
   background_layer_->SetHideLayerAndSubtree(!visible);
+  resource_manager_ =
+      ui::ResourceManagerImpl::FromJavaObject(jresource_manager);
+  layer_title_cache_ = LayerTitleCache::FromJavaObject(jlayer_title_cache);
 }
 
 void TabStripSceneLayer::FinishBuildingFrame(
     JNIEnv* env,
     const JavaParamRef<jobject>& jobj) {
+  resource_manager_ = nullptr;
+  layer_title_cache_ = nullptr;
   if (background_layer_->hide_layer_and_subtree()) {
     return;
   }
@@ -232,20 +247,26 @@ void TabStripSceneLayer::UpdateNewTabButton(
     jint tint,
     jint background_tint,
     jfloat button_alpha,
-    const JavaParamRef<jobject>& jresource_manager) {
-  ui::ResourceManager* resource_manager =
-      ui::ResourceManagerImpl::FromJavaObject(jresource_manager);
+    jboolean is_keyboard_focused,
+    jint keyboard_focus_ring_resource_id,
+    jint keyboard_focus_ring_color) {
+  DCHECK(resource_manager_);
   ui::Resource* button_resource =
-      resource_manager->GetStaticResourceWithTint(resource_id, tint);
+      resource_manager_->GetStaticResourceWithTint(resource_id, tint);
   ui::Resource* background_resource =
-      resource_manager->GetStaticResourceWithTint(bg_resource_id,
-                                                  background_tint, true);
+      resource_manager_->GetStaticResourceWithTint(bg_resource_id,
+                                                   background_tint, true);
+  ui::Resource* keyboard_focus_ring_drawable =
+      resource_manager_->GetStaticResourceWithTint(
+          keyboard_focus_ring_resource_id, keyboard_focus_ring_color, true);
 
   x += touch_target_offset;
 
   UpdateCompositorButton(new_tab_button_, new_tab_button_background_,
                          button_resource, background_resource, x, y, visible,
-                         should_apply_hover_highlight, button_alpha);
+                         should_apply_hover_highlight, button_alpha,
+                         new_tab_button_keyboard_focus_ring_,
+                         is_keyboard_focused, keyboard_focus_ring_drawable);
 }
 
 void TabStripSceneLayer::UpdateModelSelectorButton(
@@ -260,19 +281,25 @@ void TabStripSceneLayer::UpdateModelSelectorButton(
     jint tint,
     jint background_tint,
     jfloat button_alpha,
-    const JavaParamRef<jobject>& jresource_manager) {
-  ui::ResourceManager* resource_manager =
-      ui::ResourceManagerImpl::FromJavaObject(jresource_manager);
+    jboolean is_keyboard_focused,
+    jint keyboard_focus_ring_resource_id,
+    jint keyboard_focus_ring_color) {
+  DCHECK(resource_manager_);
   ui::Resource* button_resource =
-      resource_manager->GetStaticResourceWithTint(resource_id, tint);
+      resource_manager_->GetStaticResourceWithTint(resource_id, tint);
   ui::Resource* background_resource =
-      resource_manager->GetStaticResourceWithTint(bg_resource_id,
-                                                  background_tint, true);
+      resource_manager_->GetStaticResourceWithTint(bg_resource_id,
+                                                   background_tint, true);
+  ui::Resource* keyboard_focus_ring_drawable =
+      resource_manager_->GetStaticResourceWithTint(
+          keyboard_focus_ring_resource_id, keyboard_focus_ring_color, true);
 
   UpdateCompositorButton(model_selector_button_,
                          model_selector_button_background_, button_resource,
                          background_resource, x, y, visible,
-                         should_apply_hover_highlight, button_alpha);
+                         should_apply_hover_highlight, button_alpha,
+                         model_selector_button_keyboard_focus_ring_,
+                         is_keyboard_focused, keyboard_focus_ring_drawable);
 }
 
 void TabStripSceneLayer::UpdateCompositorButton(
@@ -284,7 +311,10 @@ void TabStripSceneLayer::UpdateCompositorButton(
     float y,
     bool visible,
     bool should_apply_hover_highlight,
-    float button_alpha) {
+    float button_alpha,
+    scoped_refptr<cc::slim::UIResourceLayer> keyboard_focus_ring_layer,
+    bool is_keyboard_focused,
+    ui::Resource* keyboard_focus_ring_drawable) {
   button->SetUIResourceId(button_resource->ui_resource()->id());
   button->SetBounds(button_resource->size());
   button->SetHideLayerAndSubtree(!visible);
@@ -294,16 +324,40 @@ void TabStripSceneLayer::UpdateCompositorButton(
   gfx::Size button_size = button_resource->size();
   float x_offset = (background_size.width() - button_size.width()) / 2;
   float y_offset = (background_size.height() - button_size.height()) / 2;
-  button->SetPosition(gfx::PointF(x + x_offset, y + y_offset));
+  // Round this so that the keyboard focus ring looks centered with respect to
+  // the rest of the button (see comment below).
+  button->SetPosition(
+      gfx::PointF(std::round(x + x_offset), std::round(y + y_offset)));
 
   if (!should_apply_hover_highlight) {
     background->SetHideLayerAndSubtree(true);
   } else {
     background->SetUIResourceId(background_resource->ui_resource()->id());
-    background->SetPosition(gfx::PointF(x, y));
+    // Round this so that the keyboard focus ring looks centered with respect to
+    // the rest of the button (see comment below).
+    background->SetPosition(gfx::PointF(std::round(x), std::round(y)));
     background->SetBounds(background_resource->size());
     background->SetHideLayerAndSubtree(!visible);
     background->SetOpacity(button_alpha);
+  }
+
+  if (is_keyboard_focused) {
+    keyboard_focus_ring_layer->SetIsDrawable(true);
+    keyboard_focus_ring_layer->SetUIResourceId(
+        keyboard_focus_ring_drawable->ui_resource()->id());
+    gfx::Size ring_size = keyboard_focus_ring_drawable->size();
+
+    float ring_x_offset = (background_size.width() - ring_size.width()) / 2;
+    float ring_y_offset = (background_size.height() - ring_size.height()) / 2;
+    // Make sure that the focus ring is int-aligned. Otherwise, the bitmap will
+    // look clipped/blurry.
+    keyboard_focus_ring_layer->SetPosition(gfx::PointF(
+        std::round(x + ring_x_offset), std::round(y + ring_y_offset)));
+    keyboard_focus_ring_layer->SetBounds(ring_size);
+  } else {
+    // If the keyboard focus ring is already showing, make sure it stops
+    // showing.
+    keyboard_focus_ring_layer->SetIsDrawable(false);
   }
 }
 
@@ -312,7 +366,6 @@ void TabStripSceneLayer::UpdateTabStripLeftFade(
     const JavaParamRef<jobject>& jobj,
     jint resource_id,
     jfloat opacity,
-    const JavaParamRef<jobject>& jresource_manager,
     jint left_fade_color,
     jfloat left_padding) {
   // Hide layer if it's not visible.
@@ -321,11 +374,9 @@ void TabStripSceneLayer::UpdateTabStripLeftFade(
     return;
   }
 
-  // Set UI resource.
-  ui::ResourceManager* resource_manager =
-      ui::ResourceManagerImpl::FromJavaObject(jresource_manager);
-  ui::Resource* fade_resource = resource_manager->GetStaticResourceWithTint(
-        resource_id, left_fade_color);
+  DCHECK(resource_manager_);
+  ui::Resource* fade_resource = resource_manager_->GetStaticResourceWithTint(
+      resource_id, left_fade_color);
   left_fade_->SetUIResourceId(fade_resource->ui_resource()->id());
 
   // The same resource is used for both left and right fade, so the
@@ -355,7 +406,6 @@ void TabStripSceneLayer::UpdateTabStripRightFade(
     const JavaParamRef<jobject>& jobj,
     jint resource_id,
     jfloat opacity,
-    const JavaParamRef<jobject>& jresource_manager,
     jint right_fade_color,
     jfloat right_padding) {
   // Hide layer if it's not visible.
@@ -364,11 +414,9 @@ void TabStripSceneLayer::UpdateTabStripRightFade(
     return;
   }
 
-  // Set UI resource.
-  ui::ResourceManager* resource_manager =
-      ui::ResourceManagerImpl::FromJavaObject(jresource_manager);
-  ui::Resource* fade_resource = resource_manager->GetStaticResourceWithTint(
-        resource_id, right_fade_color);
+  DCHECK(resource_manager_);
+  ui::Resource* fade_resource = resource_manager_->GetStaticResourceWithTint(
+      resource_id, right_fade_color);
   right_fade_->SetUIResourceId(fade_resource->ui_resource()->id());
 
   // Set opacity.
@@ -394,6 +442,8 @@ void TabStripSceneLayer::PutStripTabLayer(
     jint id,
     jint close_resource_id,
     jint close_hover_bg_resource_id,
+    jboolean is_close_keyboard_focused,
+    jint close_keyboard_focus_ring_resource_id,
     jint divider_resource_id,
     jint handle_resource_id,
     jint handle_outline_resource_id,
@@ -421,11 +471,14 @@ void TabStripSceneLayer::PutStripTabLayer(
     jboolean is_loading,
     jfloat spinner_rotation,
     jfloat opacity,
-    const JavaParamRef<jobject>& jlayer_title_cache,
-    const JavaParamRef<jobject>& jresource_manager) {
-  LayerTitleCache* layer_title_cache =
-      LayerTitleCache::FromJavaObject(jlayer_title_cache);
-  scoped_refptr<TabHandleLayer> layer = GetNextTabLayer(layer_title_cache);
+    jboolean is_keyboard_focused,
+    jint keyboard_focus_ring_resource_id,
+    jint keyboard_focus_ring_color,
+    jint keyboard_focus_ring_offset,
+    jint stroke_width,
+    jfloat folio_foot_length) {
+  DCHECK(layer_title_cache_);
+  scoped_refptr<TabHandleLayer> layer = GetNextTabLayer(layer_title_cache_);
 
   if (foreground != layer->foreground()) {
     if (foreground) {
@@ -435,30 +488,40 @@ void TabStripSceneLayer::PutStripTabLayer(
     }
   }
 
-  ui::ResourceManager* resource_manager =
-      ui::ResourceManagerImpl::FromJavaObject(jresource_manager);
+  DCHECK(resource_manager_);
   ui::NinePatchResource* tab_handle_resource =
-      ui::NinePatchResource::From(resource_manager->GetStaticResourceWithTint(
+      ui::NinePatchResource::From(resource_manager_->GetStaticResourceWithTint(
           handle_resource_id, handle_tint, true));
   ui::NinePatchResource* tab_handle_outline_resource =
-      ui::NinePatchResource::From(resource_manager->GetStaticResourceWithTint(
+      ui::NinePatchResource::From(resource_manager_->GetStaticResourceWithTint(
           handle_outline_resource_id, handle_outline_tint));
   ui::Resource* close_button_resource =
-      resource_manager->GetStaticResourceWithTint(close_resource_id,
-                                                  close_tint);
+      resource_manager_->GetStaticResourceWithTint(close_resource_id,
+                                                   close_tint);
   ui::Resource* close_button_hover_resource =
-      resource_manager->GetStaticResourceWithTint(close_hover_bg_resource_id,
-                                                  close_hover_bg_tint, true);
-  ui::Resource* divider_resource = resource_manager->GetStaticResourceWithTint(
+      resource_manager_->GetStaticResourceWithTint(close_hover_bg_resource_id,
+                                                   close_hover_bg_tint, true);
+  ui::Resource* close_button_keyboard_focus_ring_resource =
+      resource_manager_->GetStaticResourceWithTint(
+          close_keyboard_focus_ring_resource_id, keyboard_focus_ring_color,
+          true);
+  ui::Resource* divider_resource = resource_manager_->GetStaticResourceWithTint(
       divider_resource_id, divider_tint, true);
+  ui::NinePatchResource* keyboard_focus_ring_drawable =
+      ui::NinePatchResource::From(resource_manager_->GetStaticResourceWithTint(
+          keyboard_focus_ring_resource_id, keyboard_focus_ring_color));
 
   layer->SetProperties(
-      id, close_button_resource, close_button_hover_resource, divider_resource,
-      tab_handle_resource, tab_handle_outline_resource, foreground,
-      shouldShowTabOutline, close_pressed, toolbar_width, x, y, width, height,
-      content_offset_y, divider_offset_x, bottom_margin, top_margin,
-      close_button_padding, close_button_alpha, is_start_divider_visible,
-      is_end_divider_visible, is_loading, spinner_rotation, opacity);
+      id, close_button_resource, close_button_hover_resource,
+      is_close_keyboard_focused, close_button_keyboard_focus_ring_resource,
+      divider_resource, tab_handle_resource, tab_handle_outline_resource,
+      foreground, shouldShowTabOutline, close_pressed, toolbar_width, x, y,
+      width, height, content_offset_y, divider_offset_x, bottom_margin,
+      top_margin, close_button_padding, close_button_alpha,
+      is_start_divider_visible, is_end_divider_visible, is_loading,
+      spinner_rotation, opacity, is_keyboard_focused,
+      keyboard_focus_ring_drawable, keyboard_focus_ring_offset, stroke_width,
+      folio_foot_length);
 }
 
 void TabStripSceneLayer::PutGroupIndicatorLayer(
@@ -466,9 +529,9 @@ void TabStripSceneLayer::PutGroupIndicatorLayer(
     const base::android::JavaParamRef<jobject>& jobj,
     jboolean incognito,
     jboolean foreground,
-    jboolean show_reorder_background,
+    jboolean collapsed,
     jboolean show_bubble,
-    jint id,
+    const base::android::JavaParamRef<jobject>& jgroup_token,
     jint tint,
     jint reorder_background_tint,
     jint bubble_tint,
@@ -483,13 +546,20 @@ void TabStripSceneLayer::PutGroupIndicatorLayer(
     jfloat bottom_indicator_height,
     jfloat bubble_padding,
     jfloat bubble_size,
-    const JavaParamRef<jobject>& jlayer_title_cache) {
-  LayerTitleCache* layer_title_cache =
-      LayerTitleCache::FromJavaObject(jlayer_title_cache);
+    jboolean is_keyboard_focused,
+    jint keyboard_focus_ring_resource_id,
+    jint keyboard_focus_ring_color,
+    jint keyboard_focus_ring_offset,
+    jint keyboard_focus_ring_width) {
+  DCHECK(layer_title_cache_);
 
   // Reuse existing layer if it exists.
   scoped_refptr<GroupIndicatorLayer> layer =
-      GetNextGroupIndicatorLayer(layer_title_cache);
+      GetNextGroupIndicatorLayer(layer_title_cache_);
+
+  ui::NinePatchResource* keyboard_focus_ring_drawable =
+      ui::NinePatchResource::From(resource_manager_->GetStaticResourceWithTint(
+          keyboard_focus_ring_resource_id, keyboard_focus_ring_color));
 
   // Foreground if needed.
   if (foreground != layer->foreground()) {
@@ -500,12 +570,17 @@ void TabStripSceneLayer::PutGroupIndicatorLayer(
     }
   }
 
-  layer->SetProperties(
-      id, tint, reorder_background_tint, bubble_tint, incognito, foreground,
-      show_bubble, show_reorder_background, x, y, width, height,
-      title_start_padding, title_end_padding, corner_radius,
-      bottom_indicator_width, bottom_indicator_height, bubble_padding,
-      bubble_size, tab_strip_layer_->bounds().height());
+  const tab_groups::TabGroupId& group_token =
+      tab_groups::TabGroupId::FromRawToken(
+          base::android::TokenAndroid::FromJavaToken(env, jgroup_token));
+  layer->SetProperties(group_token, tint, reorder_background_tint, bubble_tint,
+                       incognito, foreground, collapsed, show_bubble, x, y,
+                       width, height, title_start_padding, title_end_padding,
+                       corner_radius, bottom_indicator_width,
+                       bottom_indicator_height, bubble_padding, bubble_size,
+                       tab_strip_layer_->bounds().height(), is_keyboard_focused,
+                       keyboard_focus_ring_drawable, keyboard_focus_ring_offset,
+                       keyboard_focus_ring_width);
 }
 
 scoped_refptr<TabHandleLayer> TabStripSceneLayer::GetNextTabLayer(

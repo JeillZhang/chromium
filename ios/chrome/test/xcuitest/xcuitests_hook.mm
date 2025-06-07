@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#import "base/test/allow_check_is_test_for_testing.h"
 #import "base/time/time.h"
 #import "components/feature_engagement/public/feature_activation.h"
 #import "components/signin/internal/identity_manager/profile_oauth2_token_service_delegate.h"
@@ -90,7 +91,8 @@ void DataSharingServiceHooks(
 std::unique_ptr<ShareKitService> CreateShareKitService(
     data_sharing::DataSharingService* data_sharing_service,
     collaboration::CollaborationService* collaboration_service,
-    tab_groups::TabGroupSyncService* sync_service) {
+    tab_groups::TabGroupSyncService* sync_service,
+    TabGroupService* tab_group_service) {
   return nullptr;
 }
 
@@ -110,7 +112,7 @@ GetOverriddenRecipientsFetcher() {
 }
 
 void SetUpTestsIfPresent() {
-  // No-op for XCUITest.
+  base::test::AllowCheckIsTestForTesting();
 }
 
 void RunTestsIfPresent() {
@@ -140,6 +142,11 @@ feature_engagement::FeatureActivation FETDemoModeOverride() {
 
 void WipeProfileIfRequested(int argc, char* argv[]) {
   // Do nothing.
+}
+
+base::TimeDelta
+GetOverriddenDelayForRequestingTurningOnCredentialProviderExtension() {
+  return base::Seconds(0);
 }
 
 }  // namespace tests_hook

@@ -4,6 +4,7 @@
 
 #include <string_view>
 
+#include "base/strings/stringprintf.h"
 #include "base/test/values_test_util.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
@@ -85,7 +86,7 @@ IN_PROC_BROWSER_TEST_F(RuntimeGetContextsInteractiveApiTest, GetPopupContext) {
   std::string expected_document_id =
       ExtensionApiFrameIdMap::GetDocumentId(popup_frame).ToString();
   std::string expected_frame_url =
-      extension->GetResourceURL("popup.html").spec();
+      extension->ResolveExtensionURL("popup.html").spec();
   std::string expected_origin = extension->origin().Serialize();
 
   // Query for popup-based contexts. There should only be one.

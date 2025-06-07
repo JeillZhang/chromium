@@ -22,10 +22,14 @@
 #include "content/public/browser/interest_group_manager.h"
 #include "net/base/schemeful_site.h"
 
-class Browser;
+class BrowserWindowInterface;
 
 namespace views {
 class Widget;
+}
+
+namespace privacy_sandbox {
+class PrivacySandboxQueueManager;
 }
 
 // Service which encapsulates logic related to displaying and controlling the
@@ -57,36 +61,6 @@ class PrivacySandboxService : public KeyedService {
     kAGACCT = 2,
     kMaxValue = kAGACCT,
   };
-
-  // Account sign in user groups
-  // LINT.IfChange(PrimaryAccountUserGroups)
-  enum class PrimaryAccountUserGroups {
-    kNotSet = 0,
-    kSignedOut = 1,
-    kSignedInCapabilityFalse = 2,
-    kSignedInCapabilityTrue = 3,
-    kSignedInCapabilityUnknown = 4,
-    kMaxValue = kSignedInCapabilityUnknown,
-  };
-  // LINT.ThenChange(//tools/metrics/histograms/enums.xml:PrivacySandboxPrimaryAccountUserGroups)
-
-  // Suppression reason for a generic prompt.
-  // LINT.IfChange(FakeNoticePromptSuppressionReason)
-  enum class FakeNoticePromptSuppressionReason {
-    kNone = 0,
-    // Prompt suppressed due to third party cookies being blocked.
-    k3PC_Blocked = 1 << 0,
-    // Prompt suppressed due to account capability.
-    kCapabilityFalse = 1 << 1,
-    // Prompt suppressed due to managed devices have the third party cookie
-    // policy set.
-    kManagedDevice = 1 << 2,
-    // Prompt suppressed due to the notice being shown before, tracked by a fake
-    // pref.
-    kNoticeShownBefore = 1 << 3,
-    kMaxValue = kNoticeShownBefore,
-  };
-  // LINT.ThenChange(//tools/metrics/histograms/enums.xml:PrivacySandboxPromptSuppressionReason)
 
   // An exhaustive list of actions related to showing & interacting with the
   // prompt. Includes actions which do not impact consent / notice state.
@@ -147,21 +121,6 @@ class PrivacySandboxService : public KeyedService {
     kMaxValue = kNoticeAdsMeasurementMoreInfoClosed,
   };
 
-  // Contains the possible states of the Notice Queue.
-  enum class NoticeQueueState {
-    // Queued on browser startup.
-    kQueueOnStartup = 0,
-    // Queued when new tab helper is created or navigation occurred.
-    kQueueOnThOrNav = 1,
-    // Released when new tab helper is created or navigation occurred.
-    kReleaseOnThOrNav = 2,
-    // Released because DMA notice showed during session.
-    kReleaseOnDMA = 3,
-    // Released after successful show.
-    kReleaseOnShown = 4,
-    kMaxValue = kReleaseOnShown,
-  };
-
   // If during the trials a previous consent decision was made, or the notice
   // was already acknowledged, and the privacy sandbox is disabled,
   // `prefs::kPrivacySandboxM1PromptSuppressed` was set to either
@@ -215,18 +174,15 @@ class PrivacySandboxService : public KeyedService {
   };
   // LINT.ThenChange(//tools/metrics/histograms/metadata/settings/enums.xml:SettingsPrivacySandboxPromptStartupState)
 
-  // Returns whether |url| is suitable to display the Privacy Sandbox prompt
-  // over. Only about:blank and certain chrome:// URLs are considered
-  // suitable.
-  static bool IsUrlSuitableForPrompt(const GURL& url);
-
-  // Disables the display of the Privacy Sandbox prompt for testing. When
-  // |disabled| is true, GetRequiredPromptType() will only ever return that
-  // no prompt is required. NOTE: This is set to true in
-  // InProcessBrowserTest::SetUp, disabling the prompt for those tests. If
-  // you set this outside of that context, you should ensure it is reset at
-  // the end of your test.
-  static void SetPromptDisabledForTests(bool disabled);
+  // Enum for the different events that can be triggered from the
+  // PrivacySandboxApis Dialog. It used to bubble up some Dialog events to other
+  // components.
+  enum class AdsDialogCallbackNoArgsEvents {
+    kShowDialog,
+    kCloseDialog,
+    kOpenAdsPrivacySettings,
+    kOpenMeasurementSettings,
+  };
 
   // Returns the prompt type that should be shown to the user. This consults
   // previous consent / notice information stored in preferences, the
@@ -250,32 +206,15 @@ class PrivacySandboxService : public KeyedService {
 #if !BUILDFLAG(IS_ANDROID)
   // Informs the service that a Privacy Sandbox prompt has been opened
   // or closed for |browser|.
-  virtual void PromptOpenedForBrowser(Browser* browser,
+  virtual void PromptOpenedForBrowser(BrowserWindowInterface* browser,
                                       views::Widget* widget) = 0;
-  virtual void PromptClosedForBrowser(Browser* browser) = 0;
+  virtual void PromptClosedForBrowser(BrowserWindowInterface* browser) = 0;
 
   // Returns whether a Privacy Sandbox prompt is currently open for |browser|.
-  virtual bool IsPromptOpenForBrowser(Browser* browser) = 0;
+  virtual bool IsPromptOpenForBrowser(BrowserWindowInterface* browser) = 0;
 
-  // The following methods call directly into the product messaging controller.
-  // TODO(crbug.com/370804492): When we add DMA notice to queue, consider
-  // extrapolating these methods.
-  virtual bool IsNoticeQueued() = 0;
-  virtual bool IsHoldingHandle() = 0;
-  // If the notice is in the queue, it will unqueue it. Otherwise, if the handle
-  // is being held, it will release the handle.
-  virtual void MaybeUnqueueNotice(NoticeQueueState queue_source) = 0;
-  // If a prompt is required and we are not already in the queue or holding the
-  // handle, will add the notice to the product messaging controller queue.
-  virtual void MaybeQueueNotice(NoticeQueueState queue_source) = 0;
-  // Triggered by product messaging code when our turn in queue has arrived.
-  // Moves the handle to temporary location to hold it.
-  virtual void HoldQueueHandle(user_education::RequiredNoticePriorityHandle
-                                   messaging_priority_handle) = 0;
-  // Tracks whether the queue is meant to be suppressed or not. If set to true,
-  // queueing and unqueueing attempts will be ignored, but the existing queue
-  // will be unaffected.
-  virtual void SetSuppressQueue(bool suppress_queue) = 0;
+  virtual privacy_sandbox::PrivacySandboxQueueManager&
+  GetPrivacySandboxNoticeQueueManager() = 0;
 #endif  // !BUILDFLAG(IS_ANDROID)
 
   // If set to true, this treats the testing environment as that of a branded
@@ -299,12 +238,6 @@ class PrivacySandboxService : public KeyedService {
 
   // Returns whether the RelatedWebsiteSets preference is managed.
   virtual bool IsRelatedWebsiteSetsDataAccessManaged() const = 0;
-
-  // DEPRECATED - Do not use in new code. It will be replaced with queries to
-  // the Related Website Sets that are in the browser-process.
-  // Virtual for mocking in tests.
-  virtual base::flat_map<net::SchemefulSite, net::SchemefulSite>
-  GetSampleRelatedWebsiteSets() const = 0;
 
   // Returns the owner domain of the related website set that `site_url` is a
   // member of, or std::nullopt if `site_url` is not recognised as a member of
@@ -405,6 +338,11 @@ class PrivacySandboxService : public KeyedService {
   TopicsConsentLastUpdateSource() const = 0;
   virtual base::Time TopicsConsentLastUpdateTime() const = 0;
   virtual std::string TopicsConsentLastUpdateText() const = 0;
+
+  // Notice Framework Result Callbacks.
+  virtual void UpdateTopicsApiResult(bool value) = 0;
+  virtual void UpdateProtectedAudienceApiResult(bool value) = 0;
+  virtual void UpdateMeasurementApiResult(bool value) = 0;
 };
 
 #endif  // CHROME_BROWSER_PRIVACY_SANDBOX_PRIVACY_SANDBOX_SERVICE_H_

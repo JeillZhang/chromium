@@ -16,22 +16,25 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.MethodSorters;
 
-import org.chromium.base.test.transit.BatchedPublicTransitRule;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.suggestions.SiteSuggestion;
 import org.chromium.chrome.browser.util.BrowserUiUtils.ModuleTypeOnStartAndNtp;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.transit.ChromeTabbedActivityPublicTransitEntryPoints;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.ReusedCtaTransitTestRule;
 import org.chromium.chrome.test.transit.ntp.MvtsFacility;
 import org.chromium.chrome.test.transit.ntp.RegularNewTabPageStation;
 import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.NewTabPageTestUtils;
 import org.chromium.chrome.test.util.browser.suggestions.SuggestionsDependenciesRule;
 import org.chromium.chrome.test.util.browser.suggestions.mostvisited.FakeMostVisitedSites;
+import org.chromium.net.test.EmbeddedTestServerRule;
 
 import java.util.List;
 
@@ -41,27 +44,21 @@ import java.util.List;
 @Batch(Batch.PER_CLASS)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 public class MostVisitedTilesPTTest {
-    @ClassRule
-    public static ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
-
-    @Rule
-    public BatchedPublicTransitRule<RegularNewTabPageStation> mBatchedRule =
-            new BatchedPublicTransitRule<>(
-                    RegularNewTabPageStation.class, /* expectResetByTest= */ true);
-
-    private final ChromeTabbedActivityPublicTransitEntryPoints mEntryPoints =
-            new ChromeTabbedActivityPublicTransitEntryPoints(sActivityTestRule);
+    @ClassRule public static EmbeddedTestServerRule sTestServerRule = new EmbeddedTestServerRule();
 
     @ClassRule
     public static SuggestionsDependenciesRule sSuggestionsDeps = new SuggestionsDependenciesRule();
 
     private static List<SiteSuggestion> sSiteSuggestions;
 
+    @Rule
+    public ReusedCtaTransitTestRule<RegularNewTabPageStation> mCtaTestRule =
+            ChromeTransitTestRules.ntpStartReusedActivityRule();
+
     @BeforeClass
     public static void beforeClass() {
         sSiteSuggestions =
-                NewTabPageTestUtils.createFakeSiteSuggestions(sActivityTestRule.getTestServer());
+                NewTabPageTestUtils.createFakeSiteSuggestions(sTestServerRule.getServer());
         FakeMostVisitedSites mostVisitedSites = new FakeMostVisitedSites();
         mostVisitedSites.setTileSuggestions(sSiteSuggestions);
         sSuggestionsDeps.getFactory().mostVisitedSites = mostVisitedSites;
@@ -69,24 +66,41 @@ public class MostVisitedTilesPTTest {
 
     @Test
     @MediumTest
-    public void test010_ClickFirstMVT() {
+    @DisableFeatures({ChromeFeatureList.MOST_VISITED_TILES_CUSTOMIZATION})
+    public void test010_ClickFirstMVT_DisableMvtCustomization() {
         doClickMVTTest(0);
     }
 
     @Test
     @MediumTest
-    public void test020_ClickLastMVT() {
+    @EnableFeatures({ChromeFeatureList.MOST_VISITED_TILES_CUSTOMIZATION})
+    public void test010_ClickFirstMVT_EnableMvtCustomization() {
+        doClickMVTTest(0);
+    }
+
+    @Test
+    @MediumTest
+    @DisableFeatures({ChromeFeatureList.MOST_VISITED_TILES_CUSTOMIZATION})
+    public void test020_ClickLastMVT_DisableMvtCustomization() {
+        doClickMVTTest(7);
+    }
+
+    @Test
+    @MediumTest
+    @EnableFeatures({ChromeFeatureList.MOST_VISITED_TILES_CUSTOMIZATION})
+    public void test020_ClickLastMVT_EnableMvtCustomization() {
         doClickMVTTest(7);
     }
 
     private void doClickMVTTest(int index) {
-        RegularNewTabPageStation page = mEntryPoints.startOnNtp(mBatchedRule);
+        RegularNewTabPageStation page = mCtaTestRule.start();
+
         MvtsFacility mvts = page.focusOnMvts(sSiteSuggestions);
         WebPageStation mostVisitedPage;
         try (var histogram =
                 HistogramWatcher.newSingleRecordWatcher(
                         "NewTabPage.Module.Click", ModuleTypeOnStartAndNtp.MOST_VISITED_TILES)) {
-            mostVisitedPage = mvts.scrollToAndSelectByIndex(index);
+            mostVisitedPage = mvts.ensureTileIsDisplayedAndGet(index).clickToNavigateToWebPage();
         }
 
         // Reset back to the NTP for batching
@@ -95,7 +109,7 @@ public class MostVisitedTilesPTTest {
                         RegularNewTabPageStation.newBuilder()
                                 .withIncognito(false)
                                 .withIsOpeningTabs(0)
-                                .withTabAlreadySelected(mostVisitedPage.getLoadedTab())
+                                .withTabAlreadySelected(mostVisitedPage.loadedTabElement.get())
                                 .build());
         assertFinalDestination(page);
     }

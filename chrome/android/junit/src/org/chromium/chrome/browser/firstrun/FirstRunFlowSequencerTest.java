@@ -79,7 +79,7 @@ public class FirstRunFlowSequencerTest {
     }
 
     private static class TestFirstRunFlowSequencer extends FirstRunFlowSequencer {
-        public Bundle returnedBundle;
+        public Bundle bundle;
         public boolean calledOnFlowIsKnown;
 
         public TestFirstRunFlowSequencer(
@@ -88,14 +88,15 @@ public class FirstRunFlowSequencerTest {
                     profileSupplier,
                     new ChildAccountStatusSupplier(
                             AccountManagerFacadeProvider.getInstance(),
-                            AppRestrictionSupplier.takeMaybeInitialized()));
+                            new AppRestrictionSupplier()));
         }
 
         @Override
-        public void onFlowIsKnown(Bundle freProperties) {
+        public void onFlowIsKnown(boolean isChild) {
             calledOnFlowIsKnown = true;
-            if (freProperties != null) updateFirstRunProperties(freProperties);
-            returnedBundle = freProperties;
+            Bundle freProperties = new Bundle();
+            updateFirstRunProperties(freProperties);
+            bundle = freProperties;
         }
     }
 
@@ -116,7 +117,6 @@ public class FirstRunFlowSequencerTest {
         when(IdentityServicesProvider.get().getIdentityManager(profile))
                 .thenReturn(mIdentityManagerMock);
         when(mIdentityManagerMock.hasPrimaryAccount(ConsentLevel.SIGNIN)).thenReturn(false);
-        when(mIdentityManagerMock.hasPrimaryAccount(ConsentLevel.SYNC)).thenReturn(false);
 
         SyncServiceFactory.setInstanceForTesting(mSyncServiceMock);
         HistorySyncHelper.setInstanceForTesting(mHistorySyncHelperMock);
@@ -157,11 +157,10 @@ public class FirstRunFlowSequencerTest {
         numberOfAccountsHistogram.assertExpected();
         assertTrue(sequencer.calledOnFlowIsKnown);
 
-        Bundle bundle = sequencer.returnedBundle;
+        Bundle bundle = sequencer.bundle;
         assertTrue(bundle.getBoolean(FirstRunActivityBase.SHOW_HISTORY_SYNC_PAGE));
         assertFalse(bundle.getBoolean(FirstRunActivityBase.SHOW_SEARCH_ENGINE_PAGE));
-        assertTrue(bundle.getBoolean(SyncConsentFirstRunFragment.IS_CHILD_ACCOUNT));
-        assertEquals(3, bundle.size());
+        assertEquals(2, bundle.size());
     }
 
     @Test
@@ -181,11 +180,10 @@ public class FirstRunFlowSequencerTest {
         numberOfAccountsHistogram.assertExpected();
         assertTrue(sequencer.calledOnFlowIsKnown);
 
-        Bundle bundle = sequencer.returnedBundle;
+        Bundle bundle = sequencer.bundle;
         assertFalse(bundle.getBoolean(FirstRunActivityBase.SHOW_HISTORY_SYNC_PAGE));
         assertFalse(bundle.getBoolean(FirstRunActivityBase.SHOW_SEARCH_ENGINE_PAGE));
-        assertTrue(bundle.getBoolean(SyncConsentFirstRunFragment.IS_CHILD_ACCOUNT));
-        assertEquals(3, bundle.size());
+        assertEquals(2, bundle.size());
     }
 
     @Test
@@ -203,11 +201,10 @@ public class FirstRunFlowSequencerTest {
         numberOfAccountsHistogram.assertExpected();
         assertTrue(sequencer.calledOnFlowIsKnown);
 
-        Bundle bundle = sequencer.returnedBundle;
+        Bundle bundle = sequencer.bundle;
         assertFalse(bundle.getBoolean(FirstRunActivityBase.SHOW_HISTORY_SYNC_PAGE));
         assertTrue(bundle.getBoolean(FirstRunActivityBase.SHOW_SEARCH_ENGINE_PAGE));
-        assertFalse(bundle.getBoolean(SyncConsentFirstRunFragment.IS_CHILD_ACCOUNT));
-        assertEquals(3, bundle.size());
+        assertEquals(2, bundle.size());
     }
 
     @Test
@@ -224,11 +221,10 @@ public class FirstRunFlowSequencerTest {
 
         numberOfAccountsHistogram.assertExpected();
         assertTrue(sequencer.calledOnFlowIsKnown);
-        final Bundle bundle = sequencer.returnedBundle;
+        final Bundle bundle = sequencer.bundle;
         assertFalse(bundle.getBoolean(FirstRunActivityBase.SHOW_HISTORY_SYNC_PAGE));
         assertFalse(bundle.getBoolean(FirstRunActivityBase.SHOW_SEARCH_ENGINE_PAGE));
-        assertFalse(bundle.getBoolean(SyncConsentFirstRunFragment.IS_CHILD_ACCOUNT));
-        assertEquals(3, bundle.size());
+        assertEquals(2, bundle.size());
     }
 
     @Test
@@ -247,11 +243,10 @@ public class FirstRunFlowSequencerTest {
 
         numberOfAccountsHistogram.assertExpected();
         assertTrue(sequencer.calledOnFlowIsKnown);
-        final Bundle bundle = sequencer.returnedBundle;
+        final Bundle bundle = sequencer.bundle;
         assertTrue(bundle.getBoolean(FirstRunActivityBase.SHOW_HISTORY_SYNC_PAGE));
         assertFalse(bundle.getBoolean(FirstRunActivityBase.SHOW_SEARCH_ENGINE_PAGE));
-        assertFalse(bundle.getBoolean(SyncConsentFirstRunFragment.IS_CHILD_ACCOUNT));
-        assertEquals(3, bundle.size());
+        assertEquals(2, bundle.size());
     }
 
     @Test
@@ -271,11 +266,10 @@ public class FirstRunFlowSequencerTest {
 
         numberOfAccountsHistogram.assertExpected();
         assertTrue(sequencer.calledOnFlowIsKnown);
-        final Bundle bundle = sequencer.returnedBundle;
+        final Bundle bundle = sequencer.bundle;
         assertFalse(bundle.getBoolean(FirstRunActivityBase.SHOW_HISTORY_SYNC_PAGE));
         assertFalse(bundle.getBoolean(FirstRunActivityBase.SHOW_SEARCH_ENGINE_PAGE));
-        assertFalse(bundle.getBoolean(SyncConsentFirstRunFragment.IS_CHILD_ACCOUNT));
-        assertEquals(3, bundle.size());
+        assertEquals(2, bundle.size());
     }
 
     @Test
@@ -295,10 +289,9 @@ public class FirstRunFlowSequencerTest {
 
         numberOfAccountsHistogram.assertExpected();
         assertTrue(sequencer.calledOnFlowIsKnown);
-        final Bundle bundle = sequencer.returnedBundle;
+        final Bundle bundle = sequencer.bundle;
         assertFalse(bundle.getBoolean(FirstRunActivityBase.SHOW_HISTORY_SYNC_PAGE));
         assertFalse(bundle.getBoolean(FirstRunActivityBase.SHOW_SEARCH_ENGINE_PAGE));
-        assertFalse(bundle.getBoolean(SyncConsentFirstRunFragment.IS_CHILD_ACCOUNT));
-        assertEquals(3, bundle.size());
+        assertEquals(2, bundle.size());
     }
 }

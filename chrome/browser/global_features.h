@@ -8,6 +8,7 @@
 #include <memory.h>
 
 #include "base/functional/callback.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/common/buildflags.h"
 
@@ -23,8 +24,15 @@ class WhatsNewRegistry;
 namespace glic {
 class GlicBackgroundModeManager;
 class GlicProfileManager;
+class GlicSyntheticTrialManager;
 }  // namespace glic
 #endif
+
+class ApplicationLocaleStorage;
+
+namespace installer_downloader {
+class InstallerDownloaderController;
+}
 
 // This class owns the core controllers for features that are globally
 // scoped on desktop. It can be subclassed by tests to perform
@@ -69,6 +77,21 @@ class GlobalFeatures {
   glic::GlicBackgroundModeManager* glic_background_mode_manager() {
     return glic_background_mode_manager_.get();
   }
+
+  glic::GlicSyntheticTrialManager* glic_synthetic_trial_manager() {
+    return synthetic_trial_manager_.get();
+  }
+#endif
+
+  ApplicationLocaleStorage* application_locale_storage() {
+    return application_locale_storage_.get();
+  }
+
+#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  installer_downloader::InstallerDownloaderController*
+  installer_downloader_controller() {
+    return installer_downloader_controller_.get();
+  }
 #endif
 
  protected:
@@ -98,6 +121,14 @@ class GlobalFeatures {
   std::unique_ptr<glic::GlicProfileManager> glic_profile_manager_;
   std::unique_ptr<glic::GlicBackgroundModeManager>
       glic_background_mode_manager_;
+  std::unique_ptr<glic::GlicSyntheticTrialManager> synthetic_trial_manager_;
+#endif
+
+  std::unique_ptr<ApplicationLocaleStorage> application_locale_storage_;
+
+#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  std::unique_ptr<installer_downloader::InstallerDownloaderController>
+      installer_downloader_controller_;
 #endif
 };
 

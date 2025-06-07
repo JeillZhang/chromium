@@ -37,6 +37,8 @@
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/web/web_link_preview_triggerer.h"
+#include "third_party/blink/renderer/core/dom/layout_tree_builder_traversal.h"
+#include "third_party/blink/renderer/core/dom/scroll_marker_group_data.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/events/keyboard_event.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
@@ -311,13 +313,7 @@ void HTMLAnchorElementBase::ParseAttribute(
     InvalidateCachedVisitedLinkHash();
     LogUpdateAttributeIfIsolatedWorldAndInDocument("a", params);
   } else if (params.name == html_names::kNameAttr) {
-    if (GetDocument().HasRenderBlockingExpectLinkElements() && isConnected() &&
-        IsFinishedParsingChildren() && !params.new_value.empty()) {
-      DCHECK(GetDocument().GetRenderBlockingResourceManager());
-      GetDocument()
-          .GetRenderBlockingResourceManager()
-          ->RemovePendingParsingElement(params.new_value, this);
-    }
+    ProcessElementRenderBlocking(params.new_value);
   } else if (params.name == html_names::kTitleAttr) {
     // Do nothing.
   } else if (params.name == html_names::kRelAttr) {
@@ -361,7 +357,7 @@ bool HTMLAnchorElementBase::HasLegalLinkAttribute(
 
 void HTMLAnchorElementBase::FinishParsingChildren() {
   Element::FinishParsingChildren();
-  if (GetDocument().HasRenderBlockingExpectLinkElements()) {
+  if (GetDocument().HasPendingExpectLinkElements()) {
     DCHECK(GetDocument().GetRenderBlockingResourceManager());
     GetDocument()
         .GetRenderBlockingResourceManager()
@@ -582,11 +578,16 @@ void HTMLAnchorElementBase::NavigateToHyperlink(
     // Attach the impression regardless, the embedder will be able to drop
     // impressions for subframe navigations.
 
-    frame_request.SetImpression(
+    std::optional<Impression> impression =
         frame->GetAttributionSrcLoader()->RegisterNavigation(
             /*navigation_url=*/completed_url, attribution_src,
             /*element=*/this, request.HasUserGesture(),
-            request.GetReferrerPolicy()));
+            request.GetReferrerPolicy());
+    if (impression.has_value()) {
+      impression->is_empty_attribution_src_tag = attribution_src.empty();
+    }
+
+    frame_request.SetImpression(impression);
   }
 
   Frame* target_frame =
@@ -617,8 +618,9 @@ void HTMLAnchorElementBase::NavigateToHyperlink(
   }
 }
 
-Element* HTMLAnchorElementBase::interestTargetElement() {
-  if (!RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled()) {
+Element* HTMLAnchorElementBase::InterestTargetElement() const {
+  if (!RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled(
+          GetDocument().GetExecutionContext())) {
     return nullptr;
   }
   // Anchor elements that don't have the `href` attribute are not interactive,
@@ -761,10 +763,7 @@ bool IsLinkClick(Event& event) {
       !mouse_event) {
     return false;
   }
-  int16_t button = mouse_event->button();
-  return (button == static_cast<int16_t>(WebPointerProperties::Button::kLeft) ||
-          button ==
-              static_cast<int16_t>(WebPointerProperties::Button::kMiddle));
+  return mouse_event->IsLinkClickButton();
 }
 
 bool HTMLAnchorElementBase::WillRespondToMouseClickEvents() {
@@ -795,6 +794,9 @@ Node::InsertionNotificationRequest HTMLAnchorElementBase::InsertedInto(
     }
   }
 
+  if (FastHasAttribute(html_names::kNameAttr)) {
+    ProcessElementRenderBlocking(FastGetAttribute(html_names::kNameAttr));
+  }
   return request;
 }
 
@@ -823,5 +825,46 @@ void HTMLAnchorElementBase::Trace(Visitor* visitor) const {
 
 HTMLAnchorElement::HTMLAnchorElement(Document& document)
     : HTMLAnchorElementBase(html_names::kATag, document) {}
+
+void HTMLAnchorElement::AttachLayoutTree(AttachContext& context) {
+  // It's ok to set the update flag here, since update traversal will only
+  // happen if there are elements with scroll-target-group property set, and
+  // if there are some, the update traversal will happen anyway.
+  GetDocument().SetNeedsScrollTargetGroupRelationsUpdate();
+  HTMLAnchorElementBase::AttachLayoutTree(context);
+}
+
+void HTMLAnchorElement::DetachLayoutTree(bool performing_reattach) {
+  if (ScrollMarkerGroupData* data = GetScrollTargetGroupContainerData()) {
+    data->RemoveFromFocusGroup(*this);
+  }
+  HTMLAnchorElementBase::DetachLayoutTree(performing_reattach);
+}
+
+Element* HTMLAnchorElement::ScrollTargetElement() const {
+  const KURL& url = Url();
+  if (!url.HasFragmentIdentifier()) {
+    return nullptr;
+  }
+  String fragment = url.FragmentIdentifier().ToString();
+  Node* anchor_node = GetDocument().FindAnchor(fragment);
+  return DynamicTo<Element>(anchor_node);
+}
+
+PaintLayerScrollableArea*
+HTMLAnchorElement::AncestorScrollableAreaOfScrollTargetElement() const {
+  Element* scroll_target = ScrollTargetElement();
+  if (!scroll_target) {
+    return nullptr;
+  }
+  for (Element* parent =
+           LayoutTreeBuilderTraversal::ParentElement(*scroll_target);
+       parent; parent = LayoutTreeBuilderTraversal::ParentElement(*parent)) {
+    if (parent->GetLayoutBox() && parent->GetLayoutBox()->GetScrollableArea()) {
+      return parent->GetLayoutBox()->GetScrollableArea();
+    }
+  }
+  return nullptr;
+}
 
 }  // namespace blink

@@ -19,10 +19,13 @@ import android.util.Pair;
 
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.Mockito;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.FeatureOverrides;
@@ -44,6 +47,7 @@ import java.util.concurrent.TimeoutException;
 @Config(manifest = Config.NONE)
 public class MerchantTrustMessageSchedulerTest {
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private MessageDispatcher mMockMessageDispatcher;
 
     @Mock private WebContents mMockWebContents;
@@ -60,8 +64,6 @@ public class MerchantTrustMessageSchedulerTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
-
         doAnswer(
                         invocation -> {
                             Runnable runnable = (Runnable) invocation.getArguments()[0];
@@ -71,7 +73,6 @@ public class MerchantTrustMessageSchedulerTest {
                 .when(mMockHandler)
                 .postDelayed(any(Runnable.class), anyLong());
         doReturn(mMockTab).when(mMockTabProvider).get();
-        doReturn(true).when(mMockTabProvider).hasValue();
     }
 
     @Test
@@ -231,7 +232,8 @@ public class MerchantTrustMessageSchedulerTest {
         doReturn(true).when(mockMessagesContext).isValid();
         doReturn(mMockWebContents).when(mockMessagesContext).getWebContents();
         doReturn(mMockWebContents).when(mMockTab).getWebContents();
-        doReturn(false).when(mMockTabProvider).hasValue();
+        Mockito.reset(mMockTabProvider);
+        doReturn(null).when(mMockTabProvider).get();
 
         scheduler.setHandlerForTesting(mMockHandler);
 

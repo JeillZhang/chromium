@@ -2,14 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/shelf/shelf_app_button.h"
 
 #include <algorithm>
+#include <array>
+#include <iterator>
 #include <memory>
 
 #include "ash/constants/ash_features.h"
@@ -28,7 +25,6 @@
 #include "ash/system/progress_indicator/progress_indicator.h"
 #include "ash/wm/desks/desks_controller.h"
 #include "ash/wm/window_util.h"
-#include "base/debug/stack_trace.h"
 #include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
 #include "base/metrics/histogram_macros.h"
@@ -192,10 +188,13 @@ class PromiseIconBackground : public views::Background {
   PromiseIconBackground(ui::ColorId color_id,
                         const gfx::Rect& icon_bounds,
                         const gfx::Insets& insets)
-      : color_id_(color_id), icon_bounds_(icon_bounds), insets_(insets) {}
+      : icon_bounds_(icon_bounds), insets_(insets) {
+    SetColor(color_id);
+  }
 
   PromiseIconBackground(const PromiseIconBackground&) = delete;
   PromiseIconBackground& operator=(const PromiseIconBackground&) = delete;
+
   ~PromiseIconBackground() override = default;
 
   // views::Background:
@@ -208,18 +207,16 @@ class PromiseIconBackground : public views::Background {
 
     cc::PaintFlags flags;
     flags.setAntiAlias(true);
-    flags.setColor(get_color());
+    flags.setColor(color().ResolveToSkColor(view->GetColorProvider()));
 
     canvas->DrawCircle(bounds.CenterPoint(), radius, flags);
   }
 
   void OnViewThemeChanged(views::View* view) override {
-    SetNativeControlColor(view->GetColorProvider()->GetColor(color_id_));
     view->SchedulePaint();
   }
 
  private:
-  const ui::ColorId color_id_;
   const gfx::Rect icon_bounds_;
   const gfx::Insets insets_;
 };
@@ -429,12 +426,12 @@ ShelfAppButton::ShelfAppButton(ShelfView* shelf_view,
     : ShelfButton(shelf_view->shelf(), shelf_button_delegate),
       shelf_view_(shelf_view),
       indicator_(new AppStatusIndicatorView()) {
-  const gfx::ShadowValue kShadows[] = {
+  constexpr std::array<gfx::ShadowValue, 3> kShadows = {
       gfx::ShadowValue(gfx::Vector2d(0, 2), 0, SkColorSetARGB(0x1A, 0, 0, 0)),
       gfx::ShadowValue(gfx::Vector2d(0, 3), 1, SkColorSetARGB(0x1A, 0, 0, 0)),
       gfx::ShadowValue(gfx::Vector2d(0, 0), 1, SkColorSetARGB(0x54, 0, 0, 0)),
   };
-  icon_shadows_.assign(kShadows, kShadows + std::size(kShadows));
+  icon_shadows_ = gfx::ShadowValues(std::begin(kShadows), std::end(kShadows));
 
   views::InkDrop::Get(this)->SetMode(
       views::InkDropHost::InkDropMode::ON_NO_GESTURE_HANDLER);
@@ -473,7 +470,7 @@ ShelfAppButton::ShelfAppButton(ShelfView* shelf_view,
   indicator_->SetPaintToLayer();
   indicator_->layer()->SetFillsBoundsOpaquely(false);
 
-  AddChildView(indicator_.get());
+  AddChildViewRaw(indicator_.get());
 
   notification_indicator_ =
       AddChildView(std::make_unique<DotIndicator>(kDefaultIndicatorColor));

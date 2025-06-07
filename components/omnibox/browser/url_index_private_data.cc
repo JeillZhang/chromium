@@ -22,7 +22,6 @@
 #include "base/i18n/case_conversion.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/not_fatal_until.h"
 #include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -39,6 +38,7 @@
 #include "components/omnibox/browser/omnibox_triggered_feature_service.h"
 #include "components/omnibox/browser/tailored_word_break_iterator.h"
 #include "components/omnibox/common/omnibox_features.h"
+#include "components/omnibox/common/string_cleaning.h"
 #include "components/search_engines/template_url_service.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
 
@@ -698,7 +698,7 @@ void URLIndexPrivateData::HistoryIdsToScoredMatches(
     auto hist_pos = history_info_map_.find(history_id);
     const history::URLRow& hist_item = hist_pos->second.url_row;
     auto starts_pos = word_starts_map_.find(history_id);
-    CHECK(starts_pos != word_starts_map_.end(), base::NotFatalUntil::M130);
+    CHECK(starts_pos != word_starts_map_.end());
 
     bool is_highly_visited_host =
         !host_filter.empty() ||
@@ -817,10 +817,12 @@ void URLIndexPrivateData::AddRowWordsToIndex(const history::URLRow& row,
   // Split URL into individual, unique words then add in the title words.
   const GURL& gurl(row.url());
   DCHECK(gurl.is_valid());
-  const std::u16string& url = bookmarks::CleanUpUrlForMatching(gurl, nullptr);
+  const std::u16string& url =
+      string_cleaning::CleanUpUrlForMatching(gurl, nullptr);
   String16Set url_words = String16SetFromString16(
       url, word_starts ? &word_starts->url_word_starts_ : nullptr);
-  const std::u16string& title = bookmarks::CleanUpTitleForMatching(row.title());
+  const std::u16string& title =
+      string_cleaning::CleanUpTitleForMatching(row.title());
   String16Set title_words = String16SetFromString16(
       title, word_starts ? &word_starts->title_word_starts_ : nullptr);
   for (const auto& word :
@@ -878,8 +880,7 @@ void URLIndexPrivateData::RemoveRowWordsFromIndex(const history::URLRow& row) {
   // Reconcile any changes to word usage.
   for (WordID word_id : word_id_set) {
     auto word_id_history_map_iter = word_id_history_map_.find(word_id);
-    CHECK(word_id_history_map_iter != word_id_history_map_.end(),
-          base::NotFatalUntil::M130);
+    CHECK(word_id_history_map_iter != word_id_history_map_.end());
 
     word_id_history_map_iter->second.erase(history_id);
     if (!word_id_history_map_iter->second.empty())

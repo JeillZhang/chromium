@@ -98,7 +98,7 @@ class CONTENT_EXPORT WebContentsAndroid {
 
   void ResumeLoadingCreatedWebContents(JNIEnv* env);
 
-  void SetImportance(JNIEnv* env, jint importance);
+  void SetPrimaryMainFrameImportance(JNIEnv* env, jint importance);
   void SuspendAllMediaPlayers(JNIEnv* env);
   void SetAudioMuted(JNIEnv* env, jboolean mute);
   jboolean IsAudioMuted(JNIEnv* env);
@@ -201,6 +201,15 @@ class CONTENT_EXPORT WebContentsAndroid {
                                 int left,
                                 int bottom,
                                 int right);
+
+  void SetContextMenuInsets(JNIEnv* env,
+                            int top,
+                            int left,
+                            int bottom,
+                            int right);
+
+  void ShowInterestInElement(JNIEnv* env, int nodeID);
+
   void NotifyRendererPreferenceUpdate(JNIEnv* env);
 
   void NotifyBrowserControlsHeightChanged(JNIEnv* env);
@@ -217,8 +226,6 @@ class CONTENT_EXPORT WebContentsAndroid {
   void UpdateOffsetTagDefinitions(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& joffset_tag_definitions);
-
-  void DisconnectFileSelectListenerIfAny(JNIEnv* env);
 
   RenderWidgetHostViewAndroid* GetRenderWidgetHostViewAndroid();
 
@@ -245,6 +252,10 @@ class CONTENT_EXPORT WebContentsAndroid {
   void SetLongPressLinkSelectText(JNIEnv* env, jboolean enabled);
 
   void SetSupportsForwardTransitionAnimation(JNIEnv* env, jboolean enabled);
+
+  jboolean HasOpener(JNIEnv* env);
+
+  jint GetOriginalWindowOpenDisposition(JNIEnv* env);
 
   // Adds a crash report, like DumpWithoutCrashing(), including the Java stack
   // trace from which `web_contents` was created. This is meant to help debug

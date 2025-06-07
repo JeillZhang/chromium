@@ -29,6 +29,8 @@
 #include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_worker_client.mojom.h"
+#include "third_party/blink/public/platform/modules/service_worker/web_service_worker_provider.h"
+#include "third_party/blink/public/platform/modules/service_worker/web_service_worker_provider_client.h"
 
 namespace content {
 
@@ -44,7 +46,7 @@ void CreateSubresourceLoaderFactoryForProviderContext(
     blink::mojom::ServiceWorkerFetchHandlerBypassOption
         fetch_handler_bypass_option,
     std::optional<blink::ServiceWorkerRouterRules> router_rules,
-    blink::EmbeddedWorkerStatus initial_running_status,
+    std::optional<blink::EmbeddedWorkerStatus> initial_running_status,
     mojo::PendingReceiver<blink::mojom::ServiceWorkerRunningStatusCallback>
         running_status_receiver,
     std::unique_ptr<network::PendingSharedURLLoaderFactory>
@@ -99,6 +101,10 @@ blink::mojom::ServiceWorkerObjectInfoPtr
 ServiceWorkerProviderContext::TakeController() {
   CHECK(main_thread_task_runner_->RunsTasksInCurrentSequence());
   return std::move(controller_);
+}
+
+bool ServiceWorkerProviderContext::container_is_blob_url_shared_worker() const {
+  return container_is_blob_url_shared_worker_;
 }
 
 int64_t ServiceWorkerProviderContext::GetControllerVersionId() const {
@@ -310,6 +316,15 @@ ServiceWorkerProviderContext::GetFetchHandlerBypassOption() const {
 
 const blink::WebString ServiceWorkerProviderContext::client_id() const {
   return blink::WebString::FromUTF8(client_id_);
+}
+
+std::unique_ptr<blink::WebServiceWorkerProvider>
+ServiceWorkerProviderContext::CreateServiceWorkerProvider() {
+  return std::make_unique<content::WebServiceWorkerProviderImpl>(this);
+}
+
+void ServiceWorkerProviderContext::Destroy() const {
+  DestructOnMainThread();
 }
 
 void ServiceWorkerProviderContext::UnregisterWorkerFetchContext(

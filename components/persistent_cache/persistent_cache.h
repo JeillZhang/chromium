@@ -13,6 +13,7 @@
 #include "base/containers/span.h"
 #include "base/files/file.h"
 #include "components/persistent_cache/backend_params.h"
+#include "components/persistent_cache/entry_metadata.h"
 
 namespace persistent_cache {
 
@@ -66,8 +67,7 @@ class COMPONENT_EXPORT(PERSISTENT_CACHE) PersistentCache {
 
   // Used to open a cache with a backend of type `impl`. Returns nullptr in
   // case of failure.
-  static std::unique_ptr<PersistentCache> Open(
-      const BackendParams& backend_params);
+  static std::unique_ptr<PersistentCache> Open(BackendParams backend_params);
 
   // Used to get a handle to entry associated with `key`. Returns `nullptr` if
   // `key` is not found. Returned entry will remain valid and its contents will
@@ -80,7 +80,9 @@ class COMPONENT_EXPORT(PERSISTENT_CACHE) PersistentCache {
   // Used to add an entry containing `content` and associated with `key`.
   //
   // Thread-safe.
-  void Insert(std::string_view key, base::span<const uint8_t> content);
+  void Insert(std::string_view key,
+              base::span<const uint8_t> content,
+              EntryMetadata metadata = EntryMetadata{});
 
   Backend* GetBackendForTesting();
 

@@ -38,7 +38,6 @@
 #include "chrome/browser/ash/login/test/logged_in_user_mixin.h"
 #include "chrome/browser/ash/login/test/test_condition_waiter.h"
 #include "chrome/browser/ash/policy/affiliation/affiliation_test_helper.h"
-#include "chrome/browser/ash/policy/core/device_policy_builder.h"
 #include "chrome/browser/ash/policy/core/device_policy_cros_browser_test.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
@@ -55,6 +54,7 @@
 #include "chromeos/ash/components/network/network_state_handler.h"
 #include "chromeos/ash/components/network/network_state_test_helper.h"
 #include "chromeos/ash/components/network/proxy/proxy_config_handler.h"
+#include "chromeos/ash/components/policy/device_policy/device_policy_builder.h"
 #include "components/account_id/account_id.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
@@ -554,6 +554,30 @@ IN_PROC_BROWSER_TEST_F(AutoReloadLockscreenWebUiTest,
   reauth_dialog_helper()->ExpectAutoReloadEnabled();
 }
 
+IN_PROC_BROWSER_TEST_F(AutoReloadLockscreenWebUiTest,
+                       NoReactivationOnNetworkPropertiesChanged) {
+  SetAutoReloadInterval(/*reload_interval_in_minutes=*/10);
+
+  ShowLockScreenDialog();
+
+  AdvanceTime(base::Minutes(5));
+  reauth_dialog_helper()->ExpectAutoReloadEnabled();
+
+  // The time by which the reload should be triggered.
+  base::Time desired_run_time_before =
+      reauth_dialog_helper()->GetAutoReloadTimer()->desired_run_time();
+
+  reauth_dialog_helper()->TriggerNetworkUpdateState();
+
+  // The `desired_run_time` should remain the same since autoreload is not
+  // expected to be reactivated, unless `TriggerNetworkUpdateState` causes the
+  // state to change.
+  base::Time desired_run_time_after =
+      reauth_dialog_helper()->GetAutoReloadTimer()->desired_run_time();
+
+  EXPECT_EQ(desired_run_time_before, desired_run_time_after);
+}
+
 // Sets up proxy server which requires authentication.
 class ProxyAuthLockscreenWebUiTest : public LockscreenWebUiTest {
  public:
@@ -641,9 +665,9 @@ IN_PROC_BROWSER_TEST_F(ProxyAuthLockscreenWebUiTest,
       u"foo", u"bar");
 
   reauth_dialog_helper->WaitForPrimaryGaiaButtonToBeEnabled();
+  auto saml_waiter = reauth_dialog_helper->CreateSamlPageLoadWaiter();
   reauth_dialog_helper->ClickPrimaryGaiaButton();
-
-  reauth_dialog_helper->WaitForSamlIdpPageLoad();
+  saml_waiter->Wait();
 
   // Fill-in the SAML IdP form and submit.
   test::JSChecker signin_frame_js = reauth_dialog_helper->SigninFrameJS();
@@ -735,8 +759,9 @@ class AutoStartTest : public LockscreenWebUiTest {
     EXPECT_TRUE(reauth_dialog_helper);
 
     // Wait for the webview and SAML IdP page to load.
+    auto saml_waiter = reauth_dialog_helper->CreateSamlPageLoadWaiter();
     reauth_dialog_helper->WaitForSigninWebview();
-    reauth_dialog_helper->WaitForSamlIdpPageLoad();
+    saml_waiter->Wait();
   }
 
   testing::NiceMock<policy::MockConfigurationPolicyProvider> provider;
@@ -778,8 +803,9 @@ IN_PROC_BROWSER_TEST_F(AutoStartTest, ChangeIdPButtonPresence) {
   EXPECT_TRUE(reauth_dialog_helper);
 
   // Wait for the webview and SAML IdP page to load.
+  auto saml_waiter = reauth_dialog_helper->CreateSamlPageLoadWaiter();
   reauth_dialog_helper->WaitForSigninWebview();
-  reauth_dialog_helper->WaitForSamlIdpPageLoad();
+  saml_waiter->Wait();
 
   // EGAI button should be visible during the AutoStart flow,
   // but not during normal reauth.
@@ -789,9 +815,10 @@ IN_PROC_BROWSER_TEST_F(AutoStartTest, ChangeIdPButtonPresence) {
   // With reauth endpoint we start on a Gaia page where user needs to click
   // "Next" before being redirected to SAML IdP page.
   reauth_dialog_helper->WaitForPrimaryGaiaButtonToBeEnabled();
+  auto new_saml_waiter = reauth_dialog_helper->CreateSamlPageLoadWaiter();
   reauth_dialog_helper->ClickPrimaryGaiaButton();
 
-  reauth_dialog_helper->WaitForSamlIdpPageLoad();
+  new_saml_waiter->Wait();
   reauth_dialog_helper->ExpectChangeIdPButtonHidden();
 }
 

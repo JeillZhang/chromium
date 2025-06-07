@@ -79,6 +79,18 @@ chrome_internal_verifier(
 ### Optional builders ###
 
 chrome_internal_verifier(
+    # TODO(https://crbug.com/400712231): Turn on branches for this bot.
+    #branch_selector = branches.selector.ANDROID_BRANCHES,
+    builder = "android-arm32-orderfile",
+)
+
+chrome_internal_verifier(
+    # TODO(https://crbug.com/400712231): Turn on branches for this bot.
+    #branch_selector = branches.selector.ANDROID_BRANCHES,
+    builder = "android-arm64-orderfile",
+)
+
+chrome_internal_verifier(
     branch_selector = branches.selector.ANDROID_BRANCHES,
     builder = "android-arm32-pgo",
 )
@@ -155,7 +167,11 @@ chrome_internal_verifier(
 )
 
 chrome_internal_verifier(
-    builder = "chromeos-volteer-chrome-skylab",
+    builder = "chromeos-volteer-chrome",
+)
+
+chrome_internal_verifier(
+    builder = "cronet-arm64-gn2bp-debug",
 )
 
 chrome_internal_verifier(

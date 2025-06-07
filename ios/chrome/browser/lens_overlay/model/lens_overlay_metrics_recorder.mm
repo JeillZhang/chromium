@@ -10,6 +10,7 @@
 #import "components/lens/lens_overlay_metrics.h"
 #import "components/lens/lens_overlay_mime_type.h"
 #import "components/ukm/ios/ukm_url_recorder.h"
+#import "ios/chrome/browser/lens_overlay/model/lens_overlay_sheet_detent_state.h"
 #import "ios/chrome/browser/shared/model/utils/mime_type_util.h"
 #import "ios/web/public/web_state.h"
 
@@ -54,12 +55,15 @@ lens::MimeType MimeTypeFromWebState(web::WebState* web_state) {
   int64_t _sourceID;
   /// The mime type of the webState where lens was invoked on.
   lens::MimeType _mimeType;
+  /// The entrypoint of the lens overlay.
+  LensOverlayEntrypoint _entrypoint;
 }
 
 - (instancetype)initWithEntrypoint:(LensOverlayEntrypoint)entrypoint
                 associatedWebState:(web::WebState*)associatedWebState {
   self = [super init];
   if (self) {
+    _entrypoint = entrypoint;
     _invocationSource = lens::InvocationSourceFromEntrypoint(entrypoint);
     _sourceID = associatedWebState
                     ? ukm::GetSourceIdForWebStateDocument(associatedWebState)
@@ -113,7 +117,13 @@ lens::MimeType MimeTypeFromWebState(web::WebState* web_state) {
 }
 
 - (void)recordLensOverlayClosed {
-  RecordAction(base::UserMetricsAction("Mobile.LensOverlay.Closed"));
+  if (lens::IsLVFEntrypoint(_entrypoint) ||
+      lens::IsImageContextMenuEntrypoint(_entrypoint)) {
+    RecordAction(
+        base::UserMetricsAction("Mobile.LensViewFinder.PostCapture.Closed"));
+  } else {
+    RecordAction(base::UserMetricsAction("Mobile.LensOverlay.Closed"));
+  }
 }
 
 - (void)recordPermissionsLinkOpen {

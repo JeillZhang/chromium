@@ -269,7 +269,8 @@ BuildObjectForAnimationEffect(KeyframeEffect* effect) {
 static std::unique_ptr<protocol::Animation::KeyframeStyle>
 BuildObjectForStringKeyframe(const StringKeyframe* keyframe,
                              double computed_offset) {
-  String offset = String::NumberToStringECMAScript(computed_offset * 100) + "%";
+  String offset = WTF::StrCat(
+      {String::NumberToStringECMAScript(computed_offset * 100), "%"});
 
   std::unique_ptr<protocol::Animation::KeyframeStyle> keyframe_object =
       protocol::Animation::KeyframeStyle::create()
@@ -598,6 +599,10 @@ void InspectorAnimationAgent::NotifyAnimationUpdated(
   }
 
   notify_animation_updated_tasks_.erase(animation_id);
+  if (!id_to_animation_.Contains(animation_id)) {
+    return;
+  }
+
   blink::Animation* animation = id_to_animation_.at(animation_id);
   if (!animation) {
     return;

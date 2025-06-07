@@ -14,6 +14,7 @@
 #include "base/check.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/span.h"
+#include "base/containers/to_vector.h"
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -30,7 +31,9 @@
 #include "base/values.h"
 #include "chrome/browser/browser_features.h"
 #include "chrome/browser/net/key_pinning.pb.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "content/public/browser/network_service_instance.h"
+#include "net/cert/root_store_proto_lite/root_store.pb.h"
 #include "net/net_buildflags.h"
 #include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom.h"
 #include "services/network/public/cpp/network_service_buildflags.h"
@@ -48,13 +51,12 @@
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/base/proto_wrapper.h"
 #include "mojo/public/cpp/base/proto_wrapper_passkeys.h"
+#include "net/cert/internal/trust_store_chrome.h"
 #endif
 
 #if BUILDFLAG(INCLUDE_TRANSPORT_SECURITY_STATE_PRELOAD_LIST)
 #include "net/http/transport_security_state.h"
 #endif
-
-using component_updater::ComponentUpdateService;
 
 namespace {
 
@@ -64,7 +66,7 @@ namespace {
 // if it is set). This should never be decreased since that will cause CT
 // enforcement to eventually stop. This should also only be increased if Chrome
 // is compatible with the version it is being incremented to.
-const uint64_t kMaxSupportedCTCompatibilityVersion = 2;
+const uint64_t kMaxSupportedCTCompatibilityVersion = 3;
 
 // This is the last version of key pins lists that this version of Chrome will
 // accept. If a list is delivered with a compatibility version higher than this,
@@ -166,12 +168,42 @@ void PKIMetadataComponentInstallerService::ConfigureChromeRootStore() {
 void PKIMetadataComponentInstallerService::UpdateChromeRootStoreOnUI(
     std::optional<mojo_base::ProtoWrapper> chrome_root_store) {
   if (chrome_root_store.has_value()) {
+    UpdateTrustAnchorIDs(chrome_root_store.value());
     content::GetCertVerifierServiceFactory()->UpdateChromeRootStore(
         std::move(chrome_root_store.value()),
         base::BindOnce(&PKIMetadataComponentInstallerService::
                            NotifyChromeRootStoreConfigured,
                        weak_factory_.GetWeakPtr()));
   }
+}
+void PKIMetadataComponentInstallerService::UpdateTrustAnchorIDs(
+    const mojo_base::ProtoWrapper& chrome_root_store) {
+  std::vector<std::vector<uint8_t>> trust_anchor_ids;
+  auto message = chrome_root_store.As<chrome_root_store::RootStore>();
+  if (!message.has_value()) {
+    LOG(ERROR) << "error parsing proto for Chrome Root Store";
+    return;
+  }
+  if (message->version_major() <= net::CompiledChromeRootStoreVersion()) {
+    return;
+  }
+  for (const auto& anchor : message->trust_anchors()) {
+    if (anchor.has_trust_anchor_id()) {
+      trust_anchor_ids.emplace_back(
+          base::ToVector(base::as_byte_span(anchor.trust_anchor_id())));
+    }
+  }
+  for (const auto& additional_cert : message->additional_certs()) {
+    if (additional_cert.has_trust_anchor_id() &&
+        additional_cert.tls_trust_anchor()) {
+      trust_anchor_ids.emplace_back(base::ToVector(
+          base::as_byte_span(additional_cert.trust_anchor_id())));
+    }
+  }
+  SystemNetworkContextManager* network_context_manager =
+      SystemNetworkContextManager::GetInstance();
+  CHECK(network_context_manager);
+  network_context_manager->UpdateTrustAnchorIDs(std::move(trust_anchor_ids));
 }
 
 void PKIMetadataComponentInstallerService::NotifyChromeRootStoreConfigured() {
@@ -265,14 +297,17 @@ void PKIMetadataComponentInstallerService::UpdateNetworkServiceCTListOnUI(
       content::GetNetworkService();
 
   if (proto->disable_ct_enforcement()) {
-    // TODO(crbug.com/41392053): when CT enforcement is moved to the cert
-    // verifier service, the killswitch also needs to be moved to the cert
-    // verifier service.
-    network_service->SetCtEnforcementEnabled(
-        false,
+    // TODO(crbug.com/41392053): The disable_ct_enforcement kill switch is
+    // used in both the network service and cert verifier service. Finish
+    // refactoring so that it is only sent to cert verifier service.
+    base::RepeatingClosure done_callback = BarrierClosure(
+        /*num_closures=*/2,
         base::BindOnce(
             &PKIMetadataComponentInstallerService::NotifyCTLogListConfigured,
             weak_factory_.GetWeakPtr()));
+    content::GetCertVerifierServiceFactory()->DisableCtEnforcement(
+        done_callback);
+    network_service->SetCtEnforcementEnabled(false, done_callback);
     return;
   }
 
@@ -459,7 +494,7 @@ PKIMetadataComponentInstallerPolicy::BytesArrayFromProtoBytes(
   std::vector<std::vector<uint8_t>> bytes;
   bytes.reserve(proto_bytes.size());
   std::ranges::transform(
-      proto_bytes, std::back_inserter(bytes), [](std::string element) {
+      proto_bytes, std::back_inserter(bytes), [](const std::string& element) {
         const auto bytes = base::as_byte_span(element);
         return std::vector<uint8_t>(bytes.begin(), bytes.end());
       });

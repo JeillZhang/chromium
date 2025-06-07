@@ -115,17 +115,16 @@ void AddChromeColorMixer(ui::ColorProvider* provider,
   mixer[kColorAppMenuHighlightPrimary] = {ui::kColorButtonBackgroundProminent};
   mixer[kColorAppMenuExpandedForegroundPrimary] = {
       ui::kColorButtonForegroundProminent};
-  mixer[kColorAvatarButtonHighlightNormal] =
+  mixer[kColorAvatarButtonHighlightDefault] =
       AdjustHighlightColorForContrast(ui::kColorAccent, kColorToolbar);
   mixer[kColorAvatarButtonHighlightSyncError] = AdjustHighlightColorForContrast(
       ui::kColorAlertHighSeverity, kColorToolbar);
   mixer[kColorAvatarButtonHighlightSyncPaused] = {
-      kColorAvatarButtonHighlightNormal};
+      kColorAvatarButtonHighlightDefault};
   mixer[kColorAvatarButtonHighlightSigninPaused] = {
-      kColorAvatarButtonHighlightNormal};
+      kColorAvatarButtonHighlightDefault};
   mixer[kColorAvatarButtonHighlightExplicitText] = {
-      kColorAvatarButtonHighlightNormal};
-  mixer[kColorAvatarStrokeLight] = {SK_ColorWHITE};
+      kColorAvatarButtonHighlightDefault};
   mixer[kColorAvatarStroke] = {kColorToolbarButtonIcon};
   mixer[kColorAvatarFillForContrast] = {kColorToolbar};
   mixer[kColorBookmarkBarBackground] = {kColorToolbar};
@@ -216,6 +215,8 @@ void AddChromeColorMixer(ui::ColorProvider* provider,
   mixer[kColorExtensionMenuPinButtonIconDisabled] = ui::SetAlpha(
       kColorExtensionMenuPinButtonIcon, gfx::kDisabledControlAlpha);
   mixer[kColorExtensionsMenuContainerBackground] = {ui::kColorSysSurface3};
+  mixer[kColorFeatureFirstRunInfoContainerBackground] = {ui::kColorSysSurface3};
+  mixer[kColorFeatureFirstRunIconColor] = {ui::kColorSysOnSurfaceSubtle};
   mixer[kColorFeaturePromoBubbleBackground] = {gfx::kGoogleBlue700};
   mixer[kColorFeaturePromoBubbleButtonBorder] = {gfx::kGoogleGrey300};
   mixer[kColorFeaturePromoBubbleCloseButtonInkDrop] = {gfx::kGoogleBlue300};
@@ -242,6 +243,16 @@ void AddChromeColorMixer(ui::ColorProvider* provider,
       ui::GetColorWithMaxContrast({ui::kColorFrameActive});
   mixer[kColorFrameCaptionInactive] =
       ui::GetColorWithMaxContrast({ui::kColorFrameInactive});
+
+  mixer[kColorGlicBackground] = {ui::kColorBubbleBackground};
+  // Invert modal colors w.r.t. Chrome dark mode.
+  mixer[kColorGlicModalBackground] = {dark_mode
+                                          ? SkColorSetRGB(0xE3, 0xE3, 0xE3)
+                                          : SkColorSetRGB(0x30, 0x30, 0x30)};
+  mixer[kColorGlicModalForeground] = {dark_mode
+                                          ? SkColorSetRGB(0x30, 0x30, 0x30)
+                                          : SkColorSetRGB(0xF2, 0xF2, 0xF2)};
+
   mixer[kColorInfoBarBackground] = {kColorToolbar};
   mixer[kColorInfoBarButtonIcon] = {kColorToolbarButtonIcon};
   mixer[kColorInfoBarButtonIconDisabled] = {kColorToolbarButtonIconDisabled};
@@ -279,6 +290,10 @@ void AddChromeColorMixer(ui::ColorProvider* provider,
       PickGoogleColor(ui::kColorAccent, kColorToolbar,
                       color_utils::kMinimumVisibleContrastRatio);
   mixer[kColorMediaRouterIconWarning] = {ui::kColorAlertMediumSeverityIcon};
+  mixer[kColorMulitContentsViewActiveContentOutline] = {
+      ui::kColorSysOnSurfacePrimary};
+  mixer[kColorMulitContentsViewInactiveContentOutline] = {
+      ui::kColorSysNeutralOutline};
   mixer[kColorOmniboxChipBackground] = {kColorTabBackgroundActiveFrameActive};
   mixer[kColorOmniboxChipBlockedActivityIndicatorBackground] = {
       kColorInfoBarBackground};
@@ -312,6 +327,10 @@ void AddChromeColorMixer(ui::ColorProvider* provider,
   mixer[kColorPageInfoChosenObjectDeleteButtonIcon] = {ui::kColorIcon};
   mixer[kColorPageInfoChosenObjectDeleteButtonIconDisabled] = {
       ui::kColorIconDisabled};
+  mixer[kColorParentAccessViewLocalWebApprovalBackground] = {
+      // The background needs to match a custom static color used in Google Kids
+      // Ui server.
+      dark_mode ? SkColorSetARGB(0xFF, 0x2A, 0x2A, 0x2A) : SK_ColorWHITE};
   mixer[kColorPaymentsFeedbackTipBackground] = {
       ui::kColorSubtleEmphasisBackground};
   mixer[kColorPaymentsFeedbackTipBorder] = {ui::kColorBubbleFooterBorder};
@@ -365,7 +384,6 @@ void AddChromeColorMixer(ui::ColorProvider* provider,
   mixer[kColorPipWindowSkipAdButtonBackground] = {gfx::kGoogleGrey700};
   mixer[kColorPipWindowSkipAdButtonBorder] = {kColorPipWindowForeground};
   mixer[kColorProfileMenuBackground] = {ui::kColorDialogBackground};
-  mixer[kColorProfileMenuSyncInfoBackground] = {ui::kColorSyncInfoBackground};
   // TODO(crbug.com/40833357): stop forcing the light theme once the
   // reauth dialog supports the dark mode.
   mixer[kColorProfilesReauthDialogBorder] = {SK_ColorWHITE};
@@ -444,9 +462,6 @@ void AddChromeColorMixer(ui::ColorProvider* provider,
   mixer[kColorHoverCardTabAlertPipPlayingIcon] =
       ui::PickGoogleColor(ui::kColorAccent, ui::kColorBubbleFooterBackground,
                           color_utils::kMinimumVisibleContrastRatio);
-  mixer[kColorHoverCardTabAlertUserAvatarFallbackIcon] =
-      ui::SelectBasedOnDarkInput(ui::kColorBubbleFooterBackground,
-                                 SK_ColorWHITE, gfx::kGoogleGrey800);
   mixer[kColorTabCloseButtonFocusRingActive] = ui::PickGoogleColor(
       ui::kColorFocusableBorderFocused, kColorTabBackgroundActiveFrameActive,
       color_utils::kMinimumVisibleContrastRatio);
@@ -461,7 +476,7 @@ void AddChromeColorMixer(ui::ColorProvider* provider,
       ui::kColorFrameActive, color_utils::kMinimumVisibleContrastRatio);
 
   mixer[kColorSharingRecentActivityDialogActivityContainer] = {
-      ui::kColorSysSurface5};
+      ui::kColorSysSurface3};
   mixer[kColorSharingRecentActivityDialogFaviconContainer] = {
       ui::kColorSysSurface};
 
@@ -739,11 +754,10 @@ void AddChromeColorMixer(ui::ColorProvider* provider,
       ui::SetAlpha(ui::GetColorWithMaxContrast(kColorToolbarButtonText), 0xCC);
   mixer[kColorAvatarButtonHighlightIncognito] = {
       kColorToolbarButtonBackgroundHighlightedDefault};
-  mixer[kColorAvatarButtonHighlightDefault] = {kColorToolbar};
-  mixer[kColorAvatarButtonHighlightNormalForeground] =
+  mixer[kColorAvatarButtonHighlightGuest] = {kColorToolbar};
+  mixer[kColorAvatarButtonHighlightDefaultForeground] =
       AdjustHighlightColorForContrast(ui::kColorAccent, kColorToolbar);
-  mixer[kColorAvatarButtonHighlightDefaultForeground] = {
-      kColorToolbarButtonText};
+  mixer[kColorAvatarButtonHighlightGuestForeground] = {kColorToolbarButtonText};
   mixer[kColorAvatarButtonHighlightSyncErrorForeground] =
       AdjustHighlightColorForContrast(ui::kColorAlertMediumSeverityIcon,
                                       kColorToolbar);

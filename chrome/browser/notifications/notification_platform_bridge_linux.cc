@@ -15,6 +15,7 @@
 
 #include "base/barrier_closure.h"
 #include "base/callback_list.h"
+#include "base/check_deref.h"
 #include "base/containers/contains.h"
 #include "base/environment.h"
 #include "base/files/file_path.h"
@@ -158,7 +159,7 @@ void EscapeUnsafeCharacters(std::string* message) {
   base::ReplaceChars(*message, ">", "&gt;", message);
 }
 
-int NotificationPriorityToFdoUrgency(int priority) {
+uint8_t NotificationPriorityToFdoUrgency(int priority) {
   switch (priority) {
     case message_center::MIN_PRIORITY:
     case message_center::LOW_PRIORITY:
@@ -291,18 +292,21 @@ void CallMethod(dbus::ObjectProxy* proxy,
           [](const std::string& interface, const std::string& method,
              base::OnceCallback<void(bool, Rets...)> cb,
              dbus::Response* response) {
-            dbus::MessageReader reader(response);
-            bool success = true;
+            bool success = false;
             std::tuple<Rets...> rets;
-            std::apply(
-                [&](auto&&... args) {
-                  ((success = success && args.Read(&reader)), ...);
-                },
-                rets);
-            if (reader.HasMoreData()) {
-              LOG(ERROR) << interface << "." << method
-                         << ": Failed to read all response parameters.";
-              success = false;
+            if (response) {
+              dbus::MessageReader reader(response);
+              success = true;
+              std::apply(
+                  [&](auto&&... args) {
+                    ((success = success && args.Read(&reader)), ...);
+                  },
+                  rets);
+              if (reader.HasMoreData()) {
+                LOG(ERROR) << interface << "." << method
+                           << ": Failed to read all response parameters.";
+                success = false;
+              }
             }
             std::apply(
                 [&](auto&&... args) {
@@ -320,7 +324,7 @@ void ConnectToSignal(
     const std::string& signal_name,
     base::RepeatingCallback<void(Ts...)> signal_callback,
     dbus::ObjectProxy::OnConnectedCallback on_connected_callback) {
-  proxy->ConnectToSignal(
+  CHECK_DEREF(proxy).ConnectToSignal(
       interface, signal_name,
       base::BindRepeating(
           [](const std::string& interface, const std::string& signal_name,
@@ -489,6 +493,7 @@ class NotificationPlatformBridgeLinuxImpl : public NotificationPlatformBridge {
     notification_proxy_ = nullptr;
     bus_.reset();
     notifications_.clear();
+    weak_factory_.InvalidateWeakPtrs();
   }
 
  private:
@@ -797,12 +802,12 @@ class NotificationPlatformBridgeLinuxImpl : public NotificationPlatformBridge {
 
     DbusDictionary hints;
 
-    uint32_t urgency =
+    uint8_t urgency =
         notification->never_timeout() &&
                 ShouldMarkPersistentNotificationsAsCritical(server_name_)
             ? URGENCY_CRITICAL
             : NotificationPriorityToFdoUrgency(notification->priority());
-    hints.PutAs("urgency", DbusUint32(urgency));
+    hints.PutAs("urgency", DbusByte(urgency));
 
     if (notification->silent()) {
       hints.PutAs("suppress-sound", DbusBoolean(true));

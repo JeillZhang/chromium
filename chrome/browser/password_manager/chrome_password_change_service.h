@@ -53,26 +53,21 @@ class ChromePasswordChangeService
   // Indicates that password change will be proposed to the user for a given
   // `url`, `username` and `password`. `originator` belongs to a tab which
   // initiated the process.
-  void OfferPasswordChangeUi(const GURL& url,
-                             const std::u16string& username,
-                             const std::u16string& password,
-                             content::WebContents* originator);
+  virtual void OfferPasswordChangeUi(const GURL& url,
+                                     const std::u16string& username,
+                                     const std::u16string& password,
+                                     content::WebContents* originator);
 
   // Responds with PasswordChangeDelegate for a given `web_contents`.
   // The same object is returned for a tab which initiated password change and a
   // tab where password change is performed. Returns nullptr if `web_contents`
   // isn't associated with any delegate.
-  PasswordChangeDelegate* GetPasswordChangeDelegate(
+  virtual PasswordChangeDelegate* GetPasswordChangeDelegate(
       content::WebContents* web_contents);
 
   // PasswordChangeServiceInterface implementation.
   bool IsPasswordChangeAvailable() override;
   bool IsPasswordChangeSupported(const GURL& url) override;
-
-  // For testing only.
-  void SetCustomTabOpening(OpenNewTabCallback callback) {
-    new_tab_callback_ = std::move(callback);
-  }
 
  private:
   // PasswordChangeDelegate::Observer impl.
@@ -84,9 +79,6 @@ class ChromePasswordChangeService
   const raw_ptr<affiliations::AffiliationService> affiliation_service_;
   const raw_ptr<OptimizationGuideKeyedService> optimization_keyed_service_;
   std::unique_ptr<password_manager::PasswordFeatureManager> feature_manager_;
-
-  // TODO(crbug.com/382652112): Remove once testing is simplified.
-  OpenNewTabCallback new_tab_callback_;
 
   std::vector<std::unique_ptr<PasswordChangeDelegate>>
       password_change_delegates_;

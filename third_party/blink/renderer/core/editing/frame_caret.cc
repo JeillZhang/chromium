@@ -27,6 +27,7 @@
 
 #include "base/location.h"
 #include "base/task/single_thread_task_runner.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/core/editing/caret_display_item_client.h"
 #include "third_party/blink/renderer/core/editing/editing_utilities.h"
@@ -214,7 +215,18 @@ gfx::Rect FrameCaret::AbsoluteCaretBounds() const {
   DocumentLifecycle::DisallowTransitionScope disallow_transition(
       frame_->GetDocument()->Lifecycle());
 
-  return AbsoluteCaretBoundsOf(CaretPosition());
+  return AbsoluteCaretBoundsOf(CaretPosition(), GetCaretShape());
+}
+
+CaretShape FrameCaret::GetCaretShape() const {
+  PositionWithAffinity caret_position = CaretPosition();
+  CaretShape caret_shape = CaretShape::kBar;
+  if (caret_position.AnchorNode()) {
+    caret_shape = GetCaretShapeFromComputedStyle(
+        *GetComputedStyleForElementOrLayoutObject(
+            *caret_position.AnchorNode()));
+  }
+  return caret_shape;
 }
 
 void FrameCaret::EnsureInvalidationOfPreviousLayoutBlock() {
@@ -276,11 +288,7 @@ void FrameCaret::PaintCaret(GraphicsContext& context,
     auto type = frame_->Selection().IsHandleVisible()
                     ? gfx::SelectionBound::Type::CENTER
                     : gfx::SelectionBound::Type::HIDDEN;
-
-    if (type == gfx::SelectionBound::Type::CENTER ||
-        base::FeatureList::IsEnabled(blink::features::kHiddenSelectionBounds)) {
-      display_item_client_->RecordSelection(context, paint_offset, type);
-    }
+    display_item_client_->RecordSelection(context, paint_offset, type);
   }
 }
 

@@ -14,6 +14,7 @@
 #import "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #import "components/autofill/core/browser/data_manager/personal_data_manager_observer.h"
 #import "components/autofill/core/browser/foundations/autofill_manager.h"
+#import "components/autofill/core/browser/suggestions/payments/payments_suggestion_generator.h"
 #import "components/autofill/core/common/autofill_payments_features.h"
 #import "components/autofill/ios/browser/autofill_driver_ios.h"
 #import "components/autofill/ios/browser/credit_card_util.h"
@@ -29,6 +30,7 @@
 #import "ios/chrome/browser/autofill/model/features.h"
 #import "ios/chrome/browser/autofill/model/form_input_suggestions_provider.h"
 #import "ios/chrome/browser/autofill/model/form_suggestion_tab_helper.h"
+#import "ios/chrome/browser/autofill/ui_bundled/autofill_ui_constants.h"
 #import "ios/chrome/browser/autofill/ui_bundled/bottom_sheet/payments_suggestion_bottom_sheet_consumer.h"
 #import "ios/chrome/browser/shared/model/web_state_list/active_web_state_observation_forwarder.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
@@ -43,10 +45,6 @@
 using PaymentsSuggestionBottomSheetExitReason::kBadProvider;
 
 namespace {
-// Delay before allowing selecting a suggestion for filling. This helps
-// preventing clickjacking by giving more time to the user to understand what
-// the bottom sheet does.
-base::TimeDelta kSelectSuggestionDelay = base::Milliseconds(500);
 
 // Returns true if the payments bottom sheet is at V3.
 bool IsV3() {
@@ -214,8 +212,8 @@ bool IsV3() {
     return;
   }
 
-  const auto& creditCards =
-      _personalDataManager->payments_data_manager().GetCreditCardsToSuggest();
+  const auto& creditCards = autofill::GetCreditCardsToSuggest(
+      _personalDataManager->payments_data_manager());
   if (creditCards.empty()) {
     [_consumer dismiss];
     return;
@@ -358,7 +356,7 @@ bool IsV3() {
   // Allow the action if past the delay for accepting suggestions.
   if (_viewDidAppearTimestamp &&
       base::TimeTicks::Now() - *_viewDidAppearTimestamp >=
-          kSelectSuggestionDelay) {
+          autofill_ui_constants::kSelectSuggestionDelay) {
     [self.consumer activatePrimaryButton];
   }
 }

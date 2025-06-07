@@ -77,18 +77,19 @@ import org.chromium.chrome.browser.feed.sections.SectionHeaderListProperties;
 import org.chromium.chrome.browser.feed.v2.FeedV2TestHelper;
 import org.chromium.chrome.browser.feed.v2.TestFeedServer;
 import org.chromium.chrome.browser.firstrun.FirstRunUtils;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.ntp.cards.SignInPromo;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.suggestions.SiteSuggestion;
+import org.chromium.chrome.browser.suggestions.tile.TilesLinearLayout;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.toolbar.top.ToolbarPhone;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.chrome.test.util.NewTabPageTestUtils;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
@@ -135,8 +136,8 @@ public class FeedV2NewTabPageTest {
             new GeneralSwipeAction(
                     Swipe.FAST, GeneralLocation.CENTER, GeneralLocation.CENTER_LEFT, Press.FINGER);
 
-    private final ChromeTabbedActivityTestRule mActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    private final FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule
     public final SuggestionsDependenciesRule mSuggestionsDeps = new SuggestionsDependenciesRule();
@@ -146,6 +147,7 @@ public class FeedV2NewTabPageTest {
             ChromeRenderTestRule.Builder.withPublicCorpus()
                     .setBugComponent(
                             ChromeRenderTestRule.Component.UI_BROWSER_CONTENT_SUGGESTIONS_FEED)
+                    .setRevision(2)
                     .build();
 
     public final SigninTestRule mSigninTestRule = new SigninTestRule();
@@ -191,7 +193,7 @@ public class FeedV2NewTabPageTest {
 
         SignInPromo.setDisablePromoForTesting(mDisableSigninPromoCard);
 
-        mActivityTestRule.startMainActivityWithURL("about:blank");
+        mActivityTestRule.startOnBlankPage();
 
         // EULA must be accepted, and internet connectivity is required, or the Feed will not
         // attempt to load.
@@ -227,8 +229,8 @@ public class FeedV2NewTabPageTest {
         Assert.assertTrue(mTab.getNativePage() instanceof NewTabPage);
         mNtp = (NewTabPage) mTab.getNativePage();
 
-        ViewGroup mvTilesLayout = mNtp.getView().findViewById(R.id.mv_tiles_layout);
-        Assert.assertEquals(mSiteSuggestions.size(), mvTilesLayout.getChildCount());
+        TilesLinearLayout mvTilesLayout = mNtp.getView().findViewById(R.id.mv_tiles_layout);
+        Assert.assertEquals(mSiteSuggestions.size(), mvTilesLayout.getTileCount());
     }
 
     @Test
@@ -383,7 +385,7 @@ public class FeedV2NewTabPageTest {
     @MediumTest
     @Feature({"FeedNewTabPage"})
     public void testSignInPromo_AccountsNotReady() {
-        try (var unused = mSigninTestRule.blockGetCoreAccountInfosUpdate(false)) {
+        try (var unused = mSigninTestRule.blockGetAccountsUpdate(false)) {
             openNewTabPage();
             // Check that the sign-in promo is not shown if accounts are not ready.
             onView(withId(R.id.feed_stream_recycler_view))
@@ -434,9 +436,14 @@ public class FeedV2NewTabPageTest {
         onView(withId(R.id.signin_promo_view_container)).check(matches(isDisplayed()));
     }
 
+    // The three-dot button in the feed's header is removed by the `NewTabPageCustomization`
+    // feature. Disabling this feature flag ensures the current test continues to validate the
+    // three-dot button's functionality.
+    // TODO(crbug.com/376238770): Removes this test once the feature flag turns on by default.
     @Test
     @MediumTest
     @Feature({"NewTabPage", "FeedNewTabPage"})
+    @DisableFeatures({"NewTabPageCustomization", "FeedHeaderRemoval"})
     @ParameterAnnotations.UseMethodParameter(SigninPromoParams.class)
     public void testArticleSectionHeaderWithMenu(boolean disableSigninPromoCard) throws Exception {
         openNewTabPage();
@@ -445,7 +452,7 @@ public class FeedV2NewTabPageTest {
                 .perform(RecyclerViewActions.scrollToPosition(ARTICLE_SECTION_HEADER_POSITION));
         waitForView((ViewGroup) mNtp.getView(), allOf(withId(R.id.header_title), isDisplayed()));
 
-        View sectionHeaderView = mNtp.getCoordinatorForTesting().getSectionHeaderViewForTesting();
+        View sectionHeaderView = mNtp.getCoordinatorForTesting().getHeaderViewForTesting();
         TextView headerStatusView = sectionHeaderView.findViewById(R.id.header_title);
 
         // Assert that the feed is expanded and that the header title text is correct.
@@ -474,7 +481,6 @@ public class FeedV2NewTabPageTest {
     @MediumTest
     @Feature({"RenderTest"})
     @Restriction({DeviceFormFactor.PHONE})
-    @DisableFeatures({ChromeFeatureList.LOGO_POLISH})
     public void testLoadFeedContent_Landscape() throws IOException {
         ChromeTabbedActivity chromeActivity = mActivityTestRule.getActivity();
         chromeActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
@@ -500,7 +506,7 @@ public class FeedV2NewTabPageTest {
         RecyclerView recyclerView = getRecyclerView();
         FeedV2TestHelper.waitForRecyclerItems(MIN_ITEMS_AFTER_LOAD, recyclerView);
 
-        mRenderTestRule.render(recyclerView, "feedContent_landscape_with_scrollable_mvt_v2");
+        mRenderTestRule.render(recyclerView, "feedContent_landscape_with_scrollable_mvt_v3");
     }
 
     @Test
@@ -548,7 +554,7 @@ public class FeedV2NewTabPageTest {
      */
     private int getFakeboxTop(final NewTabPage ntp) {
         return ThreadUtils.runOnUiThreadBlocking(
-                new Callable<Integer>() {
+                new Callable<>() {
                     @Override
                     public Integer call() {
                         final View fakebox = ntp.getView().findViewById(R.id.search_box);

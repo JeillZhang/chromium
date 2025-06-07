@@ -25,13 +25,15 @@ import androidx.test.filters.SmallTest;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.mockito.invocation.InvocationOnMock;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.mockito.stubbing.Answer;
 import org.robolectric.annotation.Config;
 
@@ -79,6 +81,7 @@ import java.util.concurrent.TimeUnit;
                 + "/0.8")
 public class MerchantTrustSignalsCoordinatorTest {
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private Context mMockContext;
 
     @Mock private Resources mMockResources;
@@ -131,7 +134,7 @@ public class MerchantTrustSignalsCoordinatorTest {
     private static final String DIFFERENT_HOST = "different_host";
     private static final String FAKE_URL = "fake_url";
 
-    private MerchantInfo mDummyMerchantTrustSignals =
+    private final MerchantInfo mDummyMerchantTrustSignals =
             new MerchantInfo(4.5f, 100, null, false, 0f, false, false);
     private MerchantTrustSignalsCoordinator mCoordinator;
     private String mSerializedTimestamps;
@@ -139,7 +142,6 @@ public class MerchantTrustSignalsCoordinatorTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         doReturn(mMockResources).when(mMockContext).getResources();
         doReturn("").when(mMockContext).getString(anyInt());
         doReturn("").when(mMockResources).getQuantityString(anyInt(), anyInt(), any());

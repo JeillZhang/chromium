@@ -16,8 +16,12 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import static org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.HeaderProperties.IDP_BRAND_ICON;
+import static org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.HeaderProperties.HEADER_ICON;
+import static org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.HeaderProperties.IDP_FOR_DISPLAY;
 import static org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.HeaderProperties.RP_BRAND_ICON;
+import static org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.HeaderProperties.RP_CONTEXT;
+import static org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.HeaderProperties.RP_FOR_DISPLAY;
+import static org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.HeaderProperties.RP_MODE;
 import static org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.HeaderProperties.TYPE;
 
 import org.junit.Before;
@@ -26,6 +30,7 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.blink.mojom.RpMode;
+import org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.ButtonData;
 import org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.ContinueButtonProperties;
 import org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.ErrorProperties;
 import org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.HeaderProperties.HeaderType;
@@ -56,14 +61,14 @@ public class AccountSelectionWidgetModeControllerTest extends AccountSelectionJU
                     mTestEtldPlusOne,
                     Arrays.asList(mNewUserAccount),
                     Arrays.asList(mIdpData),
-                    /* isAutoReauthn= */ false,
                     /* newAccounts= */ Collections.EMPTY_LIST);
             mMediator.showVerifySheet(mAnaAccount);
 
             assertEquals(1, mSheetAccountItems.size());
             assertEquals(HeaderType.VERIFY, mModel.get(ItemProperties.HEADER).get(TYPE));
             verify(mMockDelegate).onAccountsDisplayed();
-            assertFalse(containsItemOfType(mModel, ItemProperties.SPINNER_ENABLED));
+            assertFalse(mModel.get(ItemProperties.SPINNER_ENABLED));
+            assertFalse(mModel.get(ItemProperties.DRAGBAR_HANDLE_VISIBLE));
         }
     }
 
@@ -73,19 +78,13 @@ public class AccountSelectionWidgetModeControllerTest extends AccountSelectionJU
             when(mMockBottomSheetController.requestShowContent(any(), anyBoolean()))
                     .thenReturn(true);
             mIdpData.setRpContext(rpContext);
-            // showVerifySheet is called in showAccounts when isAutoReauthn is true
-            mMediator.showAccounts(
-                    mTestEtldPlusOne,
-                    Arrays.asList(mAnaAccount),
-                    Arrays.asList(mIdpData),
-                    /* isAutoReauthn= */ true,
-                    /* newAccounts= */ Collections.EMPTY_LIST);
+            mMediator.showVerifyingDialog(mAnaAccount, /* isAutoReauthn= */ true);
 
             assertEquals(1, mSheetAccountItems.size());
             assertEquals(
                     HeaderType.VERIFY_AUTO_REAUTHN, mModel.get(ItemProperties.HEADER).get(TYPE));
-            verify(mMockDelegate).onAccountsDisplayed();
-            assertFalse(containsItemOfType(mModel, ItemProperties.SPINNER_ENABLED));
+            assertFalse(mModel.get(ItemProperties.SPINNER_ENABLED));
+            assertFalse(mModel.get(ItemProperties.DRAGBAR_HANDLE_VISIBLE));
         }
     }
 
@@ -93,14 +92,13 @@ public class AccountSelectionWidgetModeControllerTest extends AccountSelectionJU
     public void testShowAccountsWithoutBrandIcons() {
         mMediator.showAccounts(
                 mTestEtldPlusOne,
-                Arrays.asList(mAnaAccount),
+                Arrays.asList(mAnaAccountWithoutBrandIcons),
                 Arrays.asList(mIdpDataWithoutIcons),
-                /* isAutoReauthn= */ false,
                 /* newAccounts= */ Collections.EMPTY_LIST);
 
         assertNull(mModel.get(ItemProperties.HEADER).get(RP_BRAND_ICON));
         PropertyModel headerModel = mModel.get(ItemProperties.HEADER);
-        assertNull(headerModel.get(IDP_BRAND_ICON));
+        assertNull(headerModel.get(HEADER_ICON));
     }
 
     @Test
@@ -116,7 +114,26 @@ public class AccountSelectionWidgetModeControllerTest extends AccountSelectionJU
                     rpContext,
                     mTokenErrorEmptyUrl);
             assertEquals(0, mSheetAccountItems.size());
-            assertEquals(HeaderType.SIGN_IN_ERROR, mModel.get(ItemProperties.HEADER).get(TYPE));
+
+            PropertyModel headerModel = mModel.get(ItemProperties.HEADER);
+            assertEquals(HeaderType.SIGN_IN_ERROR, headerModel.get(TYPE));
+            assertNotNull(headerModel.get(HEADER_ICON));
+            assertEquals(
+                    "Header has incorrect IDP for display",
+                    mTestEtldPlusOne2,
+                    headerModel.get(IDP_FOR_DISPLAY));
+            assertEquals(
+                    "Header has incorrect RP for display",
+                    mTestEtldPlusOne,
+                    headerModel.get(RP_FOR_DISPLAY));
+            assertNull(headerModel.get(RP_BRAND_ICON));
+            assertEquals(
+                    "Header has the incorrect RP context", rpContext, headerModel.get(RP_CONTEXT));
+            assertEquals(
+                    "Header has the incorrect RP mode",
+                    (Integer) mRpMode,
+                    headerModel.get(RP_MODE));
+
             verify(mMockDelegate, never()).onAccountsDisplayed();
 
             // For error dialog, we expect header + error text + got it button
@@ -144,10 +161,12 @@ public class AccountSelectionWidgetModeControllerTest extends AccountSelectionJU
             mModel.get(ItemProperties.CONTINUE_BUTTON)
                     .get(ContinueButtonProperties.PROPERTIES)
                     .mOnClickListener
-                    .onResult(mAnaAccount);
+                    .onResult(new ButtonData(mAnaAccount, /* idpMetadata= */ mIdpMetadata));
             verify(mMockDelegate, times(++count))
                     .onDismissed(IdentityRequestDialogDismissReason.GOT_IT_BUTTON);
             assertTrue(mMediator.wasDismissed());
+            // Reset mediator after dismiss.
+            resetMediator();
         }
     }
 
@@ -193,6 +212,8 @@ public class AccountSelectionWidgetModeControllerTest extends AccountSelectionJU
             verify(mMockDelegate, times(count))
                     .onDismissed(IdentityRequestDialogDismissReason.MORE_DETAILS_BUTTON);
             assertTrue(mMediator.wasDismissed());
+            // Reset mediator after dismiss.
+            resetMediator();
         }
     }
 }

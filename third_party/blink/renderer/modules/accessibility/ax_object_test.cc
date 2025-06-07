@@ -9,9 +9,11 @@
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
+#include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
 #include "third_party/blink/renderer/core/html/html_dialog_element.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
+#include "third_party/blink/renderer/modules/accessibility/ax_object-inl.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object_cache_impl.h"
 #include "third_party/blink/renderer/modules/accessibility/testing/accessibility_test.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
@@ -952,7 +954,7 @@ TEST_F(AccessibilityTest, NextOnLineInlineBlock) {
 
   const AXObject* next = this_object->NextOnLine();
   ASSERT_NE(nullptr, next);
-  EXPECT_EQ("is", next->GetNode()->textContent());
+  EXPECT_EQ("is", next->GetClosestNode()->textContent());
 
   next = next->NextOnLine();
   ASSERT_NE(nullptr, next);
@@ -960,7 +962,7 @@ TEST_F(AccessibilityTest, NextOnLineInlineBlock) {
 
   AXObject* prev = next->PreviousOnLine();
   ASSERT_NE(nullptr, prev);
-  EXPECT_EQ("is", prev->GetNode()->textContent());
+  EXPECT_EQ("is", prev->GetClosestNode()->textContent());
 
   prev = prev->PreviousOnLine();
   ASSERT_NE(nullptr, prev);
@@ -992,6 +994,7 @@ TEST_F(AccessibilityTest, NextAndPreviousOnLineInert) {
   // Now we go backwards.
 
   const AXObject* previous = next->PreviousOnLine();
+  ASSERT_NE(nullptr, previous);
   EXPECT_EQ("go ", previous->GetClosestNode()->textContent());
 }
 
@@ -1199,7 +1202,8 @@ TEST_F(AccessibilityTest, SlotIsLineBreakingObject) {
   EXPECT_TRUE(slot2->ParentObjectUnignored()->IsLineBreakingObject());
 }
 
-TEST_F(AccessibilityTest, LineBreakInDisplayLockedIsLineBreakingObject) {
+TEST_F(AccessibilityTest,
+       LineBreakInDisplayLockedWithScreenReaderIsLineBreakingObject) {
   SetBodyInnerHTML(R"HTML(
       <div id="spacer"
           style="height: 30000px; contain-intrinsic-size: 1px 30000px;"></div>
@@ -1230,6 +1234,28 @@ TEST_F(AccessibilityTest, LineBreakInDisplayLockedIsLineBreakingObject) {
                 *br->GetNode()))
       << "The <br> child should be display locked.";
   EXPECT_TRUE(br->IsLineBreakingObject());
+}
+
+TEST_F(AccessibilityTest, DisplayLockedContentWithoutScreenReaderIsHidden) {
+  ax_context_ = std::make_unique<AXContext>(GetDocument(), ui::kAXModeComplete);
+  SetBodyInnerHTML(R"HTML(
+      <div id="spacer"
+          style="height: 30000px; contain-intrinsic-size: 1px 30000px;"></div>
+      <p id="lockedContainer" style="content-visibility: auto">
+        Line 1
+        <br id="br" style="content-visibility: hidden">
+        Line 2
+      </p>
+      )HTML");
+
+  const AXObject* paragraph = GetAXObjectByElementId("lockedContainer");
+  ASSERT_NE(nullptr, paragraph);
+  ASSERT_EQ(ax::mojom::Role::kParagraph, paragraph->RoleValue());
+  ASSERT_EQ(0, paragraph->UnignoredChildCount());
+  ASSERT_EQ(paragraph->GetNode(),
+            DisplayLockUtilities::LockedInclusiveAncestorPreventingPaint(
+                *paragraph->GetNode()))
+      << "The <p> element should be display locked.";
 }
 
 TEST_F(AccessibilityTest, ListMarkerIsNotLineBreakingObject) {
@@ -1286,7 +1312,7 @@ TEST_F(AccessibilityTest, ListMarkerIsNotLineBreakingObject) {
 
 TEST_F(AccessibilityTest, CheckNoDuplicateChildren) {
   // Clear inline text boxes and refresh the tree.
-  ui::AXMode mode(ui::kAXModeComplete);
+  ui::AXMode mode(ui::kAXModeDefaultForTests);
   mode.set_mode(ui::AXMode::kInlineTextBoxes, false);
   ax_context_->SetAXMode(mode);
   GetAXObjectCache().MarkDocumentDirty();
@@ -1319,7 +1345,8 @@ TEST_F(AccessibilityTest, InitRelationCacheLabelFor) {
 
   // Now recreate an AXContext, simulating what happens if accessibility
   // is enabled after the document is loaded.
-  ax_context_ = std::make_unique<AXContext>(GetDocument(), ui::kAXModeComplete);
+  ax_context_ =
+      std::make_unique<AXContext>(GetDocument(), ui::kAXModeDefaultForTests);
 
   const AXObject* root = GetAXRootObject();
   ASSERT_NE(nullptr, root);
@@ -1345,7 +1372,8 @@ TEST_F(AccessibilityTest, InitRelationCacheAriaOwns) {
 
   // Now recreate an AXContext, simulating what happens if accessibility
   // is enabled after the document is loaded.
-  ax_context_ = std::make_unique<AXContext>(GetDocument(), ui::kAXModeComplete);
+  ax_context_ =
+      std::make_unique<AXContext>(GetDocument(), ui::kAXModeDefaultForTests);
 
   const AXObject* root = GetAXRootObject();
   ASSERT_NE(nullptr, root);
@@ -1853,6 +1881,111 @@ TEST_F(AccessibilityTest, ScrollerFocusability) {
   ASSERT_TRUE(scroller_node->IsFocused());
 }
 
+TEST_F(AccessibilityTest, ScrollButtonPseudoElement) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+    #scroller::scroll-button(block-end) {
+      content: "Scroll down";
+    }
+    </style>
+    <div id=scroller style="overflow:scroll;height:50px;">
+      <div id=content style="height:1000px"></div>
+    </div>
+  )HTML");
+  auto* scroller = GetElementById("scroller");
+  auto* scrollButton = GetAXObjectByElementId(
+      "scroller", PseudoId::kPseudoIdScrollButtonBlockEnd);
+  ui::AXActionData action_data;
+  action_data.action = ax::mojom::blink::Action::kDoDefault;
+  const ui::AXTreeID div_child_tree_id = ui::AXTreeID::CreateNewAXTreeID();
+  action_data.target_node_id = scrollButton->AXObjectID();
+  action_data.child_tree_id = div_child_tree_id;
+
+  scrollButton->PerformAction(action_data);
+  ASSERT_GT(scroller->scrollTop(), 0);
+}
+
+TEST_F(AccessibilityTest, ScrollMarkerPseudoElement) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+    #scroller {
+      scroll-marker-group: before;
+    }
+    #scroller::scroll-marker-group {
+      height: 100px;
+      width: 50px;
+    }
+    .marker::scroll-marker {
+      content: "Target";
+      height: 50px;
+      width: 50px;
+    }
+    </style>
+    <div id=scroller style="overflow:scroll;height:50px;">
+      <div class=marker></div>
+      <div id=content style="height:1000px"></div>
+      <div id=target class=marker></div>
+    </div>
+  )HTML");
+  auto* scroller = GetElementById("scroller");
+  auto* scrollMarker =
+      GetAXObjectByElementId("target", PseudoId::kPseudoIdScrollMarker);
+  ui::AXActionData action_data;
+  action_data.action = ax::mojom::blink::Action::kDoDefault;
+  const ui::AXTreeID div_child_tree_id = ui::AXTreeID::CreateNewAXTreeID();
+  action_data.target_node_id = scrollMarker->AXObjectID();
+  action_data.child_tree_id = div_child_tree_id;
+
+  scrollMarker->PerformAction(action_data);
+  ASSERT_GT(scroller->scrollTop(), 0);
+}
+
+TEST_F(AccessibilityTest, ScrollToMakeScrollerVisible) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+    #parent-scroller {
+      overflow: auto;
+      position: relative;
+      height: 300px;
+    }
+    #scroller {
+      overflow: auto;
+      position: absolute;
+      scroll-padding: 10px;
+      /* Scrolling is necessary to see this scroller. */
+      top: 2000px;
+      width: 400px;
+      height: 300px;
+    }
+    .spacer {
+      width: 1600px;
+    }
+    </style>
+    <div id="parent-scroller">
+      <div id="scroller">
+        <div class="spacer"></div>
+      </div>
+    </div>
+  )HTML");
+  Element* parent_scroller = GetElementById("parent-scroller");
+  Element* scroller = GetElementById("scroller");
+  // Scroll to 800px.
+  scroller->scrollTo(800, 0);
+  ASSERT_EQ(scroller->scrollLeft(), 800);
+
+  // Scrolling to make the scrolling element visible shouldn't scroll
+  // that scrolling element itself - no amount of scrolling itself
+  // changes its position on screen. If part of its scrolling content was
+  // being targeted, the inner AXObject would be used.
+  WebAXObject scrollerAXObject = WebAXObject::FromWebNode(scroller);
+  scrollerAXObject.ScrollToMakeVisibleWithSubFocus(gfx::Rect());
+  ASSERT_EQ(scroller->scrollLeft(), 800);
+
+  // But it still should have scrolled the ancestor scroller down
+  // to make the scroller visible.
+  ASSERT_GT(parent_scroller->scrollTop(), 1700);
+}
+
 TEST_F(AccessibilityTest, CanComputeAsNaturalParent) {
   SetBodyInnerHTML(R"HTML(M<img usemap="#map"><map name="map"><hr><progress>
     <div><input type="range">M)HTML");
@@ -1949,11 +2082,11 @@ TEST_F(AccessibilityTest, StitchChildTree) {
   ScopedFreezeAXCache freeze(GetAXObjectCache());
 
   ui::AXNodeData div_node_data;
-  div->Serialize(&div_node_data, ui::AXMode::kScreenReader);
+  div->Serialize(&div_node_data, ui::AXMode::kExtendedProperties);
   ui::AXNodeData button_node_data;
-  button->Serialize(&button_node_data, ui::AXMode::kScreenReader);
+  button->Serialize(&button_node_data, ui::AXMode::kExtendedProperties);
   ui::AXNodeData canvas_node_data;
-  canvas->Serialize(&canvas_node_data, ui::AXMode::kScreenReader);
+  canvas->Serialize(&canvas_node_data, ui::AXMode::kExtendedProperties);
 
   EXPECT_EQ(div_child_tree_id.ToString(),
             div_node_data.GetStringAttribute(

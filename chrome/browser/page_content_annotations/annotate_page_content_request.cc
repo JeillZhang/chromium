@@ -5,6 +5,7 @@
 #include "chrome/browser/page_content_annotations/annotate_page_content_request.h"
 
 #include "base/metrics/histogram_macros.h"
+#include "base/trace_event/trace_event.h"
 #include "chrome/browser/page_content_annotations/page_content_extraction_service.h"
 #include "chrome/browser/page_content_annotations/page_content_extraction_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -44,24 +45,11 @@ void RecordPdfPageCountMetrics(
 
 // static
 std::unique_ptr<AnnotatedPageContentRequest>
-AnnotatedPageContentRequest::MaybeCreate(content::WebContents* web_contents) {
-  Profile* profile =
-      Profile::FromBrowserContext(web_contents->GetBrowserContext());
-  auto* page_content_extraction_service = page_content_annotations::
-      PageContentExtractionServiceFactory::GetForProfile(profile);
-
-  if (!page_content_extraction_service ||
-      !page_content_extraction_service->ShouldEnablePageContentExtraction()) {
-    return nullptr;
-  }
-
+AnnotatedPageContentRequest::Create(content::WebContents* web_contents) {
   auto request = blink::mojom::AIPageContentOptions::New();
+  request->mode = blink::mojom::AIPageContentMode::kDefault;
   request->on_critical_path = page_content_annotations::features::
       IsAnnotatedPageContentOnCriticalPath();
-  request->include_geometry = page_content_annotations::features::
-      ShouldAnnotatedPageContentIncludeGeometry();
-  request->include_hidden_searchable_content = page_content_annotations::
-      features::ShouldIncludeHiddenButSearchableContent();
 
   return std::make_unique<AnnotatedPageContentRequest>(web_contents,
                                                        std::move(request));
@@ -111,7 +99,7 @@ void AnnotatedPageContentRequest::DidFinishNavigation(
   // commits.
   waiting_for_fcp_ = false;
   waiting_for_load_ = false;
-  RequestContentIfReady();
+  MaybeScheduleExtraction();
 }
 
 void AnnotatedPageContentRequest::DidStopLoading() {
@@ -133,32 +121,29 @@ void AnnotatedPageContentRequest::DidStopLoading() {
   }
 
   waiting_for_load_ = false;
-  RequestContentIfReady();
+  MaybeScheduleExtraction();
 }
 
 void AnnotatedPageContentRequest::OnFirstContentfulPaintInPrimaryMainFrame() {
   waiting_for_fcp_ = false;
-  RequestContentIfReady();
+  MaybeScheduleExtraction();
 }
 
 void AnnotatedPageContentRequest::ResetForNewNavigation() {
-  page_content_pending_ = true;
+  lifecycle_ = Lifecycle::kPending;
   waiting_for_fcp_ = true;
   waiting_for_load_ = true;
-
-#if BUILDFLAG(ENABLE_PDF)
-  pdf_load_obseration_.Reset();
-#endif  // BUILDFLAG(ENABLE_PDF)
 
   // Drop pending extraction request for the previous page, if any.
   weak_factory_.InvalidateWeakPtrs();
 }
 
-void AnnotatedPageContentRequest::RequestContentIfReady() {
-  if (!Ready()) {
+void AnnotatedPageContentRequest::MaybeScheduleExtraction() {
+  if (!ShouldScheduleExtraction()) {
     return;
   }
 
+  lifecycle_ = Lifecycle::kScheduled;
   if (web_contents_->GetContentsMimeType() == pdf::kPDFMimeType) {
 #if BUILDFLAG(ENABLE_PDF)
     content::GetUIThreadTaskRunner()->PostDelayedTask(
@@ -169,10 +154,6 @@ void AnnotatedPageContentRequest::RequestContentIfReady() {
             GetAnnotatedPageContentCaptureDelay());
 #endif  // BUILDFLAG(ENABLE_PDF)
   } else {
-    if (delay_.is_zero()) {
-      RequestAnnotatedPageContentSync();
-      return;
-    }
     content::GetUIThreadTaskRunner()->PostDelayedTask(
         FROM_HERE,
         base::BindOnce(
@@ -183,6 +164,8 @@ void AnnotatedPageContentRequest::RequestContentIfReady() {
 }
 
 void AnnotatedPageContentRequest::RequestAnnotatedPageContentSync() {
+  TRACE_EVENT0("browser",
+               "AnnotatedPageContentRequest::RequestAnnotatedPageContentSync");
   optimization_guide::GetAIPageContent(
       web_contents_, request_.Clone(),
       base::BindOnce(&AnnotatedPageContentRequest::OnPageContentReceived,
@@ -196,8 +179,8 @@ void AnnotatedPageContentRequest::RequestAnnotatedPageContentSync() {
   }
 }
 
-bool AnnotatedPageContentRequest::Ready() const {
-  if (!page_content_pending_) {
+bool AnnotatedPageContentRequest::ShouldScheduleExtraction() const {
+  if (lifecycle_ != Lifecycle::kPending) {
     return false;
   }
 
@@ -205,8 +188,9 @@ bool AnnotatedPageContentRequest::Ready() const {
 }
 
 void AnnotatedPageContentRequest::OnPageContentReceived(
-    std::optional<optimization_guide::proto::AnnotatedPageContent> proto) {
-  if (!proto) {
+    std::optional<optimization_guide::AIPageContentResult> page_content) {
+  lifecycle_ = Lifecycle::kDone;
+  if (!page_content) {
     return;
   }
 
@@ -215,7 +199,7 @@ void AnnotatedPageContentRequest::OnPageContentReceived(
   auto* page_content_extraction_service = page_content_annotations::
       PageContentExtractionServiceFactory::GetForProfile(profile);
   page_content_extraction_service->OnPageContentExtracted(
-      web_contents_->GetPrimaryPage(), *proto);
+      web_contents_->GetPrimaryPage(), page_content->proto);
 }
 
 void AnnotatedPageContentRequest::OnInnerTextReceived(
@@ -235,26 +219,15 @@ void AnnotatedPageContentRequest::RequestPdfPageCount() {
   CHECK_EQ(pdf::kPDFMimeType, web_contents_->GetContentsMimeType());
   auto* pdf_helper =
       pdf::PDFDocumentHelper::MaybeGetForWebContents(web_contents_);
-  if (!pdf_helper) {
-    return;
+  if (pdf_helper) {
+    pdf_helper->RegisterForDocumentLoadComplete(
+        base::BindOnce(&AnnotatedPageContentRequest::OnPdfDocumentLoadComplete,
+                       weak_factory_.GetWeakPtr()));
   }
-  if (!pdf_helper->IsDocumentLoadComplete()) {
-    // Wait for the PDF to load.
-    pdf_load_obseration_.Observe(pdf_helper);
-    return;
-  }
-  // Fetch zero PDF bytes to just receive the total page count.
-  pdf_helper->GetPdfBytes(
-      /*size_limit=*/0,
-      base::BindOnce(
-          &RecordPdfPageCountMetrics,
-          web_contents_->GetPrimaryMainFrame()->GetPageUkmSourceId()));
 }
 
-void AnnotatedPageContentRequest::OnDocumentLoadComplete() {
+void AnnotatedPageContentRequest::OnPdfDocumentLoadComplete() {
   CHECK_EQ(pdf::kPDFMimeType, web_contents_->GetContentsMimeType());
-  pdf_load_obseration_.Reset();
-
   auto* pdf_helper =
       pdf::PDFDocumentHelper::MaybeGetForWebContents(web_contents_);
   if (pdf_helper) {

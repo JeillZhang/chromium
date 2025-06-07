@@ -127,7 +127,6 @@ class AwContents : public FindHelper::Listener,
   base::android::ScopedJavaLocalRef<jbyteArray> GetCertificate(JNIEnv* env);
   void UpdateLastHitTestData(JNIEnv* env);
   void OnSizeChanged(JNIEnv* env, int w, int h, int ow, int oh);
-  void OnConfigurationChanged(JNIEnv* env);
   void SetViewVisibility(JNIEnv* env, bool visible);
   void SetWindowVisibility(JNIEnv* env, bool visible);
   void SetIsPaused(JNIEnv* env, bool paused);
@@ -135,7 +134,8 @@ class AwContents : public FindHelper::Listener,
   void OnDetachedFromWindow(JNIEnv* env);
   bool IsVisible(JNIEnv* env);
   bool IsDisplayingInterstitialForTesting(JNIEnv* env);
-  base::android::ScopedJavaLocalRef<jbyteArray> GetOpaqueState(JNIEnv* env);
+  base::android::ScopedJavaLocalRef<jbyteArray>
+  GetOpaqueState(JNIEnv* env, jint max_size, jboolean include_forward_state);
   jboolean RestoreFromOpaqueState(
       JNIEnv* env,
       const base::android::JavaParamRef<jbyteArray>& state);

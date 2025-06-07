@@ -169,9 +169,9 @@ views::Builder<HoverButton> GetSitePermissionsButtonBuilder(
       views::Builder<HoverButton>(
           std::make_unique<HoverButton>(std::move(callback), std::u16string()))
           .SetLabelStyle(views::style::STYLE_BODY_5)
-          .SetEnabledTextColorIds(kColorExtensionsMenuSecondaryText)
-          .SetTextColorId(views::Button::ButtonState::STATE_DISABLED,
-                          kColorExtensionsMenuSecondaryText)
+          .SetEnabledTextColors(kColorExtensionsMenuSecondaryText)
+          .SetTextColor(views::Button::ButtonState::STATE_DISABLED,
+                        kColorExtensionsMenuSecondaryText)
           .SetImageLabelSpacing(button_icon_label_spacing)
           // Align the main and secondary row text by adding the primary
           // action button's icon size as margin.
@@ -562,6 +562,27 @@ void ExtensionMenuItemView::OnPinButtonPressed() {
 
 bool ExtensionMenuItemView::IsContextMenuRunningForTesting() const {
   return context_menu_controller_->IsMenuRunning();
+}
+
+ExtensionsMenuButton*
+ExtensionMenuItemView::primary_action_button_for_testing() {
+  return primary_action_button_;
+}
+
+views::ToggleButton* ExtensionMenuItemView::site_access_toggle_for_testing() {
+  return site_access_toggle_;
+}
+
+HoverButton* ExtensionMenuItemView::context_menu_button_for_testing() {
+  return context_menu_button_;
+}
+
+HoverButton* ExtensionMenuItemView::pin_button_for_testing() {
+  return pin_button_;
+}
+
+HoverButton* ExtensionMenuItemView::site_permissions_button_for_testing() {
+  return site_permissions_button_;
 }
 
 BEGIN_METADATA(ExtensionMenuItemView)

@@ -11,6 +11,7 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <variant>
 
 #include "base/check.h"
 #include "base/containers/lru_cache.h"
@@ -22,6 +23,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/affiliations/core/browser/affiliation_utils.h"
@@ -58,6 +60,7 @@
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "google_apis/gaia/gaia_id.h"
 #include "net/base/url_util.h"
+#include "url/gurl.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "components/webauthn/android/webauthn_cred_man_delegate.h"
@@ -233,8 +236,8 @@ bool UsernameOutsideOfFormHasHigherPriority(
 }
 
 bool ShouldUploadCrowdsourcingVotes(const FormOrDigest& form_or_digest) {
-  if (absl::holds_alternative<FormData>(form_or_digest)) {
-    return !net::IsLocalhost(absl::get<FormData>(form_or_digest).url());
+  if (std::holds_alternative<FormData>(form_or_digest)) {
+    return !net::IsLocalhost(std::get<FormData>(form_or_digest).url());
   }
   return false;
 }
@@ -249,6 +252,20 @@ bool ShouldShowKeychainErrorBubble(
          PasswordStoreBackendErrorType::kKeychainError;
 }
 #endif
+
+void RecordSavingIsDisabled(PasswordManagerClient* client) {
+  if (password_manager_util::IsLoggingActive(client)) {
+    auto logger = std::make_unique<BrowserSavePasswordProgressLogger>(
+        client->GetCurrentLogManager());
+    logger->LogProvisionalSaveFailure(
+        PasswordManagerMetricsRecorder::SAVING_DISABLED);
+  }
+  if (client->GetMetricsRecorder()) {
+    client->GetMetricsRecorder()->RecordProvisionalSaveFailure(
+        PasswordManagerMetricsRecorder::SAVING_DISABLED);
+  }
+}
+
 }  // namespace
 
 PasswordFormManager::PasswordFormManager(
@@ -280,7 +297,8 @@ PasswordFormManager::PasswordFormManager(
     WebAuthnCredentialsDelegate* delegate =
         client_->GetWebAuthnCredentialsDelegateForDriver(driver_.get());
     if (delegate) {
-      delegate->RetrievePasskeys(async_predictions_waiter_.CreateClosure());
+      delegate->RequestNotificationWhenPasskeysReady(
+          async_predictions_waiter_.CreateClosure());
     }
   }
   if (votes_uploader_.has_value()) {
@@ -553,7 +571,7 @@ void PasswordFormManager::OnNopeUpdateClicked() {
   if (votes_uploader_.has_value()) {
     votes_uploader_->UploadPasswordVote(
         *parsed_submitted_form_, *parsed_submitted_form_,
-        autofill::NOT_NEW_PASSWORD, std::string());
+        autofill::NOT_NEW_PASSWORD, /*login_form_signature=*/std::nullopt);
   }
 }
 
@@ -561,9 +579,9 @@ void PasswordFormManager::OnNeverClicked() {
   if (votes_uploader_.has_value()) {
     // |UNKNOWN_TYPE| is sent in order to record that a generation popup was
     // shown and ignored.
-    votes_uploader_->UploadPasswordVote(*parsed_submitted_form_,
-                                        *parsed_submitted_form_,
-                                        autofill::UNKNOWN_TYPE, std::string());
+    votes_uploader_->UploadPasswordVote(
+        *parsed_submitted_form_, *parsed_submitted_form_,
+        autofill::UNKNOWN_TYPE, /*login_form_signature=*/std::nullopt);
   }
   Blocklist();
 }
@@ -575,7 +593,7 @@ void PasswordFormManager::OnNoInteraction(bool is_update) {
     votes_uploader_->UploadPasswordVote(
         *parsed_submitted_form_, *parsed_submitted_form_,
         is_update ? autofill::PROBABLY_NEW_PASSWORD : autofill::UNKNOWN_TYPE,
-        std::string());
+        /*login_form_signature=*/std::nullopt);
   }
 }
 
@@ -807,7 +825,7 @@ void PasswordFormManager::SaveSuggestedUsernameValueToVotesUploader() {
   }
 }
 
-std::unique_ptr<PasswordFormManager> PasswordFormManager::Clone() {
+std::unique_ptr<PasswordFormManager> PasswordFormManager::Clone() const {
   // Fetcher is cloned to avoid re-fetching data from PasswordStore.
   std::unique_ptr<FormFetcher> fetcher = form_fetcher_->Clone();
 
@@ -875,10 +893,11 @@ void PasswordFormManager::OnFetchCompleted() {
   newly_blocklisted_ = false;
   autofills_left_ = kMaxTimesAutofill;
 
+  std::optional<PasswordStoreBackendError> error = std::nullopt;
 #if BUILDFLAG(IS_ANDROID)
-  std::optional<PasswordStoreBackendError> error = GetErrorForErrorMessage(
-      form_fetcher_->GetProfileStoreBackendError(),
-      form_fetcher_->GetAccountStoreBackendError(), client_);
+  error = GetErrorForErrorMessage(form_fetcher_->GetProfileStoreBackendError(),
+                                  form_fetcher_->GetAccountStoreBackendError(),
+                                  client_);
 
   // If there is no FormData, this is an http authentication form. We don't
   // show the message for it because it would be hidden behind a sign in
@@ -917,7 +936,7 @@ void PasswordFormManager::OnFetchCompleted() {
 
   client_->UpdateCredentialCache(url::Origin::Create(GetURL()),
                                  form_fetcher_->GetBestMatches(),
-                                 form_fetcher_->IsBlocklisted());
+                                 form_fetcher_->IsBlocklisted(), error);
 
   if (is_submitted_) {
     CreatePendingCredentials();
@@ -956,7 +975,7 @@ bool PasswordFormManager::WebAuthnCredentialsAvailable() const {
     if (base::FeatureList::IsEnabled(
             features::kWebAuthnUsePasskeyFromAnotherDeviceInContextMenu)) {
       return delegate && delegate->GetPasskeys().has_value() &&
-             !delegate->GetPasskeys()->empty();
+             !delegate->GetPasskeys().value()->empty();
     }
 #endif  //! BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID)
     return delegate && delegate->GetPasskeys().has_value();
@@ -995,20 +1014,6 @@ void PasswordFormManager::CreatePendingCredentials() {
       IsCredentialAPISave());
 }
 
-void PasswordFormManager::RecordProvisionalSaveFailure(
-    PasswordManagerMetricsRecorder::ProvisionalSaveFailure failure,
-    const GURL& form_origin) {
-  std::unique_ptr<BrowserSavePasswordProgressLogger> logger;
-  if (password_manager_util::IsLoggingActive(client_)) {
-    logger = std::make_unique<BrowserSavePasswordProgressLogger>(
-        client_->GetCurrentLogManager());
-  }
-  if (client_->GetMetricsRecorder()) {
-    client_->GetMetricsRecorder()->RecordProvisionalSaveFailure(
-        failure, form_origin, form_origin, logger.get());
-  }
-}
-
 bool PasswordFormManager::ProvisionallySave(
     const FormData& submitted_form,
     const PasswordManagerDriver* driver,
@@ -1028,8 +1033,7 @@ bool PasswordFormManager::ProvisionallySave(
   }
 
   if (!client_->IsSavingAndFillingEnabled(submitted_form.url())) {
-    RecordProvisionalSaveFailure(
-        PasswordManagerMetricsRecorder::SAVING_DISABLED, submitted_form.url());
+    RecordSavingIsDisabled(client_);
     is_saving_allowed_ = false;
   }
 
@@ -1341,6 +1345,24 @@ FormParsingResult PasswordFormManager::ParseFormAndMakeLogging(
     }
   }
   return form_parsing_result;
+}
+
+void PasswordFormManager::PresaveGeneratedPasswordAsBackup(
+    const PasswordFormManager& form_manager,
+    PasswordForm form,
+    const std::u16string& generated_password) {
+  CHECK(!form.password_value.empty());
+  CHECK(!form.username_value.empty());
+  form.SetPasswordBackupNote(generated_password);
+  // Create a temporary manager to avoid changing the state of |this|.
+  // TODO(crbug.com/422125487): Fix metrics duplication.
+  std::unique_ptr<PasswordFormManager> temporary_password_form_manager =
+      form_manager.Clone();
+  temporary_password_form_manager->parsed_submitted_form_ =
+      std::make_unique<PasswordForm>(std::move(form));
+  temporary_password_form_manager->is_submitted_ = true;
+  temporary_password_form_manager->CreatePendingCredentials();
+  temporary_password_form_manager->Save();
 }
 
 void PasswordFormManager::PresaveGeneratedPasswordInternal(

@@ -2,21 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
-import 'chrome://resources/cr_elements/icons.html.js';
+import '//resources/cr_elements/cr_icon_button/cr_icon_button.js';
+import '//resources/cr_elements/icons.html.js';
 import './icons.html.js';
 
-import {assert} from 'chrome://resources/js/assert.js';
-import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
-import type {BigBuffer} from 'chrome://resources/mojo/mojo/public/mojom/base/big_buffer.mojom-webui.js';
-import type {Time} from 'chrome://resources/mojo/mojo/public/mojom/base/time.mojom-webui.js';
+import {assert} from '//resources/js/assert.js';
+import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
+import type {BigBuffer} from '//resources/mojo/mojo/public/mojom/base/big_buffer.mojom-webui.js';
+import type {Time} from '//resources/mojo/mojo/public/mojom/base/time.mojom-webui.js';
 
 import {getCss} from './trace_report.css.js';
 import {getHtml} from './trace_report.html.js';
-import type {ClientTraceReport} from './trace_report.mojom-webui.js';
-import {ReportUploadState, SkipUploadReason} from './trace_report.mojom-webui.js';
-import {TraceReportBrowserProxy} from './trace_report_browser_proxy.js';
 import {Notification, NotificationType} from './trace_report_list.js';
+import {TracesBrowserProxy} from './traces_browser_proxy.js';
+import type {ClientTraceReport} from './traces_internals.mojom-webui.js';
+import {ReportUploadState, SkipUploadReason} from './traces_internals.mojom-webui.js';
 
 // Create the temporary element here to hold the data to download the trace
 // since it is only obtained after downloadData_ is called. This way we can
@@ -50,10 +50,10 @@ export class TraceReportElement extends CrLitElement {
     };
   }
 
-  private traceReportProxy_: TraceReportBrowserProxy =
-      TraceReportBrowserProxy.getInstance();
+  private traceReportProxy_: TracesBrowserProxy =
+      TracesBrowserProxy.getInstance();
 
-  protected trace: ClientTraceReport = {
+  protected accessor trace: ClientTraceReport = {
     // Dummy ClientTraceReport
     uuid: {
       high: 0n,

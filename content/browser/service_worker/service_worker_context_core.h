@@ -207,10 +207,18 @@ class CONTENT_EXPORT ServiceWorkerClientOwner final {
   // Used to create a ServiceWorkerClient for a window during a
   // navigation. |are_ancestors_secure| should be true for main frames.
   // Otherwise it is true iff all ancestor frames of this frame have a secure
-  // origin. |frame_tree_node_id| is FrameTreeNode id.
+  // origin. |ongoing_navigation_frame_tree_node_id| is FrameTreeNode id of the
+  // to-be-committed Window/Document.
   ScopedServiceWorkerClient CreateServiceWorkerClientForWindow(
       bool are_ancestors_secure,
-      FrameTreeNodeId frame_tree_node_id);
+      FrameTreeNodeId ongoing_navigation_frame_tree_node_id);
+
+  // Used to create a ServiceWorkerClient for prefetch. This is still a
+  // navigation request's reserved client, but doesn't have associated
+  // `ongoing_navigation_frame_tree_node_id`.
+  ScopedServiceWorkerClient CreateServiceWorkerClientForPrefetch(
+      scoped_refptr<network::SharedURLLoaderFactory>
+          network_url_loader_factory);
 
   // Used for starting a web worker (dedicated worker or shared worker). Returns
   // a service worker client for the worker.
@@ -361,6 +369,7 @@ class CONTENT_EXPORT ServiceWorkerContextCore
   void OnNoControllees(ServiceWorkerVersion* version);
 
   // ServiceWorkerVersion::Observer overrides.
+  void OnStartWorkerMessageSent(ServiceWorkerVersion* version) override;
   void OnRunningStateChanged(ServiceWorkerVersion* version) override;
   void OnVersionStateChanged(ServiceWorkerVersion* version) override;
   void OnDevToolsRoutingIdChanged(ServiceWorkerVersion* version) override;
@@ -377,7 +386,7 @@ class CONTENT_EXPORT ServiceWorkerContextCore
                               const GURL& source_url) override;
 
   ServiceWorkerContextWrapper* wrapper() const { return wrapper_; }
-  ServiceWorkerRegistry* registry() const { return registry_.get(); }
+  ServiceWorkerRegistry& registry() { return registry_; }
   mojo::Remote<storage::mojom::ServiceWorkerStorageControl>&
   GetStorageControl();
   ServiceWorkerProcessManager* process_manager();
@@ -465,7 +474,7 @@ class CONTENT_EXPORT ServiceWorkerContextCore
   void ProtectVersion(const scoped_refptr<ServiceWorkerVersion>& version);
   void UnprotectVersion(int64_t version_id);
 
-  void ScheduleDeleteAndStartOver() const;
+  void ScheduleDeleteAndStartOver();
 
   // Deletes all files on disk and restarts the system. This leaves the system
   // in a disabled state until it's done.
@@ -487,10 +496,15 @@ class CONTENT_EXPORT ServiceWorkerContextCore
   // version. The count resets to zero when the worker successfully starts.
   int GetVersionFailureCount(int64_t version_id);
 
+  // Called by ServiceWorkerRegisterJob before the URLLoaderFactory used
+  // to fetch the worker script is constructed.
+  void NotifyWillCreateURLLoaderFactory(const GURL& scope);
+
   // Called by ServiceWorkerStorage when StoreRegistration() succeeds.
-  void NotifyRegistrationStored(int64_t registration_id,
+  void NotifyRegistrationStored(const int64_t registration_id,
                                 const GURL& scope,
-                                const blink::StorageKey& key);
+                                const blink::StorageKey& key,
+                                uint64_t stored_resources_total_size_bytes);
   // Notifies observers that all registrations have been deleted for a
   // particular `key`.
   void NotifyAllRegistrationsDeletedForStorageKey(const blink::StorageKey& key);
@@ -617,6 +631,9 @@ class CONTENT_EXPORT ServiceWorkerContextCore
       base::TimeTicks start_time,
       const std::vector<blink::StorageKey>& storage_keys);
 
+  void SetRegisteredStorageKeys(
+      const std::vector<blink::StorageKey>& storage_keys);
+
   // It's safe to store a raw pointer instead of a scoped_refptr to |wrapper_|
   // because the Wrapper::Shutdown call that hops threads to destroy |this| uses
   // Bind() to hold a reference to |wrapper_| until |this| is fully destroyed.
@@ -624,7 +641,7 @@ class CONTENT_EXPORT ServiceWorkerContextCore
 
   std::unique_ptr<ServiceWorkerClientOwner> service_worker_client_owner_;
 
-  std::unique_ptr<ServiceWorkerRegistry> registry_;
+  ServiceWorkerRegistry registry_;
   std::unique_ptr<ServiceWorkerJobCoordinator> job_coordinator_;
   // TODO(bashi): Move |live_registrations_| to ServiceWorkerRegistry as
   // ServiceWorkerRegistry is a better place to manage in-memory representation

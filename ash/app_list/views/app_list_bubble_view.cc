@@ -178,8 +178,8 @@ AppListBubbleView::AppListBubbleView(AppListViewDelegate* view_delegate)
       chromeos::features::IsSystemBlurEnabled()
           ? cros_tokens::kCrosSysSystemBaseElevated
           : cros_tokens::kCrosSysSystemBaseElevatedOpaque;
-  SetBackground(views::CreateThemedRoundedRectBackground(background_color_id,
-                                                         kBubbleCornerRadius));
+  SetBackground(views::CreateRoundedRectBackground(background_color_id,
+                                                   kBubbleCornerRadius));
 
   SetBorder(std::make_unique<views::HighlightBorder>(
       kBubbleCornerRadius,
@@ -239,6 +239,8 @@ void AppListBubbleView::InitContentsView() {
   button_focus_skipper_ = std::make_unique<ButtonFocusSkipper>(this);
   button_focus_skipper_->AddButton(search_box_view_->sunfish_button());
   button_focus_skipper_->AddButton(search_box_view_->assistant_button());
+  button_focus_skipper_->AddButton(
+      search_box_view_->assistant_new_entry_point_button());
 
   // The main view has a solid color layer, so the separator needs its own
   // layer to visibly paint.

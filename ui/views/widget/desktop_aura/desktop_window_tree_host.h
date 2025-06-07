@@ -64,6 +64,10 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
   // Called from DesktopNativeWidgetAura::OnWidgetInitDone().
   virtual void OnWidgetInitDone() = 0;
 
+  virtual void OnWidgetThemeChanged(
+      ui::ColorProviderKey::ColorMode color_mode,
+      std::optional<SkColor> background_color) = 0;
+
   // Called from DesktopNativeWidgetAura::OnWindowActivated().
   // `active`: if `DesktopNativeWidgetAura::content_window()` contains the
   // `aura::Window` that gains active.
@@ -139,6 +143,7 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
   virtual void Maximize() = 0;
   virtual void Minimize() = 0;
   virtual void Restore() = 0;
+  virtual void ShowWindowControlsMenu(const gfx::Point& point);
   virtual bool IsMaximized() const = 0;
   virtual bool IsMinimized() const = 0;
 
@@ -223,6 +228,10 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
 
   // Updates window shape by clipping the canvas before paint starts.
   virtual void UpdateWindowShapeIfNeeded(const ui::PaintContext& context);
+
+  // A lifecycle hook invoked when the views::Widget associated with this window
+  // tree host was destroyed by the client.
+  virtual void ClientDestroyedWidget();
 
   virtual DesktopNativeCursorManager* GetSingletonDesktopNativeCursorManager();
 };

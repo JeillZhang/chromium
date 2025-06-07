@@ -1,5 +1,5 @@
-#ifndef GOOGLE_PROTOBUF_COMPILER_JAVA_SERVICE_COMMON_H__
-#define GOOGLE_PROTOBUF_COMPILER_JAVA_SERVICE_COMMON_H__
+#ifndef GOOGLE_PROTOBUF_COMPILER_JAVA_GENERATOR_COMMON_H__
+#define GOOGLE_PROTOBUF_COMPILER_JAVA_GENERATOR_COMMON_H__
 
 #include <cstddef>
 #include <memory>
@@ -23,7 +23,6 @@ class FieldGenerator {
  public:
   virtual ~FieldGenerator() = default;
   virtual void GenerateSerializationCode(io::Printer* printer) const = 0;
-  virtual void GenerateKotlinDslMembers(io::Printer* printer) const = 0;
 };
 
 // Convenience class which constructs FieldGenerators for a Descriptor.
@@ -87,4 +86,4 @@ inline void ReportUnexpectedPackedFieldsCall() {
 }  // namespace protobuf
 }  // namespace google
 
-#endif  // GOOGLE_PROTOBUF_COMPILER_JAVA_SERVICE_COMMON_H__
+#endif  // GOOGLE_PROTOBUF_COMPILER_JAVA_GENERATOR_COMMON_H__

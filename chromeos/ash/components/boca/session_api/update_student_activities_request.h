@@ -26,6 +26,7 @@ using UpdateStudentActivitiesCallback = base::OnceCallback<void(
 class UpdateStudentActivitiesRequest : public google_apis::UrlFetchRequestBase {
  public:
   UpdateStudentActivitiesRequest(google_apis::RequestSender* sender,
+                                 std::string base_url,
                                  std::string session_id,
                                  GaiaId gaia_id,
                                  std::string device_id,
@@ -44,7 +45,9 @@ class UpdateStudentActivitiesRequest : public google_apis::UrlFetchRequestBase {
   void set_active_tab_title(std::string active_tab_title) {
     active_tab_title_ = std::move(active_tab_title);
   }
-
+  void set_callback(UpdateStudentActivitiesCallback callback) {
+    callback_ = std::move(callback);
+  }
   // For testing.
   void OverrideURLForTesting(std::string url);
 

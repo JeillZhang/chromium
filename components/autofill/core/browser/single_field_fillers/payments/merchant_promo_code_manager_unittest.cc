@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/functional/callback_helpers.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
 #include "base/test/scoped_feature_list.h"
@@ -193,7 +194,8 @@ TEST_F(MerchantPromoCodeManagerTest,
   MockSuggestionsReturnedCallback mock_callback;
   EXPECT_CALL(mock_callback, Run).Times(0);
 
-  field().SetTypeTo(AutofillType(UNKNOWN_TYPE));
+  field().SetTypeTo(AutofillType(UNKNOWN_TYPE),
+                    AutofillPredictionSource::kHeuristics);
   // Simulate request for suggestions.
   EXPECT_FALSE(promo_manager().OnGetSingleFieldSuggestions(
       form(), field(), field(), client(), mock_callback.GetNewRef()));

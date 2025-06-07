@@ -10,7 +10,10 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/to_string.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/devtools/devtools_window.h"
@@ -96,6 +99,7 @@ class HatsNextWebDialog::HatsWebView : public views::WebView {
     return true;
   }
   bool IsWebContentsCreationOverridden(
+      content::RenderFrameHost* opener,
       content::SiteInstance* source_site_instance,
       content::mojom::WindowContainerType window_container_type,
       const GURL& opener_url,
@@ -475,6 +479,7 @@ GURL HatsNextWebDialog::GetParameterizedHatsURL() const {
 }
 
 void HatsNextWebDialog::LoadTimedOut() {
+  load_timed_out_ = true;
   base::UmaHistogramEnumeration(
       kHatsShouldShowSurveyReasonHistogram,
       HatsServiceDesktop::ShouldShowSurveyReasons::kNoSurveyUnreachable);
@@ -485,6 +490,11 @@ void HatsNextWebDialog::LoadTimedOut() {
 // TODO(crbug.com/40285934): Remove this whole function after HaTSWebUI is
 // launched.
 void HatsNextWebDialog::OnSurveyStateUpdateReceived(std::string state) {
+  if (load_timed_out_) {
+    // Ignore state update, since we already consider the survey load to be
+    // timed out, and treated it accordingly.
+    return;
+  }
   loading_timer_.Stop();
 
   if (state == "loaded") {

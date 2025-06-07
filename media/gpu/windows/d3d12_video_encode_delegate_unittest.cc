@@ -2,17 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "media/gpu/windows/d3d12_video_encode_delegate.h"
+#include "media/gpu/windows/d3d12_video_encode_delegate_unittest.h"
 
+#include "base/containers/flat_map.h"
+#include "base/no_destructor.h"
 #include "base/rand_util.h"
 #include "media/base/win/d3d12_mocks.h"
 #include "media/base/win/d3d12_video_mocks.h"
 #include "media/gpu/h264_dpb.h"
-#include "media/gpu/windows/d3d12_video_encode_delegate_unittest.h"
 #include "media/gpu/windows/format_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/microsoft_dxheaders/src/include/directx/d3dx12_core.h"
 
 using testing::_;
+using testing::Invoke;
 using testing::Mock;
 using testing::NiceMock;
 using testing::Return;
@@ -30,9 +33,10 @@ class MockD3D12VideoEncodeDelegate : public D3D12VideoEncodeDelegate {
 
   size_t GetMaxNumOfRefFrames() const override { return 8; }
   bool SupportsRateControlReconfiguration() const override { return false; }
-  EncoderStatus::Or<BitstreamBufferMetadata> EncodeImpl(ID3D12Resource*,
-                                                        UINT,
-                                                        bool) override {
+  EncoderStatus::Or<BitstreamBufferMetadata> EncodeImpl(
+      ID3D12Resource*,
+      UINT,
+      const VideoEncoder::EncodeOptions&) override {
     return BitstreamBufferMetadata();
   }
 
@@ -115,6 +119,35 @@ D3D12VideoEncodeDelegateTestBase::GetDefaultH264Config() const {
   return config;
 }
 
+ScopedD3D12ResourceMap
+D3D12VideoEncodeDelegateTestBase::GetEncoderOutputMetadataResourceMap(
+    size_t bitstream_size) const {
+  Microsoft::WRL::ComPtr<D3D12ResourceMock> resource =
+      MakeComPtr<NiceMock<D3D12ResourceMock>>();
+  ON_CALL(*resource.Get(), GetDesc())
+      .WillByDefault(Return(CD3DX12_RESOURCE_DESC::Buffer(bitstream_size)));
+  static base::NoDestructor<base::flat_map<
+      D3D12ResourceMock*, std::unique_ptr<D3D12_VIDEO_ENCODER_OUTPUT_METADATA>>>
+      mapped_metadata;
+  ON_CALL(*resource.Get(), Map(0, _, _))
+      .WillByDefault(Invoke([&](UINT, const D3D12_RANGE*, void** data) {
+        D3D12_VIDEO_ENCODER_OUTPUT_METADATA* metadata =
+            new D3D12_VIDEO_ENCODER_OUTPUT_METADATA{
+                .EncodedBitstreamWrittenBytesCount = bitstream_size,
+            };
+        (*mapped_metadata)[resource.Get()].reset(metadata);
+        *data = metadata;
+        return S_OK;
+      }));
+  ON_CALL(*resource.Get(), Unmap(0, _))
+      .WillByDefault(Invoke([&](UINT, const D3D12_RANGE*) {
+        mapped_metadata->erase(resource.Get());
+      }));
+  ScopedD3D12ResourceMap metadata_buffer;
+  EXPECT_TRUE(metadata_buffer.Map(resource.Get(), 0, nullptr));
+  return metadata_buffer;
+}
+
 Microsoft::WRL::ComPtr<ID3D12Resource>
 D3D12VideoEncodeDelegateTestBase::CreateResource(
     const gfx::Size& size,
@@ -162,11 +195,11 @@ TEST_F(D3D12VideoEncodeDelegateTest, P010InputFormatFor10BitProfile) {
   EXPECT_EQ(encoder_delegate_->GetFormatForTesting(), DXGI_FORMAT_P010);
 }
 
-TEST_F(D3D12VideoEncodeDelegateTest, UnsupportedRateControl) {
+TEST_F(D3D12VideoEncodeDelegateTest, ExternalRateControl) {
   VideoEncodeAccelerator::Config config = GetDefaultH264Config();
   config.bitrate = Bitrate::ExternalRateControl();
   EXPECT_EQ(encoder_delegate_->Initialize(config).code(),
-            EncoderStatus::Codes::kEncoderUnsupportedConfig);
+            EncoderStatus::Codes::kOk);
 }
 
 class D3D12VideoEncodeDelegateTestWithProcessFrame
@@ -205,10 +238,11 @@ TEST_P(D3D12VideoEncodeDelegateTestWithProcessFrame, EncodeFrame) {
   } else {
     EXPECT_CALL(*GetVideoProcessorWrapper(), ProcessFrames).Times(0);
   }
-  EXPECT_CALL(*GetVideoEncoderWrapper(), GetEncodedBitstreamWrittenBytesCount)
-      .WillOnce(Return(kPayloadSize));
-  auto result_or_error = encoder_delegate_->Encode(input_frame, 0, color_space,
-                                                   bitstream_buffer, false);
+  EXPECT_CALL(*GetVideoEncoderWrapper(), GetEncoderOutputMetadata)
+      .WillOnce(Return(GetEncoderOutputMetadataResourceMap(kPayloadSize)));
+  auto result_or_error =
+      encoder_delegate_->Encode(input_frame, 0, color_space, bitstream_buffer,
+                                VideoEncoder::EncodeOptions());
   Mock::VerifyAndClearExpectations(GetVideoProcessorWrapper());
   ASSERT_TRUE(result_or_error.has_value());
 

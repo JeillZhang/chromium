@@ -28,6 +28,7 @@
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/syslog_logging.h"
 #include "base/system/sys_info.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -295,10 +296,6 @@ const StaticOobeScreenId kResumableOobeScreens[] = {
     WelcomeView::kScreenId,
     NetworkScreenView::kScreenId,
     UpdateView::kScreenId,
-    EnrollmentScreenView::kScreenId,
-    AutoEnrollmentCheckScreenView::kScreenId,
-    UserCreationView::kScreenId,
-    AddChildScreenView::kScreenId,
     ConsumerUpdateScreenView::kScreenId,
 };
 
@@ -910,15 +907,11 @@ WizardController::CreateScreens() {
       base::BindRepeating(&WizardController::OnThemeSelectionScreenExit,
                           weak_factory_.GetWeakPtr())));
 
-  if (base::FeatureList::IsEnabled(
-          remoting::features::kEnableCrdAdminRemoteAccessV2)) {
-    append(std::make_unique<RemoteActivityNotificationScreen>(
-        oobe_ui->GetView<RemoteActivityNotificationScreenHandler>()
-            ->AsWeakPtr(),
-        base::BindRepeating(
-            &WizardController::OnRemoteActivityNotificationScreenExit,
-            weak_factory_.GetWeakPtr())));
-  }
+  append(std::make_unique<RemoteActivityNotificationScreen>(
+      oobe_ui->GetView<RemoteActivityNotificationScreenHandler>()->AsWeakPtr(),
+      base::BindRepeating(
+          &WizardController::OnRemoteActivityNotificationScreenExit,
+          weak_factory_.GetWeakPtr())));
 
   append(std::make_unique<CryptohomeRecoveryScreen>(
       oobe_ui->GetView<CryptohomeRecoveryScreenHandler>()->AsWeakPtr(),
@@ -1447,6 +1440,8 @@ void WizardController::OnUserCreationScreenExit(
       break;
     case UserCreationScreen::Result::ENTERPRISE_ENROLL_TRIAGE:
     case UserCreationScreen::Result::ENTERPRISE_ENROLL_SHORTCUT:
+      wizard_context_->enrollment_preference_ =
+          WizardContext::EnrollmentPreference::kEnterprise;
       ShowEnrollmentScreenIfEligible();
       break;
     case UserCreationScreen::Result::KIOSK_ENTERPRISE_ENROLL:
@@ -2040,10 +2035,11 @@ void WizardController::SkipToLoginForTesting() {
 
 void WizardController::OnScreenExit(OobeScreenId screen,
                                     const std::string& exit_reason) {
-  VLOG(1) << "Wizard screen " << screen
-          << " exited with reason: " << exit_reason << " during setup type: "
-          << SetupTypeToString(
-                 wizard_context_->knowledge_factor_setup.auth_setup_flow);
+  SYSLOG(INFO) << "(LOGIN) Wizard screen " << screen
+               << " exited with reason: " << exit_reason
+               << " during setup type: "
+               << SetupTypeToString(
+                      wizard_context_->knowledge_factor_setup.auth_setup_flow);
   // Do not perform checks and record stats for the skipped screen.
   if (exit_reason == BaseScreen::kNotApplicable) {
     return;
@@ -2928,8 +2924,6 @@ void WizardController::OnOobeFlowFinished() {
   GetLocalState()->ClearPref(prefs::kOobeStartTime);
 
   GetLocalState()->ClearPref(prefs::kOobeMetricsClientIdAtOobeStart);
-  GetLocalState()->ClearPref(prefs::kOobeMetricsReportedAsEnabled);
-  GetLocalState()->ClearPref(prefs::kOobeStatsReportingControllerReportedReset);
 
   // Check if pre-consent metrics is still enabled.
   if (metrics::CrOSPreConsentMetricsManager::Get()) {
@@ -3654,6 +3648,9 @@ void WizardController::MaybeAbortQuickStartFlow(
 }
 
 void WizardController::MaybeEnablePreConsentMetrics() {
+  if (switches::ShouldDisablePreConsentMetricsForTesting()) {
+    return;
+  }
   // Enable pre-consent metrics if this device is in oobe and is the first
   // user.
   Profile* profile = ProfileManager::GetActiveUserProfile();

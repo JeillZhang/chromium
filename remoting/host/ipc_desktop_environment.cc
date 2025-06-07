@@ -12,7 +12,6 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
-#include "base/functional/callback_forward.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
@@ -284,7 +283,8 @@ void IpcDesktopEnvironmentFactory::OnTerminalDisconnected(int terminal_id) {
     active_connections_.erase(i);
 
     // Disconnect the client session.
-    desktop_session_proxy->DisconnectSession(ErrorCode::OK);
+    desktop_session_proxy->DisconnectSession(
+        ErrorCode::OK, "Terminal disconnected.", FROM_HERE);
   }
 }
 

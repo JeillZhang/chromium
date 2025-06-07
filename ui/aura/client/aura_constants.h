@@ -139,9 +139,6 @@ AURA_EXPORT extern const WindowProperty<bool>* const kUseWindowBoundsForShadow;
 AURA_EXPORT extern const aura::WindowProperty<gfx::NativeViewAccessible>* const
     kParentNativeViewAccessibleKey;
 
-// A property key to store the preferred size of the window.
-AURA_EXPORT extern const WindowProperty<gfx::Size*>* const kPreferredSize;
-
 // A property key to store the resize behavior, which is a bitmask of the
 // ResizeBehavior values.
 AURA_EXPORT extern const WindowProperty<int>* const kResizeBehaviorKey;
@@ -164,11 +161,6 @@ AURA_EXPORT extern const WindowProperty<int64_t>* const
 // back to from the current window show state.
 AURA_EXPORT extern const WindowProperty<ui::mojom::WindowShowState>* const
     kRestoreShowStateKey;
-
-// A property key to store the raster scale. This affects the scale that exo
-// windows are rasterized at.
-// TODO(b/374122147): consider removing this.
-AURA_EXPORT extern const WindowProperty<float>* const kRasterScale;
 
 // A property key to indicate if a window is currently being restored. Normally
 // restoring a window equals to changing window's state to normal window state.

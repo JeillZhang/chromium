@@ -39,6 +39,7 @@ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bu
 import {castExists} from '../assert_extras.js';
 import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
 import {RouteObserverMixin} from '../common/route_observer_mixin.js';
+import type {PrefsState} from '../common/types.js';
 import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
 import {LockStateMixin} from '../lock_state_mixin.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
@@ -63,7 +64,10 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
 
   static get properties() {
     return {
-      prefs: {type: Object},
+      prefs: {
+        type: Object,
+        notify: true,
+      },
 
       /**
        * Authentication token provided by lock-screen-password-prompt-dialog.
@@ -92,7 +96,7 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
         observer: 'updateNumFingerprintsDescription_',
       },
 
-      numFingerprintsDescription_: {
+      numFingerprintDescription_: {
         type: String,
       },
 
@@ -152,19 +156,6 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
       showDisableRecoveryDialog_: Boolean,
 
       /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kLockScreenV2,
-          Setting.kChangeAuthPinV2,
-          Setting.kLockScreenNotification,
-          Setting.kDataRecovery,
-        ]),
-      },
-
-      /**
        * Whether the device account is managed.
        */
       deviceAccountManaged_: {
@@ -177,8 +168,17 @@ export class SettingsLockScreenElement extends SettingsLockScreenElementBase {
     };
   }
 
-  prefs: Object;
+  prefs: PrefsState;
   authToken: string|undefined;
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kLockScreenV2,
+    Setting.kChangeAuthPinV2,
+    Setting.kLockScreenNotification,
+    Setting.kDataRecovery,
+  ]);
+
   private fingerprintUnlockEnabled_: boolean;
   private numFingerprints_: number;
   private numFingerprintDescription_: string;

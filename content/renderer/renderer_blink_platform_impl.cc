@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "content/renderer/renderer_blink_platform_impl.h"
 
 #include <algorithm>
@@ -39,7 +34,6 @@
 #include "base/time/time.h"
 #include "base/time/time_delta_from_string.h"
 #include "build/build_config.h"
-#include "cc/trees/raster_context_provider_wrapper.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/input/input_constants.h"
 #include "components/url_formatter/url_formatter.h"
@@ -290,6 +284,15 @@ void RendererBlinkPlatformImpl::SetThreadType(base::PlatformThreadId thread_id,
 }
 #endif
 
+std::optional<int>
+RendererBlinkPlatformImpl::GetWebUIBundledCodeCacheResourceId(
+    const GURL& webui_resource_url) {
+  auto it = webui_resource_to_code_cache_id_map_.find(webui_resource_url);
+  return it == webui_resource_to_code_cache_id_map_.end()
+             ? std::nullopt
+             : std::optional<int>(it->second);
+}
+
 blink::WebSandboxSupport* RendererBlinkPlatformImpl::GetSandboxSupport() {
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC) || \
     BUILDFLAG(IS_WIN)
@@ -508,17 +511,17 @@ std::unique_ptr<WebAudioDevice> RendererBlinkPlatformImpl::CreateAudioDevice(
     const WebAudioSinkDescriptor& sink_descriptor,
     unsigned number_of_output_channels,
     const blink::WebAudioLatencyHint& latency_hint,
+    std::optional<float> context_sample_rate,
     media::AudioRendererSink::RenderCallback* callback) {
   return RendererWebAudioDeviceImpl::Create(
-      sink_descriptor, number_of_output_channels, latency_hint, callback);
+      sink_descriptor, number_of_output_channels, latency_hint,
+      context_sample_rate, callback);
 }
 
 bool RendererBlinkPlatformImpl::DecodeAudioFileData(
     blink::WebAudioBus* destination_bus,
-    const char* audio_file_data,
-    size_t data_size) {
-  return content::DecodeAudioFileData(destination_bus, audio_file_data,
-                                      data_size);
+    base::span<const char> audio_file_data) {
+  return content::DecodeAudioFileData(destination_bus, audio_file_data);
 }
 
 //------------------------------------------------------------------------------
@@ -536,7 +539,7 @@ RendererBlinkPlatformImpl::SharedMainThreadContextProvider() {
   return RenderThreadImpl::current()->SharedMainThreadContextProvider();
 }
 
-scoped_refptr<cc::RasterContextProviderWrapper>
+scoped_refptr<viz::RasterContextProvider>
 RendererBlinkPlatformImpl::SharedCompositorWorkerContextProvider(
     cc::RasterDarkModeFilter* dark_mode_filter) {
   return RenderThreadImpl::current()->SharedCompositorWorkerContextProvider(
@@ -722,19 +725,32 @@ RendererBlinkPlatformImpl::CreateOffscreenGraphicsContext3DProvider(
     gl_info->error_message = WebString::FromUTF8(error_message);
     return nullptr;
   }
-  Collect3DContextInformation(gl_info, gpu_channel_host->gpu_info());
+
+  if (base::FeatureList::IsEnabled(
+          ::features::kDisallowRasterInterfaceWithoutSkiaBackend) &&
+      web_attributes.enable_raster_interface &&
+      gpu_channel_host->gpu_info().skia_backend_type ==
+          gpu::SkiaBackendType::kNone) {
+    return nullptr;
+  }
+
+  const auto& gpu_info = gpu_channel_host->gpu_info();
+  Collect3DContextInformation(gl_info, gpu_info);
 
   gpu::ContextCreationAttribs attributes;
   attributes.bind_generates_resource = false;
   attributes.enable_raster_interface = web_attributes.enable_raster_interface;
-  attributes.enable_oop_rasterization =
+  // TODO(crbug.com/391648152, zmo): today if Skia backend is set, Chrome either
+  // runs in GPU acceleration mode, either on top of real GPU, or on top of
+  // SwiftShader (for testing). This may change in the future if we move Skia
+  // software rendering to be OOP as well. Clean this up once
+  // kDisallowRasterInterfaceWithoutSkiaBackend is rolled out safely.
+  attributes.enable_gpu_rasterization =
       attributes.enable_raster_interface &&
-      gpu_channel_host->gpu_feature_info()
-              .status_values[gpu::GPU_FEATURE_TYPE_CANVAS_OOP_RASTERIZATION] ==
-          gpu::kGpuFeatureStatusEnabled;
-  attributes.enable_gles2_interface = !attributes.enable_oop_rasterization;
+      gpu_info.skia_backend_type != gpu::SkiaBackendType::kNone;
+  attributes.enable_gles2_interface = !attributes.enable_gpu_rasterization;
   attributes.enable_grcontext =
-      !attributes.enable_oop_rasterization && web_attributes.support_grcontext;
+      !attributes.enable_gpu_rasterization && web_attributes.support_grcontext;
 
   attributes.gpu_preference = web_attributes.prefer_low_power_gpu
                                   ? gl::GpuPreference::kLowPower
@@ -863,14 +879,6 @@ void RendererBlinkPlatformImpl::OnGpuChannelEstablished(
 
 //------------------------------------------------------------------------------
 
-gpu::GpuMemoryBufferManager*
-RendererBlinkPlatformImpl::GetGpuMemoryBufferManager() {
-  RenderThreadImpl* thread = RenderThreadImpl::current();
-  return thread ? thread->GetGpuMemoryBufferManager() : nullptr;
-}
-
-//------------------------------------------------------------------------------
-
 blink::WebString RendererBlinkPlatformImpl::ConvertIDNToUnicode(
     const blink::WebString& host) {
   return WebString::FromUTF16(url_formatter::IDNToUnicode(host.Ascii()));
@@ -948,9 +956,9 @@ void RendererBlinkPlatformImpl::CreateServiceWorkerSubresourceLoaderFactory(
     std::unique_ptr<network::PendingSharedURLLoaderFactory> fallback_factory,
     mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
     scoped_refptr<base::SequencedTaskRunner> task_runner) {
-  // TODO(crbug.com/40241479): plumb `router_rules` with the function callers
+  // TODO(crbug.com/402806160): plumb `router_rules` with the function callers
   // if there is such use case. As of 2023-06-01, only
-  // `DedicatedOrSharedWorkerFetchContextImpl` calls the function, and
+  // `DedicatedOrSharedWorkerGlobalScopeContextImpl` calls the function, and
   // no need to allow it set the `router_rules`.
   ServiceWorkerSubresourceLoaderFactory::Create(
       base::MakeRefCounted<ControllerServiceWorkerConnector>(

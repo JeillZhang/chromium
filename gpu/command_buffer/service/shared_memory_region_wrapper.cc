@@ -13,7 +13,7 @@
 #include "base/numerics/checked_math.h"
 #include "base/system/sys_info.h"
 #include "ui/gfx/buffer_format_util.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace gpu {
 namespace {
@@ -130,6 +130,15 @@ const uint8_t* SharedMemoryRegionWrapper::GetMemory(int plane_index) const {
 size_t SharedMemoryRegionWrapper::GetStride(int plane_index) const {
   DCHECK(IsValid());
   return planes_[plane_index].stride;
+}
+
+base::span<const uint8_t> SharedMemoryRegionWrapper::GetMemoryPlanes() const {
+  DCHECK(IsValid());
+  auto full_mapped_span =
+      base::span(mapping_.GetMemoryAs<const uint8_t>(), mapping_.mapped_size());
+  // It is possible that the first plane starts at a non-zero offset. So we
+  // subspan at this offset.
+  return full_mapped_span.subspan(planes_[0].offset);
 }
 
 SkPixmap SharedMemoryRegionWrapper::MakePixmapForPlane(const SkImageInfo& info,

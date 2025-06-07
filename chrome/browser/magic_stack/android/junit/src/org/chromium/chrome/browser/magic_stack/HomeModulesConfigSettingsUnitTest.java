@@ -63,15 +63,9 @@ public class HomeModulesConfigSettingsUnitTest {
     public void testLaunchHomeModulesConfigSettings() {
         registerModuleConfigChecker(3);
 
-        String singleTabNotExistedPreferenceKey =
-                ChromePreferenceKeys.HOME_MODULES_MODULE_TYPE.createKey(
-                        String.valueOf(ModuleType.SINGLE_TAB));
         String priceChangePreferenceKey =
                 ChromePreferenceKeys.HOME_MODULES_MODULE_TYPE.createKey(
                         String.valueOf(ModuleType.PRICE_CHANGE));
-        String tabResumptionPreferenceKey =
-                ChromePreferenceKeys.HOME_MODULES_MODULE_TYPE.createKey(
-                        String.valueOf(ModuleType.TAB_RESUMPTION));
 
         FragmentManager fragmentManager = mActivity.getSupportFragmentManager();
         HomeModulesConfigSettings fragment =
@@ -85,21 +79,9 @@ public class HomeModulesConfigSettingsUnitTest {
         fragmentManager.beginTransaction().replace(android.R.id.content, fragment).commit();
         mActivityScenario.moveToState(State.STARTED);
 
-        ChromeSwitchPreference switchNotExisted =
-                fragment.findPreference(singleTabNotExistedPreferenceKey);
-        Assert.assertNull(switchNotExisted);
-
         ChromeSwitchPreference switchExisted = fragment.findPreference(priceChangePreferenceKey);
         Assert.assertEquals(
                 mActivity.getString(R.string.price_change_module_name), switchExisted.getTitle());
-        Assert.assertTrue(switchExisted.isChecked());
-
-        switchExisted = fragment.findPreference(tabResumptionPreferenceKey);
-        Assert.assertEquals(
-                mActivity
-                        .getResources()
-                        .getQuantityString(R.plurals.home_modules_tab_resumption_title, 1),
-                switchExisted.getTitle());
         Assert.assertTrue(switchExisted.isChecked());
     }
 
@@ -168,7 +150,8 @@ public class HomeModulesConfigSettingsUnitTest {
     private void registerModuleConfigChecker(int size) {
         size = Math.min(size, ModuleType.NUM_ENTRIES);
         for (int i = 0; i < size; i++) {
-            if (i == ModuleType.DEPRECATED_EDUCATIONAL_TIP) {
+            if (i == ModuleType.DEPRECATED_EDUCATIONAL_TIP
+                    || i == ModuleType.DEPRECATED_TAB_RESUMPTION) {
                 continue;
             }
 

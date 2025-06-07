@@ -24,6 +24,7 @@
 #import "components/signin/public/base/signin_metrics.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_service_observer.h"
+#import "ios/chrome/browser/authentication/ui_bundled/change_profile/change_profile_send_tab.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_presenter.h"
 #import "ios/chrome/browser/infobars/ui_bundled/presentation/infobar_modal_positioner.h"
@@ -138,9 +139,9 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
 
 }  // namespace
 
-@interface SendTabToSelfCoordinator () <UIViewControllerTransitioningDelegate,
-                                        InfobarModalPositioner,
-                                        SendTabToSelfModalDelegate> {
+@interface SendTabToSelfCoordinator () <InfobarModalPositioner,
+                                        SendTabToSelfModalDelegate,
+                                        UIViewControllerTransitioningDelegate> {
   std::unique_ptr<TargetDeviceListWaiter> _targetDeviceListWaiter;
 }
 
@@ -251,7 +252,7 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
 
 - (void)sendTabToTargetDeviceCacheGUID:(NSString*)cacheGUID
                       targetDeviceName:(NSString*)deviceName {
-  SendTabToSelfSyncServiceFactory::GetForProfile(self.browser->GetProfile())
+  SendTabToSelfSyncServiceFactory::GetForProfile(self.profile)
       ->GetSendTabToSelfModel()
       ->AddEntry(self.url, base::SysNSStringToUTF8(self.title),
                  base::SysNSStringToUTF8(cacheGUID));
@@ -287,7 +288,7 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
   switch (*displayReason) {
     case send_tab_to_self::EntryPointDisplayReason::kInformNoTargetDevice:
     case send_tab_to_self::EntryPointDisplayReason::kOfferFeature: {
-      ProfileIOS* profile = self.browser->GetProfile();
+      ProfileIOS* profile = self.profile;
       send_tab_to_self::SendTabToSelfSyncService* syncService =
           SendTabToSelfSyncServiceFactory::GetForProfile(profile);
       // This modal should not be launched in incognito mode where syncService
@@ -329,13 +330,26 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
             BOOL succeeded = result == SigninCoordinatorResultSuccess;
             [weakSelf onSigninComplete:succeeded];
           };
+      ChangeProfileContinuationProvider provider = base::BindRepeating(
+          &CreateChangeProfileSendTabToOtherDevice, _url, self.title);
+      id<BrowserCoordinatorCommands> browserCoordinatorCommandsHandler =
+          HandlerForProtocol(self.browser->GetCommandDispatcher(),
+                             BrowserCoordinatorCommands);
+      void (^prepareChangeProfile)() = ^() {
+        [browserCoordinatorCommandsHandler closeCurrentTab];
+      };
+
       ShowSigninCommand* command = [[ShowSigninCommand alloc]
-          initWithOperation:AuthenticationOperation::kSigninOnly
-                   identity:nil
-                accessPoint:signin_metrics::AccessPoint::kSendTabToSelfPromo
-                promoAction:signin_metrics::PromoAction::
-                                PROMO_ACTION_NO_SIGNIN_PROMO
-                 completion:completion];
+                          initWithOperation:AuthenticationOperation::kSigninOnly
+                                   identity:nil
+                                accessPoint:signin_metrics::AccessPoint::
+                                                kSendTabToSelfPromo
+                                promoAction:signin_metrics::PromoAction::
+                                                PROMO_ACTION_NO_SIGNIN_PROMO
+                                 completion:completion
+
+                       prepareChangeProfile:prepareChangeProfile
+          changeProfileContinuationProvider:provider];
       [self.signinPresenter showSignin:command];
       break;
     }
@@ -350,7 +364,7 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
   }
   __weak __typeof(self) weakSelf = self;
   _targetDeviceListWaiter = std::make_unique<TargetDeviceListWaiter>(
-      SyncServiceFactory::GetForProfile(self.browser->GetProfile()),
+      SyncServiceFactory::GetForProfile(self.profile),
       base::BindRepeating(
           [](__typeof(self) strongSelf) { return [strongSelf displayReason]; },
           weakSelf),
@@ -368,8 +382,7 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
 
 - (std::optional<send_tab_to_self::EntryPointDisplayReason>)displayReason {
   send_tab_to_self::SendTabToSelfSyncService* service =
-      SendTabToSelfSyncServiceFactory::GetForProfile(
-          self.browser->GetProfile());
+      SendTabToSelfSyncServiceFactory::GetForProfile(self.profile);
   return service ? service->GetEntryPointDisplayReason(_url) : std::nullopt;
 }
 

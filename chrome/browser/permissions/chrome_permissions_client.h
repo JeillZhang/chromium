@@ -10,6 +10,7 @@
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "components/permissions/features.h"
+#include "components/permissions/permission_hats_trigger_helper.h"
 #include "components/permissions/permission_request_enums.h"
 #include "components/permissions/permission_uma_util.h"
 #include "components/permissions/permissions_client.h"
@@ -72,7 +73,10 @@ class ChromePermissionsClient : public permissions::PermissionsClient {
           permissions::feature_params::PermissionElementPromptPosition>
           pepc_prompt_position,
       ContentSetting initial_permission_status,
-      base::OnceCallback<void()> hats_shown_callback_) override;
+      base::OnceCallback<void()> hats_shown_callback,
+      std::optional<
+          permissions::PermissionHatsTriggerHelper::PreviewParametersForHats>
+          preview_parameters) override;
 
 #if !BUILDFLAG(IS_ANDROID)
   permissions::PermissionIgnoredReason DetermineIgnoreReason(
@@ -92,7 +96,10 @@ class ChromePermissionsClient : public permissions::PermissionsClient {
           permissions::feature_params::PermissionElementPromptPosition>
           pepc_prompt_position,
       ContentSetting initial_permission_status,
-      content::WebContents* web_contents) override;
+      content::WebContents* web_contents,
+      std::optional<
+          permissions::PermissionHatsTriggerHelper::PreviewParametersForHats>
+          preview_parameters) override;
   std::optional<bool> HadThreeConsecutiveNotificationPermissionDenies(
       content::BrowserContext* browser_context) override;
   std::optional<bool> HasPreviouslyAutoRevokedPermission(
@@ -116,12 +123,6 @@ class ChromePermissionsClient : public permissions::PermissionsClient {
 #if BUILDFLAG(IS_ANDROID)
   bool IsDseOrigin(content::BrowserContext* browser_context,
                    const url::Origin& origin) override;
-  infobars::InfoBarManager* GetInfoBarManager(
-      content::WebContents* web_contents) override;
-  infobars::InfoBar* MaybeCreateInfoBar(
-      content::WebContents* web_contents,
-      ContentSettingsType type,
-      base::WeakPtr<permissions::PermissionPromptAndroid> prompt) override;
   std::unique_ptr<PermissionMessageDelegate> MaybeCreateMessageUI(
       content::WebContents* web_contents,
       ContentSettingsType type,
@@ -136,6 +137,7 @@ class ChromePermissionsClient : public permissions::PermissionsClient {
   int MapToJavaDrawableId(int resource_id) override;
   favicon::FaviconService* GetFaviconService(
       content::BrowserContext* browser_context) override;
+  const std::u16string GetClientApplicationName() const override;
 #else
   std::unique_ptr<permissions::PermissionPrompt> CreatePrompt(
       content::WebContents* web_contents,

@@ -11,7 +11,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/chrome_extension_function_details.h"
 #include "chrome/common/extensions/api/tabs.h"
 #include "components/translate/core/browser/translate_driver.h"
 #include "components/zoom/zoom_controller.h"
@@ -22,6 +21,10 @@
 #include "extensions/common/extension_resource.h"
 #include "extensions/common/user_script.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/extensions/chrome_extension_function_details.h"
+#endif
 
 class GURL;
 class SkBitmap;
@@ -211,7 +214,7 @@ class TabsDetectLanguageFunction
   void OnLanguageDetermined(
       const translate::LanguageDetectionDetails& details) override;
 
-  // Resolves the API call with the detected |language|.
+  // Resolves the API call with the detected `language`.
   void RespondWithLanguage(const std::string& language);
 
   // Indicates if this instance is observing the tabs' WebContents and the
@@ -247,7 +250,9 @@ class TabsCaptureVisibleTabFunction
   ~TabsCaptureVisibleTabFunction() override = default;
 
  private:
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   ChromeExtensionFunctionDetails chrome_details_;
+#endif
 
   content::WebContents* GetWebContentsForID(int window_id, std::string* error);
 
@@ -279,7 +284,7 @@ class ExecuteCodeInTabFunction : public ExecuteCodeFunction {
  protected:
   ~ExecuteCodeInTabFunction() override;
 
-  // Initializes |execute_tab_id_| and |details_|.
+  // Initializes `execute_tab_id_` and `details_`.
   InitResult Init() override;
   bool ShouldInsertCSS() const override;
   bool ShouldRemoveCSS() const override;
@@ -290,7 +295,9 @@ class ExecuteCodeInTabFunction : public ExecuteCodeFunction {
   const GURL& GetWebViewSrc() const override;
 
  private:
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   const ChromeExtensionFunctionDetails chrome_details_;
+#endif
 
   // Id of tab which executes code.
   int execute_tab_id_;

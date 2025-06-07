@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "base/containers/flat_set.h"
@@ -21,7 +22,6 @@
 #include "components/url_pattern_index/proto/rules.pb.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_frame_observer_tracker.h"
-#include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "third_party/blink/public/web/web_local_frame_client.h"
@@ -97,8 +97,11 @@ class RendererAgent
 
   // Called by `RendererURLLoaderThrottles` to check a URL against the filter,
   // with a callback bound to the throttle's task runner to provide the result.
-  // Must be run on the main thread.
+  // Must be run on the main thread. The DevTools request ID will be used to
+  // report an issue in the case of a blocked URL if it is available; otherwise
+  // `url` will be reported.
   void CheckURL(const GURL& url,
+                std::optional<std::string> devtools_request_id,
                 url_pattern_index::proto::ElementType element_type,
                 FilterCallback callback);
 

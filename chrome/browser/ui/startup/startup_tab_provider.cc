@@ -18,6 +18,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
+#include "chrome/browser/privacy_sandbox/notice/desktop_entrypoint_handlers_helper.h"
 #include "chrome/browser/profile_resetter/triggered_profile_resetter.h"
 #include "chrome/browser/profile_resetter/triggered_profile_resetter_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -209,11 +210,6 @@ StartupTabs StartupTabProviderImpl::GetNewTabPageTabs(
       StartupBrowserCreator::GetSessionStartupPref(command_line, profile));
 }
 
-StartupTabs StartupTabProviderImpl::GetPostCrashTabs(
-    bool has_incompatible_applications) const {
-  return GetPostCrashTabsForState(has_incompatible_applications);
-}
-
 StartupTabs StartupTabProviderImpl::GetCommandLineTabs(
     const base::CommandLine& command_line,
     const base::FilePath& cur_dir,
@@ -349,16 +345,6 @@ StartupTabs StartupTabProviderImpl::GetNewTabPageTabsForState(
   return tabs;
 }
 
-// static
-StartupTabs StartupTabProviderImpl::GetPostCrashTabsForState(
-    bool has_incompatible_applications) {
-  StartupTabs tabs;
-  if (has_incompatible_applications) {
-    AddIncompatibleApplicationsUrl(&tabs);
-  }
-  return tabs;
-}
-
 #if !BUILDFLAG(IS_ANDROID)
 // static
 StartupTabs StartupTabProviderImpl::GetNewFeaturesTabsForState(
@@ -386,7 +372,7 @@ StartupTabs StartupTabProviderImpl::GetPrivacySandboxTabsForState(
           return !HasExtensionNtpOverride(extension_registry) &&
                  IsChromeControlledNtpUrl(ntp_url);
         }
-        return PrivacySandboxService::IsUrlSuitableForPrompt(tab.url);
+        return privacy_sandbox::IsUrlSuitableForPrompt(tab.url);
       });
 
   if (suitable_tab_available) {

@@ -244,8 +244,7 @@ class TextureLayerTest : public testing::Test {
 };
 
 TEST_F(TextureLayerTest, CheckPropertyChangeCausesCorrectBehavior) {
-  scoped_refptr<TextureLayer> test_layer =
-      TextureLayer::CreateForMailbox(nullptr);
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
   EXPECT_SET_NEEDS_COMMIT(1, layer_tree_host_->SetRootLayer(test_layer));
 
   // Test properties that should call SetNeedsCommit.  All properties need to
@@ -260,7 +259,6 @@ TEST_F(TextureLayerTest, CheckPropertyChangeCausesCorrectBehavior) {
                                      ));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetUV(gfx::PointF(0.25f, 0.25f),
                                                gfx::PointF(0.75f, 0.75f)));
-  EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetPremultipliedAlpha(false));
   EXPECT_SET_NEEDS_COMMIT(1, test_layer->SetBlendBackgroundColor(true));
 }
 
@@ -301,7 +299,7 @@ TEST_F(TextureLayerTest, ShutdownWithResource) {
     client.SetLayerTreeHost(host.get());
     client.SetUseSoftwareCompositing(!gpu);
 
-    scoped_refptr<TextureLayer> layer = TextureLayer::CreateForMailbox(nullptr);
+    scoped_refptr<TextureLayer> layer = TextureLayer::Create(nullptr);
     layer->SetIsDrawable(true);
     layer->SetBounds(gfx::Size(10, 10));
     if (gpu) {
@@ -374,8 +372,7 @@ class TextureLayerWithResourceTest : public TextureLayerTest {
 };
 
 TEST_F(TextureLayerWithResourceTest, ReplaceMailboxOnMainThreadBeforeCommit) {
-  scoped_refptr<TextureLayer> test_layer =
-      TextureLayer::CreateForMailbox(nullptr);
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
   ASSERT_TRUE(test_layer.get());
 
   EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AnyNumber());
@@ -428,8 +425,7 @@ TEST_F(TextureLayerWithResourceTest, ReplaceMailboxOnMainThreadBeforeCommit) {
 }
 
 TEST_F(TextureLayerWithResourceTest, AffectedByHdr) {
-  scoped_refptr<TextureLayer> test_layer =
-      TextureLayer::CreateForMailbox(nullptr);
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
   ASSERT_TRUE(test_layer.get());
   EXPECT_CALL(*layer_tree_host_, SetNeedsCommit()).Times(AnyNumber());
   layer_tree_host_->SetRootLayer(test_layer);
@@ -505,8 +501,7 @@ class TextureLayerMailboxHolderTest : public TextureLayerTest {
 };
 
 TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_BothReleaseThenMain) {
-  scoped_refptr<TextureLayer> test_layer =
-      TextureLayer::CreateForMailbox(nullptr);
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
   ASSERT_TRUE(test_layer.get());
 
   main_thread_.task_runner()->PostTask(
@@ -558,8 +553,7 @@ TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_BothReleaseThenMain) {
 }
 
 TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_MainReleaseBetween) {
-  scoped_refptr<TextureLayer> test_layer =
-      TextureLayer::CreateForMailbox(nullptr);
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
   ASSERT_TRUE(test_layer.get());
 
   main_thread_.task_runner()->PostTask(
@@ -612,8 +606,7 @@ TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_MainReleaseBetween) {
 }
 
 TEST_F(TextureLayerMailboxHolderTest, TwoCompositors_MainReleasedFirst) {
-  scoped_refptr<TextureLayer> test_layer =
-      TextureLayer::CreateForMailbox(nullptr);
+  scoped_refptr<TextureLayer> test_layer = TextureLayer::Create(nullptr);
   ASSERT_TRUE(test_layer.get());
 
   main_thread_.task_runner()->PostTask(
@@ -799,7 +792,7 @@ class TextureLayerImplWithMailboxThreadedCallback : public LayerTreeTest {
     root_ = Layer::Create();
     root_->SetBounds(bounds);
 
-    layer_ = TextureLayer::CreateForMailbox(nullptr);
+    layer_ = TextureLayer::Create(nullptr);
     layer_->SetIsDrawable(true);
     layer_->SetBounds(bounds);
 
@@ -845,7 +838,7 @@ class TextureLayerImplWithResourceTest : public TextureLayerTest {
 
   std::unique_ptr<TextureLayerImpl> CreateTextureLayer() {
     auto layer = TextureLayerImpl::Create(host_impl_.active_tree(), 1);
-    layer->set_visible_layer_rect(gfx::Rect(100, 100));
+    layer->SetVisibleLayerRectForTesting(gfx::Rect(100, 100));
     return layer;
   }
 
@@ -1031,7 +1024,7 @@ class TextureLayerNoExtraCommitForMailboxTest : public LayerTreeTest,
     root->SetBounds(gfx::Size(10, 10));
     root->SetIsDrawable(true);
 
-    texture_layer_ = TextureLayer::CreateForMailbox(this);
+    texture_layer_ = TextureLayer::Create(this);
     texture_layer_->SetBounds(gfx::Size(10, 10));
     texture_layer_->SetIsDrawable(true);
     root->AddChild(texture_layer_);
@@ -1098,6 +1091,19 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
     EXPECT_TRUE(sync_token.HasData());
     ++resource_returned_;
 
+    if (resource_returned_ == 1) {
+      // The 1st resource should be released after the 2nd is prepared.
+      EXPECT_GE(prepare_called_, 2);
+
+      // Clear the 2nd resource to let the test complete.
+      MainThreadTaskRunner()->PostTask(
+          FROM_HERE,
+          base::BindOnce(
+              &TextureLayerChangeInvisibleMailboxTest::ClearTextureLayerClient,
+              base::Unretained(this)));
+      return;
+    }
+
     // The actual releasing of resources by
     // TextureLayer::TransferableResourceHolder::dtor can be done as a PostTask.
     // The test signal being used, DidPresentCompositorFrame itself is also
@@ -1109,6 +1115,8 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
       EndTest();
     }
   }
+
+  void ClearTextureLayerClient() { texture_layer_->ClearClient(); }
 
   void SetupTree() override {
     scoped_refptr<Layer> root = Layer::Create();
@@ -1126,7 +1134,7 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
     parent_layer_->SetIsDrawable(true);
     root->AddChild(parent_layer_);
 
-    texture_layer_ = TextureLayer::CreateForMailbox(this);
+    texture_layer_ = TextureLayer::Create(this);
     texture_layer_->SetBounds(gfx::Size(10, 10));
     texture_layer_->SetIsDrawable(true);
     parent_layer_->AddChild(texture_layer_);
@@ -1192,11 +1200,6 @@ class TextureLayerChangeInvisibleMailboxTest : public LayerTreeTest,
         // for BeginMainFrame and hence PrepareTransferableResource to run twice
         // before DidPresentCompositorFrame due to pipelining.
         EXPECT_GE(prepare_called_, 2);
-        // So the old resource should have been returned already. This resource
-        // is returned during paint, and so does not need the same PostTask
-        // syncing as for frame 5.
-        EXPECT_EQ(1, resource_returned_);
-        texture_layer_->ClearClient();
         break;
       default:
         break;
@@ -1253,8 +1256,7 @@ class TextureLayerReleaseResourcesBase : public LayerTreeTest,
   void SetupTree() override {
     LayerTreeTest::SetupTree();
 
-    scoped_refptr<TextureLayer> texture_layer =
-        TextureLayer::CreateForMailbox(this);
+    scoped_refptr<TextureLayer> texture_layer = TextureLayer::Create(this);
     texture_layer->SetBounds(gfx::Size(10, 10));
     texture_layer->SetIsDrawable(true);
 
@@ -1327,7 +1329,7 @@ class TextureLayerWithResourceMainThreadDeleted : public LayerTreeTest {
     root_ = Layer::Create();
     root_->SetBounds(bounds);
 
-    layer_ = TextureLayer::CreateForMailbox(nullptr);
+    layer_ = TextureLayer::Create(nullptr);
     layer_->SetIsDrawable(true);
     layer_->SetBounds(bounds);
 
@@ -1398,7 +1400,7 @@ class TextureLayerWithResourceImplThreadDeleted : public LayerTreeTest {
     root_ = Layer::Create();
     root_->SetBounds(bounds);
 
-    layer_ = TextureLayer::CreateForMailbox(nullptr);
+    layer_ = TextureLayer::Create(nullptr);
     layer_->SetIsDrawable(true);
     layer_->SetBounds(bounds);
 
@@ -1481,6 +1483,13 @@ class SoftwareTextureLayerTest : public LayerTreeTest {
  protected:
   SoftwareTextureLayerTest() : LayerTreeTest(viz::RendererType::kSoftware) {}
 
+  void CleanupBeforeDestroy() override {
+    // Clear before the LayerTreeHost (and its TestLayerTreeFrameSink) is
+    // destroyed to prevent a dangling pointer during test cleanup.
+    frame_sink_ = nullptr;
+    LayerTreeTest::CleanupBeforeDestroy();
+  }
+
   void SetupTree() override {
     root_ = Layer::Create();
     root_->SetBounds(gfx::Size(10, 10));
@@ -1492,7 +1501,7 @@ class SoftwareTextureLayerTest : public LayerTreeTest {
     solid_color_layer_->SetBounds(gfx::Size(10, 10));
     root_->AddChild(solid_color_layer_);
 
-    texture_layer_ = TextureLayer::CreateForMailbox(&client_);
+    texture_layer_ = TextureLayer::Create(&client_);
     texture_layer_->SetIsDrawable(true);
     texture_layer_->SetBounds(gfx::Size(10, 10));
     layer_tree_host()->SetRootLayer(root_);
@@ -1526,8 +1535,7 @@ class SoftwareTextureLayerTest : public LayerTreeTest {
   scoped_refptr<Layer> root_;
   scoped_refptr<SolidColorLayer> solid_color_layer_;
   scoped_refptr<TextureLayer> texture_layer_;
-  raw_ptr<TestLayerTreeFrameSink, AcrossTasksDanglingUntriaged> frame_sink_ =
-      nullptr;
+  raw_ptr<TestLayerTreeFrameSink> frame_sink_ = nullptr;
   int num_frame_sinks_created_ = 0;
 
   scoped_refptr<viz::RasterContextProvider> context_provider_sw_;
@@ -1589,12 +1597,10 @@ class SoftwareTextureLayerSwitchTreesTest : public SoftwareTextureLayerTest {
 
   void DisplayReceivedCompositorFrameOnThread(
       const viz::CompositorFrame& frame) override {
-    if (step_ >= 0 && step_ <= 4) {
-      verified_frames_++;
-    }
+    verified_frames_++;
   }
 
-  void AfterTest() override { EXPECT_EQ(5, verified_frames_); }
+  void AfterTest() override { EXPECT_EQ(6, verified_frames_); }
 
   int step_ = 0;
   int verified_frames_ = 0;
@@ -1737,9 +1743,7 @@ class SoftwareTextureLayerMultipleResourceTest
 
   void DisplayReceivedCompositorFrameOnThread(
       const viz::CompositorFrame& frame) override {
-    if (step_ >= 0 && step_ <= 3) {
-      verified_frames_++;
-    }
+    verified_frames_++;
   }
 
   void AfterTest() override { EXPECT_EQ(4, verified_frames_); }
@@ -1798,6 +1802,10 @@ class SoftwareTextureLayerLoseFrameSinkTest : public SoftwareTextureLayerTest {
         // The frame sink is lost. The host will make a new one and submit
         // another frame, with the id being registered again.
         layer_tree_host()->SetVisible(false);
+        // Clear frame_sink_ before releasing to prevent dangling pointer. The
+        // normal clear in CleanupBeforeDestroy won't handle it as this test is
+        // intentionally modifying the frame sink's lifetime.
+        frame_sink_ = nullptr;
         layer_tree_host()->ReleaseLayerTreeFrameSink();
         layer_tree_host()->SetVisible(true);
         texture_layer_->SetNeedsDisplay();
@@ -1815,9 +1823,7 @@ class SoftwareTextureLayerLoseFrameSinkTest : public SoftwareTextureLayerTest {
 
   void DisplayReceivedCompositorFrameOnThread(
       const viz::CompositorFrame& frame) override {
-    if (step_ >= 0 && step_ <= 2) {
-      verified_frames_++;
-    }
+    verified_frames_++;
   }
 
   void WillCommit(const CommitState& commit_state) override {
@@ -1837,7 +1843,7 @@ class SoftwareTextureLayerLoseFrameSinkTest : public SoftwareTextureLayerTest {
     EndTest();
   }
 
-  void AfterTest() override { EXPECT_EQ(3, verified_frames_); }
+  void AfterTest() override { EXPECT_EQ(4, verified_frames_); }
 
   int step_ = 0;
   int verified_frames_ = 0;
@@ -1858,7 +1864,7 @@ class TextureLayerNoResourceTest : public LayerTreeTest, TextureLayerClient {
   void SetupTree() override {
     SetInitialRootBounds(gfx::Size(100, 100));
     LayerTreeTest::SetupTree();
-    auto texture_layer = TextureLayer::CreateForMailbox(this);
+    auto texture_layer = TextureLayer::Create(this);
     texture_layer->SetIsDrawable(true);
     texture_layer->SetContentsOpaque(true);
     texture_layer->SetBounds(gfx::Size(100, 100));

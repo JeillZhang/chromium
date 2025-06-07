@@ -8,6 +8,8 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/web/web_plugin.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_scroll_container.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_scroll_into_view_options.h"
 #include "third_party/blink/renderer/core/css/css_style_declaration.h"
 #include "third_party/blink/renderer/core/dom/column_pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -15,8 +17,10 @@
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
 #include "third_party/blink/renderer/core/exported/web_plugin_container_impl.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect.h"
+#include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/html_html_element.h"
 #include "third_party/blink/renderer/core/html/html_plugin_element.h"
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
@@ -1285,8 +1289,17 @@ TEST_F(ElementTest, TheCheckMarkPseudoElement) {
   // elements in an appearance:base-select.
   EXPECT_EQ(nullptr, checkmark_pseudo_for("a-div"));
   EXPECT_EQ(nullptr, checkmark_pseudo_for("not-base-option"));
-  EXPECT_NE(nullptr, checkmark_pseudo_for("base-button-option"));
+  EXPECT_EQ(nullptr, checkmark_pseudo_for("base-button-option"));
   EXPECT_EQ(nullptr, checkmark_pseudo_for("base-picker-option"));
+  EXPECT_EQ(nullptr, checkmark_pseudo_for("target"));
+  EXPECT_EQ(nullptr, checkmark_pseudo_for("target-option"));
+
+  LocalFrame::NotifyUserActivation(
+      GetDocument().GetFrame(), mojom::UserActivationNotificationType::kTest);
+  To<HTMLSelectElement>(GetElementById("target"))
+      ->showPicker(ASSERT_NO_EXCEPTION);
+  GetDocument().UpdateStyleAndLayoutTree();
+
   EXPECT_EQ(nullptr, checkmark_pseudo_for("target"));
   EXPECT_NE(nullptr, checkmark_pseudo_for("target-option"));
 }
@@ -1379,6 +1392,22 @@ TEST_F(ElementTest, NestedMarkerInheritsFromPseudoParent) {
 
   EXPECT_EQ(marker->GetComputedStyle()->ListStyleType()->GetCounterStyleName(),
             AtomicString("disc"));
+}
+
+TEST_F(ElementTest, ScrollIntoViewNearestUseCounted) {
+  // Set via setAttribute
+  SetBodyInnerHTML(R"HTML(
+    <body>
+      <div id=target></div>
+    </body>
+  )HTML");
+  EXPECT_FALSE(
+      GetDocument().IsUseCounted(WebFeature::kScrollIntoViewContainerNearest));
+  ScrollIntoViewOptions* options = ScrollIntoViewOptions::Create();
+  options->setContainer(V8ScrollContainer::Enum::kNearest);
+  GetElementById("target")->scrollIntoViewWithOptions(options);
+  EXPECT_TRUE(
+      GetDocument().IsUseCounted(WebFeature::kScrollIntoViewContainerNearest));
 }
 
 }  // namespace blink

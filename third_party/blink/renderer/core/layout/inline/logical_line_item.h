@@ -55,14 +55,16 @@ struct LogicalLineItem {
         children_count(children_count),
         bidi_level(bidi_level) {}
   // Create an in-flow text fragment.
-  LogicalLineItem(const InlineItemResult& item_result,
+  LogicalLineItem(const InlineItem& inline_item,
+                  InlineItemResult& item_result,
+                  const TextOffsetRange& text_offset,
                   LayoutUnit block_offset,
                   LayoutUnit inline_size,
                   LayoutUnit text_height,
                   UBiDiLevel bidi_level)
-      : inline_item(item_result.item),
+      : inline_item(&inline_item),
         shape_result(item_result.shape_result),
-        text_offset(item_result.TextOffset()),
+        text_offset(text_offset),
         rect(LayoutUnit(), block_offset, LayoutUnit(), text_height),
         inline_size(inline_size),
         bidi_level(bidi_level),
@@ -125,10 +127,10 @@ struct LogicalLineItem {
   // Create an out-of-flow positioned object.
   LogicalLineItem(LayoutObject* out_of_flow_positioned_box,
                   UBiDiLevel bidi_level,
-                  TextDirection container_direction)
+                  WritingDirectionMode container_writing_direction)
       : out_of_flow_positioned_box(out_of_flow_positioned_box),
         bidi_level(bidi_level),
-        container_direction(container_direction) {}
+        container_writing_direction(container_writing_direction) {}
   // Create an unpositioned float.
   LogicalLineItem(LayoutObject* unpositioned_float,
                   UBiDiLevel bidi_level,
@@ -144,6 +146,12 @@ struct LogicalLineItem {
         bfc_offset(bfc_offset),
         bidi_level(bidi_level) {}
 
+  bool IsItemType(InlineItem::InlineItemType type) const {
+    return inline_item && inline_item->Type() == type;
+  }
+  bool IsNotItemType(InlineItem::InlineItemType type) const {
+    return inline_item && inline_item->Type() != type;
+  }
   bool IsFloating() const {
     return layout_result && layout_result->GetPhysicalFragment().IsFloating();
   }
@@ -155,15 +163,13 @@ struct LogicalLineItem {
     return layout_result && layout_result->GetPhysicalFragment().IsInlineBox();
   }
   bool HasInFlowFragment() const {
-    return (inline_item &&
-            inline_item->Type() != InlineItem::kRubyLinePlaceholder) ||
+    return IsNotItemType(InlineItem::kRubyLinePlaceholder) ||
            (layout_result &&
             !layout_result->GetPhysicalFragment().IsFloating());
   }
   bool HasInFlowOrFloatingFragment() const {
-    return (inline_item &&
-            inline_item->Type() != InlineItem::kRubyLinePlaceholder) ||
-           layout_result || layout_object;
+    return IsNotItemType(InlineItem::kRubyLinePlaceholder) || layout_result ||
+           layout_object;
   }
   bool HasOutOfFlowFragment() const {
     return out_of_flow_positioned_box != nullptr;
@@ -171,9 +177,7 @@ struct LogicalLineItem {
   bool HasFragment() const {
     return HasInFlowOrFloatingFragment() || HasOutOfFlowFragment();
   }
-  bool IsControl() const {
-    return inline_item && inline_item->Type() == InlineItem::kControl;
-  }
+  bool IsControl() const { return IsItemType(InlineItem::kControl); }
   bool CanCreateFragmentItem() const { return HasInFlowOrFloatingFragment(); }
   bool HasBidiLevel() const { return bidi_level != 0xff; }
   bool IsPlaceholder() const { return !HasFragment() && !HasBidiLevel(); }
@@ -193,8 +197,7 @@ struct LogicalLineItem {
     return false;
   }
   bool IsRubyLinePlaceholder() const {
-    return inline_item &&
-           inline_item->Type() == InlineItem::kRubyLinePlaceholder;
+    return IsItemType(InlineItem::kRubyLinePlaceholder);
   }
 
   const LogicalOffset& Offset() const { return rect.offset; }
@@ -264,8 +267,9 @@ struct LogicalLineItem {
   // inline box. Available only after |CreateBoxFragments()|.
   unsigned children_count = 0;
   UBiDiLevel bidi_level = 0xff;
-  // The current text direction for OOF positioned items.
-  TextDirection container_direction = TextDirection::kLtr;
+  // The current writing direction for OOF positioned items.
+  WritingDirectionMode container_writing_direction =
+      WritingDirectionMode(WritingMode::kHorizontalTb, TextDirection::kLtr);
   // When an item contains only trailing spaces, the original bidi level needs
   // to be ignored, and just use paragraph direction (UAX#9 L1)
   bool has_only_bidi_trailing_spaces = false;

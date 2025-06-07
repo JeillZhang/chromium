@@ -11,7 +11,6 @@ import {NativeLayerCrosImpl} from '../native_layer_cros.js';
 import type {Cdd, ColorCapability, ColorOption, CopiesCapability, DpiOption, DuplexType, MediaSizeOption, MediaTypeOption} from './cdd.js';
 import type {ManagedPrintOptions} from './managed_print_options_cros.js';
 import {IPP_PRINT_QUALITY, managedPrintOptionsDuplexToCdd, managedPrintOptionsQualityToIpp} from './managed_print_options_cros.js';
-import type {PrinterStatus} from './printer_status_cros.js';
 import {getStatusReasonFromPrinterStatus, PrinterStatusReason} from './printer_status_cros.js';
 
 /**
@@ -34,11 +33,9 @@ export enum DestinationOrigin {
  * Must match PrinterType in printing/mojom/print.mojom
  */
 export enum PrinterType {
-  PRIVET_PRINTER_DEPRECATED = 0,
-  EXTENSION_PRINTER = 1,
-  PDF_PRINTER = 2,
-  LOCAL_PRINTER = 3,
-  CLOUD_PRINTER_DEPRECATED = 4
+  EXTENSION_PRINTER = 0,
+  PDF_PRINTER = 1,
+  LOCAL_PRINTER = 2,
 }
 
 /**
@@ -433,8 +430,7 @@ export class Destination {
         .requestPrinterStatusUpdate(this.id_)
         .then(status => {
           if (status) {
-            const statusReason =
-                getStatusReasonFromPrinterStatus(status as PrinterStatus);
+            const statusReason = getStatusReasonFromPrinterStatus(status);
             const isPrinterUnreachable =
                 statusReason === PrinterStatusReason.PRINTER_UNREACHABLE;
             if (isPrinterUnreachable && !this.printerStatusRetrySent_) {

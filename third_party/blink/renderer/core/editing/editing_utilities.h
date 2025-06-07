@@ -263,6 +263,9 @@ int16_t ComparePositions(const PositionInFlatTree&, const PositionInFlatTree&);
 // Returns true if `node` in `range`, otherwise false.
 // Note: This function resides in "editing_utilities.cc".
 bool IsNodeFullyContained(const EphemeralRange& range, const Node& node);
+// Returns true if the element's visibility or display
+// style is changed to visible or inline, respectively.
+bool EnsureNodeVisibility(HTMLElement*);
 
 // boolean functions on Position
 
@@ -387,15 +390,16 @@ gfx::QuadF LocalToAbsoluteQuadOf(const LocalCaretRect&);
 // -------------------------------------------------------------------------
 
 // Functions dispatch InputEvent
-const StaticRangeVector* TargetRangesForInputEvent(const Node&);
+const GCedStaticRangeVector* TargetRangesForInputEvent(const Node&);
 DispatchEventResult DispatchBeforeInputInsertText(
     Node*,
     const String& data,
     InputEvent::InputType = InputEvent::InputType::kInsertText,
-    const StaticRangeVector* = nullptr);
-DispatchEventResult DispatchBeforeInputEditorCommand(Node*,
-                                                     InputEvent::InputType,
-                                                     const StaticRangeVector*);
+    const GCedStaticRangeVector* = nullptr);
+DispatchEventResult DispatchBeforeInputEditorCommand(
+    Node*,
+    InputEvent::InputType,
+    const GCedStaticRangeVector*);
 DispatchEventResult DispatchBeforeInputDataTransfer(Node*,
                                                     InputEvent::InputType,
                                                     DataTransfer*);

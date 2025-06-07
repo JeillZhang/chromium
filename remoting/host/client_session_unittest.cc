@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "remoting/host/client_session.h"
 
@@ -88,9 +84,6 @@ constexpr char kTestDataChannelCallbackName[] = "test_channel_name";
 // Use large fake screen-ids on 64-bit systems, to detect errors caused by
 // inadvertent casts to 32-bits.
 constexpr bool kUse64BitDisplayId = (sizeof(webrtc::ScreenId) >= 8);
-
-const SessionPolicies kInitialLocalPolicies = {.maximum_session_duration =
-                                                   base::Hours(10)};
 
 // Matches a |protocol::Capabilities| argument against a list of capabilities
 // formatted as a space-separated string.
@@ -236,6 +229,8 @@ class ClientSessionTest : public testing::Test {
   std::vector<protocol::MouseEvent> mouse_events_;
   std::vector<protocol::ClipboardEvent> clipboard_events_;
 
+  SessionPolicies initial_local_policies_;
+
   LocalSessionPoliciesProvider local_session_policies_provider_;
 
   // ClientSession instance under test.
@@ -265,7 +260,8 @@ void ClientSessionTest::SetUp() {
           task_environment_.GetMainThreadTaskRunner());
   desktop_environment_options_ = DesktopEnvironmentOptions::CreateDefault();
 
-  local_session_policies_provider_.set_local_policies(kInitialLocalPolicies);
+  initial_local_policies_.maximum_session_duration = base::Hours(10);
+  local_session_policies_provider_.set_local_policies(initial_local_policies_);
 
   // Suppress spammy "uninteresting call" logs.
   EXPECT_CALL(client_stub_, SetCursorShape(_)).Times(testing::AnyNumber());
@@ -274,7 +270,7 @@ void ClientSessionTest::SetUp() {
 void ClientSessionTest::TearDown() {
   if (client_session_) {
     if (connection_->is_connected()) {
-      client_session_->DisconnectSession(ErrorCode::OK);
+      client_session_->DisconnectSession(ErrorCode::OK, {}, FROM_HERE);
     }
     client_session_.reset();
     desktop_environment_factory_.reset();
@@ -500,14 +496,15 @@ webrtc::ScreenId ClientSessionTest::GetSelectedSourceDisplayId() {
 TEST_F(
     ClientSessionTest,
     OnLocalPoliciesChanged_DoesNotDisconnectIfEffectivePoliciesComeFromRemotePolicies) {
-  SessionPolicies remote_policies = {.maximum_session_duration =
-                                         base::Hours(8)};
+  SessionPolicies remote_policies;
+  remote_policies.maximum_session_duration = base::Hours(8);
   CreateClientSession();
   ConnectClientSession(&remote_policies);
 
   EXPECT_TRUE(connection_->is_connected());
-  local_session_policies_provider_.set_local_policies(
-      {.maximum_session_duration = base::Hours(23)});
+  SessionPolicies new_policies;
+  new_policies.maximum_session_duration = base::Hours(23);
+  local_session_policies_provider_.set_local_policies(new_policies);
   EXPECT_TRUE(connection_->is_connected());
 }
 
@@ -517,7 +514,7 @@ TEST_F(ClientSessionTest,
   ConnectClientSession();
 
   EXPECT_TRUE(connection_->is_connected());
-  local_session_policies_provider_.set_local_policies(kInitialLocalPolicies);
+  local_session_policies_provider_.set_local_policies(initial_local_policies_);
   EXPECT_TRUE(connection_->is_connected());
 }
 
@@ -527,8 +524,9 @@ TEST_F(ClientSessionTest,
   ConnectClientSession();
 
   EXPECT_TRUE(connection_->is_connected());
-  local_session_policies_provider_.set_local_policies(
-      {.maximum_session_duration = base::Hours(23)});
+  SessionPolicies local_policies;
+  local_policies.maximum_session_duration = base::Hours(23);
+  local_session_policies_provider_.set_local_policies(local_policies);
   EXPECT_FALSE(connection_->is_connected());
 }
 
@@ -541,14 +539,14 @@ TEST_F(ClientSessionTest, DisconnectsAfterMaxSessionDurationIsReached) {
   // clock and run all the scheduled tasks, which includes the max duration
   // timer.
   task_environment_.AdvanceClock(
-      *kInitialLocalPolicies.maximum_session_duration + base::Minutes(1));
+      *initial_local_policies_.maximum_session_duration + base::Minutes(1));
   task_environment_.RunUntilIdle();
   EXPECT_FALSE(connection_->is_connected());
 }
 
 TEST_F(ClientSessionTest, DisconnectsIfOnSessionPoliciesReceivedReturnsError) {
   EXPECT_CALL(session_event_handler_,
-              OnSessionPoliciesReceived(kInitialLocalPolicies))
+              OnSessionPoliciesReceived(initial_local_policies_))
       .WillOnce(Return(ErrorCode::DISALLOWED_BY_POLICY));
 
   CreateClientSession();
@@ -571,8 +569,9 @@ TEST_F(ClientSessionTest,
 
 TEST_F(ClientSessionTest,
        EffectivePoliciesExplicitlyAllowFileTransfer_HasCapability) {
-  local_session_policies_provider_.set_local_policies(
-      {.allow_file_transfer = true});
+  SessionPolicies local_policies;
+  local_policies.allow_file_transfer = true;
+  local_session_policies_provider_.set_local_policies(local_policies);
   EXPECT_CALL(
       client_stub_,
       SetCapabilities(IncludesCapabilities(protocol::kFileTransferCapability)));
@@ -583,8 +582,9 @@ TEST_F(ClientSessionTest,
 
 TEST_F(ClientSessionTest,
        EffectivePoliciesDisallowFileTransfer_DoesNotHaveCapability) {
-  local_session_policies_provider_.set_local_policies(
-      {.allow_file_transfer = false});
+  SessionPolicies local_policies;
+  local_policies.allow_file_transfer = false;
+  local_session_policies_provider_.set_local_policies(local_policies);
   EXPECT_CALL(client_stub_, SetCapabilities(Not(IncludesCapabilities(
                                 protocol::kFileTransferCapability))));
 
@@ -593,14 +593,13 @@ TEST_F(ClientSessionTest,
 }
 
 TEST_F(ClientSessionTest, ApplyPoliciesFromRemotePolicies) {
-  local_session_policies_provider_.set_local_policies({
-      .allow_file_transfer = true,
-      .allow_uri_forwarding = true,
-  });
-  SessionPolicies remote_policies = {
-      .allow_file_transfer = false,
-      .allow_uri_forwarding = false,
-  };
+  SessionPolicies local_policies;
+  local_policies.allow_file_transfer = true;
+  local_policies.allow_uri_forwarding = true;
+  local_session_policies_provider_.set_local_policies(local_policies);
+  SessionPolicies remote_policies;
+  remote_policies.allow_file_transfer = false;
+  remote_policies.allow_uri_forwarding = false;
   EXPECT_CALL(client_stub_,
               SetCapabilities(Not(IncludesCapabilities(
                   std::string() + protocol::kFileTransferCapability + " " +
@@ -643,7 +642,7 @@ TEST_F(ClientSessionTest, MultiMonMouseMove) {
   // Events should clamp to the entire desktop (800+1024, 35+768).
   connection_->input_stub()->InjectMouseEvent(MakeMouseMoveEvent(2000, 1000));
 
-  client_session_->DisconnectSession(ErrorCode::OK);
+  client_session_->DisconnectSession(ErrorCode::OK, {}, FROM_HERE);
   client_session_.reset();
 
   EXPECT_EQ(7U, mouse_events_.size());
@@ -699,7 +698,7 @@ TEST_F(ClientSessionTest, MultiMonMouseMove_SameSize) {
   // Events should clamp to the entire desktop (800+800, 35+600).
   connection_->input_stub()->InjectMouseEvent(MakeMouseMoveEvent(2000, 1000));
 
-  client_session_->DisconnectSession(ErrorCode::OK);
+  client_session_->DisconnectSession(ErrorCode::OK, {}, FROM_HERE);
   client_session_.reset();
 
   EXPECT_EQ(7U, mouse_events_.size());
@@ -754,7 +753,7 @@ TEST_F(ClientSessionTest, DisableInputs) {
   connection_->input_stub()->InjectKeyEvent(MakeKeyEvent(true, 3));
   connection_->input_stub()->InjectMouseEvent(MakeMouseMoveEvent(300, 301));
 
-  client_session_->DisconnectSession(ErrorCode::OK);
+  client_session_->DisconnectSession(ErrorCode::OK, {}, FROM_HERE);
   client_session_.reset();
 
   EXPECT_EQ(2U, mouse_events_.size());
@@ -772,6 +771,67 @@ TEST_F(ClientSessionTest, DisableInputs) {
               EqualsClipboardEvent(kMimeTypeTextUtf8, "a"));
   EXPECT_THAT(clipboard_events_[1],
               EqualsClipboardEvent(kMimeTypeTextUtf8, "c"));
+}
+
+TEST_F(ClientSessionTest, InputAllowedFromRemotePolicy) {
+  SessionPolicies remote_policies;
+  remote_policies.allow_remote_input = true;
+  CreateClientSession();
+  ConnectClientSession(&remote_policies);
+  SetupSingleDisplay();
+
+  FakeInputInjector* input_injector =
+      desktop_environment_factory_->last_desktop_environment()
+          ->last_input_injector()
+          .get();
+  input_injector->set_key_events(&key_events_);
+  input_injector->set_mouse_events(&mouse_events_);
+  input_injector->set_clipboard_events(&clipboard_events_);
+
+  connection_->clipboard_stub()->InjectClipboardEvent(MakeClipboardEvent("a"));
+  connection_->input_stub()->InjectKeyEvent(MakeKeyEvent(true, 1));
+  connection_->input_stub()->InjectMouseEvent(MakeMouseMoveEvent(100, 101));
+
+  client_session_->DisconnectSession(ErrorCode::OK, {}, FROM_HERE);
+  client_session_.reset();
+
+  EXPECT_EQ(1U, mouse_events_.size());
+  EXPECT_THAT(mouse_events_[0], EqualsMouseMoveEvent(100, 101));
+
+  EXPECT_EQ(2U, key_events_.size());
+  EXPECT_THAT(key_events_[0], EqualsKeyEvent(1, true));
+  EXPECT_THAT(key_events_[1], EqualsKeyEvent(1, false));
+
+  EXPECT_EQ(1U, clipboard_events_.size());
+  EXPECT_THAT(clipboard_events_[0],
+              EqualsClipboardEvent(kMimeTypeTextUtf8, "a"));
+}
+
+TEST_F(ClientSessionTest, InputDisabledFromRemotePolicy) {
+  SessionPolicies remote_policies;
+  remote_policies.allow_remote_input = false;
+  CreateClientSession();
+  ConnectClientSession(&remote_policies);
+  SetupSingleDisplay();
+
+  FakeInputInjector* input_injector =
+      desktop_environment_factory_->last_desktop_environment()
+          ->last_input_injector()
+          .get();
+  input_injector->set_key_events(&key_events_);
+  input_injector->set_mouse_events(&mouse_events_);
+  input_injector->set_clipboard_events(&clipboard_events_);
+
+  connection_->clipboard_stub()->InjectClipboardEvent(MakeClipboardEvent("a"));
+  connection_->input_stub()->InjectKeyEvent(MakeKeyEvent(true, 1));
+  connection_->input_stub()->InjectMouseEvent(MakeMouseMoveEvent(100, 101));
+
+  client_session_->DisconnectSession(ErrorCode::OK, {}, FROM_HERE);
+  client_session_.reset();
+
+  EXPECT_EQ(0U, mouse_events_.size());
+  EXPECT_EQ(0U, key_events_.size());
+  EXPECT_EQ(0U, clipboard_events_.size());
 }
 
 TEST_F(ClientSessionTest, LocalInputTest) {
@@ -844,7 +904,7 @@ TEST_F(ClientSessionTest, RestoreEventState) {
   mousedown.set_button_down(true);
   connection_->input_stub()->InjectMouseEvent(mousedown);
 
-  client_session_->DisconnectSession(ErrorCode::OK);
+  client_session_->DisconnectSession(ErrorCode::OK, {}, FROM_HERE);
   client_session_.reset();
 
   EXPECT_EQ(2U, mouse_events_.size());

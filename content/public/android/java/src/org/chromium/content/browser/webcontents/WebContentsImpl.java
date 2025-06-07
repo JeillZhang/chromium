@@ -34,6 +34,7 @@ import org.chromium.base.TerminationStatus;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.UserData;
 import org.chromium.base.UserDataHost;
+import org.chromium.base.process_launcher.ChildProcessConnection;
 import org.chromium.blink_public.input.SelectionGranularity;
 import org.chromium.build.annotations.Initializer;
 import org.chromium.build.annotations.NullMarked;
@@ -144,39 +145,13 @@ public class WebContentsImpl
                 }
             };
 
-    /**
-     * Factory interface passed to {@link #getOrSetUserData()} for instantiation of
-     * class as user data.
-     *
-     * Constructor method reference comes handy for class Foo to provide the factory.
-     * Use lazy initialization to avoid having to generate too many anonymous references.
-     *
-     * <code>
-     * public class Foo {
-     *     static final class FoofactoryLazyHolder {
-     *         private static final UserDataFactory<Foo> INSTANCE = Foo::new;
-     *     }
-     *     ....
-     *
-     *     webContents.getOrsetUserData(Foo.class, FooFactoryLazyHolder.INSTANCE);
-     *
-     *     ....
-     * }
-     * </code>
-     *
-     * @param <T> Class to instantiate.
-     */
-    public interface UserDataFactory<T> {
-        T create(WebContents webContents);
-    }
-
     // Note this list may be incomplete. Frames that never had to initialize java side would
     // not have an entry here. This is here mainly to keep the java RenderFrameHosts alive, since
     // native side generally cannot safely hold strong references to them.
     private final List<RenderFrameHostImpl> mFrames = new ArrayList<>();
 
     private long mNativeWebContentsAndroid;
-    private @Nullable NavigationController mNavigationController;
+    private final NavigationController mNavigationController;
 
     // Lazily created proxy observer for handling all Java-based WebContentsObservers.
     private @Nullable WebContentsObserverProxy mObserverProxy;
@@ -249,7 +224,7 @@ public class WebContentsImpl
             String productVersion,
             ViewAndroidDelegate viewDelegate,
             InternalAccessDelegate accessDelegate,
-            WindowAndroid windowAndroid,
+            @Nullable WindowAndroid windowAndroid,
             InternalsHolder internalsHolder) {
         assert internalsHolder != null;
 
@@ -312,7 +287,6 @@ public class WebContentsImpl
     void clearNativePtr() {
         mNativeDestroyThrowable = new RuntimeException("clearNativePtr");
         mNativeWebContentsAndroid = 0;
-        mNavigationController = null;
         if (mObserverProxy != null) {
             mObserverProxy.webContentsDestroyed();
             mObserverProxy = null;
@@ -421,7 +395,7 @@ public class WebContentsImpl
     }
 
     @Override
-    public @Nullable NavigationController getNavigationController() {
+    public NavigationController getNavigationController() {
         return mNavigationController;
     }
 
@@ -624,10 +598,12 @@ public class WebContentsImpl
     }
 
     @Override
-    public void setImportance(@ChildProcessImportance int primaryMainFrameImportance) {
+    public void setPrimaryMainFrameImportance(@ChildProcessImportance int importance) {
         checkNotDestroyed();
+        assert ChildProcessConnection.supportNotPerceptibleBinding()
+                || importance != ChildProcessImportance.PERCEPTIBLE;
         WebContentsImplJni.get()
-                .setImportance(mNativeWebContentsAndroid, primaryMainFrameImportance);
+                .setPrimaryMainFrameImportance(mNativeWebContentsAndroid, importance);
     }
 
     @Override
@@ -897,19 +873,22 @@ public class WebContentsImpl
                     new EventForwarder.StylusWritingDelegate() {
                         @Override
                         public boolean handleTouchEvent(MotionEvent motionEvent) {
+                            ViewAndroidDelegate viewAndroidDelegate = getViewAndroidDelegate();
                             return mStylusWritingHandler != null
+                                    && viewAndroidDelegate != null
+                                    && viewAndroidDelegate.getContainerView() != null
                                     && mStylusWritingHandler.handleTouchEvent(
-                                            motionEvent,
-                                            assumeNonNull(getViewAndroidDelegate())
-                                                    .getContainerView());
+                                            motionEvent, viewAndroidDelegate.getContainerView());
                         }
 
                         @Override
                         public void handleHoverEvent(MotionEvent motionEvent) {
-                            if (mStylusWritingHandler != null) {
+                            ViewAndroidDelegate viewAndroidDelegate = getViewAndroidDelegate();
+                            if (mStylusWritingHandler != null
+                                    && viewAndroidDelegate != null
+                                    && viewAndroidDelegate.getContainerView() != null) {
                                 mStylusWritingHandler.handleHoverEvent(
-                                        motionEvent,
-                                        assumeNonNull(getViewAndroidDelegate()).getContainerView());
+                                        motionEvent, viewAndroidDelegate.getContainerView());
                             }
                         }
                     });
@@ -1045,15 +1024,7 @@ public class WebContentsImpl
         return mRenderCoordinates;
     }
 
-    /**
-     * Retrieves or stores a user data object for this WebContents.
-     * @param key Class instance of the object used as the key.
-     * @param userDataFactory Factory that creates an object of the generic class. A new object
-     *        is created if it hasn't been created and non-null factory is given.
-     * @return The created or retrieved user data object. Can be null if the object was
-     *         not created yet, or {@code userDataFactory} is null, or the internal data
-     *         storage is already garbage-collected.
-     */
+    @Override
     public <T extends UserData> @Nullable T getOrSetUserData(
             Class<T> key, @Nullable UserDataFactory<T> userDataFactory) {
         // For tests that go without calling |initialize|.
@@ -1104,6 +1075,7 @@ public class WebContentsImpl
         internals.userDataHost.setUserData(key, userData);
     }
 
+    @Override
     public <T extends UserData> void removeUserData(Class<T> key) {
         UserDataHost userDataHost = getUserDataHost();
         if (userDataHost == null) return;
@@ -1171,6 +1143,24 @@ public class WebContentsImpl
                         insets.left,
                         insets.bottom,
                         insets.right);
+    }
+
+    @Override
+    public void setContextMenuInsets(Rect insets) {
+        if (mNativeWebContentsAndroid == 0) return;
+        WebContentsImplJni.get()
+                .setContextMenuInsets(
+                        mNativeWebContentsAndroid,
+                        insets.top,
+                        insets.left,
+                        insets.bottom,
+                        insets.right);
+    }
+
+    @Override
+    public void showInterestInElement(int nodeID) {
+        if (mNativeWebContentsAndroid == 0) return;
+        WebContentsImplJni.get().showInterestInElement(mNativeWebContentsAndroid, nodeID);
     }
 
     @Override
@@ -1246,12 +1236,6 @@ public class WebContentsImpl
                 .updateOffsetTagDefinitions(mNativeWebContentsAndroid, offsetTagDefinitions);
     }
 
-    @Override
-    public void disconnectFileSelectListenerIfAny() {
-        if (mNativeWebContentsAndroid == 0) return;
-        WebContentsImplJni.get().disconnectFileSelectListenerIfAny(mNativeWebContentsAndroid);
-    }
-
     private void checkNotDestroyed() {
         if (mNativeWebContentsAndroid != 0) return;
         throw new IllegalStateException(
@@ -1268,6 +1252,16 @@ public class WebContentsImpl
     public void setSupportsForwardTransitionAnimation(boolean supports) {
         WebContentsImplJni.get()
                 .setSupportsForwardTransitionAnimation(mNativeWebContentsAndroid, supports);
+    }
+
+    @Override
+    public boolean hasOpener() {
+        return WebContentsImplJni.get().hasOpener(mNativeWebContentsAndroid);
+    }
+
+    @Override
+    public int getOriginalWindowOpenDisposition() {
+        return WebContentsImplJni.get().getOriginalWindowOpenDisposition(mNativeWebContentsAndroid);
     }
 
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
@@ -1338,7 +1332,7 @@ public class WebContentsImpl
 
         void collapseSelection(long nativeWebContentsAndroid);
 
-        void setImportance(long nativeWebContentsAndroid, int importance);
+        void setPrimaryMainFrameImportance(long nativeWebContentsAndroid, int importance);
 
         void suspendAllMediaPlayers(long nativeWebContentsAndroid);
 
@@ -1462,6 +1456,11 @@ public class WebContentsImpl
         void setDisplayCutoutSafeArea(
                 long nativeWebContentsAndroid, int top, int left, int bottom, int right);
 
+        void setContextMenuInsets(
+                long nativeWebContentsAndroid, int top, int left, int bottom, int right);
+
+        void showInterestInElement(long nativeWebContentsAndroid, int nodeID);
+
         void notifyRendererPreferenceUpdate(long nativeWebContentsAndroid);
 
         void notifyBrowserControlsHeightChanged(long nativeWebContentsAndroid);
@@ -1481,11 +1480,13 @@ public class WebContentsImpl
                 long nativeWebContentsAndroid,
                 BrowserControlsOffsetTagDefinitions offsetTagDefinitions);
 
-        void disconnectFileSelectListenerIfAny(long nativeWebContentsAndroid);
-
         void captureContentAsBitmapForTesting(
                 long nativeWebContentsAndroid, Callback<Bitmap> callback);
 
         void setSupportsForwardTransitionAnimation(long nativeWebContentsAndroid, boolean enabled);
+
+        boolean hasOpener(long nativeWebContentsAndroid);
+
+        int getOriginalWindowOpenDisposition(long nativeWebContentsAndroid);
     }
 }

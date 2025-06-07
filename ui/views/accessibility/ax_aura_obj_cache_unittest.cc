@@ -19,9 +19,9 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/views/accessibility/ax_aura_obj_wrapper.h"
-#include "ui/views/accessibility/ax_event_manager.h"
-#include "ui/views/accessibility/ax_event_observer.h"
 #include "ui/views/accessibility/ax_tree_source_views.h"
+#include "ui/views/accessibility/ax_update_notifier.h"
+#include "ui/views/accessibility/ax_update_observer.h"
 #include "ui/views/accessibility/ax_virtual_view.h"
 #include "ui/views/accessibility/ax_virtual_view_wrapper.h"
 #include "ui/views/accessibility/view_accessibility.h"
@@ -47,6 +47,8 @@ bool HasNodeWithName(ui::AXNode* node, const std::string& name) {
 bool HasNodeWithName(const ui::AXTree& tree, const std::string& name) {
   return HasNodeWithName(tree.root(), name);
 }
+
+}  // namespace
 
 class AXAuraObjCacheTest : public WidgetTest {
  public:
@@ -314,10 +316,10 @@ class TestingWidgetDelegateView : public WidgetDelegateView {
   raw_ptr<base::RunLoop> run_loop_;
 };
 
-class TestingAXEventObserver : public AXEventObserver {
+class TestingAXEventObserver : public AXUpdateObserver {
  public:
   explicit TestingAXEventObserver(AXAuraObjCache* cache) : cache_(cache) {
-    observation_.Observe(AXEventManager::Get());
+    observation_.Observe(AXUpdateNotifier::Get());
   }
   ~TestingAXEventObserver() override = default;
   TestingAXEventObserver(const TestingAXEventObserver&) = delete;
@@ -332,7 +334,8 @@ class TestingAXEventObserver : public AXEventObserver {
   }
 
   raw_ptr<AXAuraObjCache> cache_;
-  base::ScopedObservation<AXEventManager, AXEventObserver> observation_{this};
+  base::ScopedObservation<AXUpdateNotifier, AXUpdateObserver> observation_{
+      this};
 };
 
 TEST_F(AXAuraObjCacheTest, DoNotCreateWidgetWrapperOnDestroyed) {
@@ -387,5 +390,4 @@ TEST_F(AXAuraObjCacheTest, VirtualViews) {
   EXPECT_EQ(nullptr, cache.Get(id));
 }
 
-}  // namespace
 }  // namespace views::test

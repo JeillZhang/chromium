@@ -167,6 +167,18 @@ suite('AppTest', () => {
           const emptyInfo = createProductInfo();
           return Promise.resolve({productInfo: emptyInfo});
         });
+    shoppingServiceApi.setResultMapperFor(
+        'getProductInfoForUrls', (urls: Url[]) => {
+          const productInfos: ProductInfo[] = [];
+          for (const url of urls) {
+            const info = promiseValues.productInfos.find(
+                (curInfo) => curInfo.productUrl.url === url.url);
+            if (info) {
+              productInfos.push(info);
+            }
+          }
+          return Promise.resolve({productInfos: productInfos});
+        });
     productSpecificationsProxy.setResultMapperFor(
         'getPageTitleFromHistory', (url: Url) => {
           return Promise.resolve({
@@ -1727,15 +1739,14 @@ suite('AppTest', () => {
     assertTrue(isVisible(learnMoreLink));
     assertEquals(
         loadTimeData.getString('compareLearnMoreUrl'),
-        learnMoreLink!.getAttribute('href'));
+        learnMoreLink.getAttribute('href'));
 
     assertTrue(!!disclaimer);
     assertTrue(!!disclaimer.textContent);
     // Remove the link part before verifying the string to avoid verifying the
     // spaces due to the templated string.
     const disclaimerText =
-        disclaimer!.textContent!.replace(learnMoreLink!.textContent!, '')
-            .trim();
+        disclaimer.textContent.replace(learnMoreLink.textContent!, '').trim();
     assertEquals(
         loadTimeData.getStringF('experimentalFeatureDisclaimer', testEmail),
         disclaimerText);
@@ -1786,7 +1797,7 @@ suite('AppTest', () => {
     assertEquals(1, table.columns.length);
     assertEquals(
         1, shoppingServiceApi.getCallCount('getProductSpecificationsForUrls'));
-    assertEquals(1, shoppingServiceApi.getCallCount('getProductInfoForUrl'));
+    assertEquals(1, shoppingServiceApi.getCallCount('getProductInfoForUrls'));
 
     table.dispatchEvent(new CustomEvent('url-remove', {
       detail: {
@@ -1802,7 +1813,7 @@ suite('AppTest', () => {
     // Should not get called on an empty url list.
     assertEquals(
         1, shoppingServiceApi.getCallCount('getProductSpecificationsForUrls'));
-    assertEquals(1, shoppingServiceApi.getCallCount('getProductInfoForUrl'));
+    assertEquals(1, shoppingServiceApi.getCallCount('getProductInfoForUrls'));
   });
 
   test('deletes product specification set', async () => {
@@ -2222,12 +2233,11 @@ suite('AppTest', () => {
       const feedbackButtons =
           appElement.shadowRoot.querySelector('#feedbackButtons');
       assertTrue(!!feedbackButtons);
-      feedbackButtons!.dispatchEvent(
-          new CustomEvent('selected-option-changed', {
-            bubbles: true,
-            composed: true,
-            detail: {value: option},
-          }));
+      feedbackButtons.dispatchEvent(new CustomEvent('selected-option-changed', {
+        bubbles: true,
+        composed: true,
+        detail: {value: option},
+      }));
     }
 
     updateCrFeedbackButtons(CrFeedbackOption.THUMBS_DOWN);
@@ -2453,7 +2463,7 @@ suite('AppTest', () => {
             },
           }));
 
-      window.dispatchEvent(new Event('focus'));
+      callbackRouterRemote.onSyncStateChanged();
       await microtasksFinished();
 
       assertFalse(isVisible(appElement.$.error));
@@ -2532,10 +2542,6 @@ suite('AppTest', () => {
       const pluralStringProxy = new TestPluralStringProxy();
       PluralStringProxyImpl.setInstance(pluralStringProxy);
 
-      loadTimeData.overrideValues({
-        'comparisonTableListEnabled': true,
-      });
-
       shoppingServiceApi.setResultFor(
           'getAllProductSpecificationsSets', Promise.resolve({
             sets: SPECS_SETS,
@@ -2553,18 +2559,6 @@ suite('AppTest', () => {
           'getComparisonTableUrlForUuid', (uuid: Uuid) => {
             return Promise.resolve({url: `chrome://compare/?id=${uuid.value}`});
           });
-    });
-
-    test('list does not appear when the feature is off', async () => {
-      loadTimeData.overrideValues({
-        'comparisonTableListEnabled': false,
-      });
-
-      const appElement = await createAppElement();
-      await microtasksFinished();
-
-      const listElement = appElement.$.comparisonTableList;
-      assertFalse(isVisible(listElement));
     });
 
     test('list is hidden if there are no comparison tables', async () => {

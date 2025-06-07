@@ -42,9 +42,8 @@ const char kGoogleCalendarFeature[] = "google_calendar";
 const char kGoogleChatFeature[] = "google_chat";
 const char kYoutubeFeature[] = "youtube";
 const char kGoogleMapsFeature[] = "google_maps";
-
-const char kBlockedDisableMode[] = "blocked";
-const char kHiddenDisableMode[] = "hidden";
+const char kCalculatorFeature[] = "calculator";
+const char kTextEditorFeature[] = "text_editor";
 
 const char kSystemFeaturesDisableListHistogram[] =
     "Enterprise.SystemFeaturesDisableList";
@@ -55,13 +54,6 @@ SystemFeaturesDisableListPolicyHandler::SystemFeaturesDisableListPolicyHandler()
 
 SystemFeaturesDisableListPolicyHandler::
     ~SystemFeaturesDisableListPolicyHandler() = default;
-
-void SystemFeaturesDisableListPolicyHandler::RegisterPrefs(
-    PrefRegistrySimple* registry) {
-  registry->RegisterListPref(policy_prefs::kSystemFeaturesDisableList);
-  registry->RegisterStringPref(policy_prefs::kSystemFeaturesDisableMode,
-                               kBlockedDisableMode);
-}
 
 SystemFeature SystemFeaturesDisableListPolicyHandler::GetSystemFeatureFromAppId(
     const std::string& app_id) {
@@ -180,6 +172,12 @@ SystemFeature SystemFeaturesDisableListPolicyHandler::ConvertToEnum(
   }
   if (system_feature == kGoogleMapsFeature) {
     return SystemFeature::kGoogleMaps;
+  }
+  if (system_feature == kCalculatorFeature) {
+    return SystemFeature::kCalculator;
+  }
+  if (system_feature == kTextEditorFeature) {
+    return SystemFeature::kTextEditor;
   }
   LOG(ERROR) << "Unsupported system feature: " << system_feature;
   return SystemFeature::kUnknownSystemFeature;

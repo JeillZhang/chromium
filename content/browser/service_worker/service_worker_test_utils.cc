@@ -19,6 +19,7 @@
 #include "base/barrier_closure.h"
 #include "base/containers/span.h"
 #include "base/memory/raw_ref.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/time/time.h"
@@ -48,9 +49,9 @@
 #include "net/base/test_completion_callback.h"
 #include "net/http/http_response_info.h"
 #include "net/http/http_util.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/common/loader/throttling_url_loader.h"
 #include "third_party/blink/public/common/navigation/navigation_params.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/back_forward_cache_not_restored_reasons.mojom.h"
 #include "third_party/blink/public/mojom/loader/referrer.mojom.h"
@@ -109,7 +110,7 @@ class FakeNavigationClient : public mojom::NavigationClient {
       const blink::DocumentToken& document_token,
       const base::UnguessableToken& devtools_navigation_token,
       const base::Uuid& base_auction_nonce,
-      const std::optional<blink::ParsedPermissionsPolicy>& permissions_policy,
+      const std::optional<network::ParsedPermissionsPolicy>& permissions_policy,
       blink::mojom::PolicyContainerPtr policy_container,
       mojo::PendingRemote<blink::mojom::CodeCacheHost> code_cache_host,
       mojo::PendingRemote<blink::mojom::CodeCacheHost>
@@ -298,7 +299,7 @@ CommittedServiceWorkerClient::CommittedServiceWorkerClient(
       /*document_token=*/blink::DocumentToken(),
       /*devtools_navigation_token=*/base::UnguessableToken::Create(),
       /*base_auction_nonce=*/base::Uuid::GenerateRandomV4(),
-      std::vector<blink::ParsedPermissionsPolicyDeclaration>(),
+      std::vector<network::ParsedPermissionsPolicyDeclaration>(),
       CreateStubPolicyContainer(), /*code_cache_host=*/mojo::NullRemote(),
       /*code_cache_host_for_background=*/mojo::NullRemote(),
       /*cookie_manager_info=*/nullptr,
@@ -459,7 +460,7 @@ std::unique_ptr<ServiceWorkerHost> CreateServiceWorkerHost(
 }
 
 scoped_refptr<ServiceWorkerRegistration> CreateNewServiceWorkerRegistration(
-    ServiceWorkerRegistry* registry,
+    ServiceWorkerRegistry& registry,
     const blink::mojom::ServiceWorkerRegistrationOptions& options,
     const blink::StorageKey& key) {
   scoped_refptr<ServiceWorkerRegistration> registration;
@@ -473,7 +474,7 @@ scoped_refptr<ServiceWorkerRegistration> CreateNewServiceWorkerRegistration(
   // TODO(bashi): Figure out a way to avoid using nested loop as it's
   // problematic.
   base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
-  registry->CreateNewRegistration(
+  registry.CreateNewRegistration(
       options, key, blink::mojom::AncestorFrameType::kNormalFrame,
       base::BindLambdaForTesting(
           [&](scoped_refptr<ServiceWorkerRegistration> new_registration) {
@@ -486,7 +487,7 @@ scoped_refptr<ServiceWorkerRegistration> CreateNewServiceWorkerRegistration(
 }
 
 scoped_refptr<ServiceWorkerVersion> CreateNewServiceWorkerVersion(
-    ServiceWorkerRegistry* registry,
+    ServiceWorkerRegistry& registry,
     scoped_refptr<ServiceWorkerRegistration> registration,
     const GURL& script_url,
     blink::mojom::ScriptType script_type) {
@@ -494,7 +495,7 @@ scoped_refptr<ServiceWorkerVersion> CreateNewServiceWorkerVersion(
   // See comments in CreateNewServiceWorkerRegistration() why nestable tasks
   // allowed.
   base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
-  registry->CreateNewVersion(
+  registry.CreateNewVersion(
       std::move(registration), script_url, script_type,
       base::BindLambdaForTesting(
           [&](scoped_refptr<ServiceWorkerVersion> new_version) {
@@ -789,21 +790,21 @@ ServiceWorkerUpdateCheckTestUtils::CreatePausedCacheWriter(
   mojo::Remote<storage::mojom::ServiceWorkerResourceReader> compare_reader;
   worker_test_helper->context()
       ->registry()
-      ->GetRemoteStorageControl()
+      .GetRemoteStorageControl()
       ->CreateResourceReader(old_resource_id,
                              compare_reader.BindNewPipeAndPassReceiver());
 
   mojo::Remote<storage::mojom::ServiceWorkerResourceReader> copy_reader;
   worker_test_helper->context()
       ->registry()
-      ->GetRemoteStorageControl()
+      .GetRemoteStorageControl()
       ->CreateResourceReader(old_resource_id,
                              copy_reader.BindNewPipeAndPassReceiver());
 
   mojo::Remote<storage::mojom::ServiceWorkerResourceWriter> writer;
   worker_test_helper->context()
       ->registry()
-      ->GetRemoteStorageControl()
+      .GetRemoteStorageControl()
       ->CreateResourceWriter(new_resource_id,
                              writer.BindNewPipeAndPassReceiver());
 

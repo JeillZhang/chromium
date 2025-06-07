@@ -28,7 +28,8 @@ class DownloadItemModel : public DownloadUIModel,
                           public download::DownloadItem::Observer {
  public:
 #if !BUILDFLAG(IS_ANDROID)
-  // How long an ephemeral warning is displayed on the download bubble.
+  // How long an ephemeral warning is displayed on the download bubble on
+  // Desktop.
   static constexpr base::TimeDelta kEphemeralWarningLifetimeOnBubble =
       base::Minutes(5);
 #endif
@@ -130,10 +131,11 @@ class DownloadItemModel : public DownloadUIModel,
   TailoredWarningType GetTailoredWarningType() const override;
   DangerUiPattern GetDangerUiPattern() const override;
   bool ShouldShowInBubble() const override;
-  bool IsEphemeralWarning() const override;
 #endif
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+  bool IsEphemeralWarning() const override;
+
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
   void CompleteSafeBrowsingScan() override;
   void ReviewScanningVerdict(content::WebContents* web_contents) override;
 #endif

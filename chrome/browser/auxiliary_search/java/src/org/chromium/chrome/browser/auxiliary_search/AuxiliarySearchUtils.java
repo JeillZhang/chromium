@@ -8,26 +8,27 @@ import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.auxiliary_search.AuxiliarySearchGroupProto.AuxiliarySearchEntry;
+import org.chromium.chrome.browser.auxiliary_search.AuxiliarySearchProvider.MetaDataVersion;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
+import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.cached_flags.BooleanCachedFeatureParam;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 
+@NullMarked
 public class AuxiliarySearchUtils {
     @VisibleForTesting static final String TAB_DONATE_FILE_NAME = "tabs_donate";
     @VisibleForTesting static final int MODULE_SHOWN_MAX_IMPRESSIONS = 3;
-
-    // TODO(crbug.com/373902543): Clean up after downstream changes.
-    @VisibleForTesting
-    static final int DEFAULT_TTL_HOURS =
-            ChromeFeatureList.sAndroidAppIntegrationV2ContentTtlHours.getDefaultValue();
+    @VisibleForTesting static final int CURRENT_SCHEMA_VERSION = 1;
 
     @VisibleForTesting
     static final BooleanCachedFeatureParam SKIP_DEVICE_CHECK =
@@ -45,9 +46,16 @@ public class AuxiliarySearchUtils {
     static final BooleanCachedFeatureParam SKIP_SCHEMA_CHECK =
             ChromeFeatureList.sAndroidAppIntegrationWithFaviconSkipSchemaCheck;
 
+    @VisibleForTesting
+    static final BooleanCachedFeatureParam MULTI_DATA_SOURCE_SKIP_SCHEMA_CHECK =
+            ChromeFeatureList.sAndroidAppIntegrationMultiDataSourceSkipSchemaCheck;
+
+    @VisibleForTesting
+    static final BooleanCachedFeatureParam MULTI_DATA_SOURCE_SKIP_DEVICE_CHECK =
+            ChromeFeatureList.sAndroidAppIntegrationMultiDataSourceSkipDeviceCheck;
+
     /** Convert a Bitmap instance to a byte array. */
-    @Nullable
-    public static byte[] bitmapToBytes(Bitmap bitmap) {
+    public static byte @Nullable [] bitmapToBytes(Bitmap bitmap) {
         if (bitmap == null) return null;
 
         ByteArrayOutputStream stream = new ByteArrayOutputStream();
@@ -133,9 +141,35 @@ public class AuxiliarySearchUtils {
 
     /** Returns whether the sharing Tabs settings is enabled by default. */
     public static boolean isShareTabsWithOsDefaultEnabled() {
-        return AuxiliarySearchUtils.SKIP_DEVICE_CHECK.getValue()
+        return (AuxiliarySearchUtils.SKIP_DEVICE_CHECK.getValue()
+                        || AuxiliarySearchUtils.MULTI_DATA_SOURCE_SKIP_DEVICE_CHECK.getValue())
                 ? !AuxiliarySearchUtils.SHOW_THIRD_PARTY_CARD.getValue()
                 : AuxiliarySearchControllerFactory.getInstance().isSettingDefaultEnabledByOs();
+    }
+
+    /**
+     * Returns the metadata version based on the entry's type.
+     *
+     * @param entry The data item for donation.
+     * @param <T> The type of the entry data for donation.
+     */
+    static <T> @MetaDataVersion int getMetadataVersion(T entry) {
+        if (entry instanceof Tab || entry instanceof AuxiliarySearchEntry) {
+            return MetaDataVersion.V1;
+        }
+        return MetaDataVersion.MULTI_TYPE_V2;
+    }
+
+    /** Returns the schema version cached in the shared preference. */
+    public static int getSchemaVersion() {
+        return ChromeSharedPreferences.getInstance()
+                .readInt(ChromePreferenceKeys.AUXILIARY_SEARCH_SCHEMA_VERSION, 0);
+    }
+
+    /** Caches the schema version sent to the App search in the shared preference. */
+    public static void setSchemaVersion(int version) {
+        ChromeSharedPreferences.getInstance()
+                .writeInt(ChromePreferenceKeys.AUXILIARY_SEARCH_SCHEMA_VERSION, version);
     }
 
     public static void resetSharedPreferenceForTesting() {

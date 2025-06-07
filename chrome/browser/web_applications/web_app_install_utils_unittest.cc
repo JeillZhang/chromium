@@ -13,6 +13,7 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/containers/flat_map.h"
@@ -37,12 +38,11 @@
 #include "components/services/app_service/public/cpp/share_target.h"
 #include "mojo/public/cpp/bindings/struct_ptr.h"
 #include "services/network/public/cpp/permissions_policy/origin_with_possible_wildcards.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/manifest/manifest.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom-shared.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-shared.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
@@ -158,7 +158,7 @@ TEST(WebAppInstallUtils, UpdateWebAppInfoFromManifest) {
   }
 
   {
-    blink::ParsedPermissionsPolicyDeclaration declaration;
+    network::ParsedPermissionsPolicyDeclaration declaration;
     declaration.feature = network::mojom::PermissionsPolicyFeature::kFullscreen;
     declaration.allowed_origins = {
         *network::OriginWithPossibleWildcards::FromOrigin(
@@ -1070,9 +1070,9 @@ TEST(WebAppInstallUtils, UpdateWebAppInfoFromManifest_TabStrip) {
     UpdateWebAppInfoFromManifest(manifest, &web_app_info);
 
     EXPECT_TRUE(web_app_info.tab_strip.has_value());
-    EXPECT_EQ(absl::get<TabStrip::Visibility>(
-                  web_app_info.tab_strip.value().home_tab),
-              TabStrip::Visibility::kAbsent);
+    EXPECT_EQ(
+        std::get<TabStrip::Visibility>(web_app_info.tab_strip.value().home_tab),
+        TabStrip::Visibility::kAbsent);
     EXPECT_FALSE(web_app_info.tab_strip.value().new_tab_button.url.has_value());
   }
 
@@ -1095,11 +1095,11 @@ TEST(WebAppInstallUtils, UpdateWebAppInfoFromManifest_TabStrip) {
     UpdateWebAppInfoFromManifest(manifest, &web_app_info);
 
     EXPECT_TRUE(web_app_info.tab_strip.has_value());
-    EXPECT_EQ(absl::get<blink::Manifest::HomeTabParams>(
+    EXPECT_EQ(std::get<blink::Manifest::HomeTabParams>(
                   web_app_info.tab_strip.value().home_tab)
                   .icons.size(),
               1u);
-    EXPECT_EQ(absl::get<blink::Manifest::HomeTabParams>(
+    EXPECT_EQ(std::get<blink::Manifest::HomeTabParams>(
                   web_app_info.tab_strip.value().home_tab)
                   .icons[0]
                   .src,
@@ -1131,7 +1131,7 @@ TEST(WebAppInstallUtils, UpdateWebAppInfoFromManifestHomeTabIcons_TabStrip) {
 
   UpdateWebAppInfoFromManifest(manifest, &web_app_info);
   EXPECT_TRUE(web_app_info.tab_strip.has_value());
-  const auto& home_tab = absl::get<blink::Manifest::HomeTabParams>(
+  const auto& home_tab = std::get<blink::Manifest::HomeTabParams>(
       web_app_info.tab_strip.value().home_tab);
   EXPECT_EQ(2U, home_tab.icons.size());
 }
@@ -1193,7 +1193,7 @@ TEST(WebAppInstallUtils, PopulateHomeTabIcons_TabStrip) {
 
   UpdateWebAppInfoFromManifest(manifest, &web_app_info);
   EXPECT_TRUE(web_app_info.tab_strip.has_value());
-  const auto& home_tab = absl::get<blink::Manifest::HomeTabParams>(
+  const auto& home_tab = std::get<blink::Manifest::HomeTabParams>(
       web_app_info.tab_strip.value().home_tab);
   EXPECT_EQ(2U, home_tab.icons.size());
 
@@ -1582,7 +1582,7 @@ TEST_P(FileHandlersFromManifestTest, PopulateFileHandlingAndHomeTabIcons) {
 
   UpdateWebAppInfoFromManifest(manifest, &web_app_info);
   EXPECT_TRUE(web_app_info.tab_strip.has_value());
-  const auto& home_tab = absl::get<blink::Manifest::HomeTabParams>(
+  const auto& home_tab = std::get<blink::Manifest::HomeTabParams>(
       web_app_info.tab_strip.value().home_tab);
   EXPECT_EQ(2U, home_tab.icons.size());
 

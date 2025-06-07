@@ -39,18 +39,9 @@ const char kDisableBlobUrlPartitioning[] = "disable-blob-url-partitioning";
 const char kDefaultTileWidth[] = "default-tile-width";
 const char kDefaultTileHeight[] = "default-tile-height";
 
-// If set, the unload event cannot be disabled by default by Permissions-Policy.
-const char kForcePermissionPolicyUnloadDefaultEnabled[] =
-    "force-permission-policy-unload-default-enabled";
-
 // Disallow image animations to be reset to the beginning to avoid skipping
 // many frames. Only effective if compositor image animations are enabled.
 const char kDisableImageAnimationResync[] = "disable-image-animation-resync";
-
-// When using CPU rasterizing disable low resolution tiling. This uses
-// less power, particularly during animations, but more white may be seen
-// during fast scrolling especially on slower devices.
-const char kDisableLowResTiling[] = "disable-low-res-tiling";
 
 // Disable partial raster in the renderer. Disabling this switch also disables
 // the use of persistent gpu memory buffers.
@@ -78,10 +69,6 @@ const char kEnableGpuMemoryBufferCompositorResources[] =
 // detection.
 const char kEnableLeakDetectionHeapSnapshot[] =
     "enable-leak-detection-heap-snapshot";
-
-// When using CPU rasterizing generate low resolution tiling. Low res
-// tiles may be displayed during fast scrolls especially on slower devices.
-const char kEnableLowResTiling[] = "enable-low-res-tiling";
 
 // Enable the creation of compositing layers when it would prevent LCD text.
 const char kEnablePreferCompositingToLCDText[] =
@@ -112,14 +99,6 @@ extern const char kIntensiveWakeUpThrottlingPolicy[] =
 extern const char kIntensiveWakeUpThrottlingPolicy_ForceDisable[] = "0";
 extern const char kIntensiveWakeUpThrottlingPolicy_ForceEnable[] = "1";
 
-// Used to communicate managed policy for KeyboardFocusableScrollers feature.
-// This feature is typically controlled by a RuntimeEnabledFeature, but requires
-// an enterprise policy override.
-extern const char kKeyboardFocusableScrollersEnabled[] =
-    "keyboard-focusable-scrollers-enabled";
-extern const char kKeyboardFocusableScrollersOptOut[] =
-    "keyboard-focusable-scrollers-opt-out";
-
 // A command line to indicate if there ia any legacy tech report urls being set.
 // If so, we will send report from blink to browser process.
 extern const char kLegacyTechReportPolicyEnabled[] =
@@ -132,23 +111,11 @@ const char kMaxUntiledLayerWidth[] = "max-untiled-layer-width";
 // Sets the min tile height for GPU raster.
 const char kMinHeightForGpuRasterTile[] = "min-height-for-gpu-raster-tile";
 
-// Used to communicate managed policy for MutationEvents feature. This feature
-// is typically controlled by a RuntimeEnabledFeature, but requires an
-// enterprise policy override.
-extern const char kMutationEventsEnabled[] =
-    "deprecated-mutation-events-enabled";
-
 // Used to communicate managed policy for CSSCustomStateDeprecatedSyntax. This
 // feature is typically controlled by a RuntimeEnabledFeature, but requires an
 // enterprise policy override.
 extern const char kCSSCustomStateDeprecatedSyntaxEnabled[] =
     "css-custom-state-deprecated-syntax-enabled";
-
-// Used to communicate managed policy for SelectParserRelaxation. This feature
-// is typically controlled by a RuntimeEnabledFeature, but requires an
-// enterprise policy override.
-extern const char kDisableSelectParserRelaxation[] =
-    "disable-select-parser-relaxation";
 
 // Sets the timeout seconds of the network-quiet timers in IdlenessDetector.
 // Used by embedders who want to change the timeout time in order to run web
@@ -189,6 +156,10 @@ const char kJavaScriptFlags[] = "js-flags";
 // enterprise policy override.
 const char kWebAudioBypassOutputBufferingOptOut[] =
     "web-audio-bypass-output-buffering-opt-out";
+
+// Override mechanism for ReduceAcceptLanguage. This feature is typically
+// controlled by base features, but requires an enterprise policy override.
+const char kDisableReduceAcceptLanguage[] = "disable-reduce-accept-language";
 
 }  // namespace switches
 }  // namespace blink

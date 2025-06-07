@@ -15,7 +15,7 @@
 #include "base/callback_list.h"
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/scoped_multi_source_observation.h"
 #include "base/task/sequenced_task_runner_helpers.h"
 #include "build/build_config.h"
@@ -69,7 +69,7 @@ class SafeBrowsingPrivateApiUnitTest;
 }  // namespace extensions
 
 namespace safe_browsing {
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 class DownloadProtectionService;
 #endif
 class PasswordProtectionService;
@@ -126,7 +126,7 @@ class SafeBrowsingServiceImpl : public SafeBrowsingServiceInterface,
     return enabled_by_prefs_;
   }
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
   // The DownloadProtectionService is not valid after the
   // SafeBrowsingServiceImpl is destroyed.
   DownloadProtectionService* download_protection_service() const {
@@ -200,7 +200,7 @@ class SafeBrowsingServiceImpl : public SafeBrowsingServiceInterface,
   virtual base::CallbackListSubscription RegisterStateCallback(
       const base::RepeatingClosure& callback);
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
   // Sends download report to backend.
   // TODO(crbug.com/355577227): Rename to MaybeSendDownloadReport.
   virtual void SendDownloadReport(
@@ -217,7 +217,9 @@ class SafeBrowsingServiceImpl : public SafeBrowsingServiceInterface,
       ClientSafeBrowsingReportRequest::ReportType report_type,
       bool did_proceed,
       std::optional<bool> show_download_in_folder);
+#endif  // BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 
+#if BUILDFLAG(FULL_SAFE_BROWSING)
   // Sends phishy site report to backend. Returns true if the report is sent
   // successfully.
   virtual bool SendPhishyInteractionsReport(
@@ -225,7 +227,7 @@ class SafeBrowsingServiceImpl : public SafeBrowsingServiceInterface,
       const GURL& url,
       const GURL& page_url,
       const PhishySiteInteractionMap& phishy_interaction_data);
-#endif
+#endif  // BUILDFLAG(FULL_SAFE_BROWSING)
 
   // Sends NOTIFICATION_PERMISSION_ACCEPTED report to backend if the user
   // bypassed a warning before granting a notification permission. Returns true
@@ -307,6 +309,10 @@ class SafeBrowsingServiceImpl : public SafeBrowsingServiceInterface,
   FRIEND_TEST_ALL_PREFIXES(
       SafeBrowsingServiceTest,
       EnhancedProtectionPrefChange_SupportsMultipleProfiles);
+  FRIEND_TEST_ALL_PREFIXES(V4SafeBrowsingServiceTest,
+                           NotificationsAcceptedReportSentWithCorrectOrigins);
+  FRIEND_TEST_ALL_PREFIXES(V4SafeBrowsingServiceTest,
+                           NotificationsAcceptedReportSentWithReferrerChain);
 
   void SetDatabaseManagerForTest(SafeBrowsingDatabaseManager* database_manager);
 

@@ -19,6 +19,7 @@
 #include "ui/ozone/platform/wayland/common/wayland_object.h"
 #include "ui/ozone/platform/wayland/host/wayland_serial_tracker.h"
 #include "ui/ozone/platform/wayland/host/wayland_window_manager.h"
+#include "ui/ozone/platform/wayland/host/xdg_session_manager.h"
 
 class SkBitmap;
 
@@ -40,7 +41,7 @@ struct KeyboardDevice;
 struct TouchscreenDevice;
 
 class GtkPrimarySelectionDeviceManager;
-class GtkShell1;
+class OrgKdeKwinAppmenuManager;
 class OrgKdeKwinIdle;
 class OverlayPrioritizer;
 class SinglePixelBuffer;
@@ -63,27 +64,11 @@ class WaylandZwpPointerGestures;
 class WaylandZwpRelativePointerManager;
 class XdgActivation;
 class XdgForeignWrapper;
+class XdgSessionManager;
 class ZwpIdleInhibitManager;
 class ZwpPrimarySelectionDeviceManager;
-
-// These values are persisted to logs.  Entries should not be renumbered and
-// numeric values should never be reused.
-//
-// Append new shells before kMaxValue and update LinuxWaylandShell
-// in tools/metrics/histograms/enums.xml accordingly.
-//
-// See also tools/metrics/histograms/README.md#enum-histograms
-enum class UMALinuxWaylandShell {
-  // kZauraShell = 0, // Removed.
-  kGtkShell1 = 1,
-  kOrgKdePlasmaShell = 2,
-  kXdgWmBase = 3,
-  kXdgShellV6 = 4,
-  kZwlrLayerShellV1 = 5,
-  kMaxValue = kZwlrLayerShellV1,
-};
-
-void ReportShellUMA(UMALinuxWaylandShell shell);
+class ZwpTextInputV1;
+class ZwpTextInputV3;
 
 class WaylandConnection {
  public:
@@ -128,12 +113,6 @@ class WaylandConnection {
   }
   zwp_text_input_manager_v1* text_input_manager_v1() const {
     return text_input_manager_v1_.get();
-  }
-  zcr_text_input_extension_v1* text_input_extension_v1() const {
-    return text_input_extension_v1_.get();
-  }
-  zwp_text_input_manager_v3* text_input_manager_v3() const {
-    return text_input_manager_v3_.get();
   }
   zwp_linux_explicit_synchronization_v1* linux_explicit_synchronization_v1()
       const {
@@ -216,7 +195,9 @@ class WaylandConnection {
     return gtk_primary_selection_device_manager_.get();
   }
 
-  GtkShell1* gtk_shell1() { return gtk_shell1_.get(); }
+  OrgKdeKwinAppmenuManager* org_kde_kwin_appmenu_manager() const {
+    return org_kde_kwin_appmenu_manager_.get();
+  }
 
   OrgKdeKwinIdle* org_kde_kwin_idle() { return org_kde_kwin_idle_.get(); }
 
@@ -224,6 +205,10 @@ class WaylandConnection {
       const {
     return zwp_primary_selection_device_manager_.get();
   }
+
+  ZwpTextInputV1* EnsureTextInputV1();
+  ZwpTextInputV3* EnsureTextInputV3();
+  bool SupportsTextInputFocus() const { return !!text_input_v3_; }
 
   WaylandDataDragController* data_drag_controller() const {
     return data_drag_controller_.get();
@@ -261,12 +246,17 @@ class WaylandConnection {
     return single_pixel_buffer_.get();
   }
 
+  XdgSessionManager* session_manager() { return session_manager_.get(); }
+
   // Returns whether protocols that support setting window geometry are
   // available.
   bool SupportsSetWindowGeometry() const;
 
   // Returns true when there an active outgoing drag-and-drop session.
   bool IsDragInProgress() const;
+
+  // Returns true if a wl_keyboard is available.
+  bool IsKeyboardAvailable() const;
 
   // Creates a new wl_surface.
   wl::Object<wl_surface> CreateSurface();
@@ -305,6 +295,8 @@ class WaylandConnection {
 
   bool UseImplicitSyncInterop() const;
 
+  bool SupportsSessionManagement() const;
+
   // Returns a sync callback, which is invoked when the server has processed all
   // pending events prior to this sync point.
   struct wl_callback* GetSyncCallback();
@@ -324,7 +316,7 @@ class WaylandConnection {
   // everyone.
   friend class FractionalScaleManager;
   friend class GtkPrimarySelectionDeviceManager;
-  friend class GtkShell1;
+  friend class OrgKdeKwinAppmenuManager;
   friend class OrgKdeKwinIdle;
   friend class OverlayPrioritizer;
   friend class SinglePixelBuffer;
@@ -339,6 +331,7 @@ class WaylandConnection {
   friend class WaylandCursorShape;
   friend class XdgActivation;
   friend class XdgForeignWrapper;
+  friend class XdgSessionManager;
   friend class ZwpIdleInhibitManager;
   friend class ZwpPrimarySelectionDeviceManager;
 
@@ -426,7 +419,6 @@ class WaylandConnection {
       keyboard_shortcuts_inhibit_manager_v1_;
   wl::Object<zwp_text_input_manager_v1> text_input_manager_v1_;
   wl::Object<zwp_text_input_manager_v3> text_input_manager_v3_;
-  wl::Object<zcr_text_input_extension_v1> text_input_extension_v1_;
   wl::Object<zwp_linux_explicit_synchronization_v1>
       linux_explicit_synchronization_;
   bool enable_linux_drm_syncobj_for_testing_ = false;
@@ -474,15 +466,18 @@ class WaylandConnection {
       gtk_primary_selection_device_manager_;
   std::unique_ptr<ZwpPrimarySelectionDeviceManager>
       zwp_primary_selection_device_manager_;
+  std::unique_ptr<ZwpTextInputV1> text_input_v1_;
+  std::unique_ptr<ZwpTextInputV3> text_input_v3_;
   std::unique_ptr<WaylandClipboard> clipboard_;
 
-  std::unique_ptr<GtkShell1> gtk_shell1_;
-
   // Objects specific to KDE Plasma desktop environment.
+  std::unique_ptr<OrgKdeKwinAppmenuManager> org_kde_kwin_appmenu_manager_;
   std::unique_ptr<OrgKdeKwinIdle> org_kde_kwin_idle_;
 
   std::unique_ptr<WaylandDataDragController> data_drag_controller_;
   std::unique_ptr<WaylandWindowDragController> window_drag_controller_;
+
+  std::unique_ptr<XdgSessionManager> session_manager_;
 
   // Describes the clock domain that wp_presentation timestamps are in.
   uint32_t presentation_clk_id_ = CLOCK_MONOTONIC;

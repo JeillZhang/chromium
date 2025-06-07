@@ -4,18 +4,25 @@
 
 #include "chrome/browser/extensions/api/developer_private/developer_private_api.h"
 
-#include "chrome/browser/extensions/account_extension_tracker.h"
 #include "chrome/browser/extensions/api/developer_private/extension_info_generator.h"
-#include "chrome/browser/extensions/chrome_extension_system_factory.h"
+#include "chrome/browser/extensions/commands/command_service.h"
 #include "chrome/browser/extensions/error_console/error_console_factory.h"
-#include "chrome/browser/ui/toolbar/toolbar_actions_model_factory.h"
-#include "extensions/browser/app_window/app_window_registry.h"
+#include "chrome/browser/extensions/extension_management.h"
 #include "extensions/browser/event_router_factory.h"
 #include "extensions/browser/extension_prefs_factory.h"
 #include "extensions/browser/extension_registry_factory.h"
+#include "extensions/browser/extension_system_provider.h"
+#include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/browser/process_manager_factory.h"
 #include "extensions/browser/warning_service_factory.h"
+#include "ui/base/clipboard/file_info.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/extensions/account_extension_tracker.h"
+#include "chrome/browser/ui/toolbar/toolbar_actions_model_factory.h"
+#include "extensions/browser/app_window/app_window_registry.h"
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 namespace extensions {
 
@@ -61,19 +68,24 @@ DeveloperPrivateAPI::GetFactoryInstance() {
 template <>
 void BrowserContextKeyedAPIFactory<
     DeveloperPrivateAPI>::DeclareFactoryDependencies() {
+  // Keep this in sync with observers DeveloperPrivateEventRouterShared
+  // implements.
   DependsOn(ExtensionRegistryFactory::GetInstance());
   DependsOn(ErrorConsoleFactory::GetInstance());
   DependsOn(ProcessManagerFactory::GetInstance());
-  DependsOn(AppWindowRegistry::Factory::GetInstance());
   DependsOn(WarningServiceFactory::GetInstance());
   DependsOn(ExtensionPrefsFactory::GetInstance());
+  DependsOn(EventRouterFactory::GetInstance());
+  DependsOn(PermissionsManager::GetFactory());
+  DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
   DependsOn(ExtensionManagementFactory::GetInstance());
   DependsOn(CommandService::GetFactoryInstance());
-  DependsOn(EventRouterFactory::GetInstance());
-  DependsOn(ChromeExtensionSystemFactory::GetInstance());
-  DependsOn(PermissionsManager::GetFactory());
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  DependsOn(AppWindowRegistry::Factory::GetInstance());
   DependsOn(ToolbarActionsModelFactory::GetInstance());
   DependsOn(AccountExtensionTracker::GetFactory());
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 }
 
 // static
@@ -117,16 +129,16 @@ base::FilePath DeveloperPrivateAPI::GetUnpackedPath(
   return path_iter->second;
 }
 
-void DeveloperPrivateAPI::SetDraggedPath(content::WebContents* web_contents,
-                                         const base::FilePath& dragged_path) {
+void DeveloperPrivateAPI::SetDraggedFile(content::WebContents* web_contents,
+                                         const ui::FileInfo& dragged_file) {
   WebContentsData* data = GetOrCreateWebContentsData(web_contents);
-  data->dragged_path = dragged_path;
+  data->dragged_file = dragged_file;
 }
 
-base::FilePath DeveloperPrivateAPI::GetDraggedPath(
+ui::FileInfo DeveloperPrivateAPI::GetDraggedFile(
     content::WebContents* web_contents) const {
   const WebContentsData* data = GetWebContentsData(web_contents);
-  return data ? data->dragged_path : base::FilePath();
+  return data ? data->dragged_file : ui::FileInfo();
 }
 
 void DeveloperPrivateAPI::RegisterNotifications() {

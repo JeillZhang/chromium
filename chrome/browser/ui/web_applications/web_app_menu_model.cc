@@ -14,6 +14,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/extensions/extensions_container.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -71,7 +72,12 @@ bool WebAppMenuModel::IsCommandIdEnabled(int command_id) const {
       return base::FeatureList::IsEnabled(
                  features::kDesktopPWAsElidedExtensionsMenu) &&
              browser()->window()->GetExtensionsContainer() &&
-             browser()->window()->GetExtensionsContainer()->HasAnyExtensions();
+             browser()
+                 ->window()
+                 ->GetExtensionsContainer()
+                 ->HasAnyExtensions() &&
+             // Extensions are not supported inside Isolated Web Apps.
+             !browser()->app_controller()->IsIsolatedWebApp();
     case IDC_OPEN_IN_CHROME: {
       return ShouldAllowOpenInChrome(browser());
     }
@@ -151,7 +157,7 @@ void WebAppMenuModel::Build() {
 
   SetIcon(app_info_index,
           ui::ImageModel::FromVectorIcon(
-              browser()->location_bar_model()->GetVectorIcon()));
+              browser()->GetFeatures().location_bar_model()->GetVectorIcon()));
 
   AddSeparator(ui::NORMAL_SEPARATOR);
 

@@ -75,7 +75,7 @@ std::optional<base::FilePath> GetVersionedInstallDirectory(
   if (!path) {
     return std::nullopt;
   }
-  return path->AppendASCII(version.GetString());
+  return path->AppendUTF8(version.GetString());
 }
 
 std::optional<base::FilePath> GetVersionedInstallDirectory(UpdaterScope scope) {
@@ -98,7 +98,7 @@ std::optional<base::FilePath> GetCrxCacheDirectory(UpdaterScope scope) {
   if (!cache_path) {
     return std::nullopt;
   }
-  return std::optional<base::FilePath>(cache_path->AppendASCII("crx_cache"));
+  return std::optional<base::FilePath>(cache_path->AppendUTF8("crx_cache"));
 }
 
 std::optional<base::FilePath> GetUpdaterExecutablePath(UpdaterScope scope) {
@@ -107,7 +107,7 @@ std::optional<base::FilePath> GetUpdaterExecutablePath(UpdaterScope scope) {
 
 std::optional<base::FilePath> GetCrashDatabasePath(UpdaterScope scope) {
   const std::optional<base::FilePath> path(GetVersionedInstallDirectory(scope));
-  return path ? std::optional<base::FilePath>(path->AppendASCII("Crashpad"))
+  return path ? std::optional<base::FilePath>(path->AppendUTF8("Crashpad"))
               : std::nullopt;
 }
 
@@ -227,7 +227,7 @@ void InitLogging(UpdaterScope updater_scope) {
 #if BUILDFLAG(IS_WIN)
   // Enable Event Tracing for Windows.
   // {4D7D9607-78B6-4583-A188-2136AB85F5F1}
-  constexpr GUID kUpdaterETWProviderName = {
+  static constexpr GUID kUpdaterETWProviderName = {
       0x4d7d9607,
       0x78b6,
       0x4583,
@@ -261,16 +261,18 @@ GURL AppendQueryParameter(const GURL& url,
 
 #if BUILDFLAG(IS_WIN)
 
-std::wstring GetTaskNamePrefix(UpdaterScope scope) {
-  std::wstring task_name = GetTaskDisplayName(scope);
+std::wstring GetTaskNamePrefix(UpdaterScope scope,
+                               const base::Version& version) {
+  std::wstring task_name = GetTaskDisplayName(scope, version);
   std::erase_if(task_name, base::IsAsciiWhitespace<wchar_t>);
   return task_name;
 }
 
-std::wstring GetTaskDisplayName(UpdaterScope scope) {
-  return base::StrCat({base::ASCIIToWide(PRODUCT_FULLNAME_STRING), L" Task ",
+std::wstring GetTaskDisplayName(UpdaterScope scope,
+                                const base::Version& version) {
+  return base::StrCat({base::UTF8ToWide(PRODUCT_FULLNAME_STRING), L" Task ",
                        IsSystemInstall(scope) ? L"System " : L"User ",
-                       kUpdaterVersionUtf16});
+                       base::UTF8ToWide(version.GetString())});
 }
 
 base::CommandLine GetCommandLineLegacyCompatible() {

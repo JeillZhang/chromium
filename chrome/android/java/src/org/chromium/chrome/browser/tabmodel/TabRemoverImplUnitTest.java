@@ -36,10 +36,10 @@ import org.chromium.chrome.browser.data_sharing.DataSharingTabGroupUtils.GroupsP
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
+import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager;
+import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager.MaybeBlockingResult;
 import org.chromium.chrome.browser.tabmodel.TabModelActionListener.DialogType;
 import org.chromium.chrome.browser.tabmodel.TabModelRemover.TabModelRemoverFlowHandler;
-import org.chromium.chrome.browser.tasks.tab_management.ActionConfirmationManager;
-import org.chromium.chrome.browser.tasks.tab_management.ActionConfirmationManager.MaybeBlockingResult;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModel;
 import org.chromium.components.browser_ui.widget.ActionConfirmationResult;
 import org.chromium.components.data_sharing.DataSharingService;
@@ -68,7 +68,7 @@ public class TabRemoverImplUnitTest {
     @Mock private Runnable mUndoRunnable;
     @Mock private TabRemover mMockTabRemover;
     @Mock private TabModelActionListener mListener;
-    @Mock private Callback<Integer> mOnResult;
+    @Mock private Callback<@ActionConfirmationResult Integer> mOnResult;
     @Mock private Callback<MaybeBlockingResult> mOnMaybeBlockingResult;
     @Mock private DataSharingService mDataSharingService;
     @Mock private TabGroupSyncService mTabGroupSyncService;
@@ -76,7 +76,7 @@ public class TabRemoverImplUnitTest {
     @Mock private Runnable mFinishBlocking;
 
     @Captor private ArgumentCaptor<TabModelRemoverFlowHandler> mHandlerCaptor;
-    @Captor private ArgumentCaptor<Callback<Integer>> mOnResultCaptor;
+    @Captor private ArgumentCaptor<Callback<@ActionConfirmationResult Integer>> mOnResultCaptor;
     @Captor private ArgumentCaptor<Callback<MaybeBlockingResult>> mOnMaybeBlockingResultCaptor;
 
     private MockTabModel mTabModel;
@@ -87,6 +87,7 @@ public class TabRemoverImplUnitTest {
         DataSharingServiceFactory.setForTesting(mDataSharingService);
         TabGroupSyncServiceFactory.setForTesting(mTabGroupSyncService);
         when(mTabGroupSyncService.getAllGroupIds()).thenReturn(new String[] {});
+        when(mTabGroupSyncService.isObservingLocalChanges()).thenReturn(true);
 
         when(mProfile.isOffTheRecord()).thenReturn(false);
         mTabModel = spy(new MockTabModel(mProfile, null));
@@ -203,9 +204,11 @@ public class TabRemoverImplUnitTest {
         Tab tab0 = mTabModel.addTab(id);
         tab0.setTabGroupId(TAB_GROUP_ID.tabGroupId);
         tab0.setRootId(id);
-        when(mTabGroupModelFilter.getRelatedTabListForRootId(id)).thenReturn(List.of(tab0));
+        when(mTabGroupModelFilter.getTabsInGroup(TAB_GROUP_ID.tabGroupId))
+                .thenReturn(List.of(tab0));
         TabClosureParams params =
-                TabClosureParams.forCloseTabGroup(mTabGroupModelFilter, id).build();
+                TabClosureParams.forCloseTabGroup(mTabGroupModelFilter, TAB_GROUP_ID.tabGroupId)
+                        .build();
 
         mTabRemoverImpl.closeTabs(params, /* allowDialog= */ true, mListener);
         verify(mTabModelRemover).doTabRemovalFlow(mHandlerCaptor.capture(), eq(true));

@@ -4,11 +4,9 @@
 
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/create_tab_group_mediator.h"
 
-#import "base/test/scoped_feature_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/test/fake_web_state_list_delegate.h"
 #import "ios/chrome/browser/shared/model/web_state_list/test/web_state_list_builder_from_description.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/snapshots/model/snapshot_tab_helper.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/create_tab_group_mediator_delegate.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/tab_group_creation_consumer.h"
@@ -22,11 +20,14 @@
 - (void)setDefaultGroupColor:(tab_groups::TabGroupColorId)color {
 }
 
-- (void)setTabGroupInfos:(NSArray<GroupTabInfo*>*)tabGroupInfos
-    numberOfSelectedItems:(NSInteger)numberOfSelectedItems {
+- (void)setGroupTitle:(NSString*)title {
 }
 
-- (void)setGroupTitle:(NSString*)title {
+- (void)setSnapshotAndFavicon:(TabSnapshotAndFavicon*)tabSnapshotAndFavicon
+                     tabIndex:(NSInteger)tabIndex {
+}
+
+- (void)setTabsCount:(NSInteger)tabsCount {
 }
 
 @end
@@ -67,14 +68,12 @@ class FakeWebStateListDelegateWithSnapshotTabHelper
 class CreateTabGroupMediatorTest : public PlatformTest {
  protected:
   CreateTabGroupMediatorTest() {
-    feature_list_.InitWithFeatures({kTabGroupsIPad, kModernTabStrip}, {});
     EXPECT_TRUE(
         builder_.BuildWebStateListFromDescription("a | b [ 0 c ] [ 1 d ]"));
     consumer_ = [[TabGroupCreationConsumer alloc] init];
     delegate_ = [[FakeCreateTabMediatorDelegate alloc] init];
   }
 
-  base::test::ScopedFeatureList feature_list_;
   TabGroupCreationConsumer* consumer_;
   FakeWebStateListDelegateWithSnapshotTabHelper web_state_list_delegate_;
   WebStateList web_state_list_{&web_state_list_delegate_};
@@ -89,7 +88,8 @@ TEST_F(CreateTabGroupMediatorTest, DeletingGroupNotifiesDelegate) {
   CreateTabGroupMediator* mediator = [[CreateTabGroupMediator alloc]
       initTabGroupEditionWithConsumer:consumer_
                              tabGroup:tab_group
-                         webStateList:&web_state_list_];
+                         webStateList:&web_state_list_
+                        faviconLoader:nil];
   mediator.delegate = delegate_;
   EXPECT_EQ(delegate_.editedGroupWasExternallyMutatedCallCount, 0);
 
@@ -108,7 +108,8 @@ TEST_F(CreateTabGroupMediatorTest, DeletingOtherGroupDoesntNotifyDelegate) {
   CreateTabGroupMediator* mediator = [[CreateTabGroupMediator alloc]
       initTabGroupEditionWithConsumer:consumer_
                              tabGroup:tab_group_0
-                         webStateList:&web_state_list_];
+                         webStateList:&web_state_list_
+                        faviconLoader:nil];
   mediator.delegate = delegate_;
   EXPECT_EQ(delegate_.editedGroupWasExternallyMutatedCallCount, 0);
 
@@ -126,7 +127,8 @@ TEST_F(CreateTabGroupMediatorTest, UpdatingGroupNotifiesDelegate) {
   CreateTabGroupMediator* mediator = [[CreateTabGroupMediator alloc]
       initTabGroupEditionWithConsumer:consumer_
                              tabGroup:tab_group
-                         webStateList:&web_state_list_];
+                         webStateList:&web_state_list_
+                        faviconLoader:nil];
   mediator.delegate = delegate_;
   EXPECT_EQ(delegate_.editedGroupWasExternallyMutatedCallCount, 0);
   tab_groups::TabGroupVisualData visual_data(u"Updated Group Name",
@@ -147,7 +149,8 @@ TEST_F(CreateTabGroupMediatorTest, UpdatingOtherGroupDoesntNotifyDelegate) {
   CreateTabGroupMediator* mediator = [[CreateTabGroupMediator alloc]
       initTabGroupEditionWithConsumer:consumer_
                              tabGroup:tab_group_0
-                         webStateList:&web_state_list_];
+                         webStateList:&web_state_list_
+                        faviconLoader:nil];
   mediator.delegate = delegate_;
   EXPECT_EQ(delegate_.editedGroupWasExternallyMutatedCallCount, 0);
   tab_groups::TabGroupVisualData visual_data(u"Updated Group Name",

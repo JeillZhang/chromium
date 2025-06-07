@@ -94,8 +94,8 @@ void RunSearchPipeline(NSArray<PipelineBlock>* blocks,
 }
 
 // Returns the default icon for the suggestion type.
-UIImage* defaultIconForType(autofill::SuggestionType type) {
-  switch (type) {
+UIImage* defaultIconForType(FormSuggestion* suggestion) {
+  switch (suggestion.type) {
     case autofill::SuggestionType::kGeneratePasswordEntry:
       return MakeSymbolMulticolor(
           CustomSymbolWithPointSize(kPasswordManagerSymbol, kSymbolPointSize));
@@ -103,16 +103,29 @@ UIImage* defaultIconForType(autofill::SuggestionType type) {
     case autofill::SuggestionType::kFillExistingPlusAddress: {
       BOOL isPlusAddressFeaturesEnabled = base::FeatureList::IsEnabled(
           plus_addresses::features::kPlusAddressesEnabled);
-#if BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
       return isPlusAddressFeaturesEnabled
-                 ? CustomSymbolWithPointSize(kGooglePlusAddressSymbol,
-                                             kSymbolPointSize)
+          ? SymbolWithPalette(
+                DefaultSymbolWithPointSize(kShieldedEnvelope, kSymbolPointSize),
+                @[
+                  [UIColor colorNamed:kTextPrimaryColor],
+                ])
                  : nil;
-#else
-      return isPlusAddressFeaturesEnabled
-                 ? DefaultSymbolWithPointSize(kMailFillSymbol, kSymbolPointSize)
-                 : nil;
-#endif
+    }
+    case autofill::SuggestionType::kAddressEntry: {
+      switch (suggestion.suggestionIconType) {
+        case SuggestionIconType::kAccountHome:
+          return SymbolWithPalette(
+              DefaultSymbolWithPointSize(kHomeSymbol, kSymbolPointSize), @[
+                [UIColor colorNamed:kTextPrimaryColor],
+              ]);
+        case SuggestionIconType::kAccountWork:
+          return SymbolWithPalette(
+              DefaultSymbolWithPointSize(kWorkSymbol, kSymbolPointSize), @[
+                [UIColor colorNamed:kTextPrimaryColor],
+              ]);
+        default:
+          return nil;
+      }
     }
     case autofill::SuggestionType::kAutocompleteEntry:
     default:
@@ -138,6 +151,13 @@ NSArray<FormSuggestion*>* SetParamsAndProviderInSuggestions(
 // Returns true if the form suggestion controller is stateless.
 bool IsStateless() {
   return base::FeatureList::IsEnabled(kStatelessFormSuggestionController);
+}
+
+// Returns true if deduping requests is allowed.
+bool IsRequestDedupingAllowed() {
+  return !IsStateless() ||
+         base::FeatureList::IsEnabled(
+             kStatelessFormSuggestionControllerWithRequestDeduping);
 }
 
 }  // namespace
@@ -301,9 +321,9 @@ bool IsStateless() {
 
   // Once a provider is found, use it to retrieve suggestions.
   PipelineCompletionBlock completion = ^(NSUInteger providerIndex) {
-    // Ignore outdated results. As `_requestIdentifier` is useless when the
-    // suggestion controller is stateless, complete all requests.
-    if (weakSelf.requestIdentifier != requestIdentifier && !IsStateless()) {
+    // Ignore outdated results if allowed.
+    if (weakSelf.requestIdentifier != requestIdentifier &&
+        IsRequestDedupingAllowed()) {
       return;
     }
     if (providerIndex == NSNotFound) {
@@ -413,7 +433,7 @@ bool IsStateless() {
   if (IsStateless()) {
     // Check that there are always params attached to the suggestion when no
     // params are provided by the -didSelectSuggestion caller itself.
-    CHECK(suggestion.params, base::NotFatalUntil::M134);
+    CHECK(suggestion.params);
     if (!suggestion.params) {
       // Just skip if the check isn't triggered. This is to handle the absence
       // of params when the CHECK isn't fatal.
@@ -471,7 +491,7 @@ bool IsStateless() {
         (suggestion.type == autofill::SuggestionType::kCreateNewPlusAddress) ||
         (suggestion.type == autofill::SuggestionType::kFillExistingPlusAddress);
 
-    UIImage* defaultIcon = defaultIconForType(suggestion.type);
+    UIImage* defaultIcon = defaultIconForType(suggestion);
 
     // If there are no icons, but we have a default icon for this suggestion,
     // copy the suggestion and add the default icon. If

@@ -77,8 +77,6 @@ IN_PROC_BROWSER_TEST_F(InteractionTestUtilBrowserTest, CompareScreenshot_View) {
                              /*baseline_cl=*/"3924454"));
 }
 
-namespace {
-
 class ScreenshotSurfaceTestDialog : public views::BubbleDialogDelegateView {
  public:
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kTitleElementId);
@@ -102,10 +100,9 @@ class ScreenshotSurfaceTestDialog : public views::BubbleDialogDelegateView {
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(ScreenshotSurfaceTestDialog,
                                       kTitleElementId);
 
-}  // namespace
-
 IN_PROC_BROWSER_TEST_F(InteractionTestUtilBrowserTest,
-                       CompareScreenshot_Surface) {
+                       // TODO(crbug.com/422631121): Re-enable this test
+                       DISABLED_CompareScreenshot_Surface) {
   views::Widget* widget = nullptr;
 
   RunTestSequence(

@@ -4,14 +4,21 @@
 
 package org.chromium.components.browser_ui.site_settings;
 
+import static org.chromium.build.NullUtil.assertNonNull;
 import static org.chromium.components.content_settings.PrefNames.COOKIE_CONTROLS_MODE;
 
 import android.os.Bundle;
+import android.view.LayoutInflater;
+import android.view.ViewGroup;
 
 import androidx.preference.Preference;
+import androidx.recyclerview.widget.RecyclerView;
 
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
 import org.chromium.components.browser_ui.settings.EmbeddableSettingsPage;
 import org.chromium.components.browser_ui.settings.ManagedPreferenceDelegate;
@@ -23,6 +30,7 @@ import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.content_public.browser.BrowserContextHandle;
 
 /** Related Website Sets preference page. It's a TriStateCookieSettingsPreference subpage. */
+@NullMarked
 public class RwsCookieSettings extends BaseSiteSettingsFragment
         implements EmbeddableSettingsPage, Preference.OnPreferenceChangeListener {
     public static final String ALLOW_RWS_COOKIE_PREFERENCE = "allow_rws";
@@ -43,19 +51,20 @@ public class RwsCookieSettings extends BaseSiteSettingsFragment
     private final ObservableSupplierImpl<String> mPageTitle = new ObservableSupplierImpl<>();
 
     @Override
-    public void onCreatePreferences(Bundle bundle, String s) {
+    @Initializer
+    public void onCreatePreferences(@Nullable Bundle bundle, @Nullable String s) {
         SettingsUtils.addPreferencesFromResource(this, R.xml.rws_cookie_settings);
 
         mPageTitle.set(getContext().getString(R.string.cookies_title));
-        mSubtitle = (TextMessagePreference) findPreference(SUBTITLE);
-        mBulletOne = (TextMessagePreference) findPreference(BULLET_ONE);
-        mBulletTwo = (TextMessagePreference) findPreference(BULLET_TWO);
-        mBulletThree = (TextMessagePreference) findPreference(BULLET_THREE);
-        mAllowRwsPreference = (ChromeSwitchPreference) findPreference(ALLOW_RWS_COOKIE_PREFERENCE);
+        mSubtitle = (TextMessagePreference) assertNonNull(findPreference(SUBTITLE));
+        mBulletOne = (TextMessagePreference) assertNonNull(findPreference(BULLET_ONE));
+        mBulletTwo = (TextMessagePreference) assertNonNull(findPreference(BULLET_TWO));
+        mBulletThree = (TextMessagePreference) assertNonNull(findPreference(BULLET_THREE));
+        mAllowRwsPreference =
+                (ChromeSwitchPreference) assertNonNull(findPreference(ALLOW_RWS_COOKIE_PREFERENCE));
 
         @CookieControlsMode
         int pageState = getArguments().getInt(RwsCookieSettings.EXTRA_COOKIE_PAGE_STATE);
-
         if (pageState == CookieControlsMode.BLOCK_THIRD_PARTY) {
             setupAllowRwsPreference();
             mAllowRwsPreference.setVisible(true);
@@ -116,6 +125,17 @@ public class RwsCookieSettings extends BaseSiteSettingsFragment
     }
 
     @Override
+    public RecyclerView onCreateRecyclerView(
+            LayoutInflater inflater, ViewGroup parent, @Nullable Bundle savedInstanceState) {
+        RecyclerView view =
+                super.onCreateRecyclerView(
+                        assertNonNull(inflater), assertNonNull(parent), savedInstanceState);
+        // Make main content not focusable by keyboard when there is no actual actionable item.
+        view.setFocusable(false);
+        return view;
+    }
+
+    @Override
     public ObservableSupplier<String> getPageTitle() {
         return mPageTitle;
     }
@@ -167,5 +187,10 @@ public class RwsCookieSettings extends BaseSiteSettingsFragment
             }
             return false;
         }
+    }
+
+    @Override
+    public @AnimationType int getAnimationType() {
+        return AnimationType.PROPERTY;
     }
 }

@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -14,8 +13,6 @@
 #include <utility>
 #include <vector>
 
-#include "ash/constants/ash_features.h"
-#include "ash/public/cpp/auth/active_session_auth_controller.h"
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/containers/span.h"
@@ -26,17 +23,15 @@
 #include "base/location.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/no_destructor.h"
-#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
-#include "base/task/task_traits.h"
-#include "base/task/thread_pool.h"
+#include "base/time/default_tick_clock.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "build/buildflag.h"
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/profiles/profile.h"
@@ -52,7 +47,6 @@
 #include "chrome/browser/webauthn/gpm_enclave_transaction.h"
 #include "chrome/browser/webauthn/gpm_user_verification_policy.h"
 #include "chrome/browser/webauthn/passkey_model_factory.h"
-#include "chrome/browser/webauthn/proto/enclave_local_state.pb.h"
 #include "chrome/browser/webauthn/webauthn_metrics_util.h"
 #include "chrome/browser/webauthn/webauthn_pref_names.h"
 #include "components/device_event_log/device_event_log.h"
@@ -80,13 +74,15 @@
 #include "google_apis/gaia/gaia_id.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
+#include "ash/constants/ash_features.h"
+#include "ash/public/cpp/auth/active_session_auth_controller.h"
 #include "ash/public/cpp/webauthn_dialog_controller.h"
 #endif
 
 #if BUILDFLAG(IS_MAC)
 #include "chrome/common/chrome_version.h"
-#include "device/fido/enclave/icloud_recovery_key_mac.h"
+#include "components/trusted_vault/icloud_recovery_key_mac.h"
 #endif  // BUILDFLAG(IS_MAC)
 
 using Step = AuthenticatorRequestDialogModel::Step;
@@ -311,25 +307,105 @@ void ResetDeclinedBootstrappingCount(Profile* profile) {
 
 }  // namespace
 
+GpmTrustedVaultConnectionProvider::GpmTrustedVaultConnectionProvider(
+    content::RenderFrameHost* rfh)
+    : content::DocumentUserData<GpmTrustedVaultConnectionProvider>(rfh) {}
+
+GpmTrustedVaultConnectionProvider::~GpmTrustedVaultConnectionProvider() =
+    default;
+
+// static
+void GpmTrustedVaultConnectionProvider::SetOverrideForFrame(
+    content::RenderFrameHost* rfh,
+    std::unique_ptr<trusted_vault::TrustedVaultConnection>
+        connection_override) {
+  if (!rfh) {
+    return;
+  }
+  GpmTrustedVaultConnectionProvider* provider =
+      GetOrCreateForCurrentDocument(rfh);
+  provider->connection_override_ = std::move(connection_override);
+}
+
+// static
+std::unique_ptr<trusted_vault::TrustedVaultConnection>
+GpmTrustedVaultConnectionProvider::GetConnection(
+    content::RenderFrameHost* rfh,
+    signin::IdentityManager* identity_manager,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+  if (rfh) {
+    if (GpmTrustedVaultConnectionProvider* provider =
+            GetForCurrentDocument(rfh)) {
+      if (provider->connection_override_) {
+        return std::move(provider->connection_override_);
+      }
+    }
+  }
+
+  // Default creation logic
+  return trusted_vault::NewFrontendTrustedVaultConnection(
+      trusted_vault::SecurityDomainId::kPasskeys, identity_manager,
+      url_loader_factory);
+}
+
+DOCUMENT_USER_DATA_KEY_IMPL(GpmTrustedVaultConnectionProvider);
+
+GpmTickAndTaskRunnerProvider::GpmTickAndTaskRunnerProvider(
+    content::RenderFrameHost* rfh)
+    : content::DocumentUserData<GpmTickAndTaskRunnerProvider>(rfh) {}
+
+GpmTickAndTaskRunnerProvider::~GpmTickAndTaskRunnerProvider() = default;
+
+// static
+void GpmTickAndTaskRunnerProvider::SetOverrideForFrame(
+    content::RenderFrameHost* rfh,
+    base::TickClock const* tick_clock,
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {
+  if (!rfh) {
+    return;
+  }
+  GpmTickAndTaskRunnerProvider* provider = GetOrCreateForCurrentDocument(rfh);
+  provider->tick_clock_ = tick_clock;
+  provider->task_runner_ = std::move(task_runner);
+}
+
+// static
+base::TickClock const* GpmTickAndTaskRunnerProvider::GetTickClock(
+    content::RenderFrameHost* rfh) {
+  if (rfh) {
+    if (GpmTickAndTaskRunnerProvider* provider = GetForCurrentDocument(rfh)) {
+      return provider->tick_clock_;
+    }
+  }
+  return base::DefaultTickClock::GetInstance();
+}
+
+// static
+scoped_refptr<base::SequencedTaskRunner>
+GpmTickAndTaskRunnerProvider::GetTaskRunner(content::RenderFrameHost* rfh) {
+  if (rfh) {
+    if (GpmTickAndTaskRunnerProvider* provider = GetForCurrentDocument(rfh)) {
+      return provider->task_runner_;
+    }
+  }
+  return nullptr;
+}
+
+DOCUMENT_USER_DATA_KEY_IMPL(GpmTickAndTaskRunnerProvider);
+
 GPMEnclaveController::GPMEnclaveController(
     content::RenderFrameHost* render_frame_host,
     AuthenticatorRequestDialogModel* model,
     const std::string& rp_id,
     device::FidoRequestType request_type,
-    device::UserVerificationRequirement user_verification_requirement,
-    base::TickClock const* tick_clock,
-    scoped_refptr<base::SequencedTaskRunner> task_runner,
-    std::unique_ptr<trusted_vault::TrustedVaultConnection> optional_connection)
+    device::UserVerificationRequirement user_verification_requirement)
     : render_frame_host_id_(render_frame_host->GetGlobalId()),
       rp_id_(rp_id),
       request_type_(request_type),
       user_verification_requirement_(user_verification_requirement),
       enclave_manager_(
           EnclaveManagerFactory::GetAsEnclaveManagerForProfile(GetProfile())),
-      model_(model),
-      vault_connection_override_(std::move(optional_connection)),
-      tick_clock_(tick_clock),
-      timer_task_runner_(std::move(task_runner)) {
+      model_(model) {
   enclave_manager_observer_.Observe(enclave_manager_);
   model_observer_.Observe(model_);
 
@@ -337,6 +413,9 @@ GPMEnclaveController::GPMEnclaveController(
   webauthn::PasskeyModel* passkey_model =
       PasskeyModelFactory::GetInstance()->GetForProfile(profile);
   creds_ = passkey_model->GetPasskeysForRelyingPartyId(rp_id_);
+  if (base::FeatureList::IsEnabled(device::kWebAuthnSignalApiHidePasskeys)) {
+    std::erase_if(creds_, [](const auto& cred) { return cred.hidden(); });
+  }
 
   // The following code may do some asynchronous processing. However the control
   // flow terminates, it must have called SetAccountState with some value.
@@ -381,6 +460,24 @@ GPMEnclaveController::~GPMEnclaveController() {
   enclave_manager_->TakeSecret();
 }
 
+std::optional<EnclaveUserVerificationMethod>
+GPMEnclaveController::GetEnclaveUserVerificationMethod() {
+  // TODO(crbug.com/393055190): Figure out why `ready_for_ui` is not enough for
+  // `is_ready`.
+  if (!enclave_manager_->is_ready()) {
+    return std::nullopt;
+  }
+
+  bool has_pin = enclave_manager_->has_wrapped_pin();
+  EnclaveManager::UvKeyState uv_key_state = enclave_manager_->uv_key_state(
+      model_->platform_has_biometrics.value_or(false));
+
+  return PickEnclaveUserVerificationMethod(
+      user_verification_requirement_, /*have_entered_pin_for_recovery=*/false,
+      has_pin, uv_key_state, model_->platform_has_biometrics.value_or(false),
+      BrowserIsApp());
+}
+
 bool GPMEnclaveController::is_active() const {
   return *is_active_;
 }
@@ -411,10 +508,8 @@ void GPMEnclaveController::BuildUVKeyOptions(
     EnclaveManager::UVKeyOptions& uv_options) {
   uv_options.rp_id = rp_id_;
   uv_options.render_frame_host_id = render_frame_host_id_;
-#if BUILDFLAG(IS_MAC)
-  uv_options.lacontext = std::move(model_->lacontext);
-#endif  // BUILDFLAG(IS_MAC)
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+  uv_options.local_auth_token = std::move(model_->local_auth_token);
+#if BUILDFLAG(IS_CHROMEOS)
   if (ash::features::IsWebAuthNAuthDialogMergeEnabled()) {
     uv_options.dialog_controller = ash::ActiveSessionAuthController::Get();
   } else {
@@ -435,6 +530,16 @@ void GPMEnclaveController::OnPasskeyCreated(
   }
 }
 
+EnclaveUserVerificationMethod GPMEnclaveController::GetUvMethod() {
+  uv_method_ = PickEnclaveUserVerificationMethod(
+      user_verification_requirement_,
+      have_added_device_ && !recovered_with_icloud_keychain_,
+      enclave_manager_->has_wrapped_pin(),
+      enclave_manager_->uv_key_state(*model_->platform_has_biometrics),
+      *model_->platform_has_biometrics, BrowserIsApp());
+  return *uv_method_;
+}
+
 Profile* GPMEnclaveController::GetProfile() const {
   return Profile::FromBrowserContext(
              content::RenderFrameHost::FromID(render_frame_host_id_)
@@ -445,6 +550,10 @@ Profile* GPMEnclaveController::GetProfile() const {
 GPMEnclaveController::AccountState
 GPMEnclaveController::account_state_for_testing() const {
   return account_state_;
+}
+
+bool GPMEnclaveController::is_account_ready() const {
+  return account_state_ == AccountState::kReady;
 }
 
 void GPMEnclaveController::OnEnclaveLoaded() {
@@ -502,9 +611,11 @@ void GPMEnclaveController::DownloadAccountState() {
   FIDO_LOG(EVENT) << "Fetching account state";
   SetAccountState(AccountState::kChecking);
 
-  account_state_timeout_ = std::make_unique<base::OneShotTimer>(tick_clock_);
-  if (timer_task_runner_) {
-    account_state_timeout_->SetTaskRunner(timer_task_runner_);
+  auto* rfh = content::RenderFrameHost::FromID(render_frame_host_id_);
+  account_state_timeout_ = std::make_unique<base::OneShotTimer>(
+      GpmTickAndTaskRunnerProvider::GetTickClock(rfh));
+  if (auto task_runner = GpmTickAndTaskRunnerProvider::GetTaskRunner(rfh)) {
+    account_state_timeout_->SetTaskRunner(task_runner);
   }
   if (!base::FeatureList::IsEnabled(device::kWebAuthnNoAccountTimeout)) {
     account_state_timeout_->Start(
@@ -522,11 +633,9 @@ void GPMEnclaveController::DownloadAccountState() {
                          : SystemNetworkContextManager::GetInstance()
                                ->GetSharedURLLoaderFactory();
   std::unique_ptr<trusted_vault::TrustedVaultConnection> trusted_vault_conn =
-      vault_connection_override_
-          ? std::move(vault_connection_override_)
-          : trusted_vault::NewFrontendTrustedVaultConnection(
-                trusted_vault::SecurityDomainId::kPasskeys, identity_manager,
-                url_loader_factory);
+      GpmTrustedVaultConnectionProvider::GetConnection(rfh, identity_manager,
+                                                       url_loader_factory);
+
   auto* conn = trusted_vault_conn.get();
   CoreAccountInfo account =
       identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin);
@@ -577,15 +686,16 @@ void GPMEnclaveController::OnAccountStateDownloaded(
   download_account_state_request_.reset();
   account_state_timeout_.reset();
 
-  FIDO_LOG(EVENT) << "Download account state result: " << ToString(result.state)
-                  << ", key_version: " << result.key_version.value_or(0)
-                  << ", has PIN: " << result.gpm_pin_metadata.has_value()
-                  << ", expiry: "
-                  << (result.gpm_pin_metadata.has_value()
-                          ? base::TimeFormatAsIso8601(
-                                result.gpm_pin_metadata->expiry)
-                          : "<none>")
-                  << ", iCloud Keychain keys: " << result.icloud_keys.size();
+  FIDO_LOG(EVENT)
+      << "Download account state result: " << ToString(result.state)
+      << ", key_version: " << result.key_version.value_or(0)
+      << ", has PIN: " << result.gpm_pin_metadata.has_value() << ", expiry: "
+      << (result.gpm_pin_metadata &&
+                  result.gpm_pin_metadata->usable_pin_metadata
+              ? base::TimeFormatAsIso8601(
+                    result.gpm_pin_metadata->usable_pin_metadata->expiry)
+              : "<none>")
+      << ", iCloud Keychain keys: " << result.icloud_keys.size();
 
   if (enclave_manager_->is_ready() &&
       enclave_manager_->ConsiderSecurityDomainState(result,
@@ -596,10 +706,6 @@ void GPMEnclaveController::OnAccountStateDownloaded(
     }
     return;
   }
-
-  FIDO_LOG(EVENT) << "Account state: " << ToString(result.state)
-                  << ", has PIN: " << result.gpm_pin_metadata.has_value()
-                  << ", iCloud Keychain keys: " << result.icloud_keys.size();
 
   switch (result.state) {
     case Result::State::kError:
@@ -618,10 +724,7 @@ void GPMEnclaveController::OnAccountStateDownloaded(
       SetAccountState(AccountState::kIrrecoverable);
       break;
   }
-
-  if (result.gpm_pin_metadata) {
-    pin_metadata_ = std::move(result.gpm_pin_metadata);
-  }
+  pin_metadata_ = std::move(result.gpm_pin_metadata);
   security_domain_icloud_recovery_keys_ = std::move(result.icloud_keys);
   user_gaia_id_ = std::move(gaia_id);
 
@@ -660,7 +763,10 @@ void GPMEnclaveController::OnKeysStored() {
   CHECK(enclave_manager_->has_pending_keys());
   CHECK(!enclave_manager_->is_ready());
 
-  if (pin_metadata_.has_value() || *can_make_uv_keys_) {
+  if ((pin_metadata_.has_value() && pin_metadata_->usable_pin_metadata) ||
+      *can_make_uv_keys_) {
+    // No need to create a GPM PIN if the user already has a usable GPM PIN or
+    // can make UV keys.
     if (!enclave_manager_->AddDeviceToAccount(
             std::move(pin_metadata_),
             base::BindOnce(&GPMEnclaveController::OnDeviceAdded,
@@ -668,8 +774,8 @@ void GPMEnclaveController::OnKeysStored() {
       model_->SetStep(Step::kGPMError);
     }
   } else {
-    // Create a GPM PIN if the user doesn't have one and can't make
-    // a UV key locally.
+    // Create a GPM PIN if the user doesn't have one (or it cannot be used) and
+    // can't make a UV key locally.
     model_->SetStep(Step::kGPMCreatePin);
   }
 }
@@ -691,9 +797,10 @@ void GPMEnclaveController::OnDeviceAdded(bool success) {
 void GPMEnclaveController::RecoverSecurityDomain() {
 #if BUILDFLAG(IS_MAC)
   model_->DisableUiOrShowLoadingDialog();
-  device::enclave::ICloudRecoveryKey::Retrieve(
+  trusted_vault::ICloudRecoveryKey::Retrieve(
       base::BindOnce(&GPMEnclaveController::OnICloudKeysRetrievedForRecovery,
-                      weak_ptr_factory_.GetWeakPtr()),
+                     weak_ptr_factory_.GetWeakPtr()),
+      trusted_vault::SecurityDomainId::kPasskeys,
       kICloudKeychainRecoveryKeyAccessGroup);
 #else
   model_->SetStep(Step::kRecoverSecurityDomain);
@@ -703,14 +810,15 @@ void GPMEnclaveController::RecoverSecurityDomain() {
 #if BUILDFLAG(IS_MAC)
 
 void GPMEnclaveController::MaybeAddICloudRecoveryKey() {
-  device::enclave::ICloudRecoveryKey::Retrieve(
+  trusted_vault::ICloudRecoveryKey::Retrieve(
       base::BindOnce(&GPMEnclaveController::OnICloudKeysRetrievedForEnrollment,
                      weak_ptr_factory_.GetWeakPtr()),
+      trusted_vault::SecurityDomainId::kPasskeys,
       kICloudKeychainRecoveryKeyAccessGroup);
 }
 
 void GPMEnclaveController::OnICloudKeysRetrievedForEnrollment(
-    std::vector<std::unique_ptr<device::enclave::ICloudRecoveryKey>>
+    std::vector<std::unique_ptr<trusted_vault::ICloudRecoveryKey>>
         local_icloud_keys) {
   for (const trusted_vault::VaultMember& recovery_icloud_key :
        security_domain_icloud_recovery_keys_) {
@@ -734,14 +842,15 @@ void GPMEnclaveController::OnICloudKeysRetrievedForEnrollment(
   // security domains. We would need to loop through all vault members across
   // all security domains.
   FIDO_LOG(EVENT) << "Creating new iCloud recovery key";
-  device::enclave::ICloudRecoveryKey::Create(
+  trusted_vault::ICloudRecoveryKey::Create(
       base::BindOnce(&GPMEnclaveController::EnrollICloudRecoveryKey,
                      weak_ptr_factory_.GetWeakPtr()),
+      trusted_vault::SecurityDomainId::kPasskeys,
       kICloudKeychainRecoveryKeyAccessGroup);
 }
 
 void GPMEnclaveController::EnrollICloudRecoveryKey(
-    std::unique_ptr<device::enclave::ICloudRecoveryKey> key) {
+    std::unique_ptr<trusted_vault::ICloudRecoveryKey> key) {
   if (!key) {
     FIDO_LOG(ERROR) << "Could not create iCloud recovery key";
     OnEnclaveAccountSetUpComplete();
@@ -754,7 +863,7 @@ void GPMEnclaveController::EnrollICloudRecoveryKey(
 }
 
 void GPMEnclaveController::OnICloudKeysRetrievedForRecovery(
-    std::vector<std::unique_ptr<device::enclave::ICloudRecoveryKey>>
+    std::vector<std::unique_ptr<trusted_vault::ICloudRecoveryKey>>
         local_icloud_keys) {
   // Find the matching pair of local iCloud private key and the SDS recovery
   // member.
@@ -974,14 +1083,8 @@ void GPMEnclaveController::OnGPMPasskeySelected(
 
     case AccountState::kRecoverable:
     case AccountState::kIrrecoverable:
-      if (base::FeatureList::IsEnabled(
-              device::kWebAuthnNeverSkipTrustThisComputer) ||
-          model_->priority_phone_name.has_value()) {
-        device::enclave::RecordEvent(device::enclave::Event::kOnboarding);
-        model_->SetStep(Step::kTrustThisComputerAssertion);
-      } else {
-        RecoverSecurityDomain();
-      }
+      device::enclave::RecordEvent(device::enclave::Event::kOnboarding);
+      model_->SetStep(Step::kTrustThisComputerAssertion);
       break;
 
     case AccountState::kLoading:
@@ -1144,8 +1247,9 @@ void GPMEnclaveController::OnGPMPinEntered(const std::u16string& pin) {
     CHECK(enclave_manager_->has_pending_keys());
     // In this case, we were waiting for the user to create their GPM PIN.
     enclave_manager_->AddDeviceAndPINToAccount(
-        *pin_, base::BindOnce(&GPMEnclaveController::OnDeviceAdded,
-                              weak_ptr_factory_.GetWeakPtr()));
+        *pin_, pin_metadata_ ? pin_metadata_->public_key : std::nullopt,
+        base::BindOnce(&GPMEnclaveController::OnDeviceAdded,
+                       weak_ptr_factory_.GetWeakPtr()));
   } else if (account_state_ == AccountState::kEmpty) {
     // The user has set a PIN to create the account.
     enclave_manager_->SetupWithPIN(
@@ -1192,8 +1296,8 @@ void GPMEnclaveController::StartTransaction() {
   ResetDeclinedBootstrappingCount(GetProfile());
   pending_enclave_transaction_ = std::make_unique<GPMEnclaveTransaction>(
       /*delegate=*/this, PasskeyModelFactory::GetForProfile(GetProfile()),
-      request_type_, rp_id_, *uv_method_, enclave_manager_, pin_,
-      selected_cred_id_, enclave_request_callback_);
+      request_type_, rp_id_, enclave_manager_, pin_, selected_cred_id_,
+      enclave_request_callback_);
   pending_enclave_transaction_->Start();
 }
 

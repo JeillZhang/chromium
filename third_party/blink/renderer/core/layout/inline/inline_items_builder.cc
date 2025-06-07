@@ -367,7 +367,7 @@ bool InlineItemsBuilderTemplate<MappingBuilder>::AppendTextReusing(
   if (InlineItem* last_item = LastItemToCollapseWith(items_)) {
     if (collapse_spaces) {
       switch (last_item->EndCollapseType()) {
-        case InlineItem::kCollapsible:
+        case InlineItem::kCollapsible: {
           switch (original_string[old_item0.StartOffset()]) {
             case kSpaceCharacter:
               // If the original string starts with a collapsible space, it may
@@ -377,8 +377,21 @@ bool InlineItemsBuilderTemplate<MappingBuilder>::AppendTextReusing(
               // Collapsible spaces immediately before a preserved newline
               // should be removed to be consistent with
               // AppendForcedBreakCollapseWhitespace.
-              if (preserve_newlines)
+              if (preserve_newlines) {
                 return false;
+              }
+              break;
+            case kZeroWidthSpaceCharacter:
+              // `AppendBreakOpportunity` appends a zero width space to the
+              // `text_`. If the `original_string` starts with a zero width
+              // space, it should be collapsed. See
+              // https://issues.chromium.org/issues/389738294 for more details.
+              if (RuntimeEnabledFeatures::
+                      CollapseZeroWidthSpaceWhenReuseItemEnabled() &&
+                  old_item0.TextType() == TextItemType::kFlowControl) {
+                return false;
+              }
+              break;
           }
           // If the last item ended with a collapsible space run with segment
           // breaks, we need to run the full algorithm to apply segment break
@@ -393,6 +406,7 @@ bool InlineItemsBuilderTemplate<MappingBuilder>::AppendTextReusing(
             }
           }
           break;
+        }
         case InlineItem::kNotCollapsible: {
           const String& source_text = layout_text->TransformedText();
           if (source_text.length() &&
@@ -572,8 +586,8 @@ void InlineItemsBuilderTemplate<MappingBuilder>::AppendText(
   auto [original_length, offset_map] =
       layout_text->GetVariableLengthTransformResult();
   String transformed = layout_text->TransformedText();
-  const Vector<unsigned> length_map = TransformedString::CreateLengthMap(
-      original_length, transformed.length(), offset_map);
+  const Vector<unsigned> length_map =
+      offset_map.CreateLengthMap(original_length, transformed.length());
   CHECK(transformed.length() == length_map.size() || length_map.size() == 0);
   AppendText(TransformedString(transformed, length_map), *layout_text);
 }
@@ -690,16 +704,26 @@ void InlineItemsBuilderTemplate<MappingBuilder>::AppendTransformedString(
   unsigned identity_start = kNotFound;
   unsigned size = transformed.View().length();
   for (unsigned i = 0; i < size; ++i) {
-    TransformedString::Length len = transformed.LengthMap()[i];
+    TextOffsetMap::Length len = transformed.LengthMap()[i];
     if (len > 1u) {
       if (identity_start != kNotFound) {
         mapping_builder_.AppendIdentityMapping(i - identity_start);
         identity_start = kNotFound;
       }
-      mapping_builder_.AppendVariableMapping(len, 1u);
+      unsigned zero_length = 0;
+      for (++i; i < size; ++i) {
+        if (transformed.LengthMap()[i] != 0) {
+          --i;
+          break;
+        }
+        ++zero_length;
+      }
+      mapping_builder_.AppendVariableMapping(len, 1u + zero_length);
     } else if (len == 0u) {
-      // LengthMap starts with 0, or 2+ is followed by 0.  They should not
-      // happen.
+      // LengthMap should not start with 0.
+      CHECK_NE(i, 0u);
+      // 2+ followed by zeros should be handled in the above block. So we
+      // handle only 1, 0, ... here.
       CHECK_NE(identity_start, kNotFound);
       if (i - identity_start > 1) {
         mapping_builder_.AppendIdentityMapping(i - identity_start - 1);

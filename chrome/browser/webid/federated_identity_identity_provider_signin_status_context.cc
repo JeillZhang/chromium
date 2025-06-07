@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/json/values_util.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/types/optional_ref.h"
@@ -16,6 +17,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/permissions/object_permission_context_base.h"
+#include "content/public/browser/identity_request_account.h"
 #include "third_party/blink/public/common/webid/login_status_account.h"
 #include "third_party/blink/public/common/webid/login_status_options.h"
 #include "third_party/blink/public/mojom/webid/federated_auth_request.mojom-forward.h"
@@ -62,30 +64,6 @@ base::Value::Dict DictFromAccount(const LoginStatusAccount& account) {
   return dict;
 }
 
-std::optional<LoginStatusAccount> AccountFromDict(const base::Value& value) {
-  const base::Value::Dict* dict = value.GetIfDict();
-  if (!dict) {
-    return std::nullopt;
-  }
-  const std::string* id = dict->FindString(kId);
-  const std::string* email = dict->FindString(kEmail);
-  const std::string* name = dict->FindString(kName);
-  const std::string* given_name = dict->FindString(kGivenName);
-  const std::string* picture = dict->FindString(kPicture);
-
-  std::optional<GURL> picture_url =
-      picture ? std::make_optional(GURL(*picture)) : std::nullopt;
-
-  // These are required fields in the IDL type IdentityProviderAccount; if
-  // they aren't present this isn't usable.
-  if (id && email && name) {
-    return std::make_optional(LoginStatusAccount(
-        *id, *email, *name, base::optional_ref(given_name), picture_url));
-  } else {
-    return std::nullopt;
-  }
-}
-
 base::Value::Dict DictFromLoginStatusOptions(
     const LoginStatusOptions& options) {
   base::Value::Dict dict;
@@ -107,28 +85,6 @@ base::Value::Dict DictFromLoginStatusOptions(
   return dict;
 }
 
-LoginStatusOptions LoginStatusOptionsFromDict(base::Value::Dict* dict) {
-  CHECK(dict);
-  LoginStatusOptions options;
-
-  base::Value::List* accounts_list =
-      dict->FindList(kIdpSigninOptionsAccountsKey);
-
-  if (!accounts_list) {
-    return options;
-  }
-
-  options.expiration =
-      base::ValueToTimeDelta(dict->Find(kIdpSigninOptionsExpirationKey));
-  for (const auto& account_value : *accounts_list) {
-    std::optional<LoginStatusAccount> maybe_account =
-        AccountFromDict(account_value);
-    if (maybe_account.has_value()) {
-      options.accounts.emplace_back(std::move(maybe_account.value()));
-    }
-  }
-  return options;
-}
 // Take a dictionary representing the stored accounts list and expiration
 // information for a given IdP and returns "true" if the current time exceeds
 // the last modified time plus the expiration duration.
@@ -173,8 +129,8 @@ FederatedIdentityIdentityProviderSigninStatusContext::GetSigninStatus(
   return granted_object->value.FindBool(kIdpSigninStatusKey);
 }
 
-std::vector<LoginStatusAccount>
-FederatedIdentityIdentityProviderSigninStatusContext::GetAccountProfiles(
+base::Value::List
+FederatedIdentityIdentityProviderSigninStatusContext::GetAccounts(
     const url::Origin& identity_provider) {
   auto granted_object =
       GetGrantedObject(identity_provider, identity_provider.Serialize());
@@ -185,11 +141,15 @@ FederatedIdentityIdentityProviderSigninStatusContext::GetAccountProfiles(
     base::Value::Dict* options_dict =
         granted_object->value.FindDict(kIdpSigninOptionsKey);
     if (is_logged_in && options_dict && !IsExpired(options_dict)) {
-      return LoginStatusOptionsFromDict(options_dict).accounts;
+      base::Value::List* accounts_list =
+          options_dict->FindList(kIdpSigninOptionsAccountsKey);
+      if (accounts_list) {
+        return accounts_list->Clone();
+      }
     }
   }
 
-  return {};
+  return base::Value::List();
 }
 
 void FederatedIdentityIdentityProviderSigninStatusContext::SetSigninStatus(

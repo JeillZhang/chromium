@@ -5,6 +5,7 @@
 #include "chromeos/ash/components/boca/session_api/session_parser.h"
 
 #include "ash/constants/ash_features.h"
+#include "base/strings/string_number_conversions.h"
 #include "chromeos/ash/components/boca/proto/session.pb.h"
 #include "chromeos/ash/components/boca/session_api/constants.h"
 #include "google_apis/common/base_requests.h"
@@ -30,7 +31,27 @@ namespace ash::boca {
   if (status == "REMOVED_BY_TEACHER") {
     return ::boca::StudentStatus::REMOVED_BY_TEACHER;
   }
+  if (status == "NOT_ADDED_CONFIGURED_AS_TEACHER") {
+    return ::boca::StudentStatus::NOT_ADDED_CONFIGURED_AS_TEACHER;
+  }
+  if (status == "NOT_ADDED_NOT_CONFIGURED") {
+    return ::boca::StudentStatus::NOT_ADDED_NOT_CONFIGURED;
+  }
   return ::boca::StudentStatus::STUDENT_STATE_UNKNOWN;
+}
+
+::boca::StudentDevice::StudentDeviceState DeviceStatusJsonToProto(
+    const std::string& status) {
+  if (status == "STUDENT_DEVICE_STATE_UNKNOWN") {
+    return ::boca::StudentDevice::STUDENT_DEVICE_STATE_UNKNOWN;
+  }
+  if (status == "ACTIVE") {
+    return ::boca::StudentDevice::ACTIVE;
+  }
+  if (status == "INACTIVE") {
+    return ::boca::StudentDevice::INACTIVE;
+  }
+  return ::boca::StudentDevice::STUDENT_DEVICE_STATE_UNKNOWN;
 }
 
 ::boca::Session::SessionState SessionStateJsonToProto(
@@ -70,6 +91,9 @@ namespace ash::boca {
   if (type == "SAME_DOMAIN_OPEN_OTHER_DOMAIN_LIMITED_NAVIGATION") {
     return ::boca::LockedNavigationOptions::
         SAME_DOMAIN_OPEN_OTHER_DOMAIN_LIMITED_NAVIGATION;
+  }
+  if (type == "WORKSPACE_NAVIGATION") {
+    return ::boca::LockedNavigationOptions::WORKSPACE_NAVIGATION;
   }
   return ::boca::LockedNavigationOptions::NAVIGATION_TYPE_UNKNOWN;
 }
@@ -234,6 +258,8 @@ void ParseSessionConfigProtoFromJson(base::Value::Dict* session_dict,
       auto* active_bundle = on_task_config->mutable_active_bundle();
       active_bundle->set_locked(
           active_bundle_dict->FindBool(kLocked).value_or(false));
+      active_bundle->set_lock_to_app_home(
+          active_bundle_dict->FindBool(kLockToAppHome).value_or(false));
       auto* content_configs_list =
           active_bundle_dict->FindList(kContentConfigs);
       if (content_configs_list) {
@@ -315,6 +341,9 @@ void ParseIndividualStudentStatusFromJson(
       if (auto* device_dict = device_iter.second.GetIfDict()) {
         auto& device_entry =
             (*student_status->mutable_devices())[device_iter.first];
+        if (auto* state_ptr = device_dict->FindString(kDeviceStatusState)) {
+          device_entry.set_state(DeviceStatusJsonToProto(*state_ptr));
+        }
         // Parse and set ActiveTab from StudentDeviceActivity
         if (auto* activity = device_dict->FindDict(kActivity)) {
           if (auto* active_tab_ptr = activity->FindDict(kActiveTab)) {
@@ -324,6 +353,7 @@ void ParseIndividualStudentStatusFromJson(
                     : "");
           }
         }
+
         if (::ash::features::IsBocaSpotlightEnabled()) {
           if (auto* view_screen_config_dict =
                   device_dict->FindDict(kViewScreenConfig)) {
@@ -340,6 +370,17 @@ void ParseIndividualStudentStatusFromJson(
                       connection_param->FindString(kSpotlightConnectionCode)) {
                 view_screen_config.mutable_connection_param()
                     ->set_connection_code(*connection_code);
+              }
+            }
+            if (auto* view_screen_requester_dict =
+                    view_screen_config_dict->FindDict(kViewScreenRequester)) {
+              if (auto* service_account_dict =
+                      view_screen_requester_dict->FindDict(kServiceAccount)) {
+                if (auto* ptr = service_account_dict->FindString(kEmail)) {
+                  view_screen_config.mutable_view_screen_requester()
+                      ->mutable_service_account()
+                      ->set_email(*ptr);
+                }
               }
             }
           }
@@ -445,6 +486,8 @@ void ParseOnTaskConfigJsonFromProto(::boca::OnTaskConfig* on_task_config,
   if (on_task_config && on_task_config->has_active_bundle()) {
     base::Value::Dict bundle;
     bundle.Set(kLocked, on_task_config->active_bundle().locked());
+    bundle.Set(kLockToAppHome,
+               on_task_config->active_bundle().lock_to_app_home());
     base::Value::List content_configs;
     for (const auto& content :
          on_task_config->active_bundle().content_configs()) {

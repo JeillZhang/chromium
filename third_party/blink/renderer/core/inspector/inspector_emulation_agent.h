@@ -55,6 +55,7 @@ class CORE_EXPORT InspectorEmulationAgent final
       std::unique_ptr<protocol::Array<protocol::Emulation::MediaFeature>>
           features) override;
   protocol::Response setEmulatedVisionDeficiency(const String&) override;
+  protocol::Response setEmulatedOSTextScale(std::optional<double>) override;
   protocol::Response setCPUThrottlingRate(double) override;
   protocol::Response setFocusEmulationEnabled(bool) override;
   protocol::Response setAutoDarkModeOverride(std::optional<bool>) override;
@@ -68,6 +69,8 @@ class CORE_EXPORT InspectorEmulationAgent final
   protocol::Response setNavigatorOverrides(const String& platform) override;
   protocol::Response setDefaultBackgroundColorOverride(
       std::unique_ptr<protocol::DOM::RGBA>) override;
+  protocol::Response setSafeAreaInsetsOverride(
+      std::unique_ptr<protocol::Emulation::SafeAreaInsets> insets) override;
   protocol::Response setDeviceMetricsOverride(
       int width,
       int height,
@@ -97,6 +100,8 @@ class CORE_EXPORT InspectorEmulationAgent final
       std::unique_ptr<protocol::Array<protocol::Emulation::DisabledImageType>>)
       override;
   protocol::Response setAutomationOverride(bool enabled) override;
+  protocol::Response setSmallViewportHeightDifferenceOverride(
+      int difference) override;
 
   // Automation Emulation API
   void ApplyAutomationOverride(bool& enabled) const;
@@ -118,6 +123,7 @@ class CORE_EXPORT InspectorEmulationAgent final
   // InspectorBaseAgent overrides.
   protocol::Response disable() override;
   void Restore() override;
+  void DidCommitLoadForLocalFrame(LocalFrame*) override;
 
   void Trace(Visitor*) const override;
 
@@ -154,6 +160,8 @@ class CORE_EXPORT InspectorEmulationAgent final
   InspectorAgentState::String emulated_media_;
   InspectorAgentState::StringMap emulated_media_features_;
   InspectorAgentState::String emulated_vision_deficiency_;
+  InspectorAgentState::Boolean os_text_scale_emulation_enabled_;
+  InspectorAgentState::Double emulated_os_text_scale_;
   InspectorAgentState::String navigator_platform_override_;
   InspectorAgentState::Integer hardware_concurrency_override_;
   InspectorAgentState::String user_agent_override_;
@@ -172,6 +180,8 @@ class CORE_EXPORT InspectorEmulationAgent final
   InspectorAgentState::BooleanMap disabled_image_types_;
   InspectorAgentState::Double cpu_throttling_rate_;
   InspectorAgentState::Boolean automation_override_;
+  InspectorAgentState::Bytes safe_area_insets_override_;
+  InspectorAgentState::Double small_viewport_height_difference_override_;
 };
 
 }  // namespace blink

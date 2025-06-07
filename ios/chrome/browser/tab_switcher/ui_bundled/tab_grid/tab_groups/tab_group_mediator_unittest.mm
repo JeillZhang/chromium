@@ -22,6 +22,7 @@
 #import "ios/chrome/browser/collaboration/model/messaging/messaging_backend_service_bridge.h"
 #import "ios/chrome/browser/drag_and_drop/model/drag_item_util.h"
 #import "ios/chrome/browser/main/model/browser_web_state_list_delegate.h"
+#import "ios/chrome/browser/saved_tab_groups/model/tab_group_service.h"
 #import "ios/chrome/browser/share_kit/model/test_share_kit_service.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list.h"
@@ -81,11 +82,10 @@ class TabGroupMediatorTest : public GridMediatorTestClass {
  public:
   void SetUp() override {
     scoped_feature_list_.InitWithFeatures(
-        {kTabGroupsIPad, kModernTabStrip, kTabGroupSync,
-         data_sharing::features::kDataSharingFeature},
-        {});
+        {kTabGroupSync, data_sharing::features::kDataSharingFeature}, {});
 
     GridMediatorTestClass::SetUp();
+
     WebStateList* web_state_list = browser_->GetWebStateList();
     CloseAllWebStates(*web_state_list, WebStateList::CLOSE_NO_FLAGS);
     builder_ =
@@ -96,10 +96,8 @@ class TabGroupMediatorTest : public GridMediatorTestClass {
     mode_holder_ = [[TabGridModeHolder alloc] init];
     tab_group_ = web_state_list->GetGroupOfWebStateAt(1);
     tab_group_consumer_ = OCMProtocolMock(@protocol(TabGroupConsumer));
-    tab_group_sync_service_ =
-        std::make_unique<tab_groups::FakeTabGroupSyncService>();
-    share_kit_service_ =
-        std::make_unique<TestShareKitService>(nullptr, nullptr, nullptr);
+    share_kit_service_ = std::make_unique<TestShareKitService>(
+        nullptr, nullptr, nullptr, tab_group_service_);
     collaboration_service_ =
         std::make_unique<collaboration::MockCollaborationService>();
     data_sharing_service_ = std::make_unique<
@@ -147,7 +145,6 @@ class TabGroupMediatorTest : public GridMediatorTestClass {
   id<TabGroupConsumer> tab_group_consumer_;
   raw_ptr<const TabGroup> tab_group_;
   std::unique_ptr<WebStateListBuilderFromDescription> builder_;
-  std::unique_ptr<tab_groups::FakeTabGroupSyncService> tab_group_sync_service_;
   std::unique_ptr<ShareKitService> share_kit_service_;
   std::unique_ptr<collaboration::MockCollaborationService>
       collaboration_service_;
@@ -335,7 +332,7 @@ TEST_F(TabGroupMediatorTest, CreateAnotherGroupAndCloseTabs) {
 // Tests that CollaborationIDChangedForGroup does not update facePile UI when
 // the group id does not match.
 TEST_F(TabGroupMediatorTest, CollaborationIDChangedForInvalidGroup) {
-  OCMReject([tab_group_consumer_ setFacePileViewController:OCMOCK_ANY]);
+  OCMReject([tab_group_consumer_ setFacePileView:OCMOCK_ANY]);
 
   SavedTabGroup other_saved_group(
       u"other group", tab_groups::TabGroupColorId::kOrange, {},
@@ -343,7 +340,8 @@ TEST_F(TabGroupMediatorTest, CollaborationIDChangedForInvalidGroup) {
       tab_groups::TabGroupId::GenerateNew());
   tab_group_sync_service_->AddGroup(other_saved_group);
   tab_group_sync_service_->MakeTabGroupShared(
-      other_saved_group.local_group_id().value(), "collaboration",
+      other_saved_group.local_group_id().value(),
+      syncer::CollaborationId("collaboration"),
       tab_groups::TabGroupSyncService::TabGroupSharingCallback());
 
   EXPECT_OCMOCK_VERIFY((id)tab_group_consumer_);
@@ -352,12 +350,13 @@ TEST_F(TabGroupMediatorTest, CollaborationIDChangedForInvalidGroup) {
 // Tests that CollaborationIDChangedForGroup correctly updates the facePile UI
 // when the group is shared.
 TEST_F(TabGroupMediatorTest, CollaborationIDChangedForGroupShared) {
-  OCMExpect([tab_group_consumer_ setFacePileViewController:OCMOCK_ANY]);
+  OCMExpect([tab_group_consumer_ setFacePileView:OCMOCK_ANY]);
 
   const SavedTabGroup saved_group =
       tab_group_sync_service_->GetGroup(tab_group_->tab_group_id()).value();
   tab_group_sync_service_->MakeTabGroupShared(
-      saved_group.local_group_id().value(), "collaboration",
+      saved_group.local_group_id().value(),
+      syncer::CollaborationId("collaboration"),
       tab_groups::TabGroupSyncService::TabGroupSharingCallback());
 
   EXPECT_OCMOCK_VERIFY((id)tab_group_consumer_);

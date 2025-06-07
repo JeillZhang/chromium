@@ -49,6 +49,7 @@
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 #if DEBUG_AUDIONODE_REFERENCES
@@ -83,10 +84,23 @@ enum class AudioContextOperation {
   kMaxValue = kDelete
 };
 
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class AudioContextInterruptionType {
+  kPlayAttemptWhileFrameHidden = 0,
+  kFrameHiddenWhilePlaying = 1,
+  kMaxValue = kFrameHiddenWhilePlaying
+};
+
 void RecordAudioContextOperation(AudioContextOperation operation) {
   base::UmaHistogramEnumeration("WebAudio.AudioContext.Operation", operation);
 }
 
+void RecordMediaPlaybackInterruptionType(AudioContextInterruptionType type) {
+  base::UmaHistogramEnumeration(
+      "WebAudio.AudioContext.MediaPlaybackWhileNotVisible.InterruptionType",
+      type);
+}
 const char* LatencyCategoryToString(
     WebAudioLatencyHint::AudioContextLatencyCategory category) {
   switch (category) {
@@ -256,7 +270,7 @@ AudioContext::AudioContext(LocalDOMWindow& window,
                            std::optional<float> sample_rate,
                            WebAudioSinkDescriptor sink_descriptor,
                            bool update_echo_cancellation_on_first_start)
-    : BaseAudioContext(&window, kRealtimeContext),
+    : BaseAudioContext(&window, ContextType::kRealtimeContext),
       FrameVisibilityObserver(GetLocalFrame()),
       context_id_(context_id++),
       audio_context_manager_(&window),
@@ -268,19 +282,25 @@ AudioContext::AudioContext(LocalDOMWindow& window,
       media_device_service_(&window),
       media_device_service_receiver_(this, &window),
       should_interrupt_when_frame_is_hidden_(
-          RuntimeEnabledFeatures::
-              MediaPlaybackWhileNotVisiblePermissionPolicyEnabled() &&
           RuntimeEnabledFeatures::AudioContextInterruptedStateEnabled() &&
-          !GetExecutionContext()->IsFeatureEnabled(
-              network::mojom::PermissionsPolicyFeature::
-                  kMediaPlaybackWhileNotVisible,
-              ReportOptions::kDoNotReport)),
+          !CanPlayWhileHidden()),
       player_id_(GetNextMediaPlayerId()),
       media_player_host_(&window),
       media_player_receiver_(this, &window),
       media_player_observer_(&window) {
   RecordAudioContextOperation(AudioContextOperation::kCreate);
   SendLogMessage(__func__, GetAudioContextLogString(latency_hint, sample_rate));
+
+  if (should_interrupt_when_frame_is_hidden_) {
+    // The "media-playback-while-not-visible" permission policy default value
+    // was overridden, which means that either this frame or an ancestor frame
+    // changed the permission policy's default value. This should only happen if
+    // the MediaPlaybackWhileNotVisiblePermissionPolicyEnabled runtime flag is
+    // enabled.
+    UseCounter::Count(
+        GetExecutionContext(),
+        WebFeature::kMediaPlaybackWhileNotVisiblePermissionPolicy);
+  }
 
   destination_node_ = RealtimeAudioDestinationNode::Create(
       this, sink_descriptor_, latency_hint, sample_rate,
@@ -372,6 +392,18 @@ AudioContext::~AudioContext() {
 
   RecordAudioContextOperation(AudioContextOperation::kDelete);
 
+  // If the context is destroyed while still audible, account for the
+  // remaining audible time until destruction.
+  if (!audible_start_timestamp_.is_null()) {
+    total_audible_duration_ +=
+        base::TimeTicks::Now() - audible_start_timestamp_;
+  }
+  UMA_HISTOGRAM_EXACT_LINEAR("WebAudio.AudioContext.AudibleTime",
+                             total_audible_duration_.InSeconds(),
+                             /*exclusive_max=*/8);
+  UMA_HISTOGRAM_BOOLEAN("WebAudio.AudioContext.DestroyedWithoutClose",
+                        !is_closed_);
+
   // TODO(crbug.com/945379) Disable this DCHECK for now.  It's not terrible if
   // the autoplay metrics aren't recorded in some odd situations.  haraken@ said
   // that we shouldn't get here without also calling `Uninitialize()`, but it
@@ -453,6 +485,8 @@ ScriptPromise<IDLUndefined> AudioContext::resumeContext(
                           DOMExceptionCode::kInvalidStateError,
                           "Cannot resume an interrupted AudioContext."));
   } else if (is_frame_hidden_ && should_interrupt_when_frame_is_hidden_) {
+    RecordMediaPlaybackInterruptionType(
+        AudioContextInterruptionType::kPlayAttemptWhileFrameHidden);
     StartContextInterruption();
   }
 
@@ -580,12 +614,13 @@ void AudioContext::DidClose() {
 
   // Reject all pending resolvers for setSinkId() before closing AudioContext.
   for (auto& set_sink_id_resolver : set_sink_id_resolvers_) {
-    set_sink_id_resolver->Resolver()->Reject(MakeGarbageCollected<DOMException>(
+    set_sink_id_resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kInvalidStateError,
         "Cannot resolve pending promise from setSinkId(), AudioContext is "
         "going away"));
   }
   set_sink_id_resolvers_.clear();
+  is_closed_ = true;
 }
 
 bool AudioContext::IsContextCleared() const {
@@ -688,7 +723,7 @@ ScriptPromise<IDLUndefined> AudioContext::setSinkId(
 
   SetSinkIdResolver* resolver =
       MakeGarbageCollected<SetSinkIdResolver>(script_state, *this, *v8_sink_id);
-  auto promise = resolver->Resolver()->Promise();
+  auto promise = resolver->GetPromise();
 
   set_sink_id_resolvers_.push_back(resolver);
 
@@ -814,19 +849,21 @@ bool AudioContext::IsAllowedToStart(bool should_suppress_warning) const {
       DCHECK(window->GetFrame()->IsCrossOriginToOutermostMainFrame());
       if (!should_suppress_warning) {
         window->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-          mojom::ConsoleMessageSource::kOther,
-          mojom::ConsoleMessageLevel::kWarning,
-          "The AudioContext was not allowed to start. It must be resumed (or "
-          "created) from a user gesture event handler. https://goo.gl/7K7WLu"));
+            mojom::blink::ConsoleMessageSource::kOther,
+            mojom::blink::ConsoleMessageLevel::kWarning,
+            "The AudioContext was not allowed to start. It must be resumed (or "
+            "created) from a user gesture event handler. "
+            "https://developer.chrome.com/blog/autoplay/#web_audio"));
       }
       break;
     case AutoplayPolicy::Type::kDocumentUserActivationRequired:
       if (!should_suppress_warning) {
         window->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
-          mojom::ConsoleMessageSource::kOther,
-          mojom::ConsoleMessageLevel::kWarning,
-          "The AudioContext was not allowed to start. It must be resumed (or "
-          "created) after a user gesture on the page. https://goo.gl/7K7WLu"));
+            mojom::blink::ConsoleMessageSource::kOther,
+            mojom::blink::ConsoleMessageLevel::kWarning,
+            "The AudioContext was not allowed to start. It must be resumed (or "
+            "created) after a user gesture on the page. "
+            "https://developer.chrome.com/blog/autoplay/#web_audio"));
       }
       break;
   }
@@ -929,6 +966,9 @@ bool AudioContext::HandlePreRenderTasks(
 }
 
 void AudioContext::NotifyAudibleAudioStarted() {
+  DCHECK(audible_start_timestamp_.is_null());
+  audible_start_timestamp_ = base::TimeTicks::Now();
+
   EnsureAudioContextManagerService();
   if (audio_context_manager_.is_bound()) {
     audio_context_manager_->AudioContextAudiblePlaybackStarted(context_id_);
@@ -1017,6 +1057,10 @@ AudioIOPosition AudioContext::OutputPosition() const {
 }
 
 void AudioContext::NotifyAudibleAudioStopped() {
+  DCHECK(!audible_start_timestamp_.is_null());
+  total_audible_duration_ += base::TimeTicks::Now() - audible_start_timestamp_;
+  audible_start_timestamp_ = base::TimeTicks();
+
   EnsureAudioContextManagerService();
   if (audio_context_manager_.is_bound()) {
     audio_context_manager_->AudioContextAudiblePlaybackStopped(context_id_);
@@ -1244,13 +1288,15 @@ void AudioContext::OnDevicesChanged(mojom::blink::MediaDeviceType device_type,
       SendLogMessage(__func__,
                      "=> sink was not explicitly specified, falling back to "
                      "default sink.");
-      GetExecutionContext()->AddConsoleMessage(
-          MakeGarbageCollected<ConsoleMessage>(
-              mojom::ConsoleMessageSource::kOther,
-              mojom::ConsoleMessageLevel::kInfo,
-              "[AudioContext] Fallback to the default device due to an invalid"
-              " audio device change. (" +
-                  String(sink_descriptor_.SinkId().Utf8()) + ")"));
+      DispatchEvent(*Event::Create(event_type_names::kError));
+      GetExecutionContext()->AddConsoleMessage(MakeGarbageCollected<
+                                               ConsoleMessage>(
+          mojom::ConsoleMessageSource::kOther,
+          mojom::ConsoleMessageLevel::kInfo,
+          WTF::StrCat(
+              {"[AudioContext] Fallback to the default device due to an invalid"
+               " audio device change. (",
+               String(sink_descriptor_.SinkId().Utf8()), ")"})));
       sink_descriptor_ = WebAudioSinkDescriptor(
           g_empty_string,
           To<LocalDOMWindow>(GetExecutionContext())->GetLocalFrameToken());
@@ -1281,6 +1327,8 @@ void AudioContext::FrameVisibilityChanged(
   }
 
   if (is_frame_hidden_) {
+    RecordMediaPlaybackInterruptionType(
+        AudioContextInterruptionType::kFrameHiddenWhilePlaying);
     // The frame is not rendered, so the audio context should be suspended.
     StartContextInterruption();
   } else {
@@ -1420,17 +1468,24 @@ void AudioContext::HandleRenderError() {
 
   // Implements
   // https://webaudio.github.io/web-audio-api/#error-handling-on-a-running-audio-context
-  if (ContextState() == V8AudioContextState::Enum::kRunning) {
-    // TODO(https://crbug.com/353641602): starting or stopping the renderer
-    // should happen on the render thread, but this is the current convention.
-    destination()->GetAudioDestinationHandler().StopRendering();
+  switch (ContextState()) {
+    case V8AudioContextState::Enum::kRunning:
+    case V8AudioContextState::Enum::kInterrupted:
+      // TODO(https://crbug.com/353641602): starting or stopping the renderer
+      // should happen on the render thread, but this is the current convention.
+      destination()->GetAudioDestinationHandler().StopRendering();
 
-    DispatchEvent(*Event::Create(event_type_names::kError));
-    suspended_by_user_ = false;
-    SetContextState(V8AudioContextState::Enum::kSuspended);
-  } else if (ContextState() == V8AudioContextState::Enum::kSuspended) {
-    DispatchEvent(*Event::Create(event_type_names::kError));
+      DispatchEvent(*Event::Create(event_type_names::kError));
+      suspended_by_user_ = false;
+      SetContextState(V8AudioContextState::Enum::kSuspended);
+      return;
+    case V8AudioContextState::Enum::kSuspended:
+      DispatchEvent(*Event::Create(event_type_names::kError));
+      return;
+    case V8AudioContextState::Enum::kClosed:
+      return;
   }
+  NOTREACHED();
 }
 
 void AudioContext::invoke_onrendererror_from_platform_for_testing() {
@@ -1483,6 +1538,13 @@ void AudioContext::OnMediaPlayerDisconnect() {
   media_player_host_.reset();
   media_player_observer_.reset();
   volume_multiplier_ = 1.0;
+}
+
+bool AudioContext::CanPlayWhileHidden() const {
+  return GetExecutionContext()->IsFeatureEnabled(
+      network::mojom::blink::PermissionsPolicyFeature::
+          kMediaPlaybackWhileNotVisible,
+      ReportOptions::kDoNotReport);
 }
 
 }  // namespace blink

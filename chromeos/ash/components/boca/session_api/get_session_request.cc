@@ -11,6 +11,7 @@
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/types/expected.h"
 #include "base/values.h"
@@ -32,6 +33,7 @@
 namespace ash::boca {
 
 GetSessionRequest::GetSessionRequest(google_apis::RequestSender* sender,
+                                     std::string url_base,
                                      bool is_producer,
                                      GaiaId gaia_id,
                                      Callback callback)
@@ -40,7 +42,7 @@ GetSessionRequest::GetSessionRequest(google_apis::RequestSender* sender,
                           google_apis::ProgressCallback()),
       is_producer_(is_producer),
       gaia_id_(std::move(gaia_id)),
-      url_base_(kSchoolToolsApiBaseUrl),
+      url_base_(std::move(url_base)),
       callback_(std::move(callback)) {}
 
 GetSessionRequest::~GetSessionRequest() = default;

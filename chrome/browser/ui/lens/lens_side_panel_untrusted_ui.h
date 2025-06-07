@@ -21,6 +21,7 @@
 #include "ui/webui/resources/cr_components/searchbox/searchbox.mojom-forward.h"
 
 class LensOverlayController;
+class LensSearchController;
 
 namespace ui {
 class ColorChangeHandler;
@@ -83,11 +84,12 @@ class LensSidePanelUntrustedUI
       mojo::PendingReceiver<help_bubble::mojom::HelpBubbleHandlerFactory>
           receiver);
 
-  static constexpr std::string GetWebUIName() {
+  static constexpr std::string_view GetWebUIName() {
     return "LensSidePanelUntrusted";
   }
 
  private:
+  LensSearchController& GetLensSearchController();
   LensOverlayController& GetLensOverlayController();
 
   // lens::mojom::LensSidePanelPageHandlerFactory:

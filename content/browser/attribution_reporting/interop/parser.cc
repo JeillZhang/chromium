@@ -13,11 +13,11 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/check.h"
 #include "base/functional/function_ref.h"
-#include "base/functional/overloaded.h"
 #include "base/json/json_writer.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/scoped_refptr.h"
@@ -37,8 +37,8 @@
 #include "net/http/http_version.h"
 #include "net/http/structured_headers.h"
 #include "services/network/public/mojom/attribution.mojom.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/abseil-cpp/absl/numeric/int128.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -58,7 +58,7 @@ constexpr char kResponseKey[] = "response";
 constexpr char kResponsesKey[] = "responses";
 constexpr char kTimestampKey[] = "timestamp";
 
-using Context = absl::variant<std::string_view, size_t>;
+using Context = std::variant<std::string_view, size_t>;
 using ContextPath = std::vector<Context>;
 
 std::string TimeAsUnixMillisecondString(base::Time time) {
@@ -90,11 +90,11 @@ std::ostream& operator<<(std::ostream& out, const ContextPath& path) {
   }
 
   for (Context context : path) {
-    absl::visit(base::Overloaded{
-                    [&](std::string_view key) { out << "[\"" << key << "\"]"; },
-                    [&](size_t index) { out << '[' << index << ']'; },
-                },
-                context);
+    std::visit(absl::Overload{
+                   [&](std::string_view key) { out << "[\"" << key << "\"]"; },
+                   [&](size_t index) { out << '[' << index << ']'; },
+               },
+               context);
   }
   return out;
 }
@@ -454,7 +454,6 @@ class AttributionInteropParser {
                           std::move(randomized_response),
                           std::move(null_aggregatable_reports_days),
                           debug_permission));
-
                 });
           });
     }

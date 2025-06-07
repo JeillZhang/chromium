@@ -4,7 +4,9 @@
 
 #include "components/password_manager/core/browser/ui/credential_ui_entry.h"
 
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/affiliations/core/browser/affiliation_utils.h"
 #include "components/password_manager/core/browser/form_parsing/form_data_parser.h"
@@ -316,10 +318,6 @@ std::string CreateSortKey(const CredentialUIEntry& credential) {
 
 bool operator==(const CredentialUIEntry& lhs, const CredentialUIEntry& rhs) {
   return CreateSortKey(lhs) == CreateSortKey(rhs);
-}
-
-bool operator!=(const CredentialUIEntry& lhs, const CredentialUIEntry& rhs) {
-  return !(lhs == rhs);
 }
 
 bool operator<(const CredentialUIEntry& lhs, const CredentialUIEntry& rhs) {

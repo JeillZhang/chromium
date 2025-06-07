@@ -181,17 +181,9 @@ COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kEnterpriseDisableArc[];
 COMPONENT_EXPORT(ASH_CONSTANTS)
 extern const char kEnterpriseForceManualEnrollmentInTestBuilds[];
 COMPONENT_EXPORT(ASH_CONSTANTS)
-extern const char kEnterpriseEnableForcedReEnrollment[];
-COMPONENT_EXPORT(ASH_CONSTANTS)
 extern const char kEnterpriseEnableForcedReEnrollmentOnFlex[];
 COMPONENT_EXPORT(ASH_CONSTANTS)
 extern const char kEnterpriseEnableUnifiedStateDetermination[];
-COMPONENT_EXPORT(ASH_CONSTANTS)
-extern const char kEnterpriseEnableInitialEnrollment[];
-COMPONENT_EXPORT(ASH_CONSTANTS)
-extern const char kEnterpriseEnrollmentInitialModulus[];
-COMPONENT_EXPORT(ASH_CONSTANTS)
-extern const char kEnterpriseEnrollmentModulusLimit[];
 COMPONENT_EXPORT(ASH_CONSTANTS)
 extern const char kDisallowPolicyBlockDevMode[];
 COMPONENT_EXPORT(ASH_CONSTANTS)
@@ -296,6 +288,7 @@ extern const char kOobeTimezoneOverrideForTests[];
 COMPONENT_EXPORT(ASH_CONSTANTS)
 extern const char kOobeTriggerSyncTimeoutForTests[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kOverviewButtonForTests[];
+COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kOverscanInsetsOverride[];
 COMPONENT_EXPORT(ASH_CONSTANTS)
 extern const char kHiddenNetworkMigrationInterval[];
 COMPONENT_EXPORT(ASH_CONSTANTS)
@@ -321,6 +314,12 @@ COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kRlzPingDelay[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kRmaNotAllowed[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kSafeMode[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kSamlPasswordChangeUrl[];
+COMPONENT_EXPORT(ASH_CONSTANTS)
+extern const char kScannerDisclaimerDebugOverride[];
+COMPONENT_EXPORT(ASH_CONSTANTS)
+extern const char kScannerDisclaimerDebugOverrideReminder[];
+COMPONENT_EXPORT(ASH_CONSTANTS)
+extern const char kScannerDisclaimerDebugOverrideFull[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kScannerUpdateKey[];
 COMPONENT_EXPORT(ASH_CONSTANTS) extern const char kSealKey[];
 COMPONENT_EXPORT(ASH_CONSTANTS)
@@ -401,6 +400,11 @@ COMPONENT_EXPORT(ASH_CONSTANTS) bool ShouldSkipNewUserCheckForTesting();
 
 // Returns true if we should skip all other OOBE pages after user login.
 COMPONENT_EXPORT(ASH_CONSTANTS) bool ShouldSkipOobePostLogin();
+
+// Returns true if we should disable pre-consent metrics for testing. Consent
+// won't be enabled by CrosPreConsentMetricsManager.
+COMPONENT_EXPORT(ASH_CONSTANTS)
+bool ShouldDisablePreConsentMetricsForTesting();
 
 // Returns true if we should skip split modifier check on the split modifier
 // info screen.

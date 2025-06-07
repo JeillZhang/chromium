@@ -5,6 +5,7 @@
 #include "chrome/browser/safe_browsing/cloud_content_scanning/binary_upload_service.h"
 
 #include <algorithm>
+#include <variant>
 
 #include "base/command_line.h"
 #include "base/rand_util.h"
@@ -18,7 +19,6 @@
 #include "components/enterprise/connectors/core/analysis_settings.h"
 #include "components/safe_browsing/core/common/safebrowsing_switches.h"
 #include "net/base/url_util.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 #include "chrome/browser/enterprise/connectors/analysis/local_binary_upload_service_factory.h"
@@ -38,10 +38,11 @@ std::optional<GURL> GetUrlOverride() {
   if (command_line->HasSwitch(switches::kCloudBinaryUploadServiceUrlFlag)) {
     GURL url = GURL(command_line->GetSwitchValueASCII(
         switches::kCloudBinaryUploadServiceUrlFlag));
-    if (url.is_valid())
+    if (url.is_valid()) {
       return url;
-    else
+    } else {
       LOG(ERROR) << "--binary-upload-service-url is set to an invalid URL";
+    }
   }
 
   return std::nullopt;
@@ -133,10 +134,6 @@ bool BinaryUploadService::Request::per_profile_request() const {
   return per_profile_request_;
 }
 
-void BinaryUploadService::Request::set_fcm_token(const std::string& token) {
-  content_analysis_request_.set_fcm_notification_token(token);
-}
-
 void BinaryUploadService::Request::set_device_token(const std::string& token) {
   content_analysis_request_.set_device_token(token);
 }
@@ -152,8 +149,9 @@ void BinaryUploadService::Request::set_digest(const std::string& digest) {
 void BinaryUploadService::Request::clear_dlp_scan_request() {
   auto* tags = content_analysis_request_.mutable_tags();
   auto it = std::ranges::find(*tags, "dlp");
-  if (it != tags->end())
+  if (it != tags->end()) {
     tags->erase(it);
+  }
 }
 
 void BinaryUploadService::Request::set_analysis_connector(
@@ -271,6 +269,31 @@ void BinaryUploadService::Request::add_local_ips(
   content_analysis_request_.add_local_ips(ip_address);
 }
 
+void BinaryUploadService::Request::set_referrer_chain(
+    const google::protobuf::RepeatedPtrField<safe_browsing::ReferrerChainEntry>
+        referrer_chain) {
+  *content_analysis_request_.mutable_request_data()->mutable_referrer_chain() =
+      std::move(referrer_chain);
+}
+
+void BinaryUploadService::Request::set_content_area_account_email(
+    const std::string& email) {
+  content_analysis_request_.mutable_request_data()
+      ->set_content_area_account_email(email);
+}
+
+void BinaryUploadService::Request::set_source_content_area_account_email(
+    const std::string& email) {
+  content_analysis_request_.mutable_request_data()
+      ->set_source_content_area_account_email(email);
+}
+
+void BinaryUploadService::Request::set_frame_url_chain(
+    const google::protobuf::RepeatedPtrField<std::string> frame_url_chain) {
+  *content_analysis_request_.mutable_request_data()->mutable_frame_url_chain() =
+      std::move(frame_url_chain);
+}
+
 std::string BinaryUploadService::Request::SetRandomRequestToken() {
   DCHECK(request_token().empty());
   content_analysis_request_.set_request_token(
@@ -289,11 +312,6 @@ const std::string& BinaryUploadService::Request::device_token() const {
 
 const std::string& BinaryUploadService::Request::request_token() const {
   return content_analysis_request_.request_token();
-}
-
-const std::string& BinaryUploadService::Request::fcm_notification_token()
-    const {
-  return content_analysis_request_.fcm_notification_token();
 }
 
 const std::string& BinaryUploadService::Request::filename() const {
@@ -368,7 +386,7 @@ void BinaryUploadService::Request::SerializeToString(
 }
 
 GURL BinaryUploadService::Request::GetUrlWithParams() const {
-  DCHECK(absl::holds_alternative<enterprise_connectors::CloudAnalysisSettings>(
+  DCHECK(std::holds_alternative<enterprise_connectors::CloudAnalysisSettings>(
       cloud_or_local_settings_));
 
   GURL url = GetUrlOverride().value_or(cloud_or_local_settings_.analysis_url());

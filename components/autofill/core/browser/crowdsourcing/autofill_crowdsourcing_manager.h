@@ -45,8 +45,6 @@ struct ScopedActiveAutofillExperiments {
 class AutofillCrowdsourcingManager {
  public:
   // Names of UMA metrics recorded in this class.
-  static constexpr char kUmaApiUrlIsTooLong[] =
-      "Autofill.Query.ApiUrlIsTooLong";
   static constexpr char kUmaGetUrlLength[] = "Autofill.Query.GetUrlLength";
   static constexpr char kUmaMethod[] = "Autofill.Query.Method";
   static constexpr char kUmaWasInCache[] = "Autofill.Query.WasInCache";
@@ -77,7 +75,8 @@ class AutofillCrowdsourcingManager {
   // Returns true if a query is made.
   // TODO: crbug.com/40100455 - Make the return type `void`.
   virtual bool StartQueryRequest(
-      const std::vector<raw_ptr<FormStructure, VectorExperimental>>& forms,
+      const std::vector<raw_ptr<const FormStructure, VectorExperimental>>&
+          forms,
       std::optional<net::IsolationInfo> isolation_info,
       base::OnceCallback<void(std::optional<QueryResponse>)> callback);
 

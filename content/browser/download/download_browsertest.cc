@@ -33,6 +33,7 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -90,6 +91,8 @@
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "ppapi/buildflags/buildflags.h"
+#include "services/network/public/cpp/content_decoding_interceptor.h"
+#include "services/network/public/cpp/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
@@ -4118,6 +4121,8 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest,
   std::unique_ptr<DownloadTestObserver> observer(CreateWaiter(shell(), 1));
   EXPECT_TRUE(NavigateToURL(shell(), referrer_url));
 
+  SimulateEndOfPaintHoldingOnPrimaryMainFrame(shell()->web_contents());
+
   // Alt-click the link.
   blink::WebMouseEvent mouse_event(
       blink::WebInputEvent::Type::kMouseDown, blink::WebInputEvent::kAltKey,
@@ -4417,6 +4422,113 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest, DuplicateContentDisposition) {
 
   EXPECT_EQ(FILE_PATH_LITERAL("Jumboshrimp.txt"),
             downloads[0]->GetTargetFilePath().BaseName().value());
+}
+
+// Test fixture for forcing RendererSideContentDecoding feature.
+class DownloadContentRendererSideContentDecodingTest
+    : public DownloadContentTest,
+      public ::testing::WithParamInterface<bool> {
+ public:
+  DownloadContentRendererSideContentDecodingTest() {
+    if (GetParam()) {
+      features_.InitWithFeatures(
+          {network::features::kRendererSideContentDecoding}, {});
+    } else {
+      features_.InitWithFeatures(
+          {}, {network::features::kRendererSideContentDecoding});
+    }
+  }
+  ~DownloadContentRendererSideContentDecodingTest() override = default;
+
+  static std::string DescribeParams(
+      const testing::TestParamInfo<ParamType>& info) {
+    return info.param ? "FeatureEnabled" : "FeatureDisabled";
+  }
+
+ private:
+  base::test::ScopedFeatureList features_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    DownloadContentRendererSideContentDecodingTest,
+    ::testing::Bool(),
+    &DownloadContentRendererSideContentDecodingTest::DescribeParams);
+
+IN_PROC_BROWSER_TEST_P(DownloadContentRendererSideContentDecodingTest,
+                       CompressedResponseWithContentDisposition) {
+  // gzip-content-with-content-disposition.gz is served with Content-Disposition
+  // headers, and `Content-Encoding: gzip`.
+  NavigateToURLAndWaitForDownload(
+      shell(),
+      embedded_test_server()->GetURL(
+          "/download/gzip-content-with-content-disposition.gz"),
+      download::DownloadItem::COMPLETE);
+
+  std::vector<raw_ptr<download::DownloadItem, VectorExperimental>> downloads;
+  DownloadManagerForShell(shell())->GetAllDownloads(&downloads);
+  ASSERT_EQ(1u, downloads.size());
+
+  EXPECT_EQ(FILE_PATH_LITERAL("hello.txt"),
+            downloads[0]->GetTargetFilePath().BaseName().value());
+
+  // Verify the file is downloaded correctly.
+  {
+    base::ScopedAllowBlockingForTesting allow_blocking;
+    std::string downloaded_content;
+    ASSERT_TRUE(base::ReadFileToString(downloads[0]->GetTargetFilePath(),
+                                       &downloaded_content));
+    EXPECT_EQ(downloaded_content, "Hello World!\n");
+  }
+}
+
+// Test fixture for forcing RendererSideContentDecoding feature failure.
+class DownloadContentRendererSideContentDecodingFailureTest
+    : public DownloadContentTest {
+ public:
+  DownloadContentRendererSideContentDecodingFailureTest() {
+    features_.InitWithFeaturesAndParameters(
+        {{network::features::kRendererSideContentDecoding,
+          {{"RendererSideContentDecodingForceMojoFailureForTesting", "true"}}}},
+        {});
+  }
+  ~DownloadContentRendererSideContentDecodingFailureTest() override = default;
+
+ protected:
+  class FinishNavigationObserver : public WebContentsObserver {
+   public:
+    FinishNavigationObserver(WebContents* contents,
+                             base::OnceClosure done_closure)
+        : WebContentsObserver(contents),
+          done_closure_(std::move(done_closure)) {}
+    void DidFinishNavigation(NavigationHandle* navigation_handle) override {
+      error_code_ = navigation_handle->GetNetErrorCode();
+      std::move(done_closure_).Run();
+    }
+    const std::optional<net::Error>& error_code() const { return error_code_; }
+
+   private:
+    base::OnceClosure done_closure_;
+    std::optional<net::Error> error_code_;
+  };
+
+ private:
+  base::test::ScopedFeatureList features_;
+};
+
+IN_PROC_BROWSER_TEST_F(
+    DownloadContentRendererSideContentDecodingFailureTest,
+    CompressedResponseWithContentDispositionInsufficientResources) {
+  base::RunLoop run_loop;
+  FinishNavigationObserver finish_navigation_observer(shell()->web_contents(),
+                                                      run_loop.QuitClosure());
+  // gzip-content-with-content-disposition.gz is served with Content-Disposition
+  // headers, and `Content-Encoding: gzip`.
+  EXPECT_TRUE(NavigateToURLAndExpectNoCommit(
+      shell(), embedded_test_server()->GetURL(
+                   "/download/gzip-content-with-content-disposition.gz")));
+  run_loop.Run();
+  EXPECT_THAT(finish_navigation_observer.error_code(), net::ERR_ABORTED);
 }
 
 // Test that the network isolation key is populated for:
@@ -5429,6 +5541,7 @@ IN_PROC_BROWSER_TEST_F(DownloadContentTest,
 
   // Load the download page and click on the link.
   EXPECT_TRUE(NavigateToURL(shell(), referrer_url));
+  SimulateEndOfPaintHoldingOnPrimaryMainFrame(shell()->web_contents());
   content::SimulateMouseClickOrTapElementWithId(shell()->web_contents(),
                                                 "downloadlink");
 

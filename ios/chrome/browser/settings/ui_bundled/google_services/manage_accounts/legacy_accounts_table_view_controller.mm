@@ -19,8 +19,10 @@
 #import "ios/chrome/app/application_delegate/app_state.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_ui_util.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/table_view_account_item.h"
+#import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
 #import "ios/chrome/browser/authentication/ui_bundled/enterprise/enterprise_utils.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signout_action_sheet/signout_action_sheet_coordinator.h"
 #import "ios/chrome/browser/net/model/crurl.h"
 #import "ios/chrome/browser/settings/model/sync/utils/sync_util.h"
@@ -115,6 +117,7 @@ typedef NS_ENUM(NSInteger, AccountsItemType) {
   // for a sign-out reason. The parent coordinator is responsible to dismiss
   // this coordinator when a sign-out happens.
   BOOL _signoutDismissalByParentCoordinator;
+  SigninCoordinator* _signinCoordinator;
 }
 
 // Modal alert to choose between remove an identity and show MyGoogle UI.
@@ -188,6 +191,7 @@ typedef NS_ENUM(NSInteger, AccountsItemType) {
   [self.signoutCoordinator stop];
   self.signoutCoordinator = nil;
   [self dismissRemoveAccountCoordinator];
+  [self stopSigninCoordinator];
   _browser = nullptr;
 
   _isBeingDismissed = YES;
@@ -434,22 +438,27 @@ typedef NS_ENUM(NSInteger, AccountsItemType) {
   // fixed.
   [self preventUserInteraction];
   __weak __typeof(self) weakSelf = self;
-  ShowSigninCommand* command = [[ShowSigninCommand alloc]
-      initWithOperation:AuthenticationOperation::kAddAccount
-               identity:nil
-            accessPoint:AccessPoint::kSettings
-            promoAction:PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO
-             completion:^(SigninCoordinatorResult result,
-                          id<SystemIdentity> completionIdentity) {
-               [weakSelf handleDidAddAccount:result];
-             }];
-  [_applicationHandler showSignin:command baseViewController:self];
+  SigninContextStyle contextStyle = SigninContextStyle::kDefault;
+  AccessPoint accessPoint = AccessPoint::kSettings;
+  _signinCoordinator = [SigninCoordinator
+      addAccountCoordinatorWithBaseViewController:self
+                                          browser:_browser
+                                     contextStyle:contextStyle
+                                      accessPoint:accessPoint
+                             continuationProvider:
+                                 DoNothingContinuationProvider()];
+  _signinCoordinator.signinCompletion =
+      ^(SigninCoordinatorResult result, id<SystemIdentity> completionIdentity) {
+        [weakSelf handleDidAddAccount:result];
+      };
+  [_signinCoordinator start];
 }
 
 - (void)handleDidAddAccount:(SigninCoordinatorResult)result {
   // TODO(crbug.com/40229802): Remove the following line when todo bug will be
   // fixed.
   [self allowUserInteraction];
+  [self stopSigninCoordinator];
   [self handleAuthenticationOperationDidFinish];
   if (result == SigninCoordinatorResult::SigninCoordinatorResultSuccess &&
       _closeSettingsOnAddAccount) {
@@ -590,22 +599,21 @@ typedef NS_ENUM(NSInteger, AccountsItemType) {
     // An action is already in progress, ignore user's request.
     return;
   }
+
+  constexpr signin_metrics::ProfileSignout metricSignOut =
+      signin_metrics::ProfileSignout::kUserClickedSignoutSettings;
+
+  __weak LegacyAccountsTableViewController* weakSelf = self;
   self.signoutCoordinator = [[SignoutActionSheetCoordinator alloc]
       initWithBaseViewController:self
                          browser:_browser
                             rect:itemView.frame
                             view:itemView
         forceSnackbarOverToolbar:NO
-                      withSource:signin_metrics::ProfileSignout::
-                                     kUserClickedSignoutSettings];
-  __weak LegacyAccountsTableViewController* weakSelf = self;
-  self.signoutCoordinator.signoutCompletion = ^(BOOL success) {
-    [weakSelf.signoutCoordinator stop];
-    weakSelf.signoutCoordinator = nil;
-    if (success) {
-      [weakSelf handleAuthenticationOperationDidFinish];
-    }
-  };
+                      withSource:metricSignOut
+                      completion:^(BOOL success, SceneState* scene_state) {
+                        [weakSelf handleSignOutCompleted:success];
+                      }];
   self.signoutCoordinator.delegate = self;
   [self.signoutCoordinator start];
 }
@@ -616,6 +624,15 @@ typedef NS_ENUM(NSInteger, AccountsItemType) {
   // `self.removeOrMyGoogleChooserAlertCoordinator` should not be stopped, since
   // the coordinator has been cancelled.
   self.removeOrMyGoogleChooserAlertCoordinator = nil;
+}
+
+// Handles signout operation with `success` or failure.
+- (void)handleSignOutCompleted:(BOOL)success {
+  [self.signoutCoordinator stop];
+  self.signoutCoordinator = nil;
+  if (success) {
+    [self handleAuthenticationOperationDidFinish];
+  }
 }
 
 // Sets `_authenticationOperationInProgress` to NO and pops this accounts
@@ -726,6 +743,11 @@ typedef NS_ENUM(NSInteger, AccountsItemType) {
 }
 
 #pragma mark - Private methods
+
+- (void)stopSigninCoordinator {
+  [_signinCoordinator stop];
+  _signinCoordinator = nil;
+}
 
 - (void)dismissRemoveOrMyGoogleChooserAlert {
   [self.removeOrMyGoogleChooserAlertCoordinator stop];

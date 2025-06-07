@@ -32,6 +32,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/thread_restrictions.h"
@@ -343,7 +344,7 @@ const struct CropEntry kImagesToCrop[] = {
 // be byte-copied directly into the finished DataPack. This should contain the
 // persistent IDs for all themeable image IDs that aren't in kFrameValues,
 // kTabBackgroundMap or kImagesToCrop.
-const auto kPreloadIDs = std::to_array<BrowserThemePack::PersistentID>({
+constexpr auto kPreloadIDs = std::to_array<BrowserThemePack::PersistentID>({
     PRS::kNtpBackground,
     PRS::kNtpAttribution,
 });

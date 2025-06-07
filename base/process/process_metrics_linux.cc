@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "base/process/process_metrics.h"
 
 #include <dirent.h>
@@ -21,9 +16,11 @@
 #include <unistd.h>
 
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/cpu.h"
 #include "base/files/dir_reader_posix.h"
@@ -41,6 +38,7 @@
 #include "base/strings/string_util.h"
 #include "base/system/sys_info.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/trace_event/trace_event.h"
 #include "base/types/expected.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -72,7 +70,7 @@ uint64_t ReadFileToUint64(const FilePath& file) {
 // converted from a number of jiffies on success or an error code if parsing
 // failed.
 base::expected<TimeDelta, ProcessCPUUsageError> ParseTotalCPUTimeFromStats(
-    base::span<const std::string> proc_stats) {
+    base::span<std::string_view> proc_stats) {
   const std::optional<int64_t> utime =
       internal::GetProcStatsFieldAsOptionalInt64(proc_stats,
                                                  internal::VM_UTIME);
@@ -110,8 +108,9 @@ std::unique_ptr<ProcessMetrics> ProcessMetrics::CreateProcessMetrics(
 
 base::expected<TimeDelta, ProcessCPUUsageError>
 ProcessMetrics::GetCumulativeCPUUsage() {
+  TRACE_EVENT("base", "GetCumulativeCPUUsage");
   std::string buffer;
-  std::vector<std::string> proc_stats;
+  std::vector<std::string_view> proc_stats;
   if (!internal::ReadProcStats(process_, &buffer) ||
       !internal::ParseProcStats(buffer, &proc_stats)) {
     return base::unexpected(ProcessCPUUsageError::kSystemError);
@@ -130,7 +129,7 @@ bool ProcessMetrics::GetCumulativeCPUUsagePerThread(
         FilePath thread_stat_path = task_path.Append("stat");
 
         std::string buffer;
-        std::vector<std::string> proc_stats;
+        std::vector<std::string_view> proc_stats;
         if (!internal::ReadProcFile(thread_stat_path, &buffer) ||
             !internal::ParseProcStats(buffer, &proc_stats)) {
           return;
@@ -149,14 +148,14 @@ bool ProcessMetrics::GetCumulativeCPUUsagePerThread(
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
 base::expected<ProcessMemoryInfo, ProcessUsageError>
 ProcessMetrics::GetMemoryInfo() const {
-  StringPairs pairs;
-  if (!internal::ReadProcFileToTrimmedStringPairs(process_, "status", &pairs)) {
+  std::string buffer;
+  std::optional<StringViewPairs> pairs =
+      internal::ReadProcFileToTrimmedStringPairs(process_, "status", &buffer);
+  if (!pairs) {
     return base::unexpected(ProcessUsageError::kSystemError);
   }
   ProcessMemoryInfo dump;
-  for (const auto& pair : pairs) {
-    const std::string& key = pair.first;
-    const std::string& value_str = pair.second;
+  for (const auto& [key, value_str] : *pairs) {
     if (key == "VmSwap") {
       dump.vm_swap_bytes =
           static_cast<uint64_t>(GetKbFieldAsSizeT(value_str)) * 1024;
@@ -166,8 +165,6 @@ ProcessMetrics::GetMemoryInfo() const {
     } else if (key == "RssAnon") {
       dump.rss_anon_bytes =
           static_cast<uint64_t>(GetKbFieldAsSizeT(value_str)) * 1024;
-    } else {
-      continue;
     }
   }
   if (dump.rss_anon_bytes != 0) {
@@ -198,7 +195,7 @@ bool ProcessMetrics::GetPageFaultCounts(PageFaultCounts* counts) const {
   if (!internal::ReadProcStats(process_, &stats_data)) {
     return false;
   }
-  std::vector<std::string> proc_stats;
+  std::vector<std::string_view> proc_stats;
   if (!internal::ParseProcStats(stats_data, &proc_stats)) {
     return false;
   }
@@ -224,7 +221,8 @@ int ProcessMetrics::GetOpenFdCount() const {
   int total_count = 0;
   for (; dir_reader.Next();) {
     const char* name = dir_reader.name();
-    if (strcmp(name, ".") != 0 && strcmp(name, "..") != 0) {
+    if (UNSAFE_TODO(strcmp(name, ".")) != 0 &&
+        UNSAFE_TODO(strcmp(name, "..")) != 0) {
       ++total_count;
     }
   }
@@ -308,7 +306,7 @@ int ParseProcStatCPU(std::string_view input) {
     if (--num_spaces_remaining == 0) {
       int utime = 0;
       int stime = 0;
-      if (sscanf(&input.data()[i], "%d %d", &utime, &stime) != 2) {
+      if (UNSAFE_TODO(sscanf(&input.data()[i], "%d %d", &utime, &stime)) != 2) {
         return -1;
       }
 
@@ -910,10 +908,10 @@ bool GetSwapInfo(SwapInfo* swap_info) {
 
 namespace {
 
-size_t ParseSize(const std::string& value) {
+size_t ParseSize(std::string_view value) {
   size_t pos = value.find(' ');
-  std::string base = value.substr(0, pos);
-  std::string units = value.substr(pos + 1);
+  std::string_view base = value.substr(0, pos);
+  std::string_view units = value.substr(pos + 1);
 
   size_t ret = 0;
 
@@ -947,7 +945,8 @@ void GetFdInfoFromPid(pid_t pid,
   for (; dir_reader.Next();) {
     const char* name = dir_reader.name();
 
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+    if (UNSAFE_TODO(strcmp(name, ".")) == 0 ||
+        UNSAFE_TODO(strcmp(name, "..")) == 0) {
       continue;
     }
 
@@ -982,8 +981,9 @@ void GetFdInfoFromPid(pid_t pid,
         continue;
       }
 
-      std::string key = line.substr(0, pos);
-      std::string value = line.substr(pos + 1);
+      std::string_view line_view(line);
+      std::string_view key = line_view.substr(0, pos);
+      std::string_view value = line_view.substr(pos + 1);
 
       /* trim leading space from the value: */
       value = value.substr(value.find_first_not_of(" \t"));
@@ -1031,7 +1031,7 @@ bool GetGraphicsMemoryInfoFdInfo(GraphicsMemoryInfoKB* gpu_meminfo) {
   std::string line;
   while (std::getline(clients_stream, line)) {
     pid_t pid;
-    int num_res = sscanf(&line.c_str()[21], "%5d", &pid);
+    int num_res = UNSAFE_TODO(sscanf(&line.c_str()[21], "%5d", &pid));
     if (num_res == 1) {
       GetFdInfoFromPid(pid, fdinfo_table);
     }
@@ -1080,8 +1080,9 @@ bool GetGraphicsMemoryInfo(GraphicsMemoryInfoKB* gpu_meminfo) {
   if (ReadFileToStringNonBlocking(geminfo_path, &geminfo_data)) {
     int gpu_objects = -1;
     int64_t gpu_memory_size = -1;
-    int num_res = sscanf(geminfo_data.c_str(), "%d objects, %" SCNd64 " bytes",
-                         &gpu_objects, &gpu_memory_size);
+    int num_res = UNSAFE_TODO(sscanf(geminfo_data.c_str(),
+                                     "%d objects, %" SCNd64 " bytes",
+                                     &gpu_objects, &gpu_memory_size));
     if (num_res == 2) {
       gpu_meminfo->gpu_objects = gpu_objects;
       gpu_meminfo->gpu_memory_size = gpu_memory_size;

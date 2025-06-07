@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/webui/password_manager/password_manager_ui.h"
 
 #include "base/i18n/message_formatter.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_delegate.h"
@@ -37,11 +38,11 @@
 #include "components/grit/components_scaled_resources.h"
 #include "components/password_manager/core/browser/leak_detection_dialog_utils.h"
 #include "components/password_manager/core/common/password_manager_constants.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui_data_source.h"
+#include "device/fido/features.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -333,6 +334,10 @@ content::WebUIDataSource* CreateAndAddPasswordsUIHTMLSource(
        IDS_PASSWORD_MANAGER_UI_PASSKEY_DETAILS_CARD_DELETE_BUTTON_NO_USERNAME_ARIA_LABEL},
       {"passkeyManagementInfoLabel",
        IDS_PASSWORD_MANAGER_UI_PASSKEY_MANAGEMENT_INFO_LABEL},
+      {"passkeyUpgradeSettingsToggleLabel",
+       IDS_PASSWORD_MANAGER_UI_PASSKEY_UPGRADE_TOGGLE_LABEL},
+      {"passkeyUpgradeSettingsToggleSubLabel",
+       IDS_PASSWORD_MANAGER_UI_PASSKEY_UPGRADE_TOGGLE_SUBLABEL},
       {"passwordChangeSettingLabel", IDS_SETTINGS_PASSWORD_CHANGE_LABEL},
       {"passwordChangeSettingSubLabel", IDS_SETTINGS_PASSWORD_CHANGE_SUBLABEL},
       {"passwordChangeSettingDataBreach",
@@ -615,8 +620,9 @@ content::WebUIDataSource* CreateAndAddPasswordsUIHTMLSource(
 
   source->AddBoolean("canAddShortcut", web_app::AreWebAppsEnabled(profile));
 
-  source->AddBoolean("isBatchUploadDesktopEnabled",
-                     switches::IsBatchUploadDesktopEnabled());
+  source->AddBoolean(
+      "passkeyUpgradeSettingsToggleVisible",
+      base::FeatureList::IsEnabled(device::kWebAuthnPasskeyUpgrade));
 
   content::URLDataSource::Add(
       profile, std::make_unique<FaviconSource>(

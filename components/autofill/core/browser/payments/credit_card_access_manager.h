@@ -18,7 +18,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/foundations/autofill_driver.h"
 #include "components/autofill/core/browser/foundations/autofill_manager.h"
 #include "components/autofill/core/browser/metrics/form_events/credit_card_form_event_logger.h"
@@ -168,7 +168,13 @@ class CreditCardAccessManager
 
   AutofillClient& autofill_client() { return manager_->client(); }
 
+  const AutofillClient& autofill_client() const { return manager_->client(); }
+
   payments::PaymentsAutofillClient& payments_autofill_client() {
+    return *autofill_client().GetPaymentsAutofillClient();
+  }
+
+  const payments::PaymentsAutofillClient& payments_autofill_client() const {
     return *autofill_client().GetPaymentsAutofillClient();
   }
 

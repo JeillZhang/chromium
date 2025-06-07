@@ -32,7 +32,7 @@ namespace {
 // https://cloud.google.com/compute/docs/metadata/querying-metadata#query-https-mds
 constexpr char kHttpMetadataBaseUrl[] =
     "http://metadata.google.internal/computeMetadata/v1/instance/"
-    "service-accounts/default/";
+    "service-accounts/default";
 
 constexpr size_t kMaxResponseSize = 4096;
 
@@ -241,6 +241,10 @@ void ComputeEngineServiceClient::OnRequestComplete(
                << static_cast<int32_t>(http_status.error_code())
                << ", Message: " << http_status.error_message();
   }
+
+  // Reset |url_loader_| since we've extracted the info we need from it.
+  // This will allow the caller to reuse this instance to make another request.
+  url_loader_.reset();
 
   std::move(callback).Run(http_status);
 }

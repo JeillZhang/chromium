@@ -26,7 +26,6 @@
 #include "ash/ime/ime_switch_type.h"
 #include "ash/public/cpp/accelerator_actions.h"
 #include "ash/public/cpp/accelerators.h"
-#include "ash/public/cpp/debug_delegate.h"
 #include "ash/public/mojom/input_device_settings.mojom-shared.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
@@ -771,11 +770,6 @@ bool AcceleratorControllerImpl::IsReserved(
   return action_ptr && base::Contains(reserved_actions_, *action_ptr);
 }
 
-void AcceleratorControllerImpl::SetDebugDelegate(DebugDelegate* delegate) {
-  DCHECK(!delegate || !debug_delegate_);
-  debug_delegate_ = delegate;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // AcceleratorControllerImpl, ui::AcceleratorTarget implementation:
 
@@ -949,6 +943,7 @@ bool AcceleratorControllerImpl::CanPerformAction(
     case AcceleratorAction::kDebugShowInformedRestore:
     case AcceleratorAction::kDebugShowToast:
     case AcceleratorAction::kDebugShowSystemNudge:
+    case AcceleratorAction::kDebugShowTestWindow:
     case AcceleratorAction::kDebugSystemUiStyleViewer:
     case AcceleratorAction::kDebugStartSunfishSession:
     case AcceleratorAction::kDebugToggleDarkMode:
@@ -1055,8 +1050,8 @@ bool AcceleratorControllerImpl::CanPerformAction(
       return ::features::IsAccessibilityMouseKeysEnabled();
     case AcceleratorAction::kToggleOverview:
       return accelerators::CanToggleOverview();
-    case AcceleratorAction::kCreateSnapGroup:
-      return accelerators::CanCreateSnapGroup();
+    case AcceleratorAction::kToggleSnapGroup:
+      return accelerators::CanToggleSnapGroup();
     case AcceleratorAction::kToggleSnapGroupWindowsMinimizeAndRestore:
       return false;
     case AcceleratorAction::kToggleMultitaskMenu:
@@ -1080,6 +1075,8 @@ bool AcceleratorControllerImpl::CanPerformAction(
     case AcceleratorAction::kTakeWindowScreenshot:
       return accelerators::CanScreenshot(action ==
                                          AcceleratorAction::kTakeScreenshot);
+    case AcceleratorAction::kStartSunfishSession:
+      return accelerators::CanStartSunfishSession();
     case AcceleratorAction::kToggleProjectorMarker:
       return accelerators::CanToggleProjectorMarker();
     case AcceleratorAction::kToggleResizeLockMenu:
@@ -1263,6 +1260,7 @@ void AcceleratorControllerImpl::PerformAction(
     case AcceleratorAction::kDebugShowInformedRestore:
     case AcceleratorAction::kDebugShowToast:
     case AcceleratorAction::kDebugShowSystemNudge:
+    case AcceleratorAction::kDebugShowTestWindow:
     case AcceleratorAction::kDebugStartSunfishSession:
     case AcceleratorAction::kDebugToggleDarkMode:
     case AcceleratorAction::kDebugToggleDynamicColor:
@@ -1272,7 +1270,6 @@ void AcceleratorControllerImpl::PerformAction(
     case AcceleratorAction::kDebugToggleVideoConferenceCameraTrayIcon:
     case AcceleratorAction::kDebugSystemUiStyleViewer:
       debug::PerformDebugActionIfEnabled(action);
-      PerformDebugActionOnDelegateIfEnabled(action);
       break;
     case AcceleratorAction::kDebugToggleShowDebugBorders:
       debug::ToggleShowDebugBorders();
@@ -1539,6 +1536,9 @@ void AcceleratorControllerImpl::PerformAction(
       RecordToggleAssistant(accelerator);
       accelerators::ToggleAssistant();
       break;
+    case AcceleratorAction::kStartSunfishSession:
+      accelerators::StartSunfishSession();
+      break;
     case AcceleratorAction::kSuspend:
       base::RecordAction(UserMetricsAction("Accel_Suspend"));
       if (!features::IsSuspendStateMachineEnabled()) {
@@ -1668,8 +1668,8 @@ void AcceleratorControllerImpl::PerformAction(
       base::RecordAction(base::UserMetricsAction("Accel_Overview_F5"));
       accelerators::ToggleOverview();
       break;
-    case AcceleratorAction::kCreateSnapGroup:
-      accelerators::CreateSnapGroup();
+    case AcceleratorAction::kToggleSnapGroup:
+      accelerators::ToggleSnapGroup();
       break;
     case AcceleratorAction::kToggleSnapGroupWindowsMinimizeAndRestore:
       accelerators::ToggleSnapGroupsMinimize();
@@ -1867,27 +1867,6 @@ bool AcceleratorControllerImpl::ShouldPreventProcessingAccelerators() const {
 
 void AcceleratorControllerImpl::RecordVolumeSource() {
   accelerators::RecordVolumeSource();
-}
-
-void AcceleratorControllerImpl::PerformDebugActionOnDelegateIfEnabled(
-    AcceleratorAction action) {
-  if (!debug_delegate_) {
-    return;
-  }
-
-  switch (action) {
-    case AcceleratorAction::kDebugPrintLayerHierarchy:
-      debug_delegate_->PrintLayerHierarchy();
-      break;
-    case AcceleratorAction::kDebugPrintWindowHierarchy:
-      debug_delegate_->PrintWindowHierarchy();
-      break;
-    case AcceleratorAction::kDebugPrintViewHierarchy:
-      debug_delegate_->PrintViewHierarchy();
-      break;
-    default:
-      break;
-  }
 }
 
 }  // namespace ash

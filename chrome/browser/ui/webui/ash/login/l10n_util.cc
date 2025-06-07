@@ -103,12 +103,11 @@ base::Value::Dict CreateLanguageEntry(
 // kMostRelevantLanguagesDivider is placed between the most relevant languages
 // and all others.
 base::Value::List GetLanguageList(
+    const std::string& app_locale,
     const input_method::InputMethodDescriptors& descriptors,
     const std::vector<std::string>& base_language_codes,
     const std::vector<std::string>& most_relevant_language_codes,
     bool insert_divider) {
-  const std::string app_locale = g_browser_process->GetApplicationLocale();
-
   std::set<std::string> language_codes;
   // Collect the language codes from the supported input methods.
   for (const auto& descriptor : descriptors) {
@@ -384,7 +383,7 @@ void ResolveLanguageListInThreadPool(
   const std::string list_locale =
       language_switch_result ? language_switch_result->loaded_locale : locale;
   base::Value::List language_list(
-      GetUILanguageList(nullptr, selected_code, input_method_manager));
+      GetUILanguageList(locale, nullptr, selected_code, input_method_manager));
 
   task_runner->PostTask(
       FROM_HERE,
@@ -459,6 +458,7 @@ base::Value::List GetMinimalUILanguageList() {
 }
 
 base::Value::List GetUILanguageList(
+    const std::string& app_locale,
     const std::vector<std::string>* most_relevant_language_codes,
     const std::string& selected,
     input_method::InputMethodManager* input_method_manager) {
@@ -467,7 +467,7 @@ base::Value::List GetUILanguageList(
   input_method::InputMethodDescriptors descriptors =
       component_extension_ime_manager->GetXkbIMEAsInputMethodDescriptor();
   base::Value::List languages_list(GetLanguageList(
-      descriptors, l10n_util::GetUserFacingUILocaleList(),
+      app_locale, descriptors, l10n_util::GetUserFacingUILocaleList(),
       most_relevant_language_codes
           ? *most_relevant_language_codes
           : StartupCustomizationDocument::GetInstance()->configured_locales(),
@@ -500,7 +500,7 @@ std::string FindMostRelevantLocale(
   return fallback_locale;
 }
 
-base::Value::List GetAndActivateLoginKeyboardLayouts(
+base::Value::List GetAndActivateOobeInputMethods(
     const std::string& locale,
     const std::string& selected,
     input_method::InputMethodManager* input_method_manager) {
@@ -508,24 +508,24 @@ base::Value::List GetAndActivateLoginKeyboardLayouts(
   input_method::InputMethodUtil* util =
       input_method_manager->GetInputMethodUtil();
 
-  const std::vector<std::string>& hardware_login_input_methods =
-      util->GetHardwareLoginInputMethodIds();
+  const std::vector<std::string>& hardware_input_methods =
+      util->GetHardwareInputMethodIds();
 
   DCHECK(
       ProfileHelper::IsSigninProfile(ProfileManager::GetActiveUserProfile()));
-  input_method_manager->GetActiveIMEState()->EnableLoginLayouts(
-      locale, hardware_login_input_methods);
+  input_method_manager->GetActiveIMEState()->EnableOobeInputMethods(
+      locale, hardware_input_methods);
 
   input_method::InputMethodDescriptors input_methods(
       input_method_manager->GetActiveIMEState()->GetEnabledInputMethods());
   std::set<std::string> input_methods_added;
 
-  for (const auto& hardware_login_input_method : hardware_login_input_methods) {
+  for (const auto& hardware_input_method : hardware_input_methods) {
     const input_method::InputMethodDescriptor* ime =
-        util->GetInputMethodDescriptorFromId(hardware_login_input_method);
+        util->GetInputMethodDescriptorFromId(hardware_input_method);
     // Do not crash in case of misconfiguration.
     if (ime) {
-      input_methods_added.insert(hardware_login_input_method);
+      input_methods_added.insert(hardware_input_method);
       input_methods_list.Append(CreateInputMethodsEntry(*ime, selected, util));
     } else {
       NOTREACHED();

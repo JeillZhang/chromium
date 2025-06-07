@@ -14,14 +14,15 @@
 #include "components/permissions/contexts/midi_permission_context.h"
 #include "components/permissions/permission_request_id.h"
 #include "components/permissions/permission_util.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "services/network/public/cpp/permissions_policy/origin_with_possible_wildcards.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
 #include "third_party/blink/public/common/features.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -65,7 +66,7 @@ class PermissionContextBasePermissionsPolicyTest
       const char* origin,
       network::mojom::PermissionsPolicyFeature feature =
           network::mojom::PermissionsPolicyFeature::kNotFound) {
-    blink::ParsedPermissionsPolicy frame_policy = {};
+    network::ParsedPermissionsPolicy frame_policy = {};
     if (feature != network::mojom::PermissionsPolicyFeature::kNotFound) {
       frame_policy.emplace_back(
           feature,
@@ -111,6 +112,11 @@ class PermissionContextBasePermissionsPolicyTest
                                        content::RenderFrameHost* rfh) {
     return permissions::PermissionUtil::PermissionStatusToContentSetting(
         pcb->GetPermissionStatus(
+               content::PermissionDescriptorUtil::
+                   CreatePermissionDescriptorForPermissionType(
+                       permissions::PermissionUtil::
+                           ContentSettingsTypeToPermissionType(
+                               pcb->content_settings_type())),
                rfh, rfh->GetLastCommittedURL(),
                web_contents()->GetPrimaryMainFrame()->GetLastCommittedURL())
             .status);
@@ -122,9 +128,9 @@ class PermissionContextBasePermissionsPolicyTest
     permissions::PermissionRequestID id(
         rfh, permission_request_id_generator_.GenerateNextId());
     pcb->RequestPermission(
-        permissions::PermissionRequestData(pcb, id,
-                                           /*user_gesture=*/true,
-                                           rfh->GetLastCommittedURL()),
+        std::make_unique<permissions::PermissionRequestData>(
+            pcb, id,
+            /*user_gesture=*/true, rfh->GetLastCommittedURL()),
         base::BindOnce(&PermissionContextBasePermissionsPolicyTest::
                            RequestPermissionForFrameFinished,
                        base::Unretained(this)));

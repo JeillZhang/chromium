@@ -114,6 +114,7 @@
 #include "chrome/browser/ash/login/osauth/chrome_auth_parts.h"
 #include "chrome/browser/ash/login/session/chrome_session_manager.h"
 #include "chrome/browser/ash/login/session/user_session_manager.h"
+#include "chrome/browser/ash/login/signin/token_handle_store_factory.h"
 #include "chrome/browser/ash/login/startup_utils.h"
 #include "chrome/browser/ash/login/users/avatar/user_image_manager_registry.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
@@ -228,6 +229,7 @@
 #include "chromeos/ash/components/network/system_token_cert_db_storage.h"
 #include "chromeos/ash/components/network/traffic_counters_handler.h"
 #include "chromeos/ash/components/peripheral_notification/peripheral_notification_manager.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/ash/components/power/dark_resume_controller.h"
 #include "chromeos/ash/components/report/device_metrics/use_case/real_psm_client_manager.h"
 #include "chromeos/ash/components/report/device_metrics/use_case/use_case.h"
@@ -255,7 +257,6 @@
 #include "components/metrics/metrics_service.h"
 #include "components/ownership/owner_key_util.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
-#include "components/policy/core/common/device_local_account_type.h"
 #include "components/prefs/pref_service.h"
 #include "components/quirks/quirks_manager.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
@@ -277,6 +278,7 @@
 #include "content/public/common/main_function_params.h"
 #include "dbus/object_path.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
+#include "extensions/common/switches.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_change_notifier_passive.h"
 #include "printing/backend/print_backend.h"
@@ -287,6 +289,7 @@
 #include "ui/base/ime/ash/ime_keyboard.h"
 #include "ui/base/ime/ash/input_method_manager.h"
 #include "ui/base/ime/ash/input_method_util.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/pointer/pointer_device.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/events/ash/pref_names.h"
@@ -538,9 +541,7 @@ class DBusServices {
 
     disks::DiskMountManager::Initialize();
 
-    if (ash::features::IsWifiDirectEnabled()) {
-      WifiP2PController::Initialize();
-    }
+    WifiP2PController::Initialize();
     NetworkHandler::Initialize();
 
     chromeos::sensors::SensorHalDispatcher::Initialize();
@@ -572,9 +573,7 @@ class DBusServices {
     rollback_network_config::Shutdown();
     chromeos::sensors::SensorHalDispatcher::Shutdown();
     NetworkHandler::Shutdown();
-    if (ash::features::IsWifiDirectEnabled()) {
-      WifiP2PController::Shutdown();
-    }
+    WifiP2PController::Shutdown();
     disks::DiskMountManager::Shutdown();
     LoginState::Shutdown();
     NetworkCertLoader::Shutdown();
@@ -671,7 +670,7 @@ int ChromeBrowserMainPartsAsh::PreEarlyInitialization() {
   if (command_line->HasSwitch(switches::kGuestSession)) {
     // Disable sync and extensions if we're in "browse without sign-in" mode.
     command_line->AppendSwitch(::syncer::kDisableSync);
-    command_line->AppendSwitch(::switches::kDisableExtensions);
+    command_line->AppendSwitch(extensions::switches::kDisableExtensions);
     browser_defaults::bookmarks_enabled = false;
   }
 
@@ -981,8 +980,9 @@ void ChromeBrowserMainPartsAsh::PreProfileInit() {
                      chromeos::version_loader::VERSION_FULL),
       base::BindOnce(&ChromeOSVersionCallback));
 
-  kiosk_controller_ =
-      std::make_unique<KioskControllerImpl>(user_manager::UserManager::Get());
+  kiosk_controller_ = std::make_unique<KioskControllerImpl>(
+      CHECK_DEREF(g_browser_process->local_state()),
+      user_manager::UserManager::Get());
 
   ambient_client_ = std::make_unique<AmbientClientImpl>();
 
@@ -1054,7 +1054,8 @@ void ChromeBrowserMainPartsAsh::PreProfileInit() {
   // CoralController depends on machine_learning::ServiceConnection, so needs to
   // be initialized after it.
   if (features::IsCoralFeatureEnabled()) {
-    Shell::Get()->coral_controller()->Initialize();
+    Shell::Get()->coral_controller()->Initialize(
+        l10n_util::GetLanguage(g_browser_process->GetApplicationLocale()));
   }
 
   // Needs to be initialized after crosapi_manager_.
@@ -1503,8 +1504,7 @@ void ChromeBrowserMainPartsAsh::PostBrowserStart() {
 
   // ARCVM defers to Android's LMK to kill apps in low memory situations because
   // memory can't be reclaimed directly to ChromeOS.
-  if (!arc::IsArcVmEnabled() &&
-      base::FeatureList::IsEnabled(arc::kContainerAppKiller)) {
+  if (!arc::IsArcVmEnabled()) {
     arc_container_app_killer_ = std::make_unique<arc::ContainerAppKiller>();
   }
 
@@ -1735,6 +1735,12 @@ void ChromeBrowserMainPartsAsh::PostMainMessageLoopRun() {
 
   // NOTE: Closes ash and destroys `Shell`.
   ChromeBrowserMainPartsLinux::PostMainMessageLoopRun();
+
+  // TokenHandleStore needs to outlive the Profile, which
+  // is destroyed inside ChromeBrowserMainPartsLinux::PostMainMessageLoopRun().
+  if (ash::features::IsUseTokenHandleStoreEnabled()) {
+    TokenHandleStoreFactory::Get()->DestroyTokenHandleStore();
+  }
 
   magic_boost_controller_ash_.reset();
 

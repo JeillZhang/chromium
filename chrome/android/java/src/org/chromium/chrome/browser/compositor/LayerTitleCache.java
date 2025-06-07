@@ -9,7 +9,6 @@ import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.text.TextUtils;
 import android.util.SparseArray;
-import android.util.SparseIntArray;
 import android.view.View;
 
 import androidx.annotation.ColorInt;
@@ -19,6 +18,7 @@ import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.base.Token;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.compositor.layouts.content.TitleBitmapFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -37,7 +37,9 @@ import org.chromium.ui.resources.dynamics.BitmapDynamicResource;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
 import org.chromium.ui.resources.dynamics.ViewResourceAdapter;
 
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 
 /**
  * A version of the {@link LayerTitleCache} that builds native cc::Layer objects that represent the
@@ -49,8 +51,8 @@ public class LayerTitleCache {
     private TabModelSelector mTabModelSelector;
 
     private final SparseArray<FaviconTitle> mTabTitles = new SparseArray<>();
-    private final SparseArray<Title> mGroupTitles = new SparseArray<>();
-    private final SparseIntArray mSharedAvatarResIds = new SparseIntArray();
+    private final Map<Token, Title> mGroupTitles = new HashMap<>();
+    private final Map<Token, Integer> mSharedAvatarResIds = new HashMap<>();
     private final HashSet<Integer> mTabBubbles = new HashSet<>();
     private final int mFaviconSize;
     private final int mSharedGroupAvatarPaddingPx;
@@ -64,7 +66,7 @@ public class LayerTitleCache {
     private final ResourceManager mResourceManager;
 
     private FaviconHelper mFaviconHelper;
-    private DefaultFaviconHelper mDefaultFaviconHelper;
+    private final DefaultFaviconHelper mDefaultFaviconHelper;
 
     /** Responsible for building titles on light themes or standard tabs. */
     protected final TitleBitmapFactory mStandardTitleBitmapFactory;
@@ -101,8 +103,7 @@ public class LayerTitleCache {
         mBubbleOffset =
                 res.getDimensionPixelSize(R.dimen.compositor_tab_title_favicon_bubble_offset);
         mBubbleBorderColor =
-                TabUiThemeUtil.getTabStripBackgroundColorForActivityState(
-                        context, /* isIncognito= */ false, /* isActivityFocused= */ true);
+                TabUiThemeUtil.getTabStripBackgroundColor(context, /* isIncognito= */ false);
         mBubbleFillColor = TabUiThemeProvider.getTabBubbleFillColor(context);
         mNativeLayerTitleCache =
                 LayerTitleCacheJni.get()
@@ -220,46 +221,48 @@ public class LayerTitleCache {
     }
 
     @CalledByNative
-    private void buildUpdatedGroupTitle(int groupRootId, boolean incognito) {
+    private void buildUpdatedGroupTitle(Token groupId, boolean incognito) {
         // TODO(crbug.com/331642736): Investigate if this can be called with a different width than
         //  what is stored for the corresponding group title.
         TabGroupModelFilter filter =
                 mTabModelSelector
                         .getTabGroupModelFilterProvider()
                         .getTabGroupModelFilter(incognito);
-        if (!filter.tabGroupExistsForRootId(groupRootId)) return;
+        if (!filter.tabGroupExists(groupId)) return;
 
-        String titleString = filter.getTabGroupTitle(groupRootId);
-        getUpdatedGroupTitle(groupRootId, titleString, incognito);
+        String titleString = filter.getTabGroupTitle(filter.getRootIdFromTabGroupId(groupId));
+        getUpdatedGroupTitle(groupId, titleString, incognito);
     }
 
-    public String getUpdatedGroupTitle(int groupRootId, String titleString, boolean incognito) {
+    public String getUpdatedGroupTitle(Token groupId, String titleString, boolean incognito) {
         if (TextUtils.isEmpty(titleString)) return null;
 
-        getUpdatedGroupTitleInternal(groupRootId, titleString, incognito);
+        getUpdatedGroupTitleInternal(groupId, titleString, incognito);
         return titleString;
     }
 
-    private String getUpdatedGroupTitleInternal(int rootId, String titleString, boolean incognito) {
+    private void getUpdatedGroupTitleInternal(
+            Token groupId, String titleString, boolean incognito) {
         TitleBitmapFactory titleBitmapFactory =
                 incognito ? mDarkTitleBitmapFactory : mStandardTitleBitmapFactory;
 
-        Title title = mGroupTitles.get(rootId);
+        Title title = mGroupTitles.get(groupId);
         if (title == null) {
             title = new Title();
-            mGroupTitles.put(rootId, title);
+            mGroupTitles.put(groupId, title);
             title.register();
         }
 
         TabGroupModelFilter filter =
                 mTabModelSelector.getTabGroupModelFilterProvider().getCurrentTabGroupModelFilter();
         Bitmap titleBitmap =
-                titleBitmapFactory.getGroupTitleBitmap(filter, mContext, rootId, titleString);
+                titleBitmapFactory.getGroupTitleBitmap(filter, mContext, groupId, titleString);
+        if (titleBitmap == null) return;
         title.set(titleBitmap);
 
-        int avatarResId = mSharedAvatarResIds.get(rootId, ResourcesCompat.ID_NULL);
+        Integer avatarResId = mSharedAvatarResIds.get(groupId);
         ViewResourceAdapter avatarResource = null;
-        if (avatarResId != ResourcesCompat.ID_NULL) {
+        if (avatarResId != null) {
             avatarResource = getResourceAdapterFromLoader(avatarResId);
             if (avatarResource != null) avatarResource.invalidate(null);
         }
@@ -273,14 +276,13 @@ public class LayerTitleCache {
                     .updateGroupLayer(
                             mNativeLayerTitleCache,
                             LayerTitleCache.this,
-                            rootId,
+                            groupId,
                             title.getTitleResId(),
                             avatarResource == null ? ResourcesCompat.ID_NULL : avatarResId,
                             avatarResource == null ? 0 : mSharedGroupAvatarPaddingPx,
                             incognito,
                             isRtl);
         }
-        return titleString;
     }
 
     /**
@@ -346,18 +348,11 @@ public class LayerTitleCache {
         return (ViewResourceAdapter) dynamicResourceLoader.getResource(resId);
     }
 
-    public void registerSharedGroupAvatar(int rootId, ViewResourceAdapter avatarResource) {
+    public void registerSharedGroupAvatar(Token groupId, ViewResourceAdapter avatarResource) {
         DynamicResourceLoader dynamicResourceLoader = mResourceManager.getDynamicResourceLoader();
         int resId = View.generateViewId();
         dynamicResourceLoader.registerResource(resId, avatarResource);
-        mSharedAvatarResIds.put(rootId, resId);
-    }
-
-    public void transferAvatarToNewRootId(int oldRootId, int newRootId) {
-        int avatarResId = mSharedAvatarResIds.get(oldRootId, ResourcesCompat.ID_NULL);
-        if (avatarResId == ResourcesCompat.ID_NULL) return;
-        mSharedAvatarResIds.delete(oldRootId);
-        mSharedAvatarResIds.put(newRootId, avatarResId);
+        mSharedAvatarResIds.put(groupId, resId);
     }
 
     private void unregisterSharedGroupAvatar(int resId) {
@@ -424,17 +419,17 @@ public class LayerTitleCache {
                         false);
     }
 
-    public void removeGroupTitle(int rootId) {
-        Title title = mGroupTitles.get(rootId);
+    public void removeGroupTitle(Token groupId) {
+        Title title = mGroupTitles.get(groupId);
         if (title == null) return;
         title.unregister();
-        mGroupTitles.remove(rootId);
+        mGroupTitles.remove(groupId);
         if (mNativeLayerTitleCache == 0) return;
         LayerTitleCacheJni.get()
                 .updateGroupLayer(
                         mNativeLayerTitleCache,
                         LayerTitleCache.this,
-                        rootId,
+                        groupId,
                         ResourcesCompat.ID_NULL,
                         ResourcesCompat.ID_NULL,
                         0,
@@ -442,11 +437,11 @@ public class LayerTitleCache {
                         false);
     }
 
-    public void removeSharedGroupAvatar(int rootId) {
-        int resId = mSharedAvatarResIds.get(rootId, ResourcesCompat.ID_NULL);
-        if (resId == ResourcesCompat.ID_NULL) return;
+    public void removeSharedGroupAvatar(Token groupId) {
+        Integer resId = mSharedAvatarResIds.get(groupId);
+        if (resId == null) return;
         unregisterSharedGroupAvatar(resId);
-        mSharedAvatarResIds.delete(rootId);
+        mSharedAvatarResIds.remove(groupId);
     }
 
     private class Title {
@@ -546,7 +541,7 @@ public class LayerTitleCache {
         void updateGroupLayer(
                 long nativeLayerTitleCache,
                 LayerTitleCache caller,
-                int groupRootId,
+                Token groupId,
                 int titleResId,
                 int avatarResId,
                 int avatarPadding,

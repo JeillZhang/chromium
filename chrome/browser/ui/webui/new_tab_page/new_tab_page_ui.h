@@ -29,7 +29,7 @@
 #include "chrome/browser/search/background/ntp_custom_background_service_observer.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_observer.h"
-#include "chrome/browser/ui/webui/metrics_reporter/metrics_reporter.h"
+#include "chrome/browser/ui/webui/customize_buttons/customize_buttons.mojom.h"
 #include "chrome/browser/ui/webui/new_tab_page/new_tab_page.mojom.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/page_image_service/mojom/page_image_service.mojom.h"
@@ -47,7 +47,6 @@
 #include "ui/webui/resources/cr_components/color_change_listener/color_change_listener.mojom.h"
 #include "ui/webui/resources/cr_components/most_visited/most_visited.mojom.h"
 #include "ui/webui/resources/cr_components/searchbox/searchbox.mojom-forward.h"
-#include "ui/webui/resources/js/metrics_reporter/metrics_reporter.mojom.h"
 
 namespace base {
 class RefCountedMemory;
@@ -67,6 +66,7 @@ class ColorChangeHandler;
 }  // namespace ui
 
 class BrowserCommandHandler;
+class CustomizeButtonsHandler;
 class DriveSuggestionHandler;
 #if !defined(OFFICIAL_BUILD)
 class FooHandler;
@@ -98,13 +98,15 @@ class NewTabPageUIConfig : public content::DefaultWebUIConfig<NewTabPageUI> {
   bool IsWebUIEnabled(content::BrowserContext* browser_context) override;
 };
 
-class NewTabPageUI : public ui::MojoWebUIController,
-                     public new_tab_page::mojom::PageHandlerFactory,
-                     public most_visited::mojom::MostVisitedPageHandlerFactory,
-                     public browser_command::mojom::CommandHandlerFactory,
-                     public help_bubble::mojom::HelpBubbleHandlerFactory,
-                     public NtpCustomBackgroundServiceObserver,
-                     content::WebContentsObserver {
+class NewTabPageUI
+    : public ui::MojoWebUIController,
+      public new_tab_page::mojom::PageHandlerFactory,
+      public customize_buttons::mojom::CustomizeButtonsHandlerFactory,
+      public most_visited::mojom::MostVisitedPageHandlerFactory,
+      public browser_command::mojom::CommandHandlerFactory,
+      public help_bubble::mojom::HelpBubbleHandlerFactory,
+      public NtpCustomBackgroundServiceObserver,
+      content::WebContentsObserver {
  public:
   explicit NewTabPageUI(content::WebUI* web_ui);
 
@@ -138,17 +140,19 @@ class NewTabPageUI : public ui::MojoWebUIController,
   void BindInterface(mojo::PendingReceiver<searchbox::mojom::PageHandler>
                          pending_page_handler);
 
-  // Instantiates the implementor of metrics_reporter::mojom::PageMetricsHost
-  // mojo interface passing the pending receiver that will be internally bound.
-  void BindInterface(
-      mojo::PendingReceiver<metrics_reporter::mojom::PageMetricsHost> receiver);
-
   // Instantiates the implementor of the
   // browser_command::mojom::CommandHandlerFactory mojo interface passing
   // the pending receiver that will be internally bound.
   void BindInterface(
       mojo::PendingReceiver<browser_command::mojom::CommandHandlerFactory>
           pending_receiver);
+
+  // Instantiates the implementor of the
+  // customize_buttons::mojom::CustomizeButtonsHandlerFactory mojo interface
+  // passing the pending receiver that will be internally bound.
+  void BindInterface(mojo::PendingReceiver<
+                     customize_buttons::mojom::CustomizeButtonsHandlerFactory>
+                         pending_receiver);
 
   // Instantiates the implementor of the
   // most_visited::mojom::MostVisitedPageHandlerFactory mojo interface passing
@@ -230,6 +234,13 @@ class NewTabPageUI : public ui::MojoWebUIController,
       mojo::PendingReceiver<browser_command::mojom::CommandHandler>
           pending_handler) override;
 
+  // customize_buttons::mojom::CustomizeButtonsHandlerFactory:
+  void CreateCustomizeButtonsHandler(
+      mojo::PendingRemote<customize_buttons::mojom::CustomizeButtonsDocument>
+          pending_page,
+      mojo::PendingReceiver<customize_buttons::mojom::CustomizeButtonsHandler>
+          pending_page_handler) override;
+
   // most_visited::mojom::MostVisitedPageHandlerFactory:
   void CreatePageHandler(
       mojo::PendingRemote<most_visited::mojom::MostVisitedPage> pending_page,
@@ -265,6 +276,9 @@ class NewTabPageUI : public ui::MojoWebUIController,
   mojo::Receiver<new_tab_page::mojom::PageHandlerFactory>
       page_factory_receiver_;
   std::unique_ptr<ui::ColorChangeHandler> color_provider_handler_;
+  std::unique_ptr<CustomizeButtonsHandler> customize_buttons_handler_;
+  mojo::Receiver<customize_buttons::mojom::CustomizeButtonsHandlerFactory>
+      customize_buttons_factory_receiver_;
   std::unique_ptr<MostVisitedHandler> most_visited_page_handler_;
   mojo::Receiver<most_visited::mojom::MostVisitedPageHandlerFactory>
       most_visited_page_factory_receiver_;
@@ -275,7 +289,6 @@ class NewTabPageUI : public ui::MojoWebUIController,
   std::unique_ptr<user_education::HelpBubbleHandler> help_bubble_handler_;
   mojo::Receiver<help_bubble::mojom::HelpBubbleHandlerFactory>
       help_bubble_handler_factory_receiver_{this};
-  MetricsReporter metrics_reporter_;
 #if !defined(OFFICIAL_BUILD)
   std::unique_ptr<FooHandler> foo_handler_;
 #endif

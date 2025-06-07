@@ -14,15 +14,26 @@
 #include "chrome/common/buildflags.h"
 
 class ChromeAutofillAiClient;
+class FileSystemAccessPageActionController;
+class FromGWSNavigationAndKeepAliveRequestObserver;
+class IntentPickerViewPageActionController;
 class LensOverlayController;
+class LensSearchController;
+class MemorySaverChipTabHelper;
 class PinnedTranslateActionListener;
 class Profile;
+class PwaInstallPageActionController;
 class ReadAnythingSidePanelController;
 class SidePanelRegistry;
+class TabResourceUsageTabHelper;
+class TabUIHelper;
 class TranslatePageActionController;
+class QwacWebContentsObserver;
+class ManagePasswordsPageActionController;
 
 namespace commerce {
 class CommerceUiTabHelper;
+class PriceInsightsPageActionViewController;
 }
 
 namespace content {
@@ -47,9 +58,18 @@ class ExtensionSidePanelManager;
 
 #if BUILDFLAG(ENABLE_GLIC)
 namespace glic {
+class GlicPageContextEligibilityObserver;
 class GlicTabIndicatorHelper;
 }
 #endif
+
+namespace memory_saver {
+class MemorySaverChipController;
+}
+
+namespace zoom {
+class ZoomViewController;
+}
 
 namespace permissions {
 class PermissionIndicatorsTabData;
@@ -57,6 +77,7 @@ class PermissionIndicatorsTabData;
 
 namespace privacy_sandbox {
 class PrivacySandboxTabObserver;
+class PrivacySandboxIncognitoTabObserver;
 }  // namespace privacy_sandbox
 
 namespace metrics {
@@ -85,9 +106,11 @@ class CollaborationMessagingTabData;
 
 namespace tabs {
 
-class DisconnectFileChooserOnBackgroundController;
+class TabAlertController;
 class TabInterface;
 class TabDialogManager;
+
+class InactiveWindowMouseEventController;
 
 // This class owns the core controllers for features that are scoped to a given
 // tab. It can be subclassed by tests to perform dependency injection.
@@ -104,8 +127,8 @@ class TabFeatures {
       base::RepeatingCallback<std::unique_ptr<TabFeatures>()>;
   static void ReplaceTabFeaturesForTesting(TabFeaturesFactory factory);
 
-  LensOverlayController* lens_overlay_controller() {
-    return lens_overlay_controller_.get();
+  LensSearchController* lens_search_controller() {
+    return lens_search_controller_.get();
   }
 
   enterprise_data_protection::DataProtectionNavigationController*
@@ -121,6 +144,13 @@ class TabFeatures {
   customize_chrome_side_panel_controller() {
     return customize_chrome_side_panel_controller_.get();
   }
+
+  // Note: Temporary until there is a more uniform way to swap out features for
+  // testing.
+  customize_chrome::SidePanelController*
+  SetCustomizeChromeSidePanelControllerForTesting(
+      std::unique_ptr<customize_chrome::SidePanelController>
+          customize_chrome_side_panel_controller);
 
   // This side-panel registry is tab-scoped. It is different from the browser
   // window scoped SidePanelRegistry.
@@ -144,6 +174,11 @@ class TabFeatures {
     return privacy_sandbox_tab_observer_.get();
   }
 
+  privacy_sandbox::PrivacySandboxIncognitoTabObserver*
+  privacy_sandbox_incognito_tab_observer() {
+    return privacy_sandbox_incognito_tab_observer_.get();
+  }
+
   metrics::DwaWebContentsObserver* dwa_web_contents_observer() {
     return dwa_web_contents_observer_.get();
   }
@@ -163,9 +198,77 @@ class TabFeatures {
     return page_action_controller_.get();
   }
 
+  IntentPickerViewPageActionController*
+  intent_picker_view_page_action_controller() {
+    return intent_picker_view_page_action_controller_.get();
+  }
+
+  FileSystemAccessPageActionController*
+  file_system_access_page_action_controller() {
+    return file_system_access_page_action_controller_.get();
+  }
+
+  ManagePasswordsPageActionController*
+  manage_passwords_page_action_controller() {
+    return manage_passwords_page_action_controller_.get();
+  }
+
   tab_groups::CollaborationMessagingTabData*
   collaboration_messaging_tab_data() {
     return collaboration_messaging_tab_data_.get();
+  }
+
+  zoom::ZoomViewController* zoom_view_controller() {
+    return zoom_view_controller_.get();
+  }
+
+  memory_saver::MemorySaverChipController* memory_saver_chip_controller() {
+    return memory_saver_chip_controller_.get();
+  }
+
+  commerce::PriceInsightsPageActionViewController*
+  commerce_price_insights_page_action_view_controller() {
+    return commerce_price_insights_page_action_view_controller_.get();
+  }
+
+  LensOverlayController* lens_overlay_controller();
+  const LensOverlayController* lens_overlay_controller() const;
+
+  PwaInstallPageActionController* pwa_install_page_action_controller() {
+    return pwa_install_page_action_controller_.get();
+  }
+
+  InactiveWindowMouseEventController* inactive_window_mouse_event_controller() {
+    return inactive_window_mouse_event_controller_.get();
+  }
+
+  TabResourceUsageTabHelper* resource_usage_helper() {
+    return resource_usage_helper_.get();
+  }
+
+  MemorySaverChipTabHelper* memory_saver_chip_helper() {
+    return memory_saver_chip_helper_.get();
+  }
+
+  TabUIHelper* tab_ui_helper() { return tab_ui_helper_.get(); }
+
+  // Note: Temporary until there is a more uniform way to swap out features for
+  // testing.
+  TabResourceUsageTabHelper* SetResourceUsageHelperForTesting(
+      std::unique_ptr<TabResourceUsageTabHelper> resource_usage_helper);
+
+  TabUIHelper* SetTabUIHelperForTesting(
+      std::unique_ptr<TabUIHelper> tab_ui_helper);
+
+#if BUILDFLAG(ENABLE_GLIC)
+  glic::GlicPageContextEligibilityObserver*
+  glic_page_context_eligibility_observer() {
+    return glic_page_context_eligibility_observer_.get();
+  }
+#endif
+
+  TabAlertController* tab_alert_controller() {
+    return tab_alert_controller_.get();
   }
 
   // Called exactly once to initialize features.
@@ -177,13 +280,11 @@ class TabFeatures {
 
   // Override these methods to stub out individual feature controllers for
   // testing.
-  virtual std::unique_ptr<LensOverlayController> CreateLensController(
-      TabInterface* tab,
-      Profile* profile);
+  virtual std::unique_ptr<LensSearchController> CreateLensController(
+      TabInterface* tab);
 
   virtual std::unique_ptr<commerce::CommerceUiTabHelper>
-  CreateCommerceUiTabHelper(content::WebContents* web_contents,
-                            Profile* profile);
+  CreateCommerceUiTabHelper(TabInterface& tab, Profile* profile);
 
  private:
   bool initialized_ = false;
@@ -203,7 +304,7 @@ class TabFeatures {
       permission_indicators_tab_data_;
 
   std::unique_ptr<SidePanelRegistry> side_panel_registry_;
-  std::unique_ptr<LensOverlayController> lens_overlay_controller_;
+  std::unique_ptr<LensSearchController> lens_search_controller_;
 
   // Responsible for the customize chrome tab-scoped side panel.
   std::unique_ptr<customize_chrome::SidePanelController>
@@ -223,6 +324,9 @@ class TabFeatures {
 
   std::unique_ptr<privacy_sandbox::PrivacySandboxTabObserver>
       privacy_sandbox_tab_observer_;
+
+  std::unique_ptr<privacy_sandbox::PrivacySandboxIncognitoTabObserver>
+      privacy_sandbox_incognito_tab_observer_;
 
   std::unique_ptr<metrics::DwaWebContentsObserver>
       dwa_web_contents_observer_;
@@ -247,13 +351,36 @@ class TabFeatures {
   // Holds subscriptions for TabInterface callbacks.
   std::vector<base::CallbackListSubscription> tab_subscriptions_;
 
+  // Responsible for managing the "Intent Picker" page action.
+  std::unique_ptr<IntentPickerViewPageActionController>
+      intent_picker_view_page_action_controller_;
+
+  // Responsible for managing the "File System Access" page action.
+  std::unique_ptr<FileSystemAccessPageActionController>
+      file_system_access_page_action_controller_;
+
   // Responsible for managing all page actions of a tab. Other controllers
   // interact with this to have their feature's page action shown.
   std::unique_ptr<page_actions::PageActionController> page_action_controller_;
 
+  // Responsible for managing the "Manage Passwords" page action.
+  std::unique_ptr<ManagePasswordsPageActionController>
+      manage_passwords_page_action_controller_;
+
   // Responsible for managing the "Translate" page action.
   std::unique_ptr<TranslatePageActionController>
       translate_page_action_controller_;
+
+  // Responsible for managing the "PWA Install" page action.
+  std::unique_ptr<PwaInstallPageActionController>
+      pwa_install_page_action_controller_;
+
+  // Responsible for managing the "Zoom" page action and bubble.
+  std::unique_ptr<zoom::ZoomViewController> zoom_view_controller_;
+
+  // Responsible for managing the commerce "Price insights" page action.
+  std::unique_ptr<commerce::PriceInsightsPageActionViewController>
+      commerce_price_insights_page_action_view_controller_;
 
   // Contains the recent collaboration message for a shared tab.
   std::unique_ptr<tab_groups::CollaborationMessagingTabData>
@@ -262,11 +389,31 @@ class TabFeatures {
   std::unique_ptr<passage_embeddings::EmbedderTabObserver>
       embedder_tab_observer_;
 
-  std::unique_ptr<DisconnectFileChooserOnBackgroundController>
-      disconnect_file_chooser_on_background_controller_;
 #if BUILDFLAG(ENABLE_GLIC)
   std::unique_ptr<glic::GlicTabIndicatorHelper> glic_tab_indicator_helper_;
+
+  std::unique_ptr<glic::GlicPageContextEligibilityObserver>
+      glic_page_context_eligibility_observer_;
 #endif
+
+  std::unique_ptr<memory_saver::MemorySaverChipController>
+      memory_saver_chip_controller_;
+
+  std::unique_ptr<InactiveWindowMouseEventController>
+      inactive_window_mouse_event_controller_;
+
+  std::unique_ptr<FromGWSNavigationAndKeepAliveRequestObserver>
+      from_gws_navigation_and_keep_alive_request_observer_;
+
+  std::unique_ptr<TabResourceUsageTabHelper> resource_usage_helper_;
+
+  std::unique_ptr<MemorySaverChipTabHelper> memory_saver_chip_helper_;
+
+  std::unique_ptr<TabAlertController> tab_alert_controller_;
+
+  std::unique_ptr<TabUIHelper> tab_ui_helper_;
+
+  std::unique_ptr<QwacWebContentsObserver> qwac_web_contents_observer_;
 
   // Must be the last member.
   base::WeakPtrFactory<TabFeatures> weak_factory_{this};

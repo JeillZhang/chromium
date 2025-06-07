@@ -43,7 +43,6 @@ import org.chromium.base.test.util.CriteriaNotSatisfiedException;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.Restriction;
@@ -55,11 +54,13 @@ import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.logo.LogoBridge.Logo;
 import org.chromium.chrome.browser.logo.LogoUtils;
 import org.chromium.chrome.browser.logo.LogoView;
+import org.chromium.chrome.browser.suggestions.tile.TilesLinearLayout;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.chrome.test.util.NewTabPageTestUtils;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.embedder_support.util.UrlUtilities;
@@ -77,7 +78,8 @@ import java.util.concurrent.TimeoutException;
 @DoNotBatch(reason = "This test suite tests startup behaviors.")
 public class ShowNtpAtStartupTest {
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     private static final String TAB_URL = "https://foo.com/";
     private static final String TAB_URL_1 = "https://bar.com/";
@@ -93,7 +95,7 @@ public class ShowNtpAtStartupTest {
                         .expectBooleanRecord(HOME_SURFACE_SHOWN_UMA, true)
                         .build();
         HomeSurfaceTestUtils.prepareTabStateMetadataFile(new int[] {0}, new String[] {TAB_URL}, 0);
-        HomeSurfaceTestUtils.startMainActivityFromLauncher(mActivityTestRule);
+        mActivityTestRule.startFromLauncher();
         HomeSurfaceTestUtils.waitForTabModel(mActivityTestRule.getActivity());
 
         // Verifies that a NTP is created and set as the current Tab.
@@ -123,7 +125,7 @@ public class ShowNtpAtStartupTest {
                         .build();
         HomeSurfaceTestUtils.prepareTabStateMetadataFile(
                 new int[] {0, 1}, new String[] {TAB_URL, modifiedNtpUrl}, 0);
-        HomeSurfaceTestUtils.startMainActivityFromLauncher(mActivityTestRule);
+        mActivityTestRule.startFromLauncher();
         HomeSurfaceTestUtils.waitForTabModel(mActivityTestRule.getActivity());
 
         // Verifies that a new NTP is created and set as the active Tab.
@@ -151,7 +153,7 @@ public class ShowNtpAtStartupTest {
 
         HomeSurfaceTestUtils.prepareTabStateMetadataFile(
                 new int[] {0, 1}, new String[] {TAB_URL, modifiedNtpUrl}, 1);
-        HomeSurfaceTestUtils.startMainActivityFromLauncher(mActivityTestRule);
+        mActivityTestRule.startFromLauncher();
         HomeSurfaceTestUtils.waitForTabModel(mActivityTestRule.getActivity());
 
         // Verifies that no new NTP is created, and the existing NTP is reused and set as the
@@ -168,11 +170,10 @@ public class ShowNtpAtStartupTest {
     @MediumTest
     @Feature({"StartSurface"})
     @EnableFeatures({START_SURFACE_RETURN_TIME_IMMEDIATE, ChromeFeatureList.MAGIC_STACK_ANDROID})
-    @DisableFeatures(ChromeFeatureList.TAB_RESUMPTION_MODULE_ANDROID)
     public void testSingleTabCardGoneAfterTabClosed_MagicStack() throws IOException {
         HomeSurfaceTestUtils.prepareTabStateMetadataFile(
                 new int[] {0, 1}, new String[] {TAB_URL, TAB_URL_1}, 0);
-        HomeSurfaceTestUtils.startMainActivityFromLauncher(mActivityTestRule);
+        mActivityTestRule.startFromLauncher();
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         HomeSurfaceTestUtils.waitForTabModel(cta);
 
@@ -228,11 +229,10 @@ public class ShowNtpAtStartupTest {
     @MediumTest
     @Feature({"StartSurface"})
     @EnableFeatures(START_SURFACE_RETURN_TIME_IMMEDIATE)
-    @DisableFeatures(ChromeFeatureList.TAB_RESUMPTION_MODULE_ANDROID)
     public void testSingleTabModule() throws IOException {
         HomeSurfaceTestUtils.prepareTabStateMetadataFile(
                 new int[] {0, 1}, new String[] {TAB_URL, TAB_URL_1}, 0);
-        HomeSurfaceTestUtils.startMainActivityFromLauncher(mActivityTestRule);
+        mActivityTestRule.startFromLauncher();
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         HomeSurfaceTestUtils.waitForTabModel(cta);
 
@@ -253,11 +253,10 @@ public class ShowNtpAtStartupTest {
     @MediumTest
     @Feature({"StartSurface"})
     @EnableFeatures({START_SURFACE_RETURN_TIME_IMMEDIATE, ChromeFeatureList.MAGIC_STACK_ANDROID})
-    @DisableFeatures(ChromeFeatureList.TAB_RESUMPTION_MODULE_ANDROID)
     public void testSingleTabModule_MagicStack() throws IOException {
         HomeSurfaceTestUtils.prepareTabStateMetadataFile(
                 new int[] {0, 1}, new String[] {TAB_URL, TAB_URL_1}, 0);
-        HomeSurfaceTestUtils.startMainActivityFromLauncher(mActivityTestRule);
+        mActivityTestRule.startFromLauncher();
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         HomeSurfaceTestUtils.waitForTabModel(cta);
 
@@ -276,7 +275,7 @@ public class ShowNtpAtStartupTest {
     @MediumTest
     @Feature({"StartSurface"})
     public void testNtpLogoSize() {
-        mActivityTestRule.startMainActivityWithURL(UrlConstants.NTP_URL);
+        mActivityTestRule.startOnNtp();
         Resources res = mActivityTestRule.getActivity().getResources();
         int expectedLogoHeight = res.getDimensionPixelSize(R.dimen.ntp_logo_height);
         int expectedTopMargin = res.getDimensionPixelSize(R.dimen.ntp_logo_margin_top);
@@ -290,7 +289,7 @@ public class ShowNtpAtStartupTest {
     @MediumTest
     @Feature({"StartSurface"})
     public void testNtpDoodleSize() {
-        mActivityTestRule.startMainActivityWithURL(UrlConstants.NTP_URL);
+        mActivityTestRule.startOnNtp();
 
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         NewTabPage ntp = (NewTabPage) cta.getActivityTab().getNativePage();
@@ -304,8 +303,8 @@ public class ShowNtpAtStartupTest {
                 });
 
         Resources res = mActivityTestRule.getActivity().getResources();
-        int expectedLogoHeight = LogoUtils.getLogoHeightForLogoPolishWithMediumSize(res);
-        int expectedTopMargin = LogoUtils.getTopMarginForLogoPolish(res);
+        int expectedLogoHeight = LogoUtils.getDoodleHeight(res);
+        int expectedTopMargin = LogoUtils.getTopMarginForDoodle(res);
         int expectedBottomMargin = res.getDimensionPixelSize(R.dimen.ntp_logo_margin_bottom);
 
         // Verifies the logo size is decreased, and top bottom margins are updated.
@@ -315,9 +314,9 @@ public class ShowNtpAtStartupTest {
     @Test
     @MediumTest
     @Feature({"StartSurface"})
-    @Restriction({DeviceFormFactor.TABLET})
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testMvtAndSingleTabCardVerticalMargin() {
-        mActivityTestRule.startMainActivityWithURL(UrlConstants.NTP_URL);
+        mActivityTestRule.startOnNtp();
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         HomeSurfaceTestUtils.waitForTabModel(cta);
         waitForNtpLoaded(cta.getActivityTab());
@@ -337,10 +336,9 @@ public class ShowNtpAtStartupTest {
     @MediumTest
     @Feature({"StartSurface"})
     @EnableFeatures({START_SURFACE_RETURN_TIME_IMMEDIATE, ChromeFeatureList.MAGIC_STACK_ANDROID})
-    @DisableFeatures(ChromeFeatureList.TAB_RESUMPTION_MODULE_ANDROID)
     public void testClickSingleTabCardCloseNtpHomeSurface() throws IOException {
         HomeSurfaceTestUtils.prepareTabStateMetadataFile(new int[] {0}, new String[] {TAB_URL}, 0);
-        HomeSurfaceTestUtils.startMainActivityFromLauncher(mActivityTestRule);
+        mActivityTestRule.startFromLauncher();
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         HomeSurfaceTestUtils.waitForTabModel(cta);
 
@@ -384,7 +382,7 @@ public class ShowNtpAtStartupTest {
     public void testThumbnailRecaptureForSingleTabCardAfterMostRecentTabClosed()
             throws IOException {
         HomeSurfaceTestUtils.prepareTabStateMetadataFile(new int[] {0}, new String[] {TAB_URL}, 0);
-        HomeSurfaceTestUtils.startMainActivityFromLauncher(mActivityTestRule);
+        mActivityTestRule.startFromLauncher();
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         HomeSurfaceTestUtils.waitForTabModel(cta);
 
@@ -439,9 +437,9 @@ public class ShowNtpAtStartupTest {
     @Test
     @MediumTest
     @Feature({"StartSurface"})
-    @Restriction({DeviceFormFactor.TABLET})
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testFakeSearchBoxWidth() {
-        mActivityTestRule.startMainActivityWithURL(UrlConstants.NTP_URL);
+        mActivityTestRule.startOnNtp();
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         HomeSurfaceTestUtils.waitForTabModel(cta);
         waitForNtpLoaded(cta.getActivityTab());
@@ -459,10 +457,10 @@ public class ShowNtpAtStartupTest {
     @Test
     @MediumTest
     @Feature({"StartSurface"})
-    @Restriction({DeviceFormFactor.TABLET})
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     @EnableFeatures(START_SURFACE_RETURN_TIME_IMMEDIATE)
     public void testMvtLayoutHorizontalMargin() {
-        mActivityTestRule.startMainActivityWithURL(UrlConstants.NTP_URL);
+        mActivityTestRule.startOnNtp();
         ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         HomeSurfaceTestUtils.waitForTabModel(cta);
         waitForNtpLoaded(cta.getActivityTab());
@@ -621,13 +619,11 @@ public class ShowNtpAtStartupTest {
             NewTabPage ntp) {
         NewTabPageLayout ntpLayout = ntp.getNewTabPageLayout();
         View mvtContainer = ntpLayout.findViewById(R.id.mv_tiles_container);
-        View mvTilesLayout = ntpLayout.findViewById(R.id.mv_tiles_layout);
+        TilesLinearLayout mvTilesLayout = ntpLayout.findViewById(R.id.mv_tiles_layout);
         int mvt1LeftMargin =
-                ((MarginLayoutParams) ((ViewGroup) mvTilesLayout).getChildAt(0).getLayoutParams())
-                        .leftMargin;
+                ((MarginLayoutParams) mvTilesLayout.getTileAt(0).getLayoutParams()).leftMargin;
         int mvt2LeftMargin =
-                ((MarginLayoutParams) ((ViewGroup) mvTilesLayout).getChildAt(1).getLayoutParams())
-                        .leftMargin;
+                ((MarginLayoutParams) mvTilesLayout.getTileAt(1).getLayoutParams()).leftMargin;
 
         // Orientation changes are not supported on automotive.
         if (BuildInfo.getInstance().isAutomotive) {

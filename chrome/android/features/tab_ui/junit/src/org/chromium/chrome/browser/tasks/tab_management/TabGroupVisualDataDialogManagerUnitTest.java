@@ -30,6 +30,7 @@ import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 
+import org.chromium.base.Token;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
@@ -56,6 +57,7 @@ import java.util.Collections;
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class TabGroupVisualDataDialogManagerUnitTest {
+    private static final Token TAB_GROUP_ID = new Token(34L, 378L);
     private static final int TAB1_ID = 456;
     private static final String TAB_GROUP_CREATION_DIALOG_SHOWN =
             EventConstants.TAB_GROUP_CREATION_DIALOG_SHOWN;
@@ -82,6 +84,7 @@ public class TabGroupVisualDataDialogManagerUnitTest {
         TrackerFactory.setTrackerForTests(mTracker);
 
         mActivity = Robolectric.buildActivity(Activity.class).setup().get();
+        mActivity.setTheme(R.style.Theme_Chromium_Activity);
         mTabGroupVisualDataDialogManager =
                 new TabGroupVisualDataDialogManager(
                         mActivity,
@@ -97,13 +100,10 @@ public class TabGroupVisualDataDialogManagerUnitTest {
     }
 
     @Test
-    @EnableFeatures({
-        ChromeFeatureList.TAB_GROUP_PANE_ANDROID,
-        ChromeFeatureList.TAB_GROUP_SYNC_ANDROID
-    })
+    @EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
     public void testVisualDataDialogDelegate_showDialog() {
         mTabGroupVisualDataDialogManager.showDialog(
-                TAB1_ID, mTabGroupModelFilter, mDialogController);
+                TAB_GROUP_ID, mTabGroupModelFilter, mDialogController);
         verify(mModalDialogManager).showDialog(mModelCaptor.capture(), eq(ModalDialogType.APP));
 
         PropertyModel model = mModelCaptor.getValue();
@@ -122,26 +122,20 @@ public class TabGroupVisualDataDialogManagerUnitTest {
     }
 
     @Test
-    @EnableFeatures({
-        ChromeFeatureList.TAB_GROUP_PANE_ANDROID,
-        ChromeFeatureList.TAB_GROUP_SYNC_ANDROID
-    })
+    @EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
     public void testVisualDataDialogDelegate_doubleShowDismissed() {
         // Mock a double trigger for the creation dialog observer method for the same group action,
         // but show dialog is only called once.
         mTabGroupVisualDataDialogManager.showDialog(
-                TAB1_ID, mTabGroupModelFilter, mDialogController);
+                TAB_GROUP_ID, mTabGroupModelFilter, mDialogController);
         mTabGroupVisualDataDialogManager.showDialog(
-                TAB1_ID, mTabGroupModelFilter, mDialogController);
+                TAB_GROUP_ID, mTabGroupModelFilter, mDialogController);
         verify(mModalDialogManager, times(1))
                 .showDialog(mModelCaptor.capture(), eq(ModalDialogType.APP));
     }
 
     @Test
-    @EnableFeatures({
-        ChromeFeatureList.TAB_GROUP_PANE_ANDROID,
-        ChromeFeatureList.TAB_GROUP_SYNC_ANDROID
-    })
+    @EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
     public void testVisualDataDialog_descriptionTextNotSet() {
         // Set the opposite values for the conditional statement to be true.
         doReturn(true).when(mTabModel).isIncognitoBranded();
@@ -150,7 +144,7 @@ public class TabGroupVisualDataDialogManagerUnitTest {
                 .shouldTriggerHelpUi(TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE);
 
         mTabGroupVisualDataDialogManager.showDialog(
-                TAB1_ID, mTabGroupModelFilter, mDialogController);
+                TAB_GROUP_ID, mTabGroupModelFilter, mDialogController);
         verify(mModalDialogManager).showDialog(mModelCaptor.capture(), eq(ModalDialogType.APP));
 
         PropertyModel model = mModelCaptor.getValue();
@@ -159,13 +153,13 @@ public class TabGroupVisualDataDialogManagerUnitTest {
                         .findViewById(R.id.visual_data_dialog_description);
         Assert.assertEquals(View.GONE, description.getVisibility());
         verify(mTracker, never()).notifyEvent(eq(TAB_GROUP_CREATION_DIALOG_SHOWN));
+
+        mTabGroupVisualDataDialogManager.hideDialog();
+        verify(mTracker, never()).dismissed(eq(TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE));
     }
 
     @Test
-    @EnableFeatures({
-        ChromeFeatureList.TAB_GROUP_PANE_ANDROID,
-        ChromeFeatureList.TAB_GROUP_SYNC_ANDROID
-    })
+    @EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
     public void testVisualDataDialog_descriptionTextSetButNotSyncing() {
         doReturn(false).when(mTabModel).isIncognitoBranded();
         doReturn(true)
@@ -174,7 +168,7 @@ public class TabGroupVisualDataDialogManagerUnitTest {
         when(mSyncService.getActiveDataTypes()).thenReturn(Collections.emptySet());
 
         mTabGroupVisualDataDialogManager.showDialog(
-                TAB1_ID, mTabGroupModelFilter, mDialogController);
+                TAB_GROUP_ID, mTabGroupModelFilter, mDialogController);
         verify(mModalDialogManager).showDialog(mModelCaptor.capture(), eq(ModalDialogType.APP));
 
         PropertyModel model = mModelCaptor.getValue();
@@ -188,13 +182,13 @@ public class TabGroupVisualDataDialogManagerUnitTest {
                         .getString(R.string.tab_group_creation_dialog_description_text_sync_off),
                 description.getText());
         verify(mTracker).notifyEvent(eq(TAB_GROUP_CREATION_DIALOG_SHOWN));
+
+        mTabGroupVisualDataDialogManager.hideDialog();
+        verify(mTracker).dismissed(eq(TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE));
     }
 
     @Test
-    @EnableFeatures({
-        ChromeFeatureList.TAB_GROUP_PANE_ANDROID,
-        ChromeFeatureList.TAB_GROUP_SYNC_ANDROID
-    })
+    @EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
     public void testVisualDataDialog_descriptionTextSetAndSyncing() {
         doReturn(false).when(mTabModel).isIncognitoBranded();
         doReturn(true)
@@ -204,7 +198,7 @@ public class TabGroupVisualDataDialogManagerUnitTest {
                 .thenReturn(Collections.singleton(DataType.SAVED_TAB_GROUP));
 
         mTabGroupVisualDataDialogManager.showDialog(
-                TAB1_ID, mTabGroupModelFilter, mDialogController);
+                TAB_GROUP_ID, mTabGroupModelFilter, mDialogController);
         verify(mModalDialogManager).showDialog(mModelCaptor.capture(), eq(ModalDialogType.APP));
 
         PropertyModel model = mModelCaptor.getValue();
@@ -218,5 +212,8 @@ public class TabGroupVisualDataDialogManagerUnitTest {
                         .getString(R.string.tab_group_creation_dialog_description_text_sync_on),
                 description.getText());
         verify(mTracker).notifyEvent(eq(TAB_GROUP_CREATION_DIALOG_SHOWN));
+
+        mTabGroupVisualDataDialogManager.hideDialog();
+        verify(mTracker).dismissed(eq(TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE));
     }
 }

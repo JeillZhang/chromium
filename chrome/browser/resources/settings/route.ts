@@ -30,8 +30,10 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
   r.SITE_SETTINGS = r.PRIVACY.createChild('/content');
   r.SECURITY = r.PRIVACY.createChild('/security');
 
-  r.TRACKING_PROTECTION = r.PRIVACY.createChild('/trackingProtection');
   r.COOKIES = r.PRIVACY.createChild('/cookies');
+  if (loadTimeData.getBoolean('enableIncognitoTrackingProtections') ) {
+    r.INCOGNITO_TRACKING_PROTECTIONS = r.PRIVACY.createChild('/incognito');
+  }
 
   if (!loadTimeData.getBoolean('isPrivacySandboxRestricted')) {
     r.PRIVACY_SANDBOX = r.PRIVACY.createChild('/adPrivacy');
@@ -51,10 +53,6 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
     r.PRIVACY_SANDBOX_AD_MEASUREMENT =
         r.PRIVACY_SANDBOX.createChild('/adPrivacy/measurement');
   }
-
-  // <if expr="use_nss_certs">
-  r.CERTIFICATES = r.SECURITY.createChild('/certificates');
-  // </if>
 
   if (loadTimeData.getBoolean('enableSecurityKeysSubpage')) {
     r.SECURITY_KEYS = r.SECURITY.createChild('/securityKeys');
@@ -95,10 +93,6 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
   }
   // </if>
   r.SITE_SETTINGS_AUTO_VERIFY = r.SITE_SETTINGS.createChild('autoVerify');
-  if (!loadTimeData.getBoolean('enableAiSettingsPageRefresh') &&
-      loadTimeData.getBoolean('enableComposeProactiveNudge')) {
-    r.OFFER_WRITING_HELP = r.SITE_SETTINGS.createChild('offerWritingHelp');
-  }
   r.SITE_SETTINGS_BACKGROUND_SYNC =
       r.SITE_SETTINGS.createChild('backgroundSync');
   r.SITE_SETTINGS_CAMERA = r.SITE_SETTINGS.createChild('camera');
@@ -166,6 +160,10 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
     r.SITE_SETTINGS_WEB_APP_INSTALLATION =
         r.SITE_SETTINGS.createChild('webApplications');
   }
+  if (loadTimeData.getBoolean('enableLocalNetworkAccessSetting')) {
+    r.SITE_SETTINGS_LOCAL_NETWORK_ACCESS =
+        r.SITE_SETTINGS.createChild('localNetworkAccess');
+  }
 }
 
 /**
@@ -193,32 +191,33 @@ function createRoutes(): SettingsRoutes {
 
     r.SYNC = r.PEOPLE.createChild('/syncSetup');
     r.SYNC_ADVANCED = r.SYNC.createChild('/syncSetup/advanced');
-    if (!loadTimeData.getBoolean('enableAiSettingsPageRefresh') &&
-        loadTimeData.getBoolean('showHistorySearchControl')) {
-      r.HISTORY_SEARCH = r.SYNC.createChild('/historySearch');
-    }
   }
 
   const visibility = pageVisibility || {};
 
-  if (visibility.ai !== false &&
-      loadTimeData.getBoolean('showAdvancedFeaturesMainControl')) {
+  if (visibility.ai !== false && loadTimeData.getBoolean('showAiPage')) {
     r.AI = r.BASIC.createSection(
-        '/ai', 'ai', loadTimeData.getString('aiPageTitle'));
-    if (loadTimeData.getBoolean('enableAiSettingsPageRefresh')) {
-      if (loadTimeData.getBoolean('showTabOrganizationControl')) {
-        r.AI_TAB_ORGANIZATION = r.AI.createChild('/ai/tabOrganizer');
-      }
-      if (loadTimeData.getBoolean('showHistorySearchControl')) {
-        r.HISTORY_SEARCH = r.AI.createChild('/ai/historySearch');
-      }
-      if (loadTimeData.getBoolean('showComposeControl')) {
-        r.OFFER_WRITING_HELP = r.AI.createChild('/ai/helpMeWrite');
-      }
-      if (loadTimeData.getBoolean('showCompareControl')) {
-        r.COMPARE = r.AI.createChild('/ai/compareProducts');
-      }
+        '/ai', 'ai', loadTimeData.getString('aiInnovationsPageTitle'));
+    if (loadTimeData.getBoolean('showTabOrganizationControl')) {
+      r.AI_TAB_ORGANIZATION = r.AI.createChild('/ai/tabOrganizer');
     }
+    if (loadTimeData.getBoolean('showHistorySearchControl')) {
+      r.HISTORY_SEARCH = r.AI.createChild('/ai/historySearch');
+    }
+    if (loadTimeData.getBoolean('showComposeControl')) {
+      r.OFFER_WRITING_HELP = r.AI.createChild('/ai/helpMeWrite');
+    }
+    if (loadTimeData.getBoolean('showCompareControl')) {
+      r.COMPARE = r.AI.createChild('/ai/compareProducts');
+    }
+    // <if expr="enable_glic">
+    if (loadTimeData.getBoolean('showGlicSettings')) {
+      r.GLIC_SECTION = r.AI.createSection(
+          '/ai/glicSection', 'glicSection',
+          loadTimeData.getString('glicPageTitle'));
+      r.GEMINI = r.GLIC_SECTION.createChild('/ai/gemini');
+    }
+    // </if>
   }
 
   // <if expr="not chromeos_ash">
@@ -241,17 +240,9 @@ function createRoutes(): SettingsRoutes {
     r.PAYMENTS = r.AUTOFILL.createChild('/payments');
     r.ADDRESSES = r.AUTOFILL.createChild('/addresses');
 
-    if (loadTimeData.getBoolean('autofillAiEnabled')) {
+    if (loadTimeData.getBoolean('showAutofillAiControl')) {
       r.AUTOFILL_AI = r.AUTOFILL.createChild('/autofillAi');
     }
-
-    // <if expr="enable_glic">
-    if (visibility.glic !== false &&
-        loadTimeData.getBoolean('showGlicSettings')) {
-      r.GLIC = r.BASIC.createSection(
-          '/glic', 'glic', loadTimeData.getString('glicPageTitle'));
-    }
-    // </if>
 
     // <if expr="is_win or is_macosx">
     r.PASSKEYS = r.AUTOFILL.createChild('/passkeys');
@@ -319,10 +310,6 @@ function createRoutes(): SettingsRoutes {
       r.TRIGGERED_RESET_DIALOG.isNavigableDialog = true;
       // <if expr="_google_chrome and is_win">
       r.CHROME_CLEANUP = r.RESET.createChild('/cleanup');
-      if (loadTimeData.getBoolean('showIncompatibleApplications')) {
-        r.INCOMPATIBLE_APPLICATIONS =
-            r.RESET.createChild('/incompatibleApplications');
-      }
       // </if>
     }
 

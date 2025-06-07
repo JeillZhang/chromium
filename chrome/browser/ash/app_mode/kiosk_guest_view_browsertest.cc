@@ -8,8 +8,11 @@
 #include "chrome/browser/ash/app_mode/kiosk_controller.h"
 #include "chrome/browser/ash/app_mode/test/kiosk_mixin.h"
 #include "chrome/browser/ash/app_mode/test/kiosk_test_utils.h"
-#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ash/login/demo_mode/demo_mode_window_closer.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
@@ -30,6 +33,8 @@
 #include "ui/base/window_open_disposition.h"
 
 namespace ash {
+
+using kiosk::test::WaitKioskLaunched;
 
 namespace {
 
@@ -89,7 +94,12 @@ class KioskGuestViewTest
     : public MixinBasedInProcessBrowserTest,
       public testing::WithParamInterface<KioskMixin::Config> {
  public:
-  KioskGuestViewTest() = default;
+  KioskGuestViewTest() {
+    // Force allow Chrome Apps in Kiosk, since they are default disabled since
+    // M138.
+    scoped_feature_list_.InitFromCommandLine("AllowChromeAppsInKioskSessions",
+                                             "");
+  }
   KioskGuestViewTest(const KioskGuestViewTest&) = delete;
   KioskGuestViewTest& operator=(const KioskGuestViewTest&) = delete;
 
@@ -100,7 +110,7 @@ class KioskGuestViewTest
 
   void SetUpOnMainThread() override {
     MixinBasedInProcessBrowserTest::SetUpOnMainThread();
-    ASSERT_TRUE(kiosk_.WaitSessionLaunched());
+    ASSERT_TRUE(WaitKioskLaunched());
   }
 
   guest_view::TestGuestViewManagerFactory& factory() { return factory_; }
@@ -110,6 +120,7 @@ class KioskGuestViewTest
 
  private:
   guest_view::TestGuestViewManagerFactory factory_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_P(KioskGuestViewTest, AddingWebViewGuestViewDoesNotCrash) {
@@ -164,7 +175,7 @@ class WebKioskGuestViewTest : public MixinBasedInProcessBrowserTest {
  protected:
   void SetUpOnMainThread() override {
     MixinBasedInProcessBrowserTest::SetUpOnMainThread();
-    ASSERT_TRUE(kiosk_.WaitSessionLaunched());
+    ASSERT_TRUE(WaitKioskLaunched());
   }
 
   guest_view::TestGuestViewManagerFactory& factory() { return factory_; }

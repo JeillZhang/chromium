@@ -35,10 +35,12 @@
 #include "base/test/test_future.h"
 #include "base/threading/sequence_bound.h"
 #include "base/time/time.h"
-#include "content/browser/dips/dips_service_impl.h"
-#include "content/browser/dips/dips_storage.h"
-#include "content/browser/dips/dips_test_utils.h"
-#include "content/browser/dips/dips_utils.h"
+#include "components/fingerprinting_protection_filter/interventions/common/interventions_features.h"
+#include "content/browser/btm/btm_service_impl.h"
+#include "content/browser/btm/btm_storage.h"
+#include "content/browser/btm/btm_test_utils.h"
+#include "content/browser/btm/btm_utils.h"
+#include "content/browser/fingerprinting_protection/canvas_noise_token_data.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -58,6 +60,7 @@
 #include "content/public/test/test_storage_partition.h"
 #include "content/public/test/test_utils.h"
 #include "net/cookies/canonical_cookie.h"
+#include "net/cookies/cookie_access_params.h"
 #include "net/cookies/cookie_deletion_info.h"
 #include "net/cookies/cookie_store.h"
 #include "net/http/http_network_session.h"
@@ -773,14 +776,12 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedDataForeverBoth) {
   BlockUntilBrowsingDataRemoved(
       base::Time(), base::Time::Max(),
       BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-          BrowsingDataRemover::DATA_TYPE_WEB_SQL |
           BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
           BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
           BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
       false);
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL |
                 BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
@@ -792,7 +793,6 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedDataForeverBoth) {
   StoragePartitionRemovalData removal_data = GetStoragePartitionRemovalData();
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -807,14 +807,12 @@ TEST_F(BrowsingDataRemoverImplTest,
   BlockUntilBrowsingDataRemoved(
       base::Time(), base::Time::Max(),
       BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-          BrowsingDataRemover::DATA_TYPE_WEB_SQL |
           BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
           BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
           BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
       false);
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL |
                 BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
@@ -827,7 +825,6 @@ TEST_F(BrowsingDataRemoverImplTest,
 
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -857,14 +854,12 @@ TEST_F(BrowsingDataRemoverImplTest,
   BlockUntilBrowsingDataRemoved(
       base::Time(), base::Time::Max(),
       BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-          BrowsingDataRemover::DATA_TYPE_WEB_SQL |
           BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
           BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
           BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
       false);
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL |
                 BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
@@ -877,7 +872,6 @@ TEST_F(BrowsingDataRemoverImplTest,
 
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -906,14 +900,12 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedDataForeverNeither) {
   BlockUntilBrowsingDataRemoved(
       base::Time(), base::Time::Max(),
       BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-          BrowsingDataRemover::DATA_TYPE_WEB_SQL |
           BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
           BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
           BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
       false);
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL |
                 BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
@@ -926,7 +918,6 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedDataForeverNeither) {
 
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -961,15 +952,13 @@ TEST_F(BrowsingDataRemoverImplTest,
                               BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                                   BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                                   BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                                  BrowsingDataRemover::DATA_TYPE_INDEXED_DB |
-                                  BrowsingDataRemover::DATA_TYPE_WEB_SQL,
+                                  BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
                               std::move(builder));
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_INDEXED_DB |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL,
+                BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
             GetRemovalMask());
   EXPECT_EQ(BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
             GetOriginTypeMask());
@@ -979,7 +968,6 @@ TEST_F(BrowsingDataRemoverImplTest,
 
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -1002,14 +990,12 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedDataForLastHour) {
   BlockUntilBrowsingDataRemoved(
       AnHourAgo(), base::Time::Max(),
       BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-          BrowsingDataRemover::DATA_TYPE_WEB_SQL |
           BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
           BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
           BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
       false);
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL |
                 BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
@@ -1022,7 +1008,6 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedDataForLastHour) {
 
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -1037,14 +1022,12 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedDataForLastWeek) {
   BlockUntilBrowsingDataRemoved(
       base::Time::Now() - base::Days(7), base::Time::Max(),
       BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-          BrowsingDataRemover::DATA_TYPE_WEB_SQL |
           BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
           BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
           BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
       false);
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL |
                 BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
@@ -1057,7 +1040,6 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedDataForLastWeek) {
 
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -1077,14 +1059,12 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedUnprotectedOrigins) {
   BlockUntilBrowsingDataRemoved(
       base::Time(), base::Time::Max(),
       BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-          BrowsingDataRemover::DATA_TYPE_WEB_SQL |
           BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
           BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
           BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
       false);
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL |
                 BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
@@ -1097,7 +1077,6 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedUnprotectedOrigins) {
 
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -1134,15 +1113,13 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedProtectedSpecificOrigin) {
                               BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                                   BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                                   BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                                  BrowsingDataRemover::DATA_TYPE_INDEXED_DB |
-                                  BrowsingDataRemover::DATA_TYPE_WEB_SQL,
+                                  BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
                               std::move(builder));
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_INDEXED_DB |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL,
+                BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
             GetRemovalMask());
   EXPECT_EQ(BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
             GetOriginTypeMask());
@@ -1152,7 +1129,6 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedProtectedSpecificOrigin) {
 
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -1189,15 +1165,13 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedProtectedOrigins) {
       BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
           BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
           BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-          BrowsingDataRemover::DATA_TYPE_INDEXED_DB |
-          BrowsingDataRemover::DATA_TYPE_WEB_SQL,
+          BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
       true);
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_INDEXED_DB |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL,
+                BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
             GetRemovalMask());
   EXPECT_EQ(BrowsingDataRemover::ORIGIN_TYPE_PROTECTED_WEB |
                 BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
@@ -1208,7 +1182,6 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveQuotaManagedProtectedOrigins) {
 
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -1239,15 +1212,13 @@ TEST_F(BrowsingDataRemoverImplTest,
       BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
           BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
           BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-          BrowsingDataRemover::DATA_TYPE_INDEXED_DB |
-          BrowsingDataRemover::DATA_TYPE_WEB_SQL,
+          BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
       false);
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_INDEXED_DB |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL,
+                BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
             GetRemovalMask());
   EXPECT_EQ(BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
             GetOriginTypeMask());
@@ -1257,7 +1228,6 @@ TEST_F(BrowsingDataRemoverImplTest,
 
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -1534,10 +1504,6 @@ TEST_F(BrowsingDataRemoverImplTest, MultipleTasks) {
                      BrowsingDataFilterBuilder::Create(
                          BrowsingDataFilterBuilder::Mode::kPreserve),
                      observer.target_b());
-  tasks.emplace_back(base::Time(), base::Time::UnixEpoch(),
-                     BrowsingDataRemover::DATA_TYPE_WEB_SQL,
-                     BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
-                     std::move(filter_builder_1), observer.target_b());
 
   for (BrowsingDataRemoverImpl::RemovalTask& task : tasks) {
     // All tasks can be directly translated to a RemoveInternal() call. Since
@@ -1783,7 +1749,6 @@ TEST_F(BrowsingDataRemoverImplTest, DeferCookieDeletion) {
   uint32_t dom_storage_mask =
       StoragePartition::REMOVE_DATA_MASK_LOCAL_STORAGE |
       StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-      StoragePartition::REMOVE_DATA_MASK_WEBSQL |
       StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
       StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
       StoragePartition::REMOVE_DATA_MASK_BACKGROUND_FETCH |
@@ -1924,15 +1889,13 @@ TEST_F(BrowsingDataRemoverImplTest, NonDefaultStoragePartitionInFilter) {
                               BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                                   BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                                   BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                                  BrowsingDataRemover::DATA_TYPE_INDEXED_DB |
-                                  BrowsingDataRemover::DATA_TYPE_WEB_SQL,
+                                  BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
                               std::move(builder));
 
   EXPECT_EQ(BrowsingDataRemover::DATA_TYPE_SERVICE_WORKERS |
                 BrowsingDataRemover::DATA_TYPE_CACHE_STORAGE |
                 BrowsingDataRemover::DATA_TYPE_FILE_SYSTEMS |
-                BrowsingDataRemover::DATA_TYPE_INDEXED_DB |
-                BrowsingDataRemover::DATA_TYPE_WEB_SQL,
+                BrowsingDataRemover::DATA_TYPE_INDEXED_DB,
             GetRemovalMask());
   EXPECT_EQ(BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
             GetOriginTypeMask());
@@ -1949,7 +1912,6 @@ TEST_F(BrowsingDataRemoverImplTest, NonDefaultStoragePartitionInFilter) {
   StoragePartitionRemovalData removal_data = all_removal_data.back();
   EXPECT_EQ(removal_data.remove_mask,
             StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                StoragePartition::REMOVE_DATA_MASK_WEBSQL |
                 StoragePartition::REMOVE_DATA_MASK_SERVICE_WORKERS |
                 StoragePartition::REMOVE_DATA_MASK_CACHE_STORAGE |
                 StoragePartition::REMOVE_DATA_MASK_INDEXEDDB);
@@ -2000,7 +1962,7 @@ class BrowsingDataRemoverImplSharedStorageTest
     : public BrowsingDataRemoverImplTest {
  public:
   BrowsingDataRemoverImplSharedStorageTest() {
-    feature_list_.InitAndEnableFeature(blink::features::kSharedStorageAPI);
+    feature_list_.InitAndEnableFeature(network::features::kSharedStorageAPI);
   }
 
  private:
@@ -2141,22 +2103,22 @@ class RemoveBtmEventsTester {
                        std::optional<base::Time> interaction_time) {
     if (storage_time.has_value()) {
       storage_->AsyncCall(&BtmStorage::RecordStorage)
-          .WithArgs(url, storage_time.value(), BtmCookieMode::kBlock3PC);
+          .WithArgs(url, storage_time.value());
     }
     if (interaction_time.has_value()) {
       storage_->AsyncCall(&BtmStorage::RecordUserActivation)
-          .WithArgs(url, interaction_time.value(), BtmCookieMode::kBlock3PC);
+          .WithArgs(url, interaction_time.value());
     }
     storage_->FlushPostedTasksForTesting();
   }
 
   std::optional<StateValue> ReadStateValue(GURL url) {
-    base::test::TestFuture<BtmState> dips_state;
+    base::test::TestFuture<BtmState> btm_state;
     storage_->AsyncCall(&BtmStorage::Read)
         .WithArgs(url)
-        .Then(dips_state.GetCallback());
+        .Then(btm_state.GetCallback());
 
-    const BtmState& state = dips_state.Get();
+    const BtmState& state = btm_state.Get();
     if (!state.was_loaded()) {
       return {};
     }
@@ -2167,14 +2129,14 @@ class RemoveBtmEventsTester {
   raw_ptr<base::SequenceBound<BtmStorage>> storage_;
 };
 
-class BrowsingDataRemoverImplDipsTest : public BrowsingDataRemoverImplTest {
+class BrowsingDataRemoverImplBtmTest : public BrowsingDataRemoverImplTest {
  public:
-  BrowsingDataRemoverImplDipsTest()
+  BrowsingDataRemoverImplBtmTest()
       : BrowsingDataRemoverImplTest(
             std::make_unique<TpcBlockingBrowserClient>()) {}
 };
 
-TEST_F(BrowsingDataRemoverImplDipsTest, RemoveBtmEventsForLastHour) {
+TEST_F(BrowsingDataRemoverImplBtmTest, RemoveBtmEventsForLastHour) {
   RemoveBtmEventsTester tester(GetBrowserContext());
   GURL url1("https://example1.com");
   GURL url2("https://example2.com");
@@ -2222,7 +2184,7 @@ TEST_F(BrowsingDataRemoverImplDipsTest, RemoveBtmEventsForLastHour) {
   }
 }
 
-TEST_F(BrowsingDataRemoverImplDipsTest, RemoveBtmEventsByType) {
+TEST_F(BrowsingDataRemoverImplBtmTest, RemoveBtmEventsByType) {
   RemoveBtmEventsTester tester(GetBrowserContext());
   GURL url1("https://example1.com");
   GURL url2("https://example2.com");
@@ -2292,6 +2254,26 @@ TEST_F(BrowsingDataRemoverImplDipsTest, RemoveBtmEventsByType) {
     EXPECT_FALSE(state_val3->site_storage_times.has_value());
     EXPECT_TRUE(state_val3->user_activation_times.has_value());
   }
+}
+
+TEST_F(BrowsingDataRemoverImplTest,
+       RemoveBrowsingHistoryRegeneratesNoiseToken) {
+  base::test::ScopedFeatureList features(
+      fingerprinting_protection_interventions::features::kCanvasNoise);
+  uint64_t original_token =
+      content::CanvasNoiseTokenData::GetToken(GetBrowserContext());
+
+  BlockUntilBrowsingDataRemoved(base::Time(), base::Time::Max(),
+                                content::BrowsingDataRemover::DATA_TYPE_COOKIES,
+                                false);
+
+  EXPECT_EQ(content::BrowsingDataRemover::DATA_TYPE_COOKIES, GetRemovalMask());
+  EXPECT_EQ(content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
+            GetOriginTypeMask());
+
+  uint64_t updated_token =
+      content::CanvasNoiseTokenData::GetToken(GetBrowserContext());
+  EXPECT_NE(original_token, updated_token);
 }
 
 }  // namespace content

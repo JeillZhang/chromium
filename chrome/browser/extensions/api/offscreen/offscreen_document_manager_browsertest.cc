@@ -5,6 +5,7 @@
 #include "extensions/browser/api/offscreen/offscreen_document_manager.h"
 
 #include "base/test/bind.h"
+#include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_destroyer.h"
@@ -23,10 +24,7 @@
 #include "extensions/common/switches.h"
 #include "extensions/test/test_extension_dir.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/extensions/extension_platform_apitest.h"
-#else
-#include "chrome/browser/extensions/extension_apitest.h"
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/ui/browser.h"
 #endif
 
@@ -77,19 +75,13 @@ std::unique_ptr<OffscreenDocumentLifetimeEnforcer> CreateTestLifetimeEnforcer(
 
 }  // namespace
 
-#if BUILDFLAG(IS_ANDROID)
-using ExtensionApiTestBase = ExtensionPlatformApiTest;
-#else
-using ExtensionApiTestBase = ExtensionApiTest;
-#endif
-
-class OffscreenDocumentManagerBrowserTest : public ExtensionApiTestBase {
+class OffscreenDocumentManagerBrowserTest : public ExtensionApiTest {
  public:
   OffscreenDocumentManagerBrowserTest() = default;
   ~OffscreenDocumentManagerBrowserTest() override = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    ExtensionApiTestBase::SetUpCommandLine(command_line);
+    ExtensionApiTest::SetUpCommandLine(command_line);
     // Add the kOffscreenDocumentTesting switch to allow the use of the
     // `TESTING` reason in offscreen document creation.
     command_line->AppendSwitch(switches::kOffscreenDocumentTesting);
@@ -166,7 +158,7 @@ IN_PROC_BROWSER_TEST_F(OffscreenDocumentManagerBrowserTest,
                 *extension));
 
   OffscreenDocumentHost* offscreen_document = CreateDocumentAndWaitForLoad(
-      *extension, extension->GetResourceURL("offscreen.html"));
+      *extension, extension->ResolveExtensionURL("offscreen.html"));
 
   {
     // Check the document loaded properly. Note: general capabilities of
@@ -220,7 +212,7 @@ IN_PROC_BROWSER_TEST_F(OffscreenDocumentManagerBrowserTest,
   const Extension* extension = LoadExtension(test_dir.UnpackedPath());
   ASSERT_TRUE(extension);
 
-  const GURL offscreen_url = extension->GetResourceURL("offscreen.html");
+  const GURL offscreen_url = extension->ResolveExtensionURL("offscreen.html");
 
   OffscreenDocumentHost* offscreen_document =
       CreateDocumentAndWaitForLoad(*extension, offscreen_url);
@@ -258,7 +250,7 @@ IN_PROC_BROWSER_TEST_F(OffscreenDocumentManagerBrowserTest,
   ASSERT_TRUE(extension);
 
   OffscreenDocumentHost* offscreen_document = CreateDocumentAndWaitForLoad(
-      *extension, extension->GetResourceURL("offscreen.html"));
+      *extension, extension->ResolveExtensionURL("offscreen.html"));
   ASSERT_TRUE(offscreen_document);
   EXPECT_EQ(offscreen_document,
             offscreen_document_manager()->GetOffscreenDocumentForExtension(
@@ -308,7 +300,7 @@ IN_PROC_BROWSER_TEST_F(OffscreenDocumentManagerBrowserTest,
   ASSERT_TRUE(extension);
 
   OffscreenDocumentHost* offscreen_document = CreateDocumentAndWaitForLoad(
-      *extension, extension->GetResourceURL("offscreen.html"));
+      *extension, extension->ResolveExtensionURL("offscreen.html"));
   ASSERT_TRUE(offscreen_document);
   EXPECT_EQ(offscreen_document,
             offscreen_document_manager()->GetOffscreenDocumentForExtension(
@@ -355,7 +347,7 @@ IN_PROC_BROWSER_TEST_F(OffscreenDocumentManagerBrowserTest,
   ASSERT_TRUE(extension);
 
   OffscreenDocumentHost* offscreen_document = CreateDocumentAndWaitForLoad(
-      *extension, extension->GetResourceURL("offscreen.html"));
+      *extension, extension->ResolveExtensionURL("offscreen.html"));
   ASSERT_TRUE(offscreen_document);
   EXPECT_EQ(offscreen_document,
             offscreen_document_manager()->GetOffscreenDocumentForExtension(
@@ -411,7 +403,7 @@ IN_PROC_BROWSER_TEST_F(
 
   // Create a new document for both the blob and dom parser reasons.
   OffscreenDocumentHost* offscreen_document = CreateDocumentAndWaitForLoad(
-      *extension, extension->GetResourceURL("offscreen.html"),
+      *extension, extension->ResolveExtensionURL("offscreen.html"),
       {api::offscreen::Reason::kBlobs, api::offscreen::Reason::kDomParser},
       *profile());
   ASSERT_TRUE(offscreen_document);
@@ -506,7 +498,7 @@ IN_PROC_BROWSER_TEST_F(OffscreenDocumentManagerBrowserTest,
   ASSERT_TRUE(extension);
   ASSERT_TRUE(util::IsIncognitoEnabled(extension->id(), profile()));
 
-  const GURL offscreen_url = extension->GetResourceURL("offscreen.html");
+  const GURL offscreen_url = extension->ResolveExtensionURL("offscreen.html");
 
   // Create an on-the-record offscreen document.
   OffscreenDocumentHost* on_the_record_host =
@@ -521,15 +513,15 @@ IN_PROC_BROWSER_TEST_F(OffscreenDocumentManagerBrowserTest,
                    ->GetBrowserContext()
                    ->IsOffTheRecord());
 
-#if BUILDFLAG(IS_ANDROID)
-  Profile* incognito_profile =
-      profile()->GetPrimaryOTRProfile(/*create_if_needed=*/true);
-#else
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   // Create an incognito browser and an incognito offscreen document, and
   // validate that the proper context is used.
   Browser* incognito_browser = CreateIncognitoBrowser();
   ASSERT_TRUE(incognito_browser);
   Profile* incognito_profile = incognito_browser->profile();
+#else
+  Profile* incognito_profile =
+      profile()->GetPrimaryOTRProfile(/*create_if_needed=*/true);
 #endif
 
   OffscreenDocumentHost* incognito_host = CreateDocumentAndWaitForLoad(

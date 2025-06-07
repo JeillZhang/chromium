@@ -13,12 +13,10 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/test/metrics/histogram_tester.h"
-#import "base/test/scoped_feature_list.h"
 #import "base/test/task_environment.h"
 #import "components/password_manager/core/browser/password_form.h"
 #import "components/password_manager/core/browser/password_manager_metrics_util.h"
 #import "components/password_manager/core/browser/ui/credential_ui_entry.h"
-#import "components/sync/base/features.h"
 #import "ios/chrome/browser/settings/ui_bundled/cells/settings_image_detail_text_item.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/password_details/cells/table_view_stacked_details_item.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/password_details/credential_details.h"
@@ -138,36 +136,10 @@ NSString* DisplayName() {
   self.credential = credential;
 }
 
-- (void)didFinishEditingPasswordDetails {
+- (void)didFinishEditingCredentialDetails {
 }
 
 - (BOOL)isUsernameReused:(NSString*)newUsername forDomain:(NSString*)domain {
-  return NO;
-}
-
-- (void)passwordDetailsViewController:
-            (PasswordDetailsTableViewController*)viewController
-                didAddPasswordDetails:(NSString*)username
-                             password:(NSString*)password {
-}
-
-- (void)checkForDuplicates:(NSString*)username {
-}
-
-- (void)showExistingCredential:(NSString*)username {
-}
-
-- (void)didCancelAddPasswordDetails {
-}
-
-- (void)setWebsiteURL:(NSString*)website {
-}
-
-- (BOOL)isURLValid {
-  return YES;
-}
-
-- (BOOL)isTLDMissing {
   return NO;
 }
 
@@ -233,7 +205,7 @@ class PasswordDetailsTableViewControllerTest
     controller.handler = handler_;
     controller.delegate = delegate_;
     controller.reauthModule = reauthentication_module_;
-    controller.snackbarCommandsHandler = snack_bar_;
+    controller.snackbarHandler = snack_bar_;
     return controller;
   }
 
@@ -434,7 +406,6 @@ class PasswordDetailsTableViewControllerTest
   }
 
  private:
-  base::test::ScopedFeatureList feature_list_;
   id snack_bar_;
   FakePasswordDetailsHandler* handler_ = nil;
   FakePasswordDetailsDelegate* delegate_ = nil;
@@ -456,10 +427,6 @@ TEST_F(PasswordDetailsTableViewControllerTest, TestPassword) {
 
 // Tests that passkey is displayed properly.
 TEST_F(PasswordDetailsTableViewControllerTest, TestPasskey) {
-  if (!syncer::IsWebauthnCredentialSyncEnabled()) {
-    GTEST_SKIP() << "This build configuration does not support passkeys.";
-  }
-
   base::Time creation_time = SetPasskey();
   EXPECT_EQ(1, NumberOfSections());
   EXPECT_EQ(4, NumberOfItemsInSection(0));
@@ -610,7 +577,7 @@ TEST_F(PasswordDetailsTableViewControllerTest, TestChangePasswordOnWebsite) {
           controller());
 
   id applicationCommandsMock = OCMProtocolMock(@protocol(ApplicationCommands));
-  password_details.applicationCommandsHandler = applicationCommandsMock;
+  password_details.applicationHandler = applicationCommandsMock;
 
   TableViewModel* model = password_details.tableViewModel;
   NSIndexPath* indexPath =

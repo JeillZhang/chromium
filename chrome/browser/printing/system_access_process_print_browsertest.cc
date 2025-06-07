@@ -12,6 +12,7 @@
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_util.h"
 #include "base/strings/to_string.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
@@ -24,6 +25,7 @@
 #include "chrome/browser/printing/printer_query.h"
 #include "chrome/browser/printing/test_print_preview_observer.h"
 #include "chrome/browser/printing/test_print_view_manager.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
@@ -59,7 +61,7 @@
 #endif
 
 #if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
-#include "chrome/browser/enterprise/connectors/analysis/content_analysis_dialog.h"
+#include "chrome/browser/enterprise/connectors/analysis/content_analysis_dialog_controller.h"
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/enterprise/connectors/test/deep_scanning_test_utils.h"  // nogncheck
 #include "chrome/browser/enterprise/connectors/test/fake_content_analysis_delegate.h"  // nogncheck
@@ -3452,11 +3454,11 @@ class ContentAnalysisPrintBrowserTestBase
 
     // These overrides make the overall tests faster as the content analysis
     // dialog won't stay in each state for mandatory minimum times.
-    enterprise_connectors::ContentAnalysisDialog::
+    enterprise_connectors::ContentAnalysisDialogController::
         SetMinimumPendingDialogTimeForTesting(base::Milliseconds(0));
-    enterprise_connectors::ContentAnalysisDialog::SetShowDialogDelayForTesting(
-        base::Milliseconds(0));
-    enterprise_connectors::ContentAnalysisDialog::
+    enterprise_connectors::ContentAnalysisDialogController::
+        SetShowDialogDelayForTesting(base::Milliseconds(0));
+    enterprise_connectors::ContentAnalysisDialogController::
         SetSuccessDialogTimeoutForTesting(base::Milliseconds(0));
   }
 

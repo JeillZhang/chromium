@@ -9,6 +9,9 @@
 #import "components/sync/base/user_selectable_type.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_user_settings.h"
+#import "ios/chrome/browser/collaboration/model/collaboration_service_factory.h"
+#import "ios/chrome/browser/collaboration/model/features.h"
+#import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/tab_group.h"
@@ -49,9 +52,6 @@
                                   selectedTabs:
                                       (const std::set<web::WebStateID>&)
                                           identifiers {
-  CHECK(IsTabGroupInGridEnabled())
-      << "You should not be able to create a tab group outside the Tab Groups "
-         "experiment.";
   CHECK(!identifiers.empty()) << "Cannot create an empty tab group.";
   self = [super initWithBaseViewController:viewController browser:browser];
   if (self) {
@@ -65,9 +65,6 @@
     initTabGroupEditionWithBaseViewController:(UIViewController*)viewController
                                       browser:(Browser*)browser
                                      tabGroup:(const TabGroup*)tabGroup {
-  CHECK(IsTabGroupInGridEnabled())
-      << "You should not be able to edit a tab group outside the Tab Groups "
-         "experiment.";
   CHECK(tabGroup) << "You need to pass a tab group in order to edit it.";
   self = [super initWithBaseViewController:viewController browser:browser];
   if (self) {
@@ -106,17 +103,30 @@
       [[CreateTabGroupViewController alloc] initWithEditMode:editMode
                                                    tabSynced:tabSynced];
 
+  FaviconLoader* faviconLoader = nil;
+  collaboration::CollaborationService* collaborationService =
+      collaboration::CollaborationServiceFactory::GetForProfile(profile);
+
+  // Fetch favicons if in regular mode and sync or shared tab groups is enabled.
+  if (!profile->IsOffTheRecord() &&
+      (IsTabGroupSyncEnabled() ||
+       IsSharedTabGroupsJoinEnabled(collaborationService))) {
+    faviconLoader = IOSChromeFaviconLoaderFactory::GetForProfile(profile);
+  }
+
   if (_tabGroup) {
     _mediator = [[CreateTabGroupMediator alloc]
         initTabGroupEditionWithConsumer:_viewController
                                tabGroup:_tabGroup
-                           webStateList:browser->GetWebStateList()];
+                           webStateList:browser->GetWebStateList()
+                          faviconLoader:faviconLoader];
     _mediator.delegate = self;
   } else {
     _mediator = [[CreateTabGroupMediator alloc]
         initTabGroupCreationWithConsumer:_viewController
                             selectedTabs:_identifiers
-                                 browser:browser];
+                                 browser:browser
+                           faviconLoader:faviconLoader];
   }
   _viewController.mutator = _mediator;
   _viewController.delegate = self;

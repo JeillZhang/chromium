@@ -154,7 +154,6 @@ base::TimeDelta GetOverinstallTimeoutForEnterTestMode();
 // Places the updater into test mode (redirect server URLs and disable CUP).
 void EnterTestMode(const GURL& update_url,
                    const GURL& crash_upload_url,
-                   const GURL& device_management_url,
                    const GURL& app_logo_url,
                    base::TimeDelta idle_timeout,
                    base::TimeDelta server_keep_alive_time,
@@ -300,7 +299,9 @@ std::vector<TestUpdaterVersion> GetRealUpdaterVersions();
 
 // Sets up a real updater on the system given any (higher or lower) version of
 // `UpdaterSetup.exe` in `updater_path`.
-void SetupRealUpdater(UpdaterScope scope, const base::FilePath& updater_path);
+void SetupRealUpdater(UpdaterScope scope,
+                      const base::FilePath& updater_path,
+                      const base::Value::List& switches);
 
 // Sets up a fake updater on the system at a version higher than the test.
 void SetupFakeUpdaterHigherVersion(UpdaterScope scope);
@@ -372,7 +373,8 @@ void ExpectPolicyStatusValues(
     const std::wstring& expected_source,
     const std::wstring& expected_value,
     VARIANT_BOOL expected_has_conflict);
-void ExpectLegacyPolicyStatusSucceeds(UpdaterScope scope);
+void ExpectLegacyPolicyStatusSucceeds(UpdaterScope scope,
+                                      const base::Version& updater_version);
 
 void LegacyInstallApp(UpdaterScope scope,
                       const std::string& app_id,
@@ -406,7 +408,8 @@ void ExpectAppCommandPing(UpdaterScope scope,
                           int errorcode,
                           int eventresult,
                           int event_type,
-                          const base::Version& version);
+                          const base::Version& version,
+                          const base::Version& updater_version);
 
 void ExpectUpdateCheckRequest(UpdaterScope scope, ScopedServer* test_server);
 
@@ -506,12 +509,25 @@ void UninstallApp(UpdaterScope scope, const std::string& app_id);
 
 void RunOfflineInstall(UpdaterScope scope,
                        bool is_legacy_install,
-                       bool is_silent_install);
+                       bool is_silent_install,
+                       int installer_result,
+                       int installer_error);
 
 void RunOfflineInstallOsNotSupported(UpdaterScope scope,
                                      bool is_legacy_install,
                                      bool is_silent_install,
                                      const std::string& language);
+
+void RunMockOfflineMetaInstall(UpdaterScope scope,
+                               const std::string& app_id,
+                               const base::Version& version,
+                               const base::FilePath& installer_path,
+                               const std::string& arguments,
+                               bool is_silent_install,
+                               const std::string& platform,
+                               int string_resource_id_to_find,
+                               const std::string& language,
+                               bool expect_success);
 
 base::CommandLine MakeElevated(base::CommandLine command_line);
 
@@ -550,6 +566,13 @@ void ExpectEnterpriseCompanionAppNotInstalled();
 // Uninstalls the enterprise companion app, always at the system scope.
 void UninstallEnterpriseCompanionApp();
 
+void ExpectDeviceManagementRequest(ScopedServer* test_server,
+                                   const std::string& request_type,
+                                   const std::string& authorization_type,
+                                   const std::string& authorization_token,
+                                   net::HttpStatusCode response_status,
+                                   const std::string& response,
+                                   std::optional<GURL> target_url = {});
 void ExpectDeviceManagementRegistrationRequest(
     ScopedServer* test_server,
     const std::string& enrollment_token,
@@ -562,31 +585,9 @@ void ExpectDeviceManagementPolicyFetchRequest(
     bool first_request = true,
     bool rotate_public_key = false,
     std::optional<GURL> target_url = std::nullopt);
-void ExpectDeviceManagementPolicyFetchWithNewPublicKeyRequest(
-    ScopedServer* test_server,
-    const std::string& dm_token,
-    const ::wireless_android_enterprise_devicemanagement::
-        OmahaSettingsClientProto& omaha_settings);
 void ExpectDeviceManagementTokenDeletionRequest(ScopedServer* test_server,
                                                 const std::string& dm_token,
                                                 bool invalidate_token);
-void ExpectDeviceManagementPolicyValidationRequest(ScopedServer* test_server,
-                                                   const std::string& dm_token);
-void ExpectDeviceManagementRegistrationRequestViaCompanionApp(
-    ScopedServer* test_server,
-    const std::string& enrollment_token,
-    const std::string& dm_token);
-void ExpectDeviceManagementPolicyFetchRequestViaCompanionApp(
-    ScopedServer* test_server,
-    const std::string& dm_token,
-    const ::wireless_android_enterprise_devicemanagement::
-        OmahaSettingsClientProto& omaha_settings,
-    bool first_request = true,
-    bool rotate_public_key = false,
-    std::optional<GURL> target_url = std::nullopt);
-void ExpectDeviceManagementPolicyValidationRequestViaCompanionApp(
-    ScopedServer* test_server,
-    const std::string& dm_token);
 void ExpectProxyPacScriptRequest(ScopedServer* test_server);
 
 #if BUILDFLAG(IS_MAC)
@@ -620,6 +621,21 @@ void ExpectKSAdminFetchTag(UpdaterScope scope,
                            std::optional<UpdaterScope> store_flag,
                            std::optional<std::string> want_tag);
 
+// Expect ksadmin to fetch the specified brand code from a tag stored in the
+// `com.apple.application-instance` extended attribute of the item at the
+// specified path, or to fail to retrieve a brand code.
+//
+// Params:
+//      scope -- Picks which ksadmin binary to use.
+//    elevate -- Whether to run as root instead of the current user.
+//       path -- Path to send to ksadmin via `--print-xattr-tag-brand`.
+// want_brand -- if valid, the brand code that ksadmin is expected to
+//               successfully retrieve, which may be the empty string. If
+//               nullopt, specifies that ksadmin should return EXIT_FAILURE.
+void ExpectKSAdminXattrBrand(UpdaterScope scope,
+                             bool elevate,
+                             const base::FilePath& path,
+                             std::optional<std::string> want_brand);
 #endif  // BUILDFLAG(IS_MAC)
 
 }  // namespace updater::test

@@ -141,6 +141,12 @@ export class SearchboxElement extends SearchboxElementBase {
         reflectToAttribute: true,
       },
 
+      composeButtonEnabled: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('searchboxShowComposeEntrypoint'),
+        reflectToAttribute: true,
+      },
+
       //========================================================================
       // Private properties
       //========================================================================
@@ -148,6 +154,12 @@ export class SearchboxElement extends SearchboxElementBase {
       isLensSearchbox_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('isLensSearchbox'),
+        reflectToAttribute: true,
+      },
+
+      enableThumbnailSizingTweaks_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('enableThumbnailSizingTweaks'),
         reflectToAttribute: true,
       },
 
@@ -250,6 +262,11 @@ export class SearchboxElement extends SearchboxElementBase {
         value: '',
       },
 
+      isThumbnailDeletable_: {
+        type: Boolean,
+        value: false,
+      },
+
       queryAutocompleteOnEmptyInput_: {
         type: Boolean,
         value: () => loadTimeData.getBoolean('queryAutocompleteOnEmptyInput'),
@@ -263,34 +280,37 @@ export class SearchboxElement extends SearchboxElementBase {
     };
   }
 
-  canShowSecondarySide: boolean;
-  colorSourceIsBaseline: boolean;
-  dropdownIsVisible: boolean;
-  hadSecondarySide: boolean;
-  hasSecondarySide: boolean;
-  isDark: boolean;
-  matchSearchbox: boolean;
-  searchboxAriaDescription: string;
-  searchboxLensSearchEnabled: boolean;
-  searchboxChromeRefreshTheming: boolean;
-  searchboxSteadyStateShadow: boolean;
-  showThumbnail: boolean;
-  private inputAriaLive_: string;
-  private isLensSearchbox_: boolean;
-  private isDeletingInput_: boolean;
-  private queryAutocompleteOnEmptyInput_: boolean;
-  private lastIgnoredEnterEvent_: KeyboardEvent|null;
-  private lastInput_: Input;
-  private lastQueriedInput_: string|null;
-  private pastedInInput_: boolean;
-  private placeholderText: string;
-  private searchboxIcon_: string;
-  private searchboxVoiceSearchEnabled_: boolean;
-  private searchboxLensSearchEnabled_: boolean;
-  private result_: AutocompleteResult|null;
-  private selectedMatch_: AutocompleteMatch|null;
-  private selectedMatchIndex_: number;
-  private thumbnailUrl_: string;
+  declare canShowSecondarySide: boolean;
+  declare colorSourceIsBaseline: boolean;
+  declare dropdownIsVisible: boolean;
+  declare hadSecondarySide: boolean;
+  declare hasSecondarySide: boolean;
+  declare isDark: boolean;
+  declare matchSearchbox: boolean;
+  declare searchboxAriaDescription: string;
+  declare searchboxLensSearchEnabled: boolean;
+  declare searchboxChromeRefreshTheming: boolean;
+  declare searchboxSteadyStateShadow: boolean;
+  declare composeButtonEnabled: boolean;
+  declare showThumbnail: boolean;
+  declare private inputAriaLive_: string;
+  declare private isLensSearchbox_: boolean;
+  declare private enableThumbnailSizingTweaks_: boolean;
+  declare private isDeletingInput_: boolean;
+  declare private queryAutocompleteOnEmptyInput_: boolean;
+  declare private lastIgnoredEnterEvent_: KeyboardEvent|null;
+  declare private lastInput_: Input;
+  declare private lastQueriedInput_: string|null;
+  declare private pastedInInput_: boolean;
+  declare private placeholderText: string;
+  declare private searchboxIcon_: string;
+  declare private searchboxVoiceSearchEnabled_: boolean;
+  declare private searchboxLensSearchEnabled_: boolean;
+  declare private result_: AutocompleteResult|null;
+  declare private selectedMatch_: AutocompleteMatch|null;
+  declare private selectedMatchIndex_: number;
+  declare private thumbnailUrl_: string;
+  declare private isThumbnailDeletable_: boolean;
 
   private pageHandler_: PageHandlerInterface;
   private callbackRouter_: PageCallbackRouter;
@@ -338,12 +358,20 @@ export class SearchboxElement extends SearchboxElementBase {
     performance.measure('realbox-creation', 'realbox-creation-start');
   }
 
-  getSuggestionsElement(): HTMLElement {
+  getSuggestionsElement(): SearchboxDropdownElement {
     return this.$.matches;
   }
 
   isInputEmpty(): boolean {
     return !this.$.input.value.trim();
+  }
+
+  queryAutocomplete() {
+    // Query autocomplete if dropdown is not visible
+    if (this.dropdownIsVisible) {
+      return;
+    }
+    this.queryAutocomplete_(this.$.input.value);
   }
 
   //============================================================================
@@ -409,20 +437,14 @@ export class SearchboxElement extends SearchboxElementBase {
     this.updateInput_({text: inputText, inline: ''});
   }
 
-  private onSetThumbnail_(thumbnailUrl: string) {
+  private onSetThumbnail_(thumbnailUrl: string, isDeletable: boolean) {
     this.thumbnailUrl_ = thumbnailUrl;
+    this.isThumbnailDeletable_ = isDeletable;
   }
 
   //============================================================================
   // Event handlers
   //============================================================================
-
-  private onHeaderFocusin_() {
-    // The header got focus. Unselect the selected match and clear the input.
-    assert(this.lastQueriedInput_ === '');
-    this.$.matches.unselect();
-    this.updateInput_({text: '', inline: ''});
-  }
 
   private onInputCutCopy_(e: ClipboardEvent) {
     // Only handle cut/copy when input has content and it's all selected.
@@ -800,6 +822,10 @@ export class SearchboxElement extends SearchboxElementBase {
     this.dispatchEvent(new Event('open-lens-search'));
   }
 
+  private onComposeButtonClick_() {
+    this.dispatchEvent(new CustomEvent('open-compose-box'));
+  }
+
   private onRemoveThumbnailClick_() {
     /* Remove thumbnail, focus input, and notify browser. */
     this.thumbnailUrl_ = '';
@@ -880,6 +906,7 @@ export class SearchboxElement extends SearchboxElementBase {
     this.dispatchEvent(new CustomEvent('query-autocomplete', {
       bubbles: true,
       composed: true,
+      detail: {inputValue: input},
     }));
   }
 
@@ -916,6 +943,12 @@ export class SearchboxElement extends SearchboxElementBase {
     this.isDeletingInput_ = lastInputValue.length > newInputValue.length &&
         lastInputValue.startsWith(newInputValue);
     this.lastInput_ = newInput;
+  }
+
+  private getThumbnailTabindex_(): string {
+    // If the thumbnail can't be deleted, returning an empty string will set the
+    // tabindex to nothing, which will make the thumbnail not focusable.
+    return this.isThumbnailDeletable_ ? '1' : '';
   }
 }
 

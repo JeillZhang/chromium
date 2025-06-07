@@ -21,6 +21,8 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import static org.chromium.ui.test.util.ViewUtils.onViewWaiting;
+
 import android.os.Build;
 import android.view.ViewGroup;
 import android.view.ViewStub;
@@ -80,8 +82,14 @@ import java.util.concurrent.TimeoutException;
 /** Tests for the {@link TabSwitcher} on tablet */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
-@Restriction({Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE, DeviceFormFactor.TABLET})
-@Features.DisableFeatures(ChromeFeatureList.TAB_STRIP_INCOGNITO_MIGRATION)
+@Restriction({Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE, DeviceFormFactor.TABLET_OR_DESKTOP})
+@Features.DisableFeatures({
+    ChromeFeatureList.ANDROID_SURFACE_COLOR_UPDATE,
+    ChromeFeatureList.GRID_TAB_SWITCHER_SURFACE_COLOR_UPDATE,
+    ChromeFeatureList.GRID_TAB_SWITCHER_UPDATE,
+    ChromeFeatureList.ANDROID_THEME_MODULE,
+    ChromeFeatureList.TAB_STRIP_INCOGNITO_MIGRATION
+})
 @Batch(Batch.PER_CLASS)
 public class TabSwitcherTabletTest {
     @ClassRule
@@ -388,7 +396,7 @@ public class TabSwitcherTabletTest {
 
         // Incognito tab switcher should exit to go to normal tab switcher and we should see empty
         // view.
-        onView(
+        onViewWaiting(
                         allOf(
                                 withId(R.id.empty_state_container),
                                 isDescendantOfA(withId(tabSwitcherAncestorId))))

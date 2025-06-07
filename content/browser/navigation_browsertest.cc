@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 #include <stdint.h>
 
 #include <array>
@@ -23,12 +22,14 @@
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/to_string.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/test/test_timeouts.h"
+#include "base/test/values_test_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/uuid.h"
 #include "build/build_config.h"
@@ -78,6 +79,7 @@
 #include "content/public/test/navigation_handle_observer.h"
 #include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/slow_http_response.h"
+#include "content/public/test/test_devtools_protocol_client.h"
 #include "content/public/test/test_frame_navigation_observer.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_navigation_throttle.h"
@@ -153,8 +155,9 @@ class InterceptAndCancelDidCommitProvisionalLoad
       override {
     intercepted_navigations_.push_back(navigation_request);
     intercepted_messages_.push_back(std::move(*params));
-    if (loop_)
+    if (loop_) {
       loop_->Quit();
+    }
     // Do not send the message to the RenderFrameHostImpl.
     return false;
   }
@@ -176,8 +179,9 @@ class RenderFrameHostImplForHistoryBackInterceptor
                          bool has_user_gesture,
                          std::optional<blink::scheduler::TaskAttributionId>
                              soft_navigation_heuristics_task_id) override {
-    if (quit_handler_)
+    if (quit_handler_) {
       std::move(quit_handler_).Run();
+    }
   }
 
   void set_quit_handler(base::OnceClosure handler) {
@@ -225,11 +229,13 @@ class EmbedderVisibleUrlTracker : public WebContentsDelegate {
   // WebContentsDelegate's implementation:
   void NavigationStateChanged(WebContents* source,
                               InvalidateTypes changed_flags) override {
-    if (!(changed_flags & INVALIDATE_TYPE_URL))
+    if (!(changed_flags & INVALIDATE_TYPE_URL)) {
       return;
+    }
     url_ = source->GetVisibleURL();
-    if (on_url_invalidated_)
+    if (on_url_invalidated_) {
       std::move(on_url_invalidated_).Run();
+    }
   }
 
   void WaitUntilUrlInvalidated() {
@@ -254,8 +260,9 @@ class DidStartNavigationCallback final : public WebContentsObserver {
 
  private:
   void DidStartNavigation(NavigationHandle* navigation_handle) override {
-    if (callback_)
+    if (callback_) {
       std::move(callback_).Run(navigation_handle);
+    }
   }
   base::OnceCallback<void(NavigationHandle*)> callback_;
 };
@@ -271,8 +278,9 @@ class DidFinishNavigationCallback final : public WebContentsObserver {
 
  private:
   void DidFinishNavigation(NavigationHandle* navigation_handle) override {
-    if (callback_)
+    if (callback_) {
       std::move(callback_).Run(navigation_handle);
+    }
   }
   base::OnceCallback<void(NavigationHandle*)> callback_;
 };
@@ -291,13 +299,12 @@ BlockNavigationWillProcessResponse(WebContentsImpl* web_content) {
   return std::make_unique<content::TestNavigationThrottleInserter>(
       web_content,
       base::BindLambdaForTesting(
-          [&](NavigationHandle* handle) -> std::unique_ptr<NavigationThrottle> {
-            auto throttle = std::make_unique<TestNavigationThrottle>(handle);
+          [&](NavigationThrottleRegistry& registry) -> void {
+            auto throttle = std::make_unique<TestNavigationThrottle>(registry);
             throttle->SetResponse(TestNavigationThrottle::WILL_PROCESS_RESPONSE,
                                   TestNavigationThrottle::SYNCHRONOUS,
                                   NavigationThrottle::BLOCK_RESPONSE);
-
-            return throttle;
+            registry.AddThrottle(std::move(throttle));
           }));
 }
 
@@ -570,9 +577,10 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest,
               observer.last_initiator_process_id());
   }
 
-  // The RenderFrameHost should have changed unless full site isolation and
-  // proactive BrowsingInstance swaps are both disabled.
-  if (!AreAllSitesIsolatedForTesting() &&
+  // The RenderFrameHost should have changed unless strict SiteInstances (either
+  // full site isolation or default SiteInstanceGroups) and proactive
+  // BrowsingInstance swaps are both disabled.
+  if (!AreStrictSiteInstancesEnabled() &&
       !CanCrossSiteNavigationsProactivelySwapBrowsingInstances()) {
     EXPECT_EQ(initial_rfh, current_frame_host());
   } else {
@@ -1636,7 +1644,8 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest,
 #else
 #define MAYBE_IPCFlood_GoToEntryAtOffset IPCFlood_GoToEntryAtOffset
 #endif
-IN_PROC_BROWSER_TEST_F(NavigationBrowserTest, MAYBE_IPCFlood_GoToEntryAtOffset) {
+IN_PROC_BROWSER_TEST_F(NavigationBrowserTest,
+                       MAYBE_IPCFlood_GoToEntryAtOffset) {
   GURL url(embedded_test_server()->GetURL("/title1.html"));
   EXPECT_TRUE(NavigateToURL(shell(), url));
 
@@ -1771,13 +1780,12 @@ IN_PROC_BROWSER_TEST_F(NavigationDownloadBrowserTest,
   content::TestNavigationThrottleInserter throttle_inserter(
       web_contents(),
       base::BindLambdaForTesting(
-          [&](NavigationHandle* handle) -> std::unique_ptr<NavigationThrottle> {
-            auto throttle = std::make_unique<TestNavigationThrottle>(handle);
+          [&](NavigationThrottleRegistry& registry) -> void {
+            auto throttle = std::make_unique<TestNavigationThrottle>(registry);
             throttle->SetResponse(TestNavigationThrottle::WILL_PROCESS_RESPONSE,
                                   TestNavigationThrottle::SYNCHRONOUS,
                                   NavigationThrottle::CANCEL_AND_IGNORE);
-
-            return throttle;
+            registry.AddThrottle(std::move(throttle));
           }));
 
   // Insert enough iframes so that if sockets are not properly released: there
@@ -1806,15 +1814,16 @@ IN_PROC_BROWSER_TEST_F(NavigationBaseBrowserTest, AddRequestHeaderOnRedirect) {
   content::TestNavigationThrottleInserter throttle_inserter(
       web_contents(),
       base::BindLambdaForTesting(
-          [](NavigationHandle* handle) -> std::unique_ptr<NavigationThrottle> {
-            auto throttle = std::make_unique<TestNavigationThrottle>(handle);
-            NavigationRequest* request = NavigationRequest::From(handle);
+          [](NavigationThrottleRegistry& registry) -> void {
+            auto throttle = std::make_unique<TestNavigationThrottle>(registry);
+            NavigationRequest* request =
+                NavigationRequest::From(&registry.GetNavigationHandle());
             throttle->SetCallback(TestNavigationThrottle::WILL_REDIRECT_REQUEST,
                                   base::BindLambdaForTesting([request]() {
                                     request->SetRequestHeader("header_name",
                                                               "header_value");
                                   }));
-            return throttle;
+            registry.AddThrottle(std::move(throttle));
           }));
 
   // 1) There is no "header_name" header in the initial request.
@@ -1849,9 +1858,10 @@ IN_PROC_BROWSER_TEST_F(NavigationBaseBrowserTest,
   content::TestNavigationThrottleInserter throttle_inserter(
       web_contents(),
       base::BindLambdaForTesting(
-          [](NavigationHandle* handle) -> std::unique_ptr<NavigationThrottle> {
-            auto throttle = std::make_unique<TestNavigationThrottle>(handle);
-            NavigationRequest* request = NavigationRequest::From(handle);
+          [](NavigationThrottleRegistry& registry) -> void {
+            auto throttle = std::make_unique<TestNavigationThrottle>(registry);
+            NavigationRequest* request =
+                NavigationRequest::From(&registry.GetNavigationHandle());
             throttle->SetCallback(TestNavigationThrottle::WILL_START_REQUEST,
                                   base::BindLambdaForTesting([request]() {
                                     request->SetRequestHeader("header_name",
@@ -1862,7 +1872,7 @@ IN_PROC_BROWSER_TEST_F(NavigationBaseBrowserTest,
                                     request->SetRequestHeader("header_name",
                                                               "other_value");
                                   }));
-            return throttle;
+            registry.AddThrottle(std::move(throttle));
           }));
 
   // 1) The header is added to the initial request.
@@ -1892,9 +1902,10 @@ IN_PROC_BROWSER_TEST_F(NavigationBaseBrowserTest,
   content::TestNavigationThrottleInserter throttle_inserter(
       web_contents(),
       base::BindLambdaForTesting(
-          [](NavigationHandle* handle) -> std::unique_ptr<NavigationThrottle> {
-            NavigationRequest* request = NavigationRequest::From(handle);
-            auto throttle = std::make_unique<TestNavigationThrottle>(handle);
+          [](NavigationThrottleRegistry& registry) -> void {
+            NavigationRequest* request =
+                NavigationRequest::From(&registry.GetNavigationHandle());
+            auto throttle = std::make_unique<TestNavigationThrottle>(registry);
             throttle->SetCallback(TestNavigationThrottle::WILL_START_REQUEST,
                                   base::BindLambdaForTesting([request]() {
                                     request->SetRequestHeader("header_name",
@@ -1904,7 +1915,7 @@ IN_PROC_BROWSER_TEST_F(NavigationBaseBrowserTest,
                                   base::BindLambdaForTesting([request]() {
                                     request->RemoveRequestHeader("header_name");
                                   }));
-            return throttle;
+            registry.AddThrottle(std::move(throttle));
           }));
 
   // 1) The header is added to the initial request.
@@ -2016,18 +2027,19 @@ IN_PROC_BROWSER_TEST_F(NavigationCorsExemptBrowserTest,
   const std::string header_value = "value";
   content::TestNavigationThrottleInserter throttle_inserter(
       web_contents(),
-      base::BindLambdaForTesting([header_value](NavigationHandle* handle)
-                                     -> std::unique_ptr<NavigationThrottle> {
-        NavigationRequest* request = NavigationRequest::From(handle);
-        auto throttle = std::make_unique<TestNavigationThrottle>(handle);
-        throttle->SetCallback(
-            TestNavigationThrottle::WILL_START_REQUEST,
-            base::BindLambdaForTesting([request, header_value]() {
-              request->SetCorsExemptRequestHeader(kCorsHeaderName,
-                                                  header_value);
-            }));
-        return throttle;
-      }));
+      base::BindLambdaForTesting(
+          [header_value](NavigationThrottleRegistry& registry) -> void {
+            NavigationRequest* request =
+                NavigationRequest::From(&registry.GetNavigationHandle());
+            auto throttle = std::make_unique<TestNavigationThrottle>(registry);
+            throttle->SetCallback(
+                TestNavigationThrottle::WILL_START_REQUEST,
+                base::BindLambdaForTesting([request, header_value]() {
+                  request->SetCorsExemptRequestHeader(kCorsHeaderName,
+                                                      header_value);
+                }));
+            registry.AddThrottle(std::move(throttle));
+          }));
   shell()->LoadURL(embedded_test_server()->GetURL("/doc"));
   response.WaitForRequest();
   EXPECT_EQ(header_value, response.http_request()->headers.at(kCorsHeaderName));
@@ -2916,8 +2928,9 @@ IN_PROC_BROWSER_TEST_F(NavigationCookiesBrowserTest,
 IN_PROC_BROWSER_TEST_F(NavigationCookiesBrowserTest,
                        CookiesInheritedAboutBlank) {
   // This test expects several cross-site navigation to happen.
-  if (!AreAllSitesIsolatedForTesting())
+  if (!AreAllSitesIsolatedForTesting()) {
     return;
+  }
 
   using Response = net::test_server::ControllableHttpResponse;
   Response response_1(https_server(), "/response_1");
@@ -3044,8 +3057,9 @@ IN_PROC_BROWSER_TEST_F(NavigationCookiesBrowserTest,
 IN_PROC_BROWSER_TEST_F(NavigationCookiesBrowserTest,
                        CookiesInheritedAboutBlank2) {
   // This test expects several cross-site navigation to happen.
-  if (!AreAllSitesIsolatedForTesting())
+  if (!AreAllSitesIsolatedForTesting()) {
     return;
+  }
 
   using Response = net::test_server::ControllableHttpResponse;
   Response response_1(https_server(), "/response_1");
@@ -3655,15 +3669,17 @@ class GetEffectiveUrlClient : public ContentBrowserTestContentBrowserClient {
  public:
   GURL GetEffectiveURL(content::BrowserContext* browser_context,
                        const GURL& url) override {
-    if (effective_url_)
+    if (effective_url_) {
       return *effective_url_;
+    }
     return url;
   }
 
   bool IsSuitableHost(RenderProcessHost* process_host,
                       const GURL& site_url) override {
-    if (!disallowed_process_id_)
+    if (!disallowed_process_id_) {
       return true;
+    }
     return process_host->GetDeprecatedID() != disallowed_process_id_;
   }
 
@@ -4342,6 +4358,13 @@ class InitiatorClosingOpenURLInterceptor
 IN_PROC_BROWSER_TEST_F(
     NavigationBrowserTest,
     MAYBE_FormSubmissionInRemoteFrameSenderDeletedBeforeReceivingOpenURL) {
+  // TODO(crbug.com/420851638): Skipping this test if the
+  // TrackEmptyRendererProcessesForReuse feature is enabled while investigating
+  // the issue between this test and the feature causing this test to fail.
+  if (base::FeatureList::IsEnabled(
+          features::kTrackEmptyRendererProcessesForReuse)) {
+    return;
+  }
   // We crash a renderer in the OpenURL interceptor.
   content::ScopedAllowRendererCrashes scoped_allow_renderer_crashes;
   content::IsolateAllSitesForTesting(base::CommandLine::ForCurrentProcess());
@@ -4853,14 +4876,14 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest,
   class ShutdownThrottle : public TaskRunnerDeferringThrottle,
                            WebContentsObserver {
    public:
-    explicit ShutdownThrottle(WebContents* web_contents,
-                              NavigationHandle* handle)
+    ShutdownThrottle(WebContents* web_contents,
+                     NavigationThrottleRegistry& registry)
         : TaskRunnerDeferringThrottle(
               base::SingleThreadTaskRunner::GetCurrentDefault(),
               /*defer_start=*/false,
               /*defer_redirect=*/false,
               /*defer_response=*/true,
-              handle),
+              registry),
           web_contents_(web_contents) {
       WebContentsObserver::Observe(web_contents_);
     }
@@ -4881,9 +4904,9 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest,
   auto inserter = std::make_unique<TestNavigationThrottleInserter>(
       shell()->web_contents(),
       base::BindLambdaForTesting(
-          [&](NavigationHandle* handle) -> std::unique_ptr<NavigationThrottle> {
-            return std::make_unique<ShutdownThrottle>(shell()->web_contents(),
-                                                      handle);
+          [&](NavigationThrottleRegistry& registry) -> void {
+            registry.AddThrottle(std::make_unique<ShutdownThrottle>(
+                shell()->web_contents(), registry));
           }));
 
   class DoesNotReadyToCommitObserver : public WebContentsObserver {
@@ -5188,8 +5211,9 @@ class SubresourceLoadingTest : public NavigationBrowserTest {
       WebContents* current_contents =
           WebContents::FromRenderFrameHost(current_frame);
       DCHECK(current_contents);
-      if (base::Contains(visited_contents, current_contents))
+      if (base::Contains(visited_contents, current_contents)) {
         break;
+      }
       visited_contents.insert(current_contents);
 
       // Flush all the frames in the `current_contents's active page.
@@ -5305,7 +5329,7 @@ IN_PROC_BROWSER_TEST_F(SubresourceLoadingTest,
       main_frame->child_at(0)->current_frame_host();
   RenderFrameHostImpl* grandchild_frame =
       child_frame->child_at(0)->current_frame_host();
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_NE(main_frame->GetSiteInstance(), child_frame->GetSiteInstance());
   } else {
     EXPECT_EQ(main_frame->GetSiteInstance(), child_frame->GetSiteInstance());
@@ -5355,7 +5379,7 @@ IN_PROC_BROWSER_TEST_F(SubresourceLoadingTest,
       main_frame->child_at(0)->current_frame_host();
   RenderFrameHostImpl* grandchild_frame =
       child_frame->child_at(0)->current_frame_host();
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_NE(main_frame->GetSiteInstance(), child_frame->GetSiteInstance());
   } else {
     EXPECT_EQ(main_frame->GetSiteInstance(), child_frame->GetSiteInstance());
@@ -5399,7 +5423,7 @@ IN_PROC_BROWSER_TEST_F(SubresourceLoadingTest, TopToAboutBlank_CrossSite) {
       shell()->web_contents()->GetPrimaryMainFrame());
   RenderFrameHostImpl* child_frame =
       main_frame->child_at(0)->current_frame_host();
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     EXPECT_NE(main_frame->GetSiteInstance(), child_frame->GetSiteInstance());
   } else {
     EXPECT_EQ(main_frame->GetSiteInstance(), child_frame->GetSiteInstance());
@@ -6332,11 +6356,19 @@ IN_PROC_BROWSER_TEST_F(NavigationQueueingBrowserTest, Regular) {
   histogram_tester().ExpectBucketCount(
       "Navigation.PendingCommit.DidBlockGetFrameHostForNavigation.Regular",
       true, 1);
-  // For 2 blocked navigations, 4 total blocks are expected: 2 when trying to
-  // assign a RenderFrameHost when starting a navigation, and 2 when trying to
-  // pick a final RenderFrameHost to commit the navigation.
-  histogram_tester().ExpectBucketCount(
-      "Navigation.PendingCommit.BlockedCount.Regular", 4, 1);
+  if (base::FeatureList::IsEnabled(features::kDeferSpeculativeRFHCreation)) {
+    // For 2 blocked navigations, 2 total blocks are expected when trying to
+    // pick a final RenderFrameHost to commit the navigation. The attempt to
+    // create a RenderFrameHost when starting the navigation will be skipped.
+    histogram_tester().ExpectBucketCount(
+        "Navigation.PendingCommit.BlockedCount.Regular", 2, 1);
+  } else {
+    // For 2 blocked navigations, 4 total blocks are expected: 2 when trying to
+    // assign a RenderFrameHost when starting a navigation, and 2 when trying to
+    // pick a final RenderFrameHost to commit the navigation.
+    histogram_tester().ExpectBucketCount(
+        "Navigation.PendingCommit.BlockedCount.Regular", 4, 1);
+  }
   histogram_tester().ExpectBucketCount(
       "Navigation.PendingCommit.BlockedCommitCount.Regular", 2, 1);
 }
@@ -7531,6 +7563,77 @@ class NavigationBrowserTestCredentiallessIframe : public NavigationBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(NavigationBrowserTestCredentiallessIframe,
+                       CheckCookiesForCredentiallessIframeNavigation) {
+  GURL main_url =
+      embedded_test_server()->GetURL("/page_with_credentialless_iframe.html");
+  GURL iframe_url_1 = embedded_test_server()->GetURL("/title1.html");
+  EXPECT_TRUE(NavigateToURL(shell(), main_url));
+
+  // Set a cookie on the main frame
+  EXPECT_TRUE(ExecJs(main_frame(), "document.cookie = 'name=main;';"));
+  EXPECT_EQ("name=main", EvalJs(main_frame(), "document.cookie;"));
+
+  // The main page has a child iframe with url `iframe_url_1`.
+  EXPECT_EQ(1U, main_frame()->child_count());
+  FrameTreeNode* child = main_frame()->child_at(0);
+  EXPECT_EQ(iframe_url_1, child->current_url());
+  EXPECT_TRUE(child->Credentialless());
+  EXPECT_TRUE(child->current_frame_host()->IsCredentialless());
+  EXPECT_TRUE(ExecJs(child->current_frame_host(), "window.credentialless"));
+
+  // Set up devtools client so we can check which cookies were sent and blocked
+  // with frame navigation
+  TestDevToolsProtocolClient fenced_frame_devtools_client;
+  fenced_frame_devtools_client.AttachToFrameTreeHost(
+      child->current_frame_host());
+  fenced_frame_devtools_client.SendCommandAsync("Network.enable");
+  fenced_frame_devtools_client.ClearNotifications();
+
+  // Set a cookie on the frame and reload so we can see which cookies are
+  // included in the network request
+  EXPECT_TRUE(ExecJs(child->current_frame_host(),
+                     "document.cookie = 'name=credentialless;';"));
+
+  EXPECT_EQ("name=credentialless",
+            EvalJs(child->current_frame_host(), "document.cookie;"));
+
+  EXPECT_TRUE(ExecJs(child->current_frame_host(), "location.reload();"));
+
+  // Check associated cookies according to devtools
+  base::Value::Dict params = fenced_frame_devtools_client.WaitForNotification(
+      "Network.requestWillBeSentExtraInfo", /*allow_existing=*/true);
+
+  const base::Value::List* associated_cookies =
+      params.FindList("associatedCookies");
+
+  EXPECT_THAT(
+      associated_cookies,
+      testing::Pointee(testing::UnorderedElementsAre(
+          base::test::IsSupersetOfValue(base::test::ParseJsonDict(R"({
+                            "blockedReasons": [ "AnonymousContext" ],
+                            "cookie" : {
+                              "name": "name",
+                              "value": "main"
+                            }
+                        })")),
+          testing::AllOf(
+              base::test::IsSupersetOfValue(base::test::ParseJsonDict(R"({
+                        "blockedReasons": [ ],
+                        "cookie" : {
+                          "name": "name",
+                          "value": "credentialless"
+                        }
+                      })")),
+              testing::ResultOf(
+                  [](const base::Value& dict) {
+                    return dict.GetDict().FindList("blockedReasons");
+                  },
+                  testing::Pointee(testing::IsEmpty()))))));
+
+  fenced_frame_devtools_client.DetachProtocolClient();
+}
+
+IN_PROC_BROWSER_TEST_F(NavigationBrowserTestCredentiallessIframe,
                        CredentiallessAttributeIsHonoredByNavigation) {
   GURL main_url = embedded_test_server()->GetURL("/page_with_iframe.html");
   GURL iframe_url_1 = embedded_test_server()->GetURL("/title1.html");
@@ -7726,6 +7829,13 @@ IN_PROC_BROWSER_TEST_F(
   NavigationController::LoadURLParams load_url_params(
       OpenURLParams::FromNavigationHandle(
           first_tab_manager.GetNavigationHandle()));
+
+  // Check that the FrameTreeNode id is set, but then clear it since we'll be
+  // navigating another tab with the rest of the params.
+  EXPECT_EQ(load_url_params.frame_tree_node_id,
+            main_frame()->frame_tree_node_id());
+  load_url_params.frame_tree_node_id = content::FrameTreeNodeId();
+
   Shell* second_tab = CreateBrowser();
   TestNavigationManager second_tab_manager(second_tab->web_contents(),
                                            load_url_params.url);
@@ -7804,7 +7914,7 @@ IN_PROC_BROWSER_TEST_F(NavigationBrowserTest,
   // Now, the site should be set before we send the CommitNavigation IPC.
   EXPECT_TRUE(site_instance->HasSite());
 
-  if (AreAllSitesIsolatedForTesting()) {
+  if (AreStrictSiteInstancesEnabled()) {
     // When we get into this situation with strict site isolation, the site URL
     // currently used is "about:". This may be changed in the future (e.g., to
     // an opaque ID).
@@ -7938,7 +8048,7 @@ class NavigationSuddenTerminationDisablerTypeBrowserTest
   NavigationSuddenTerminationDisablerTypeBrowserTest() {
     feature_list_.InitWithFeaturesAndParameters(
         /*enabled_features=*/{},
-        /*disabled_features=*/{blink::features::kDeprecateUnload});
+        /*disabled_features=*/{network::features::kDeprecateUnload});
   }
 
  private:
@@ -8480,12 +8590,12 @@ class NavigationBrowserTestDeprecateUnloadOptOut
     NavigationBrowserTest::SetUpCommandLine(command_line);
     if (IsOptOutEnabled()) {
       scoped_feature_list_.InitWithFeatures(
-          {blink::features::kDeprecateUnload,
+          {network::features::kDeprecateUnload,
            blink::features::kDeprecateUnloadOptOut},
           {});
     } else {
       scoped_feature_list_.InitWithFeatures(
-          {blink::features::kDeprecateUnload},
+          {network::features::kDeprecateUnload},
           {blink::features::kDeprecateUnloadOptOut});
     }
   }
@@ -8683,9 +8793,7 @@ class NavigationBrowserTestPaintHoldingSubframe
     // Paint holding for in-process iframes is only enabled when there is a
     // ViewTransition.
     paint_holding_feature_.InitWithFeatures(
-        {blink::features::kPaintHoldingForIframes,
-         blink::features::kViewTransitionOnNavigationForIframes},
-        {});
+        {blink::features::kPaintHoldingForIframes}, {});
 
     const bool enable_render_document = GetParam();
     if (enable_render_document) {
@@ -9169,13 +9277,14 @@ class DeferSpeculativeRFHCreationRenderProcessTest
  public:
   DeferSpeculativeRFHCreationRenderProcessTest()
       : warmup_spare_render_process_(GetParam()) {
-    always_spare_render_process_feature_list_.InitAndDisableFeature(
-        features::kSpareRendererForSitePerProcess);
     std::map<std::string, std::string> parameters = {
-        {"warmup_spare_process", GetParam() ? "true" : "false"},
+        {"warmup_spare_process", base::ToString(GetParam())},
     };
     defer_rfh_feature_list_.InitAndEnableFeatureWithParameters(
         features::kDeferSpeculativeRFHCreation, parameters);
+    android_spare_rederer_feature_.InitAndEnableFeatureWithParameters(
+        features::kAndroidWarmUpSpareRendererWithTimeout,
+        base::FieldTrialParams{{"spare_renderer_memory_threshold", "0"}});
     InitAndEnableRenderDocumentFeature(
         &render_document_feature_,
         GetRenderDocumentLevelName(RenderDocumentLevel::kAllFrames));
@@ -9184,15 +9293,16 @@ class DeferSpeculativeRFHCreationRenderProcessTest
   // A new renderer process will only be created for a cross-RFH navigation if
   // it involves a SiteInstanceGroup change, which will happen if site isolation
   // or BFCache is turned on
-  bool WillWarmupSpareRenderProcess() {
-    return warmup_spare_render_process_ &&
-           (AreAllSitesIsolatedForTesting() || IsBackForwardCacheEnabled());
+  bool WillWarmupSpareRenderProcess() { return warmup_spare_render_process_; }
+
+  bool WillAllocateNewProcess() {
+    return AreAllSitesIsolatedForTesting() || IsBackForwardCacheEnabled();
   }
 
  private:
   bool warmup_spare_render_process_;
-  base::test::ScopedFeatureList always_spare_render_process_feature_list_;
   base::test::ScopedFeatureList defer_rfh_feature_list_;
+  base::test::ScopedFeatureList android_spare_rederer_feature_;
   base::test::ScopedFeatureList render_document_feature_;
 };
 
@@ -9203,6 +9313,8 @@ IN_PROC_BROWSER_TEST_P(DeferSpeculativeRFHCreationRenderProcessTest,
                        SpeculativeRFHCreationDeferred) {
   ASSERT_TRUE(NavigateToURL(
       shell(), embedded_test_server()->GetURL("a.com", "/title1.html")));
+  RenderProcessHost* first_navigation_process =
+      main_frame()->render_manager()->current_frame_host()->GetProcess();
   WebContentsImpl* web_contents =
       static_cast<WebContentsImpl*>(shell()->web_contents());
   SpareRenderProcessHostManagerImpl::Get().CleanupSparesForTesting();
@@ -9250,7 +9362,10 @@ IN_PROC_BROWSER_TEST_P(DeferSpeculativeRFHCreationRenderProcessTest,
   ASSERT_TRUE(speculative_rfh);
   ASSERT_EQ(navigation_request->GetAssociatedRFHType(),
             NavigationRequest::AssociatedRenderFrameHostType::SPECULATIVE);
-  if (WillWarmupSpareRenderProcess()) {
+  if (!WillAllocateNewProcess()) {
+    ASSERT_EQ(speculative_rfh->GetSiteInstance()->GetProcess(),
+              first_navigation_process);
+  } else if (WillWarmupSpareRenderProcess()) {
     ASSERT_EQ(speculative_rfh->GetSiteInstance()->GetProcess(),
               created_process);
   }
@@ -9323,9 +9438,10 @@ IN_PROC_BROWSER_TEST_F(DeferSpeculativeRFHCreationTest,
   shell()->LoadURL(url);
   VerifyDeferSpeculativeRFHActionUMA(histogram_tester,
                                      DeferSpeculativeRFHAction::kNotDeferred);
+  ASSERT_TRUE(nav_manager.WaitForRequestStart());
   NavigationRequest* navigation_request = main_frame()->navigation_request();
   ASSERT_EQ(navigation_request->state(),
-            NavigationRequest::NavigationState::WAITING_FOR_RENDERER_RESPONSE);
+            NavigationRequest::NavigationState::WILL_START_REQUEST);
   ASSERT_FALSE(navigation_request->HasLoader());
   ASSERT_TRUE(GetMainFrameSpeculativeRFH(web_contents));
   ASSERT_EQ(navigation_request->GetAssociatedRFHType(),
@@ -9524,7 +9640,9 @@ IN_PROC_BROWSER_TEST_F(DeferSpeculativeRFHCreationReuseRFHTest,
       NavigationRequest::From(nav_manager.GetNavigationHandle());
   ASSERT_EQ(navigation_request->state(),
             NavigationRequest::NavigationState::WILL_START_REQUEST);
+  ASSERT_FALSE(GetMainFrameSpeculativeRFH(web_contents));
   ASSERT_FALSE(navigation_request->HasLoader());
+  ASSERT_TRUE(nav_manager.WaitForResponse());
   ASSERT_FALSE(GetMainFrameSpeculativeRFH(web_contents));
   ASSERT_EQ(navigation_request->GetAssociatedRFHType(),
             NavigationRequest::AssociatedRenderFrameHostType::CURRENT);

@@ -24,7 +24,6 @@
 #include "base/trace_event/trace_event.h"
 #include "build/branding_buildflags.h"
 #include "chrome/browser/extensions/component_loader.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/grit/browser_resources.h"
@@ -34,8 +33,8 @@
 #include "chromeos/ime/input_methods.h"
 #include "extensions/browser/extension_pref_value_map.h"
 #include "extensions/browser/extension_pref_value_map_factory.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
-#include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
 #include "net/base/url_util.h"
@@ -104,15 +103,6 @@ struct AllowlistedComponentExtensionIME {
 
 const char kImePathKeyName[] = "ime_path";
 
-extensions::ComponentLoader* GetComponentLoader(
-    content::BrowserContext* context) {
-  extensions::ExtensionSystem* extension_system =
-      extensions::ExtensionSystem::Get(context);
-  extensions::ExtensionService* extension_service =
-      extension_system->extension_service();
-  return extension_service->component_loader();
-}
-
 void DoLoadExtension(content::BrowserContext* context,
                      const std::string& extension_id,
                      const std::string& manifest,
@@ -127,7 +117,7 @@ void DoLoadExtension(content::BrowserContext* context,
     return;
   }
   const std::string loaded_extension_id =
-      GetComponentLoader(context)->Add(manifest, file_path);
+      extensions::ComponentLoader::Get(context)->Add(manifest, file_path);
   if (loaded_extension_id.empty()) {
     LOG(ERROR) << "Failed to add an IME extension(id=\"" << extension_id
                << ", path=\"" << file_path.LossyDisplayName()
@@ -141,12 +131,9 @@ void DoLoadExtension(content::BrowserContext* context,
                           true,          // is_enabled.
                           true);         // is_incognito_enabled.
   DCHECK_EQ(loaded_extension_id, extension_id);
-  extensions::ExtensionSystem* extension_system =
-      extensions::ExtensionSystem::Get(context);
-  extensions::ExtensionService* extension_service =
-      extension_system->extension_service();
-  DCHECK(extension_service);
-  if (!extension_service->IsExtensionEnabled(loaded_extension_id)) {
+  auto* registrar = extensions::ExtensionRegistrar::Get(context);
+  DCHECK(registrar);
+  if (!registrar->IsExtensionEnabled(loaded_extension_id)) {
     LOG(ERROR) << "An IME extension(id=\"" << loaded_extension_id
                << "\") is not enabled after loading";
   }
@@ -318,7 +305,7 @@ bool ComponentExtensionIMEManagerDelegateImpl::ReadEngineComponent(
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   bool is_global_emoji_preferences_enabled = base::FeatureList::IsEnabled(
       features::kVirtualKeyboardGlobalEmojiPreferences);
-  GURL url = extensions::Extension::GetResourceURL(
+  GURL url = extensions::Extension::ResolveExtensionURL(
       extensions::Extension::GetBaseURLFromExtensionId(component_extension.id),
       "inputview.html");
   url = net::AppendOrReplaceQueryParameter(url, "jelly", "true");
@@ -337,7 +324,7 @@ bool ComponentExtensionIMEManagerDelegateImpl::ReadEngineComponent(
       dict.FindString(extensions::manifest_keys::kInputView);
   if (input_view) {
     url_string = *input_view;
-    GURL url = extensions::Extension::GetResourceURL(
+    GURL url = extensions::Extension::ResolveExtensionURL(
         extensions::Extension::GetBaseURLFromExtensionId(
             component_extension.id),
         url_string);
@@ -357,7 +344,7 @@ bool ComponentExtensionIMEManagerDelegateImpl::ReadEngineComponent(
 
   if (option_page && flag_allows_settings_page) {
     url_string = *option_page;
-    GURL options_page_url = extensions::Extension::GetResourceURL(
+    GURL options_page_url = extensions::Extension::ResolveExtensionURL(
         extensions::Extension::GetBaseURLFromExtensionId(
             component_extension.id),
         url_string);
@@ -401,7 +388,7 @@ bool ComponentExtensionIMEManagerDelegateImpl::ReadExtensionInfo(
   const std::string* url_string =
       manifest.FindString(extensions::manifest_keys::kOptionsPage);
   if (url_string) {
-    GURL url = extensions::Extension::GetResourceURL(
+    GURL url = extensions::Extension::ResolveExtensionURL(
         extensions::Extension::GetBaseURLFromExtensionId(extension_id),
         *url_string);
     if (!url.is_valid()) {
@@ -424,6 +411,13 @@ void ComponentExtensionIMEManagerDelegateImpl::ReadComponentExtensionsInfo(
         ::features::IsAccessibilityManifestV3EnabledForBrailleIme()) {
       extension.manifest_resource_id = IDR_BRAILLE_MANIFEST_MV3;
     }
+
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+    if (extension.manifest_resource_id == IDR_GOOGLE_XKB_MANIFEST &&
+        base::FeatureList::IsEnabled(features::kImeManifestV3)) {
+      extension.manifest_resource_id = IDR_GOOGLE_XKB_MANIFEST_V3;
+    }
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
     ComponentExtensionIME component_ime;
     component_ime.manifest =

@@ -5,6 +5,8 @@
 #include "chrome/browser/ui/views/location_bar/selected_keyword_view.h"
 
 #include "base/check.h"
+#include "build/branding_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/history_embeddings/history_embeddings_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -40,8 +42,13 @@ SelectedKeywordView::GetKeywordLabelNames(const std::u16string& keyword,
                                           const TemplateURLService* service) {
   KeywordLabelNames names;
   if (service) {
+    const TemplateURL* template_url =
+        service->GetTemplateURLForKeyword(keyword);
     bool is_extension_keyword = false;
     bool is_gemini_keyword = false;
+    bool is_page_keyword =
+        template_url &&
+        template_url->starter_pack_id() == TemplateURLStarterPackData::kPage;
     names.short_name = service->GetKeywordShortName(
         keyword, &is_extension_keyword, &is_gemini_keyword);
     if (is_gemini_keyword) {
@@ -49,6 +56,9 @@ SelectedKeywordView::GetKeywordLabelNames(const std::u16string& keyword,
           IDS_OMNIBOX_SELECTED_KEYWORD_ASK_TEXT, names.short_name);
     } else if (is_extension_keyword) {
       names.full_name = names.short_name;
+    } else if (is_page_keyword) {
+      names.full_name =
+          l10n_util::GetStringUTF16(IDS_STARTER_PACK_PAGE_KEYWORD_TEXT);
     } else {
       names.full_name = l10n_util::GetStringFUTF16(IDS_OMNIBOX_KEYWORD_TEXT_MD,
                                                    names.short_name);
@@ -96,8 +106,8 @@ void SelectedKeywordView::SetCustomImage(const gfx::Image& image) {
     return;
   }
 
-  // Use the search icon for most keywords. Use special icons for '@gemini' and
-  // @history'.
+  // Use the search icon for most keywords. Use special icons for '@gemini',
+  // '@history', and search aggregator.
   const TemplateURL* template_url =
       TemplateURLServiceFactory::GetForProfile(profile_)
           ->GetTemplateURLForKeyword(keyword_);
@@ -113,6 +123,12 @@ void SelectedKeywordView::SetCustomImage(const gfx::Image& image) {
              template_url->starter_pack_id() ==
                  TemplateURLStarterPackData::kHistory) {
     vector_icon = &omnibox::kSearchSparkIcon;
+  } else if (template_url &&
+             template_url->policy_origin() ==
+                 TemplateURLData::PolicyOrigin::kSearchAggregator) {
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+    vector_icon = &vector_icons::kGoogleAgentspaceMonochromeLogoIcon;
+#endif
   }
 
   IconLabelBubbleView::SetImageModel(ui::ImageModel::FromVectorIcon(

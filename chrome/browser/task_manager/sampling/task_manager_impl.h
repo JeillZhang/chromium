@@ -48,7 +48,7 @@ class TaskManagerImpl : public TaskManagerInterface,
   // task_manager::TaskManagerInterface:
   void ActivateTask(TaskId task_id) override;
   bool IsTaskKillable(TaskId task_id) override;
-  void KillTask(TaskId task_id) override;
+  bool KillTask(TaskId task_id) override;
   double GetPlatformIndependentCPUUsage(TaskId task_id) const override;
   base::Time GetStartTime(TaskId task_id) const override;
   base::TimeDelta GetCpuTime(TaskId task_id) const override;
@@ -97,6 +97,7 @@ class TaskManagerImpl : public TaskManagerInterface,
   bool IsRunningInVM(TaskId task_id) const override;
   TaskId GetTaskIdForWebContents(
       content::WebContents* web_contents) const override;
+  bool IsTaskValid(TaskId task_id) const override;
 
   // task_manager::TaskProviderObserver:
   void TaskAdded(Task* task) override;

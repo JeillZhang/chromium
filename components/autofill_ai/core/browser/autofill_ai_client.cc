@@ -5,41 +5,35 @@
 #include "components/autofill_ai/core/browser/autofill_ai_client.h"
 
 #include <optional>
+#include <utility>
 
-#include "components/autofill/core/browser/data_model/entity_instance.h"
+#include "components/autofill/core/browser/data_model/autofill_ai/entity_instance.h"
 
 namespace autofill_ai {
 
-AutofillAiClient::SavePromptAcceptanceResult::SavePromptAcceptanceResult(
-    bool prompt_was_accepted,
-    bool did_user_interact,
+AutofillAiClient::SaveOrUpdatePromptResult::SaveOrUpdatePromptResult(
+    bool did_user_decline,
     std::optional<autofill::EntityInstance> entity)
-    : prompt_was_accepted(prompt_was_accepted),
-      did_user_interact(did_user_interact),
-      entity(std::move(entity)) {}
+    : did_user_decline(did_user_decline), entity(std::move(entity)) {}
 
-AutofillAiClient::SavePromptAcceptanceResult::SavePromptAcceptanceResult(
-    bool prompt_was_accepted)
-    : prompt_was_accepted(prompt_was_accepted) {}
-
-AutofillAiClient::SavePromptAcceptanceResult::SavePromptAcceptanceResult() =
+AutofillAiClient::SaveOrUpdatePromptResult::SaveOrUpdatePromptResult() =
     default;
 
-AutofillAiClient::SavePromptAcceptanceResult::SavePromptAcceptanceResult(
-    const AutofillAiClient::SavePromptAcceptanceResult&) = default;
+AutofillAiClient::SaveOrUpdatePromptResult::SaveOrUpdatePromptResult(
+    const AutofillAiClient::SaveOrUpdatePromptResult&) = default;
 
-AutofillAiClient::SavePromptAcceptanceResult::SavePromptAcceptanceResult(
-    AutofillAiClient::SavePromptAcceptanceResult&&) = default;
+AutofillAiClient::SaveOrUpdatePromptResult::SaveOrUpdatePromptResult(
+    AutofillAiClient::SaveOrUpdatePromptResult&&) = default;
 
-AutofillAiClient::SavePromptAcceptanceResult&
-AutofillAiClient::SavePromptAcceptanceResult::operator=(
-    const AutofillAiClient::SavePromptAcceptanceResult&) = default;
+AutofillAiClient::SaveOrUpdatePromptResult&
+AutofillAiClient::SaveOrUpdatePromptResult::operator=(
+    const AutofillAiClient::SaveOrUpdatePromptResult&) = default;
 
-AutofillAiClient::SavePromptAcceptanceResult&
-AutofillAiClient::SavePromptAcceptanceResult::operator=(
-    AutofillAiClient::SavePromptAcceptanceResult&&) = default;
+AutofillAiClient::SaveOrUpdatePromptResult&
+AutofillAiClient::SaveOrUpdatePromptResult::operator=(
+    AutofillAiClient::SaveOrUpdatePromptResult&&) = default;
 
-AutofillAiClient::SavePromptAcceptanceResult::~SavePromptAcceptanceResult() =
+AutofillAiClient::SaveOrUpdatePromptResult::~SaveOrUpdatePromptResult() =
     default;
 
 }  // namespace autofill_ai

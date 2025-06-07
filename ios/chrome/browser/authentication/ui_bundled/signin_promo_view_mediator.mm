@@ -21,6 +21,7 @@
 #import "ios/chrome/browser/authentication/ui_bundled/account_settings_presenter.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view_configurator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view_consumer.h"
+#import "ios/chrome/browser/authentication/ui_bundled/change_profile_continuation_provider.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_utils.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_presenter.h"
@@ -33,7 +34,6 @@
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service.h"
-#import "ios/chrome/browser/signin/model/chrome_account_manager_service_observer_bridge.h"
 #import "ios/chrome/browser/signin/model/system_identity.h"
 #import "ios/chrome/browser/sync/model/sync_observer_bridge.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -107,7 +107,6 @@ bool IsSupportedAccessPoint(signin_metrics::AccessPoint access_point) {
     case signin_metrics::AccessPoint::kAccountConsistencyService:
     case signin_metrics::AccessPoint::kSearchCompanion:
     case signin_metrics::AccessPoint::kSetUpList:
-    case signin_metrics::AccessPoint::kPasswordMigrationWarningAndroid:
     case signin_metrics::AccessPoint::kSaveToDriveIos:
     case signin_metrics::AccessPoint::kSaveToPhotosIos:
     case signin_metrics::AccessPoint::kChromeSigninInterceptBubble:
@@ -128,9 +127,19 @@ bool IsSupportedAccessPoint(signin_metrics::AccessPoint access_point) {
     case signin_metrics::AccessPoint::kAddressBubble:
     case signin_metrics::AccessPoint::kCctAccountMismatchNotification:
     case signin_metrics::AccessPoint::kDriveFilePickerIos:
-    case signin_metrics::AccessPoint::kCollaborationTabGroup:
+    case signin_metrics::AccessPoint::kCollaborationShareTabGroup:
     case signin_metrics::AccessPoint::kGlicLaunchButton:
     case signin_metrics::AccessPoint::kHistoryPage:
+    case signin_metrics::AccessPoint::kCollaborationJoinTabGroup:
+    case signin_metrics::AccessPoint::kHistorySyncOptinExpansionPillOnStartup:
+    case signin_metrics::AccessPoint::kWidget:
+    case signin_metrics::AccessPoint::kCollaborationLeaveOrDeleteTabGroup:
+    case signin_metrics::AccessPoint::
+        kHistorySyncOptinExpansionPillOnInactivity:
+    case signin_metrics::AccessPoint::kHistorySyncEducationalTip:
+    case signin_metrics::AccessPoint::kManagedProfileAutoSigninIos:
+    case signin_metrics::AccessPoint::kNonModalSigninPasswordPromo:
+    case signin_metrics::AccessPoint::kNonModalSigninBookmarkPromo:
       return false;
   }
 }
@@ -198,7 +207,6 @@ void RecordImpressionsTilSigninButtonsHistogramForAccessPoint(
     case signin_metrics::AccessPoint::kAccountConsistencyService:
     case signin_metrics::AccessPoint::kSearchCompanion:
     case signin_metrics::AccessPoint::kSetUpList:
-    case signin_metrics::AccessPoint::kPasswordMigrationWarningAndroid:
     case signin_metrics::AccessPoint::kSaveToDriveIos:
     case signin_metrics::AccessPoint::kSaveToPhotosIos:
     case signin_metrics::AccessPoint::kChromeSigninInterceptBubble:
@@ -219,9 +227,19 @@ void RecordImpressionsTilSigninButtonsHistogramForAccessPoint(
     case signin_metrics::AccessPoint::kAddressBubble:
     case signin_metrics::AccessPoint::kCctAccountMismatchNotification:
     case signin_metrics::AccessPoint::kDriveFilePickerIos:
-    case signin_metrics::AccessPoint::kCollaborationTabGroup:
+    case signin_metrics::AccessPoint::kCollaborationShareTabGroup:
     case signin_metrics::AccessPoint::kGlicLaunchButton:
     case signin_metrics::AccessPoint::kHistoryPage:
+    case signin_metrics::AccessPoint::kCollaborationJoinTabGroup:
+    case signin_metrics::AccessPoint::kHistorySyncOptinExpansionPillOnStartup:
+    case signin_metrics::AccessPoint::kWidget:
+    case signin_metrics::AccessPoint::kCollaborationLeaveOrDeleteTabGroup:
+    case signin_metrics::AccessPoint::
+        kHistorySyncOptinExpansionPillOnInactivity:
+    case signin_metrics::AccessPoint::kHistorySyncEducationalTip:
+    case signin_metrics::AccessPoint::kManagedProfileAutoSigninIos:
+    case signin_metrics::AccessPoint::kNonModalSigninPasswordPromo:
+    case signin_metrics::AccessPoint::kNonModalSigninBookmarkPromo:
       NOTREACHED() << "Unexpected value for access point "
                    << static_cast<int>(access_point);
   }
@@ -290,7 +308,6 @@ void RecordImpressionsTilXButtonHistogramForAccessPoint(
     case signin_metrics::AccessPoint::kAccountConsistencyService:
     case signin_metrics::AccessPoint::kSearchCompanion:
     case signin_metrics::AccessPoint::kSetUpList:
-    case signin_metrics::AccessPoint::kPasswordMigrationWarningAndroid:
     case signin_metrics::AccessPoint::kSaveToDriveIos:
     case signin_metrics::AccessPoint::kSaveToPhotosIos:
     case signin_metrics::AccessPoint::kChromeSigninInterceptBubble:
@@ -311,9 +328,19 @@ void RecordImpressionsTilXButtonHistogramForAccessPoint(
     case signin_metrics::AccessPoint::kAddressBubble:
     case signin_metrics::AccessPoint::kCctAccountMismatchNotification:
     case signin_metrics::AccessPoint::kDriveFilePickerIos:
-    case signin_metrics::AccessPoint::kCollaborationTabGroup:
+    case signin_metrics::AccessPoint::kCollaborationShareTabGroup:
     case signin_metrics::AccessPoint::kGlicLaunchButton:
     case signin_metrics::AccessPoint::kHistoryPage:
+    case signin_metrics::AccessPoint::kCollaborationJoinTabGroup:
+    case signin_metrics::AccessPoint::kHistorySyncOptinExpansionPillOnStartup:
+    case signin_metrics::AccessPoint::kWidget:
+    case signin_metrics::AccessPoint::kCollaborationLeaveOrDeleteTabGroup:
+    case signin_metrics::AccessPoint::
+        kHistorySyncOptinExpansionPillOnInactivity:
+    case signin_metrics::AccessPoint::kHistorySyncEducationalTip:
+    case signin_metrics::AccessPoint::kManagedProfileAutoSigninIos:
+    case signin_metrics::AccessPoint::kNonModalSigninPasswordPromo:
+    case signin_metrics::AccessPoint::kNonModalSigninBookmarkPromo:
       NOTREACHED() << "Unexpected value for access point "
                    << static_cast<int>(access_point);
   }
@@ -371,7 +398,6 @@ const char* DisplayedCountPreferenceKey(
     case signin_metrics::AccessPoint::kAccountConsistencyService:
     case signin_metrics::AccessPoint::kSearchCompanion:
     case signin_metrics::AccessPoint::kSetUpList:
-    case signin_metrics::AccessPoint::kPasswordMigrationWarningAndroid:
     case signin_metrics::AccessPoint::kSaveToDriveIos:
     case signin_metrics::AccessPoint::kSaveToPhotosIos:
     case signin_metrics::AccessPoint::kChromeSigninInterceptBubble:
@@ -392,9 +418,19 @@ const char* DisplayedCountPreferenceKey(
     case signin_metrics::AccessPoint::kAddressBubble:
     case signin_metrics::AccessPoint::kCctAccountMismatchNotification:
     case signin_metrics::AccessPoint::kDriveFilePickerIos:
-    case signin_metrics::AccessPoint::kCollaborationTabGroup:
+    case signin_metrics::AccessPoint::kCollaborationShareTabGroup:
     case signin_metrics::AccessPoint::kGlicLaunchButton:
     case signin_metrics::AccessPoint::kHistoryPage:
+    case signin_metrics::AccessPoint::kCollaborationJoinTabGroup:
+    case signin_metrics::AccessPoint::kHistorySyncOptinExpansionPillOnStartup:
+    case signin_metrics::AccessPoint::kWidget:
+    case signin_metrics::AccessPoint::kCollaborationLeaveOrDeleteTabGroup:
+    case signin_metrics::AccessPoint::
+        kHistorySyncOptinExpansionPillOnInactivity:
+    case signin_metrics::AccessPoint::kHistorySyncEducationalTip:
+    case signin_metrics::AccessPoint::kManagedProfileAutoSigninIos:
+    case signin_metrics::AccessPoint::kNonModalSigninPasswordPromo:
+    case signin_metrics::AccessPoint::kNonModalSigninBookmarkPromo:
       return nullptr;
   }
 }
@@ -451,7 +487,6 @@ const char* AlreadySeenSigninViewPreferenceKey(
     case signin_metrics::AccessPoint::kAccountConsistencyService:
     case signin_metrics::AccessPoint::kSearchCompanion:
     case signin_metrics::AccessPoint::kSetUpList:
-    case signin_metrics::AccessPoint::kPasswordMigrationWarningAndroid:
     case signin_metrics::AccessPoint::kSaveToDriveIos:
     case signin_metrics::AccessPoint::kSaveToPhotosIos:
     case signin_metrics::AccessPoint::kChromeSigninInterceptBubble:
@@ -472,9 +507,19 @@ const char* AlreadySeenSigninViewPreferenceKey(
     case signin_metrics::AccessPoint::kAddressBubble:
     case signin_metrics::AccessPoint::kCctAccountMismatchNotification:
     case signin_metrics::AccessPoint::kDriveFilePickerIos:
-    case signin_metrics::AccessPoint::kCollaborationTabGroup:
+    case signin_metrics::AccessPoint::kCollaborationShareTabGroup:
     case signin_metrics::AccessPoint::kGlicLaunchButton:
     case signin_metrics::AccessPoint::kHistoryPage:
+    case signin_metrics::AccessPoint::kCollaborationJoinTabGroup:
+    case signin_metrics::AccessPoint::kHistorySyncOptinExpansionPillOnStartup:
+    case signin_metrics::AccessPoint::kWidget:
+    case signin_metrics::AccessPoint::kCollaborationLeaveOrDeleteTabGroup:
+    case signin_metrics::AccessPoint::
+        kHistorySyncOptinExpansionPillOnInactivity:
+    case signin_metrics::AccessPoint::kHistorySyncEducationalTip:
+    case signin_metrics::AccessPoint::kManagedProfileAutoSigninIos:
+    case signin_metrics::AccessPoint::kNonModalSigninPasswordPromo:
+    case signin_metrics::AccessPoint::kNonModalSigninBookmarkPromo:
       return nullptr;
   }
 }
@@ -522,21 +567,15 @@ id<SystemIdentity> GetDisplayedIdentity(
 
 }  // namespace
 
-@interface SigninPromoViewMediator () <ChromeAccountManagerServiceObserver,
-                                       IdentityManagerObserverBridgeDelegate,
+@interface SigninPromoViewMediator () <IdentityManagerObserverBridgeDelegate,
                                        SyncObserverModelBridge>
 
 // Redefined to be readwrite. See documentation in the header file.
 @property(nonatomic, strong, readwrite) id<SystemIdentity> displayedIdentity;
 
-// YES if the sign-in flow is in progress.
-@property(nonatomic, assign, readwrite) BOOL signinInProgress;
 // YES if the initial sync for a specific data type is in progress. The data
 // type is based on `dataTypeToWaitForInitialSync`.
 @property(nonatomic, assign, readwrite) BOOL initialSyncInProgress;
-
-// Presenter which can show signin UI.
-@property(nonatomic, weak, readonly) id<SigninPresenter> signinPresenter;
 
 // Presenter which can show the signed-in account settings UI.
 @property(nonatomic, weak, readonly) id<AccountSettingsPresenter>
@@ -566,8 +605,6 @@ id<SystemIdentity> GetDisplayedIdentity(
   raw_ptr<AuthenticationService> _authService;
   // AccountManager Service used to retrive identities.
   raw_ptr<ChromeAccountManagerService> _accountManagerService;
-  std::unique_ptr<ChromeAccountManagerServiceObserverBridge>
-      _accountManagerServiceObserver;
   // IdentityManager used to retrive identities.
   raw_ptr<signin::IdentityManager> _identityManager;
   std::unique_ptr<signin::IdentityManagerObserverBridge>
@@ -576,6 +613,9 @@ id<SystemIdentity> GetDisplayedIdentity(
   raw_ptr<syncer::SyncService> _syncService;
   // Observer for changes to the sync state.
   std::unique_ptr<SyncObserverBridge> _syncObserverBridge;
+  ChangeProfileContinuationProvider _changeProfileContinuationProvider;
+  // Presenter which can show signin UI.
+  __weak id<SigninPromoViewMediatorDelegate> _delegate;
 }
 
 + (void)registerProfilePrefs:(user_prefs::PrefRegistrySyncable*)registry {
@@ -660,22 +700,28 @@ id<SystemIdentity> GetDisplayedIdentity(
 }
 
 - (instancetype)
-     initWithIdentityManager:(signin::IdentityManager*)identityManager
-       accountManagerService:(ChromeAccountManagerService*)accountManagerService
-                 authService:(AuthenticationService*)authService
-                 prefService:(PrefService*)prefService
-                 syncService:(syncer::SyncService*)syncService
-                 accessPoint:(signin_metrics::AccessPoint)accessPoint
-             signinPresenter:(id<SigninPresenter>)signinPresenter
-    accountSettingsPresenter:
-        (id<AccountSettingsPresenter>)accountSettingsPresenter {
+              initWithIdentityManager:(signin::IdentityManager*)identityManager
+                accountManagerService:
+                    (ChromeAccountManagerService*)accountManagerService
+                          authService:(AuthenticationService*)authService
+                          prefService:(PrefService*)prefService
+                          syncService:(syncer::SyncService*)syncService
+                          accessPoint:(signin_metrics::AccessPoint)accessPoint
+                             delegate:
+                                 (id<SigninPromoViewMediatorDelegate>)delegate
+             accountSettingsPresenter:
+                 (id<AccountSettingsPresenter>)accountSettingsPresenter
+    changeProfileContinuationProvider:(const ChangeProfileContinuationProvider&)
+                                          changeProfileContinuationProvider {
   self = [super init];
   if (self) {
+    CHECK(changeProfileContinuationProvider);
     CHECK(identityManager);
     CHECK(accountManagerService);
     DCHECK(IsSupportedAccessPoint(accessPoint));
     _identityManager = identityManager;
     _accountManagerService = accountManagerService;
+    _changeProfileContinuationProvider = changeProfileContinuationProvider;
     _authService = authService;
     _prefService = prefService;
     _syncService = syncService;
@@ -683,11 +729,8 @@ id<SystemIdentity> GetDisplayedIdentity(
     _signinPromoViewState = SigninPromoViewState::kNeverVisible;
     _signinPromoAction = SigninPromoAction::kInstantSignin;
     _dataTypeToWaitForInitialSync = syncer::DataType::UNSPECIFIED;
-    _signinPresenter = signinPresenter;
+    _delegate = delegate;
     _accountSettingsPresenter = accountSettingsPresenter;
-    _accountManagerServiceObserver =
-        std::make_unique<ChromeAccountManagerServiceObserverBridge>(
-            self, _accountManagerService);
     _identityManagerObserver =
         std::make_unique<signin::IdentityManagerObserverBridge>(
             _identityManager, self);
@@ -722,7 +765,7 @@ id<SystemIdentity> GetDisplayedIdentity(
       // by the mediator. We should not have no identity. This can be reproduced
       // with EGtests with bots. The identity notification might not have
       // received yet. Let's update the promo identity.
-      [self handleIdentityListChanged];
+      [self onAccountsOnDeviceChanged];
     }
     DCHECK(self.displayedIdentity)
         << base::SysNSStringToUTF8([self description]);
@@ -849,15 +892,35 @@ id<SystemIdentity> GetDisplayedIdentity(
 }
 
 - (void)disconnect {
+  // While the sign-in is in progress, the UI should be frozen, with the
+  // exception of the part of the UI used for sign-in. So it should not be
+  // possible to disconnect the mediator.
+  CHECK(!self.signinInProgress, base::NotFatalUntil::M145);
   [self signinPromoViewIsRemoved];
   self.consumer = nil;
   _accountManagerService = nullptr;
   _identityManager = nullptr;
   _authService = nullptr;
   _syncService = nullptr;
-  _accountManagerServiceObserver.reset();
   _identityManagerObserver.reset();
   _syncObserverBridge.reset();
+}
+
+// Finishes the sign-in process.
+- (void)signinDidCompleteWithResult:(SigninCoordinatorResult)result {
+  if (self.signinPromoViewState == SigninPromoViewState::kInvalid) {
+    // The mediator owner can remove the view before the sign-in is done.
+    return;
+  }
+  // We can turn on `self.initialSyncInProgress`, if the sign-in is successful.
+  // We can't call now GetTypesWithPendingDownloadForInitialSync() related to
+  // a post task issue.
+  self.initialSyncInProgress = (result == SigninCoordinatorResultSuccess) &&
+                               [self shouldWaitForInitialSync];
+  DCHECK_EQ(SigninPromoViewState::kUsedAtLeastOnce, self.signinPromoViewState)
+      << base::SysNSStringToUTF8([self description]);
+  DCHECK(self.signinInProgress) << base::SysNSStringToUTF8([self description]);
+  self.signinInProgress = NO;
 }
 
 #pragma mark - Public properties
@@ -961,49 +1024,24 @@ id<SystemIdentity> GetDisplayedIdentity(
                                                            displayedCount);
 }
 
-// Finishes the sign-in process.
-- (void)signinCallbackWithResult:(SigninCoordinatorResult)result {
-  if (self.signinPromoViewState == SigninPromoViewState::kInvalid) {
-    // The mediator owner can remove the view before the sign-in is done.
-    return;
-  }
-  // We can turn on `self.initialSyncInProgress`, if the sign-in is successful.
-  // We can't call now GetTypesWithPendingDownloadForInitialSync() related to
-  // a post task issue.
-  self.initialSyncInProgress = (result == SigninCoordinatorResultSuccess) &&
-                               [self shouldWaitForInitialSync];
-  DCHECK_EQ(SigninPromoViewState::kUsedAtLeastOnce, self.signinPromoViewState)
-      << base::SysNSStringToUTF8([self description]);
-  DCHECK(self.signinInProgress) << base::SysNSStringToUTF8([self description]);
-  self.signinInProgress = NO;
-}
-
 // Starts sign-in process with the Chrome identity from `identity`.
 - (void)showSigninWithIdentity:(id<SystemIdentity>)identity
                      operation:(AuthenticationOperation)operation
                    promoAction:(signin_metrics::PromoAction)promoAction {
   self.signinPromoViewState = SigninPromoViewState::kUsedAtLeastOnce;
   self.signinInProgress = YES;
-  __weak SigninPromoViewMediator* weakSelf = self;
   // This mediator might be removed before the sign-in callback is invoked.
   // (if the owner receive primary account notification).
   // To make sure -[<SigninPromoViewConsumer> signinDidFinish], we have to save
   // in a variable and not get it from weakSelf (that might not exist anymore).
-  __weak id<SigninPromoViewConsumer> weakConsumer = self.consumer;
-  SigninCoordinatorCompletionCallback completion =
-      ^(SigninCoordinatorResult result, id<SystemIdentity> completionIdentity) {
-        [weakSelf signinCallbackWithResult:result];
-        if ([weakConsumer respondsToSelector:@selector(signinDidFinish)]) {
-          [weakConsumer signinDidFinish];
-        }
-      };
-  ShowSigninCommand* command =
-      [[ShowSigninCommand alloc] initWithOperation:operation
-                                          identity:identity
-                                       accessPoint:self.accessPoint
-                                       promoAction:promoAction
-                                        completion:completion];
-  [self.signinPresenter showSignin:command];
+  ShowSigninCommand* command = [[ShowSigninCommand alloc]
+                      initWithOperation:operation
+                               identity:identity
+                            accessPoint:self.accessPoint
+                            promoAction:promoAction
+                             completion:nil
+      changeProfileContinuationProvider:_changeProfileContinuationProvider];
+  [_delegate showSignin:self command:command];
 }
 
 // Shows account settings.
@@ -1027,7 +1065,9 @@ id<SystemIdentity> GetDisplayedIdentity(
   return self.dataTypeToWaitForInitialSync != syncer::DataType::UNSPECIFIED;
 }
 
-- (void)handleIdentityListChanged {
+#pragma mark -  IdentityManagerObserver
+
+- (void)onAccountsOnDeviceChanged {
   id<SystemIdentity> currentIdentity = self.displayedIdentity;
   id<SystemIdentity> displayedIdentity = GetDisplayedIdentity(
       _authService, _identityManager, _accountManagerService);
@@ -1039,50 +1079,8 @@ id<SystemIdentity> GetDisplayedIdentity(
   }
 }
 
-- (void)handleIdentityUpdated {
-  [self sendConsumerNotificationWithIdentityChanged:NO];
-}
-
-#pragma mark - ChromeAccountManagerServiceObserver
-
-- (void)identityListChanged {
-  if (IsUseAccountListFromIdentityManagerEnabled()) {
-    // Listening to `onAccountsOnDeviceChanged` instead.
-    return;
-  }
-  [self handleIdentityListChanged];
-}
-
-- (void)identityUpdated:(id<SystemIdentity>)identity {
-  if (IsUseAccountListFromIdentityManagerEnabled()) {
-    // Listening to `onExtendedAccountInfoUpdated` instead.
-    return;
-  }
-  [self handleIdentityUpdated];
-}
-
-- (void)onChromeAccountManagerServiceShutdown:
-    (ChromeAccountManagerService*)accountManagerService {
-  // TODO(crbug.com/40284086): Remove `[self disconnect]`.
-  [self disconnect];
-}
-
-#pragma mark -  IdentityManagerObserver
-
-- (void)onAccountsOnDeviceChanged {
-  if (!IsUseAccountListFromIdentityManagerEnabled()) {
-    // Listening to `identityListChanged` instead.
-    return;
-  }
-  [self handleIdentityListChanged];
-}
-
 - (void)onExtendedAccountInfoUpdated:(const AccountInfo&)info {
-  if (!IsUseAccountListFromIdentityManagerEnabled()) {
-    // Listening to `identityUpdated` instead.
-    return;
-  }
-  [self handleIdentityUpdated];
+  [self sendConsumerNotificationWithIdentityChanged:NO];
 }
 
 #pragma mark - SigninPromoViewDelegate

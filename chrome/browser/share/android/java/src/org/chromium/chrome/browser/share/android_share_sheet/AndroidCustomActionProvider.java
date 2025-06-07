@@ -29,14 +29,13 @@ import org.chromium.chrome.browser.share.ShareMetricsUtils;
 import org.chromium.chrome.browser.share.ShareMetricsUtils.ShareCustomAction;
 import org.chromium.chrome.browser.share.link_to_text.LinkToTextCoordinator;
 import org.chromium.chrome.browser.share.long_screenshots.LongScreenshotsCoordinator;
-import org.chromium.chrome.browser.share.page_info_sheet.PageInfoSharingController;
-import org.chromium.chrome.browser.share.page_info_sheet.PageInfoSharingControllerImpl;
 import org.chromium.chrome.browser.share.share_sheet.ChromeOptionShareCallback;
 import org.chromium.chrome.browser.share.share_sheet.ShareSheetLinkToggleCoordinator.LinkToggleState;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.device_lock.DeviceLockActivityLauncher;
 import org.chromium.components.browser_ui.share.ShareParams;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.ui.base.Clipboard;
@@ -54,12 +53,6 @@ class AndroidCustomActionProvider extends ChromeProvidedSharingOptionsProviderBa
     private static final String USER_ACTION_SHARE_COPY_IMAGE_WITH_LINK_SELECTED =
             "SharingHubAndroid.CopyImageWithLinkSelected";
 
-    private static final String USER_ACTION_PAGE_INFO_SELECTED =
-            "SharingHubAndroid.PageInfoSelected";
-
-    private static final String USER_ACTION_REMOVE_PAGE_INFO_SELECTED =
-            "SharingHubAndroid.RemovePageInfoSelected";
-
     private static final String USER_ACTION_SHARE_AS_TAB_GROUP =
             "SharingHubAndroid.ShareAsTabGroup";
 
@@ -67,7 +60,6 @@ class AndroidCustomActionProvider extends ChromeProvidedSharingOptionsProviderBa
 
     private final ChromeShareExtras mChromeShareExtras;
     @Nullable private final LinkToTextCoordinator mLinkToTextCoordinator;
-    private final PageInfoSharingController mPageInfoSharingController;
 
     private final TabGroupSharingController mTabGroupSharingController;
 
@@ -129,7 +121,6 @@ class AndroidCustomActionProvider extends ChromeProvidedSharingOptionsProviderBa
                 deviceLockActivityLauncher);
         mChromeShareExtras = chromeShareExtras;
         mLinkToTextCoordinator = linkToTextCoordinator;
-        mPageInfoSharingController = PageInfoSharingControllerImpl.getInstance();
         mShareStartTime = shareStartTime;
         mTabGroupSharingController = tabGroupSharingController;
 
@@ -237,7 +228,7 @@ class AndroidCustomActionProvider extends ChromeProvidedSharingOptionsProviderBa
 
     private FirstPartyOption createCopyImageWithLinkFirstPartyOption() {
         return new FirstPartyOptionBuilder(ContentType.IMAGE_AND_LINK)
-                .setIcon(R.drawable.ic_content_copy_black, R.string.sharing_copy_image_with_link)
+                .setIcon(R.drawable.ic_content_copy, R.string.sharing_copy_image_with_link)
                 .setShareActionType(ShareCustomAction.COPY_IMAGE_WITH_LINK)
                 .setFeatureNameForMetrics(USER_ACTION_SHARE_COPY_IMAGE_WITH_LINK_SELECTED)
                 .setOnClickCallback(
@@ -287,49 +278,13 @@ class AndroidCustomActionProvider extends ChromeProvidedSharingOptionsProviderBa
                 .build();
     }
 
-    @Override
-    protected FirstPartyOption createPageInfoFirstPartyOption() {
-        if (!mTabProvider.hasValue()) {
-            return null;
-        }
-
-        if (mChromeShareExtras != null
-                && mChromeShareExtras.getDetailedContentType() == DetailedContentType.PAGE_INFO) {
-            return new FirstPartyOptionBuilder(ContentType.LINK_AND_TEXT)
-                    .setIcon(R.drawable.spark_off, R.string.sharing_remove_summary)
-                    .setShareActionType(ShareCustomAction.REMOVE_PAGE_INFO)
-                    .setFeatureNameForMetrics(USER_ACTION_REMOVE_PAGE_INFO_SELECTED)
-                    .setOnClickCallback(
-                            (view) -> {
-                                mPageInfoSharingController.shareWithoutPageInfo(
-                                        mChromeOptionShareCallback, mTabProvider.get());
-                            })
-                    .build();
-        }
-
-        if (mPageInfoSharingController.shouldShowInShareSheet(mTabProvider.get())) {
-            return new FirstPartyOptionBuilder(ContentType.LINK_PAGE_VISIBLE)
-                    .setIcon(R.drawable.spark, R.string.sharing_create_summary)
-                    .setShareActionType(ShareCustomAction.PAGE_INFO)
-                    .setFeatureNameForMetrics(USER_ACTION_PAGE_INFO_SELECTED)
-                    .setOnClickCallback(
-                            (view) -> {
-                                mPageInfoSharingController.sharePageInfo(
-                                        mActivity,
-                                        mBottomSheetController,
-                                        mChromeOptionShareCallback,
-                                        mTabProvider.get());
-                            })
-                    .build();
-        }
-
-        return null;
-    }
-
     private ChromeCustomShareAction shareActionFromFirstPartyOption(FirstPartyOption option) {
+        Icon icon = Icon.createWithResource(mActivity, option.icon);
+        icon.setTint(SemanticColorUtils.getDefaultIconColor(mActivity));
+
         return new ChromeCustomShareAction(
                 option.featureNameForMetrics,
-                Icon.createWithResource(mActivity, option.icon),
+                icon,
                 mActivity.getResources().getString(option.iconLabel),
                 () -> {
                     ShareMetricsUtils.recordShareUserAction(

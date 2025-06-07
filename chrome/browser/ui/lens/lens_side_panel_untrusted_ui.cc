@@ -4,19 +4,18 @@
 
 #include "chrome/browser/ui/lens/lens_side_panel_untrusted_ui.h"
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "base/strings/strcat.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/lens/lens_overlay_controller.h"
+#include "chrome/browser/ui/lens/lens_overlay_side_panel_coordinator.h"
 #include "chrome/browser/ui/lens/lens_overlay_theme_utils.h"
+#include "chrome/browser/ui/lens/lens_search_controller.h"
+#include "chrome/browser/ui/lens/lens_searchbox_controller.h"
 #include "chrome/browser/ui/webui/searchbox/lens_searchbox_handler.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/lens_shared_resources.h"
 #include "chrome/grit/lens_shared_resources_map.h"
@@ -40,18 +39,31 @@ LensSidePanelUntrustedUI::LensSidePanelUntrustedUI(content::WebUI* web_ui)
           web_ui->GetWebContents()->GetBrowserContext(),
           chrome::kChromeUILensUntrustedSidePanelURL);
   html_source->AddLocalizedString("backButton", IDS_ACCNAME_BACK);
+  html_source->AddLocalizedString("close", IDS_CLOSE);
+  html_source->AddLocalizedString("dismiss",
+                                  IDS_LENS_OVERLAY_TOAST_DISMISS_MESSAGE);
   html_source->AddLocalizedString(
       "networkErrorPageTopLine",
-      IDS_SIDE_PANEL_COMPANION_ERROR_PAGE_FIRST_LINE);
+      IDS_SIDE_PANEL_LENS_OVERLAY_GENERIC_ERROR_PAGE_FIRST_LINE);
   html_source->AddLocalizedString(
       "networkErrorPageBottomLine",
-      IDS_SIDE_PANEL_COMPANION_ERROR_PAGE_SECOND_LINE);
+      IDS_SIDE_PANEL_LENS_OVERLAY_GENERIC_ERROR_PAGE_SECOND_LINE);
+  html_source->AddLocalizedString(
+      "protectedErrorPageTopLine",
+      IDS_SIDE_PANEL_LENS_OVERLAY_PROTECTED_PAGE_ERROR_FIRST_LINE);
+  html_source->AddLocalizedString(
+      "protectedErrorPageBottomLine",
+      IDS_SIDE_PANEL_LENS_OVERLAY_PROTECTED_PAGE_ERROR_SECOND_LINE);
   html_source->AddLocalizedString(
       "searchboxGhostLoaderHintTextPrimaryDefault",
-      IDS_GOOGLE_SEARCH_BOX_CONTEXTUAL_LOADING_HINT_PRIMARY);
+      lens::features::ShouldUseAltLoadingHintWeb()
+          ? IDS_GOOGLE_SEARCH_BOX_CONTEXTUAL_LOADING_HINT_PRIMARY_ALT
+          : IDS_GOOGLE_SEARCH_BOX_CONTEXTUAL_LOADING_HINT_PRIMARY);
   html_source->AddLocalizedString(
       "searchboxGhostLoaderHintTextPrimaryPdf",
-      IDS_GOOGLE_SEARCH_BOX_CONTEXTUAL_LOADING_HINT_PRIMARY_PDF);
+      lens::features::ShouldUseAltLoadingHintPdf()
+          ? IDS_GOOGLE_SEARCH_BOX_CONTEXTUAL_LOADING_HINT_PRIMARY_ALT
+          : IDS_GOOGLE_SEARCH_BOX_CONTEXTUAL_LOADING_HINT_PRIMARY_PDF);
   html_source->AddLocalizedString(
       "searchboxGhostLoaderHintTextSecondary",
       IDS_GOOGLE_SEARCH_BOX_CONTEXTUAL_LOADING_HINT_SECONDARY);
@@ -60,19 +72,23 @@ LensSidePanelUntrustedUI::LensSidePanelUntrustedUI(content::WebUI* web_ui)
   html_source->AddLocalizedString(
       "searchboxGhostLoaderNoSuggestText",
       IDS_GOOGLE_SEARCH_BOX_CONTEXTUAL_NO_SUGGEST_TEXT);
+  html_source->AddLocalizedString("feedbackToastMessage",
+                                  IDS_LENS_OVERLAY_FEEDBACK_TOAST_MESSAGE);
+  html_source->AddLocalizedString("sendFeedbackButtonText",
+                                  IDS_LENS_OVERLAY_SEND_FEEDBACK_BUTTON_LABEL);
+  const bool dark_mode = lens::LensOverlayShouldUseDarkMode(
+      ThemeServiceFactory::GetForProfile(Profile::FromWebUI(web_ui)));
 
   // Add finch flags
   html_source->AddString(
       "resultsLoadingUrl",
-      lens::features::GetLensOverlayResultsSearchLoadingURL(
-          lens::LensOverlayShouldUseDarkMode(
-              ThemeServiceFactory::GetForProfile(Profile::FromWebUI(web_ui)))));
-  html_source->AddBoolean(
-      "darkMode",
-      lens::LensOverlayShouldUseDarkMode(
-          ThemeServiceFactory::GetForProfile(Profile::FromWebUI(web_ui))));
+      lens::features::GetLensOverlayResultsSearchLoadingURL(dark_mode));
+  html_source->AddBoolean("darkMode", dark_mode);
   html_source->AddBoolean("enableErrorPage",
                           lens::features::GetLensOverlayEnableErrorPage());
+  html_source->AddBoolean(
+      "enableGhostLoader",
+      lens::features::EnableContextualSearchboxGhostLoader());
   html_source->AddBoolean(
       "showContextualSearchboxLoadingState",
       lens::features::ShowContextualSearchboxGhostLoaderLoadingState());
@@ -81,6 +97,20 @@ LensSidePanelUntrustedUI::LensSidePanelUntrustedUI(content::WebUI* web_ui)
   html_source->AddLocalizedString(
       "searchBoxHintContextualPdf",
       IDS_GOOGLE_SEARCH_BOX_EMPTY_HINT_CONTEXTUAL_PDF);
+  html_source->AddBoolean(
+      "newFeedbackEnabled",
+      lens::features::IsLensSearchSidePanelNewFeedbackEnabled());
+  html_source->AddBoolean(
+      "scrollToEnabled",
+      lens::features::IsLensSearchSidePanelScrollToAPIEnabled());
+  html_source->AddString("resultsSearchURL",
+                         lens::features::GetLensOverlayResultsSearchURL());
+  html_source->AddBoolean(
+      "enableCloseButtonTweaks",
+      lens::features::GetVisualSelectionUpdatesEnableCloseButtonTweaks());
+  html_source->AddBoolean(
+      "enableSummarizeSuggestionHint",
+      lens::features::ShouldEnableSummarizeHintForContextualSuggest());
 
   // Allow FrameSrc from all Google subdomains as redirects can occur.
   GURL results_side_panel_url =
@@ -112,14 +142,27 @@ LensSidePanelUntrustedUI::LensSidePanelUntrustedUI(content::WebUI* web_ui)
                                          Profile::FromWebUI(web_ui));
   html_source->AddString(
       "searchboxDefaultIcon",
-      "//resources/cr_components/searchbox/icons/google_g.svg");
+      lens::features::GetVisualSelectionUpdatesEnableGradientSuperG()
+          ? "//resources/cr_components/searchbox/icons/google_g_gradient.svg"
+      : dark_mode
+          ? "//resources/cr_components/searchbox/icons/google_g_cr23.svg"
+          : "//resources/cr_components/searchbox/icons/google_g.svg");
   html_source->AddBoolean("reportMetrics", false);
   html_source->AddLocalizedString("searchBoxHint",
                                   IDS_GOOGLE_LENS_SEARCH_BOX_EMPTY_HINT);
   html_source->AddLocalizedString("searchBoxHintMultimodal",
                                   IDS_GOOGLE_SEARCH_BOX_EMPTY_HINT_MULTIMODAL);
   html_source->AddBoolean("isLensSearchbox", true);
+  html_source->AddBoolean(
+      "forceHideEllipsis",
+      lens::features::GetVisualSelectionUpdatesHideCsbEllipsis());
   html_source->AddBoolean("queryAutocompleteOnEmptyInput", true);
+  html_source->AddBoolean(
+      "enableCsbMotionTweaks",
+      lens::features::GetVisualSelectionUpdatesEnableCsbMotionTweaks());
+  html_source->AddBoolean(
+      "enableThumbnailSizingTweaks",
+      lens::features::GetVisualSelectionUpdatesEnableThumbnailSizingTweaks());
 }
 
 void LensSidePanelUntrustedUI::BindInterface(
@@ -144,13 +187,14 @@ void LensSidePanelUntrustedUI::BindInterface(
 
 void LensSidePanelUntrustedUI::BindInterface(
     mojo::PendingReceiver<searchbox::mojom::PageHandler> receiver) {
-  LensOverlayController& controller = GetLensOverlayController();
+  LensSearchboxController* controller =
+      GetLensSearchController().lens_searchbox_controller();
 
   auto handler = std::make_unique<LensSearchboxHandler>(
       std::move(receiver), Profile::FromWebUI(web_ui()),
       web_ui()->GetWebContents(),
-      /*metrics_reporter=*/nullptr, /*lens_searchbox_client=*/&controller);
-  controller.SetSidePanelSearchboxHandler(std::move(handler));
+      /*metrics_reporter=*/nullptr, /*lens_searchbox_client=*/controller);
+  controller->SetSidePanelSearchboxHandler(std::move(handler));
 }
 
 void LensSidePanelUntrustedUI::BindInterface(
@@ -162,9 +206,9 @@ void LensSidePanelUntrustedUI::BindInterface(
   help_bubble_handler_factory_receiver_.Bind(std::move(receiver));
 }
 
-LensOverlayController& LensSidePanelUntrustedUI::GetLensOverlayController() {
-  LensOverlayController* controller =
-      LensOverlayController::GetController(web_ui()->GetWebContents());
+LensSearchController& LensSidePanelUntrustedUI::GetLensSearchController() {
+  LensSearchController* controller =
+      LensSearchController::FromWebUIWebContents(web_ui()->GetWebContents());
   CHECK(controller);
   return *controller;
 }
@@ -172,20 +216,23 @@ LensOverlayController& LensSidePanelUntrustedUI::GetLensOverlayController() {
 void LensSidePanelUntrustedUI::CreateSidePanelPageHandler(
     mojo::PendingReceiver<lens::mojom::LensSidePanelPageHandler> receiver,
     mojo::PendingRemote<lens::mojom::LensSidePanelPage> page) {
-  LensOverlayController& controller = GetLensOverlayController();
+  LensSearchController& controller = GetLensSearchController();
 
   // Once the interface is bound, we want to connect this instance with the
-  // appropriate instance of LensOverlayController.
-  controller.BindSidePanel(std::move(receiver), std::move(page));
+  // appropriate instance of LensOverlaySidePanelCoordinator.
+  controller.lens_overlay_side_panel_coordinator()->BindSidePanel(
+      std::move(receiver), std::move(page));
 }
 
 void LensSidePanelUntrustedUI::CreateGhostLoaderPage(
     mojo::PendingRemote<lens::mojom::LensGhostLoaderPage> page) {
-  LensOverlayController& controller = GetLensOverlayController();
+  LensSearchboxController* controller =
+      GetLensSearchController().lens_searchbox_controller();
 
   // Once the interface is bound, we want to connect this instance with the
   // appropriate instance of LensOverlayController.
-  controller.BindSidePanelGhostLoader(std::move(page));
+
+  controller->BindSidePanelGhostLoader(std::move(page));
 }
 
 void LensSidePanelUntrustedUI::CreateHelpBubbleHandler(

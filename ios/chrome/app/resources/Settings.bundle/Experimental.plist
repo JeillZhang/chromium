@@ -176,6 +176,7 @@
 				<string>promos_manager::Promo::OmniboxPosition</string>
 				<string>promos_manager::Promo::DockingPromo</string>
 				<string>promos_manager::Promo::PostDefaultAbandonment</string>
+				<string>promos_manager::Promo::BWGPromo</string>
 			</array>
 			<key>Titles</key>
 			<array>
@@ -186,6 +187,7 @@
 				<string>Omnibox Position</string>
 				<string>Docking Promo</string>
 				<string>Post-Default Browser Abandonment Alert</string>
+				<string>BWG Promo</string>
 			</array>
 		</dict>
 		<dict>
@@ -410,34 +412,6 @@
 			<key>Type</key>
 			<string>PSMultiValueSpecifier</string>
 			<key>Title</key>
-			<string>Tab Resumption force Decoration</string>
-			<key>Key</key>
-			<string>TabResumptionDecorationOverride</string>
-			<key>DefaultValue</key>
-			<string></string>
-			<key>Values</key>
-			<array>
-				<string></string>
-				<string>MostRecent</string>
-				<string>FrequentlyVisited</string>
-				<string>FrequentlyVisitedAtTime</string>
-				<string>VisitedSomeTimeAgoRecent</string>
-				<string>VisitedSomeTimeAgoOld</string>
-			</array>
-			<key>Titles</key>
-			<array>
-				<string>Unset</string>
-				<string>Most recent</string>
-				<string>Frequently visited</string>
-				<string>Frequently visited at time</string>
-				<string>Visited some time ago (recent)</string>
-				<string>Visited some time ago (old)</string>
-			</array>
-		</dict>
-		<dict>
-			<key>Type</key>
-			<string>PSMultiValueSpecifier</string>
-			<key>Title</key>
 			<string>Tips (Magic Stack) State</string>
 			<key>Key</key>
 			<string>TipsMagicStackStateOverride</string>
@@ -601,6 +575,68 @@
 			<string>EnableAIPrototypingMenu</string>
 			<key>DefaultValue</key>
 			<false/>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSMultiValueSpecifier</string>
+			<key>Title</key>
+			<string>Forced Tips Notification</string>
+			<key>Key</key>
+			<string>ForcedTipsNotificationType</string>
+			<key>DefaultValue</key>
+			<integer>0</integer>
+			<key>Values</key>
+			<array>
+				<integer>0</integer>
+				<integer>1</integer>
+				<integer>2</integer>
+				<integer>3</integer>
+				<integer>5</integer>
+				<integer>6</integer>
+				<integer>7</integer>
+				<integer>8</integer>
+				<integer>9</integer>
+				<integer>10</integer>
+				<integer>11</integer>
+			</array>
+			<key>Titles</key>
+			<array>
+				<string>Unset</string>
+				<string>Default Browser</string>
+				<string>Whats New</string>
+				<string>Sign In</string>
+				<string>Set Up List</string>
+				<string>Docking</string>
+				<string>Omnibox Position</string>
+				<string>Lens</string>
+				<string>Enhanced Safe Browsing</string>
+				<string>Lens Overlay</string>
+				<string>CPE</string>
+			</array>
+		</dict>
+		<dict>
+			<key>Type</key>
+			<string>PSMultiValueSpecifier</string>
+			<key>Title</key>
+			<string>Tips Notification Trigger</string>
+			<key>Key</key>
+			<string>TipsNotificationTrigger</string>
+			<key>DefaultValue</key>
+			<integer>0</integer>
+			<key>Values</key>
+			<array>
+				<integer>0</integer>
+				<integer>5</integer>
+				<integer>10</integer>
+				<integer>30</integer>
+			</array>
+			<key>Titles</key>
+			<array>
+				<string>Unset</string>
+				<string>5 Seconds</string>
+				<string>10 Seconds</string>
+				<string>30 Seconds</string>
+			</array>
 		</dict>
 		<dict>
 			<key>Type</key>
@@ -827,6 +863,20 @@
 			<string>AlternateOriginServerHost</string>
 			<key>DefaultValue</key>
 			<string></string>
+			<key>AutocorrectionType</key>
+			<string>No</string>
+		</dict>
+			<dict>
+			<key>Type</key>
+			<string>PSTextFieldSpecifier</string>
+			<key>Title</key>
+			<string>Lens Result Panel GWS URL</string>
+			<key>Key</key>
+			<string>LensResultPanelGwsURL</string>
+			<key>DefaultValue</key>
+			<string></string>
+			<key>KeyboardType</key>
+			<string>URL</string>
 			<key>AutocorrectionType</key>
 			<string>No</string>
 		</dict>

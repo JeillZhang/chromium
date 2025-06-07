@@ -40,6 +40,7 @@
 
 #include "base/containers/flat_map.h"
 #include "base/feature_list.h"
+#include "base/strings/string_view_util.h"
 #include "base/time/time.h"
 #include "net/http/http_content_disposition.h"
 #include "net/http/http_response_headers.h"
@@ -49,6 +50,7 @@
 #include "services/network/public/cpp/parsed_headers.h"
 #include "services/network/public/cpp/sri_message_signatures.h"
 #include "services/network/public/cpp/timing_allow_origin_parser.h"
+#include "services/network/public/mojom/integrity_policy.mojom-blink.h"
 #include "services/network/public/mojom/no_vary_search.mojom-blink-forward.h"
 #include "services/network/public/mojom/no_vary_search.mojom-blink.h"
 #include "services/network/public/mojom/parsed_headers.mojom-blink.h"
@@ -165,6 +167,16 @@ blink::CSPSourcePtr ConvertToBlink(const CSPSourcePtr& in) {
       ConvertToBlink(in->path), in->is_host_wildcard, in->is_port_wildcard);
 }
 
+blink::IntegrityPolicy::Destination ConvertToBlink(
+    const IntegrityPolicy::Destination& in) {
+  return blink::IntegrityPolicy::Destination(in);
+}
+
+blink::IntegrityPolicy::Source ConvertToBlink(
+    const IntegrityPolicy::Source& in) {
+  return blink::IntegrityPolicy::Source(in);
+}
+
 blink::CSPHashSourcePtr ConvertToBlink(const CSPHashSourcePtr& in) {
   CHECK(in);
   Vector<uint8_t> hash_value = ConvertToBlink(in->value);
@@ -178,15 +190,19 @@ blink::CSPSourceListPtr ConvertToBlink(const CSPSourceListPtr& source_list) {
   Vector<blink::CSPSourcePtr> sources = ConvertToBlink(source_list->sources);
   Vector<String> nonces = ConvertToBlink(source_list->nonces);
   Vector<blink::CSPHashSourcePtr> hashes = ConvertToBlink(source_list->hashes);
+  Vector<blink::CSPHashSourcePtr> url_hashes =
+      ConvertToBlink(source_list->url_hashes);
+  Vector<blink::CSPHashSourcePtr> eval_hashes =
+      ConvertToBlink(source_list->eval_hashes);
 
   return blink::CSPSourceList::New(
       std::move(sources), std::move(nonces), std::move(hashes),
-      source_list->allow_self, source_list->allow_star,
-      source_list->allow_inline, source_list->allow_inline_speculation_rules,
-      source_list->allow_eval, source_list->allow_wasm_eval,
-      source_list->allow_wasm_unsafe_eval, source_list->allow_dynamic,
-      source_list->allow_unsafe_hashes, source_list->report_sample,
-      source_list->report_hash_algorithm);
+      std::move(url_hashes), std::move(eval_hashes), source_list->allow_self,
+      source_list->allow_star, source_list->allow_inline,
+      source_list->allow_inline_speculation_rules, source_list->allow_eval,
+      source_list->allow_wasm_eval, source_list->allow_wasm_unsafe_eval,
+      source_list->allow_dynamic, source_list->allow_unsafe_hashes,
+      source_list->report_sample, source_list->report_hash_algorithm);
 }
 
 blink::ContentSecurityPolicyHeaderPtr ConvertToBlink(
@@ -194,6 +210,14 @@ blink::ContentSecurityPolicyHeaderPtr ConvertToBlink(
   CHECK(in);
   return blink::ContentSecurityPolicyHeader::New(
       ConvertToBlink(in->header_value), in->type, in->source);
+}
+
+blink::IntegrityPolicyPtr ConvertToBlink(const IntegrityPolicyPtr& in) {
+  Vector<blink::IntegrityPolicy::Destination> blocked_destinations =
+      ConvertToBlink(in->blocked_destinations);
+  return blink::IntegrityPolicy::New(
+      std::move(blocked_destinations), ConvertToBlink(in->sources),
+      ConvertToBlink(in->endpoints), ConvertToBlink(in->parsing_errors));
 }
 
 blink::CSPTrustedTypesPtr ConvertToBlink(const CSPTrustedTypesPtr& in) {
@@ -211,9 +235,8 @@ blink::ContentSecurityPolicyPtr ConvertToBlink(
       ConvertToBlink(in->directives), in->upgrade_insecure_requests,
       in->treat_as_public_address, in->block_all_mixed_content, in->sandbox,
       ConvertToBlink(in->header), in->use_reporting_api,
-      ConvertToBlink(in->report_endpoints), in->require_sri_for,
-      in->require_trusted_types_for, ConvertToBlink(in->trusted_types),
-      ConvertToBlink(in->parsing_errors));
+      ConvertToBlink(in->report_endpoints), in->require_trusted_types_for,
+      ConvertToBlink(in->trusted_types), ConvertToBlink(in->parsing_errors));
 }
 
 blink::AllowCSPFromHeaderValuePtr ConvertToBlink(
@@ -290,8 +313,8 @@ blink::NoVarySearchWithParseErrorPtr ConvertToBlink(
 
 // `in` is a Mojo enum type, which is type aliased to the same underlying type
 // by both the non-Blink Mojo variant and the Blink Mojo variant.
-blink::SRIMessageSignatureComponent::Parameter ConvertToBlink(
-    SRIMessageSignatureComponent::Parameter in) {
+blink::SRIMessageSignatureComponentParameter::Type ConvertToBlink(
+    SRIMessageSignatureComponentParameter::Type in) {
   return in;
 }
 
@@ -299,6 +322,22 @@ blink::SRIMessageSignatureComponent::Parameter ConvertToBlink(
 // by both the non-Blink Mojo variant and the Blink Mojo variant.
 blink::SRIMessageSignatureError ConvertToBlink(SRIMessageSignatureError in) {
   return in;
+}
+
+blink::SRIMessageSignatureComponentParameterPtr ConvertToBlink(
+    const SRIMessageSignatureComponentParameterPtr& in) {
+  CHECK(in);
+  return blink::SRIMessageSignatureComponentParameter::New(
+      ConvertToBlink(in->type), ConvertToBlink(in->value));
+}
+
+blink::SRIMessageSignatureIssuePtr ConvertToBlink(
+    const SRIMessageSignatureIssuePtr& in) {
+  return blink::SRIMessageSignatureIssue::New(
+      ConvertToBlink(in->error), ConvertToBlink(in->signature_base),
+      in->integrity_assertions.has_value()
+          ? std::make_optional(ConvertToBlink(in->integrity_assertions.value()))
+          : std::nullopt);
 }
 
 blink::SRIMessageSignatureComponentPtr ConvertToBlink(
@@ -321,7 +360,7 @@ blink::SRIMessageSignaturesPtr ConvertToBlink(
     const SRIMessageSignaturesPtr& in) {
   CHECK(in);
   return blink::SRIMessageSignatures::New(ConvertToBlink(in->signatures),
-                                          ConvertToBlink(in->errors));
+                                          ConvertToBlink(in->issues));
 }
 
 blink::ParsedHeadersPtr ConvertToBlink(const ParsedHeadersPtr& in) {
@@ -330,6 +369,7 @@ blink::ParsedHeadersPtr ConvertToBlink(const ParsedHeadersPtr& in) {
       ConvertToBlink(in->content_security_policy),
       ConvertToBlink(in->allow_csp_from), in->cross_origin_embedder_policy,
       in->cross_origin_opener_policy, in->document_isolation_policy,
+      in->integrity_policy, in->integrity_policy_report_only,
       in->origin_agent_cluster,
       in->accept_ch.has_value()
           ? std::make_optional(ConvertToBlink(in->accept_ch.value()))
@@ -528,6 +568,13 @@ bool ParseHTTPRefresh(const String& refresh,
 std::optional<base::Time> ParseDate(const String& value,
                                     UseCounter& use_counter) {
   const std::string utf8_value = value.Utf8();
+  if (RuntimeEnabledFeatures::ParseDateUsesBaseTimeFromUtcStringEnabled()) {
+    base::Time parsed_time;
+    if (!base::Time::FromUTCString(utf8_value.c_str(), &parsed_time)) {
+      return std::nullopt;
+    }
+    return parsed_time;
+  }
   std::optional<base::Time> maybe_parsed_time =
       ParseDateFromNullTerminatedCharacters(utf8_value.c_str());
   {

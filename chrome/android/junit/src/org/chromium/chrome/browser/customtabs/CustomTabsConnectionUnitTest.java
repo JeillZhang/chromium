@@ -8,7 +8,6 @@ import static androidx.browser.customtabs.CustomTabsCallback.ACTIVITY_LAYOUT_STA
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -38,10 +37,12 @@ import androidx.browser.customtabs.PostMessageServiceConnection;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.Implementation;
@@ -71,6 +72,7 @@ import org.chromium.chrome.browser.tab.Tab;
 @Config(shadows = {CustomTabsConnectionUnitTest.ShadowUmaSessionStats.class, ShadowPostTask.class})
 public class CustomTabsConnectionUnitTest {
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private SessionHandler mSessionHandler;
 
     @Mock private CustomTabsCallback mCallback;
@@ -99,7 +101,6 @@ public class CustomTabsConnectionUnitTest {
 
     @Before
     public void setup() {
-        MockitoAnnotations.initMocks(this);
         ShadowPostTask.setTestImpl(
                 new TestImpl() {
                     @Override
@@ -247,44 +248,6 @@ public class CustomTabsConnectionUnitTest {
         // The logic is currently expected to not even peek in the intent.
         // Omnibox must remain disabled even if the feature flag is on.
         assertFalse(mConnection.shouldEnableOmniboxForIntent(null));
-    }
-
-    @Test
-    @EnableFeatures(ChromeFeatureList.CCT_EPHEMERAL_MODE)
-    public void isEphemeralBrowsingSupported_featureEnabled() {
-        Bundle bundle =
-                mConnection.extraCommand(
-                        CustomTabsConnection.IS_EPHEMERAL_BROWSING_SUPPORTED, null);
-        assertNotNull(bundle);
-        assertTrue(bundle.containsKey(CustomTabsConnection.EPHEMERAL_BROWSING_SUPPORTED_KEY));
-        assertTrue(bundle.getBoolean(CustomTabsConnection.EPHEMERAL_BROWSING_SUPPORTED_KEY));
-    }
-
-    @Test
-    @DisableFeatures(ChromeFeatureList.CCT_EPHEMERAL_MODE)
-    public void isEphemeralBrowsingSupported_featureDisabled() {
-        Bundle bundle =
-                mConnection.extraCommand(
-                        CustomTabsConnection.IS_EPHEMERAL_BROWSING_SUPPORTED, null);
-        assertNotNull(bundle);
-        assertTrue(bundle.containsKey(CustomTabsConnection.EPHEMERAL_BROWSING_SUPPORTED_KEY));
-        assertFalse(bundle.getBoolean(CustomTabsConnection.EPHEMERAL_BROWSING_SUPPORTED_KEY));
-    }
-
-    @Test
-    @EnableFeatures(ChromeFeatureList.CCT_EPHEMERAL_MODE)
-    public void isEphemeralBrowsingSupported_apiEnabled() {
-        initSession();
-        when(mPrivacyPreferencesManager.isUsageAndCrashReportingPermitted()).thenReturn(true);
-        assertTrue(mConnection.isEphemeralBrowsingSupported(Bundle.EMPTY));
-    }
-
-    @Test
-    @DisableFeatures(ChromeFeatureList.CCT_EPHEMERAL_MODE)
-    public void isEphemeralBrowsingSupported_apiDisbled() {
-        initSession();
-        when(mPrivacyPreferencesManager.isUsageAndCrashReportingPermitted()).thenReturn(true);
-        assertFalse(mConnection.isEphemeralBrowsingSupported(Bundle.EMPTY));
     }
 
     @Test

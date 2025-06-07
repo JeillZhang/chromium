@@ -8,6 +8,8 @@
 #include <string>
 #include <string_view>
 
+#include "ash/constants/ash_features.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "chromeos/ash/components/boca/babelorca/pref_names.h"
 #include "components/prefs/pref_change_registrar.h"
@@ -17,9 +19,15 @@ namespace ash::babelorca {
 
 CaptionBubbleSettingsImpl::CaptionBubbleSettingsImpl(
     PrefService* profile_prefs,
-    std::string_view caption_language_code)
+    std::string_view caption_language_code,
+    base::RepeatingClosure on_local_caption_closed_cb)
     : profile_prefs_(profile_prefs),
-      caption_language_code_(caption_language_code) {}
+      caption_language_code_(caption_language_code),
+      on_local_caption_closed_cb_(on_local_caption_closed_cb) {
+  if (GetLiveTranslateTargetLanguageCode().empty()) {
+    SetLiveTranslateTargetLanguageCode(caption_language_code_);
+  }
+}
 
 CaptionBubbleSettingsImpl::~CaptionBubbleSettingsImpl() = default;
 
@@ -41,7 +49,7 @@ void CaptionBubbleSettingsImpl::RemoveObserver() {
 }
 
 bool CaptionBubbleSettingsImpl::IsLiveTranslateFeatureEnabled() {
-  return translate_enabled_;
+  return true;
 }
 
 bool CaptionBubbleSettingsImpl::GetLiveCaptionBubbleExpanded() {
@@ -49,7 +57,7 @@ bool CaptionBubbleSettingsImpl::GetLiveCaptionBubbleExpanded() {
 }
 
 bool CaptionBubbleSettingsImpl::GetLiveTranslateEnabled() {
-  return translate_enabled_;
+  return translate_allowed_ && translate_enabled_;
 }
 
 std::string CaptionBubbleSettingsImpl::GetLiveCaptionLanguageCode() {
@@ -60,7 +68,11 @@ std::string CaptionBubbleSettingsImpl::GetLiveTranslateTargetLanguageCode() {
   return profile_prefs_->GetString(prefs::kTranslateTargetLanguageCode);
 }
 
-void CaptionBubbleSettingsImpl::SetLiveCaptionEnabled(bool enabled) {}
+void CaptionBubbleSettingsImpl::SetLiveCaptionEnabled(bool enabled) {
+  if (!enabled) {
+    on_local_caption_closed_cb_.Run();
+  }
+}
 
 void CaptionBubbleSettingsImpl::SetLiveCaptionBubbleExpanded(bool expanded) {
   profile_prefs_->SetBoolean(prefs::kCaptionBubbleExpanded, expanded);
@@ -71,6 +83,10 @@ void CaptionBubbleSettingsImpl::SetLiveTranslateTargetLanguageCode(
   profile_prefs_->SetString(prefs::kTranslateTargetLanguageCode, language_code);
 }
 
+bool CaptionBubbleSettingsImpl::ShouldAdjustPositionOnExpand() {
+  return features::IsBocaAdjustCaptionBubbleOnExpandEnabled();
+}
+
 void CaptionBubbleSettingsImpl::SetLiveTranslateEnabled(bool enabled) {
   bool enabled_changed = translate_enabled_ != enabled;
   translate_enabled_ = enabled;
@@ -78,6 +94,19 @@ void CaptionBubbleSettingsImpl::SetLiveTranslateEnabled(bool enabled) {
     return;
   }
   observer_->OnLiveTranslateEnabledChanged();
+}
+
+void CaptionBubbleSettingsImpl::SetTranslateAllowed(bool allowed) {
+  bool allowed_changed = translate_allowed_ != allowed;
+  translate_allowed_ = allowed;
+  if (!allowed_changed || !observer_) {
+    return;
+  }
+  observer_->OnLiveTranslateEnabledChanged();
+}
+
+bool CaptionBubbleSettingsImpl::GetTranslateAllowed() {
+  return translate_allowed_;
 }
 
 }  // namespace ash::babelorca

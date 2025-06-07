@@ -2,17 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import type {ErrorReasonTypes, ErrorWithReason} from 'glic_api/glic_api.js';
-
-import type {HostRequestTypes, WebClientRequestTypes} from './request_types.js';
+import type {AllRequestTypes, AllRequestTypesWithoutReturn, RequestRequestType, RequestResponseType, TransferableException} from './request_types.js';
+import {exceptionFromTransferable, newTransferableException} from './request_types.js';
 
 // This file contains helpers to send and receive messages over postMessage.
 
-// TODO(crbug.com/379684723): Make sure that request IDs cannot be duplicated,
-// even if the web client is recreated.
-
 // Requests sent over postMessage have this structure.
 declare interface RequestMessage {
+  // Unique ID of the sender.
+  senderId: string;
   // Present for any Glic request message.
   glicRequest: true;
   // The type of request.
@@ -27,6 +25,8 @@ declare interface RequestMessage {
 // Responses sent over postMessage have this structure. Responses are messages
 // sent in response to a `RequestMessage`.
 declare interface ResponseMessage {
+  // Round-tripped RequestMessage.senderId.
+  senderId: string;
   // The type of request.
   type: string;
   // The round-tripped `RequestMessage.requestId`.
@@ -36,20 +36,7 @@ declare interface ResponseMessage {
   responsePayload?: any;
   // An error that occurred during processing the request. If this is set,
   // responsePayload will not be set.
-  exception?: Error;
-  // If exception is set, this may be set to indicate that the exception
-  // is a ErrorWithReason exception.
-  exceptionReason?: ErrorWithReasonDetails;
-}
-
-/** Any ErrorWithReason<T>.reason type. */
-type AnyErrorReasonType = ErrorReasonTypes[keyof ErrorReasonTypes];
-/** Any ErrorWithReason type. */
-type AnyErrorWithReasonType = ErrorWithReason<keyof ErrorReasonTypes>;
-/** Sent in ResponseMessage to reconstruct the ErrorWithReason. */
-interface ErrorWithReasonDetails {
-  reason: AnyErrorReasonType;
-  reasonType: keyof ErrorReasonTypes;
+  exception?: TransferableException;
 }
 
 // Something that has postMessage() - probably a window or WindowProxy.
@@ -58,19 +45,61 @@ declare interface PostMessageSender {
       void;
 }
 
-type AllRequestTypes = HostRequestTypes&WebClientRequestTypes;
+export function newSenderId(): string {
+  const array = new Uint8Array(8);
+  crypto.getRandomValues(array);
+  return Array.from(array).map((n: number) => n.toString(16)).join('');
+}
+
+export class ResponseExtras {
+  transfers: Transferable[] = [];
+
+  // Add objects to transfer when sending the response over postMessage.
+  addTransfer(...transfers: Transferable[]): void {
+    this.transfers.push(...transfers);
+  }
+}
+
+class MessageLogger {
+  loggingEnabled = false;
+  loggingPrefix: string;
+  constructor(senderId: string, protected prefix: string) {
+    this.loggingPrefix = `${prefix}(${senderId.substring(0, 6)})`;
+  }
+
+  setLoggingEnabled(v: boolean): void {
+    this.loggingEnabled = v;
+  }
+
+  shouldLogMessage(requestType: string): boolean {
+    return this.loggingEnabled &&
+        requestType !== 'glicWebClientCheckResponsive';
+  }
+
+  maybeLogMessage(requestType: string, message: string, payload: any) {
+    if (!this.shouldLogMessage(requestType)) {
+      return;
+    }
+    console.info(
+        `${this.loggingPrefix} [${requestType}] ${message}: ${
+            toDebugJson(payload)}`,
+        payload);
+  }
+}
 
 // Sends requests over postMessage. Ideally this type would be parameterized by
 // only one of HostRequestTypes or WebClientRequestTypes, but typescript
 // cannot represent this. Instead, this class can send messages of any type.
-export class PostMessageRequestSender {
+export class PostMessageRequestSender extends MessageLogger {
   requestId = 1;
   responseHandlers: Map<number, (response: ResponseMessage) => void> =
       new Map();
   onDestroy: () => void;
 
   constructor(
-      private messageSender: PostMessageSender, private remoteOrigin: string) {
+      private messageSender: PostMessageSender, private remoteOrigin: string,
+      private senderId: string, logPrefix: string) {
+    super(senderId, logPrefix);
     const handler = this.onMessage.bind(this);
     window.addEventListener('message', handler);
     this.onDestroy = () => {
@@ -85,8 +114,9 @@ export class PostMessageRequestSender {
   // Handles responses from the host.
   private onMessage(event: MessageEvent) {
     // Ignore all messages that don't look like responses.
-    if (event.origin !== this.remoteOrigin || event.data.type === undefined ||
-        event.data.responseId === undefined) {
+    if (event.origin !== this.remoteOrigin ||
+        event.data.senderId !== this.senderId ||
+        event.data.type === undefined || event.data.responseId === undefined) {
       return;
     }
     const response = event.data as ResponseMessage;
@@ -102,29 +132,25 @@ export class PostMessageRequestSender {
   // Sends a request to the host, and returns a promise that resolves with its
   // response.
   requestWithResponse<T extends keyof AllRequestTypes>(
-      requestType: T, request: AllRequestTypes[T]['request'],
-      transfer: Transferable[] = []): Promise<AllRequestTypes[T]['response']> {
+      requestType: T, request: RequestRequestType<T>,
+      transfer: Transferable[] = []): Promise<RequestResponseType<T>> {
     const {promise, resolve, reject} =
-        Promise.withResolvers<AllRequestTypes[T]['response']>();
+        Promise.withResolvers<RequestResponseType<T>>();
     const requestId = this.requestId++;
     this.responseHandlers.set(requestId, (response: ResponseMessage) => {
       if (response.exception !== undefined) {
-        // Error types are serializable, but they do not serialize all members.
-        // If exceptionReason is provided, we use it to reconstruct a
-        // ErrorWithReason by just setting additional fields after
-        // serialization.
-        if (response.exceptionReason) {
-          const withReason = response.exception as AnyErrorWithReasonType;
-          withReason.reason = response.exceptionReason.reason;
-          withReason.reasonType = response.exceptionReason.reasonType;
-        }
-        reject(response.exception);
+        this.maybeLogMessage(
+            requestType, 'received with exception', response.exception);
+        reject(exceptionFromTransferable(response.exception));
       } else {
-        resolve(response.responsePayload as AllRequestTypes[T]['response']);
+        this.maybeLogMessage(requestType, 'received', response.responsePayload);
+        resolve(response.responsePayload as RequestResponseType<T>);
       }
     });
 
+    this.maybeLogMessage(requestType, 'sending', request);
     const message: RequestMessage = {
+      senderId: this.senderId,
       glicRequest: true,
       requestId,
       type: requestType,
@@ -135,15 +161,17 @@ export class PostMessageRequestSender {
   }
 
   // Sends a request to the host, and does not track the response.
-  requestNoResponse<T extends keyof AllRequestTypes>(
-      requestType: T, request: AllRequestTypes[T]['request'],
-      transfer: Transferable[] = []) {
+  requestNoResponse<T extends keyof AllRequestTypesWithoutReturn>(
+      requestType: T, request: RequestRequestType<T>,
+      transfer: Transferable[] = []): void {
     const message: RequestMessage = {
+      senderId: this.senderId,
       glicRequest: true,
       requestId: undefined,
       type: requestType,
       requestPayload: request,
     };
+    this.maybeLogMessage(requestType, 'sending', request);
     this.messageSender.postMessage(message, this.remoteOrigin, transfer);
   }
 }
@@ -159,22 +187,32 @@ export interface PostMessageRequestHandler {
    * @param payload The payload, from request_types.ts.
    * @returns The response to be returned to the client.
    */
-  handleRawRequest(type: string, payload: any): Promise<{
-    /** The payload of the response. */
-    payload: any,
-    /** Objects to be transferred over postMessage(). */
-    transfer: Transferable[],
-  }|undefined>;
+  handleRawRequest(type: string, payload: any, extras: ResponseExtras):
+      Promise<{
+        /** The payload of the response. */
+        payload: any,
+      }|undefined>;
+
+  /** Called when each request is received. */
+  onRequestReceived(type: string): void;
+  /** Called when a request handler throws an exception. */
+  onRequestHandlerException(type: string): void;
+  /**
+   * Called when a request response is sent (will not be called if
+   * `onRequestHandlerException()` is called.).
+   */
+  onRequestCompleted(type: string): void;
 }
 
 // Receives requests over postMessage and forward them to a
 // `PostMessageRequestHandler`.
-export class PostMessageRequestReceiver {
+export class PostMessageRequestReceiver extends MessageLogger {
   private onDestroy: () => void;
   constructor(
-      private embeddedOrigin: string,
+      private embeddedOrigin: string, senderId: string,
       private postMessageSender: PostMessageSender,
-      private handler: PostMessageRequestHandler) {
+      private handler: PostMessageRequestHandler, logPrefix: string) {
+    super(senderId, logPrefix);
     const handlerFunction = this.onMessage.bind(this);
     window.addEventListener('message', handlerFunction);
     this.onDestroy = () => {
@@ -194,45 +232,59 @@ export class PostMessageRequestReceiver {
       return;
     }
     const requestMessage = event.data as RequestMessage;
-    const {requestId, type, requestPayload} = requestMessage;
+    const {requestId, type, requestPayload, senderId} = requestMessage;
     let response;
-    let exception: Error|undefined;
-    let reasonDetails: ErrorWithReasonDetails|undefined;
+    let exception: TransferableException|undefined;
+    const extras = new ResponseExtras();
+    this.handler.onRequestReceived(type);
+    this.maybeLogMessage(type, 'processing request', requestPayload);
     try {
-      response = await this.handler.handleRawRequest(type, requestPayload);
+      response =
+          await this.handler.handleRawRequest(type, requestPayload, extras);
     } catch (error) {
-      console.error('Unexpected error', error);
+      this.handler.onRequestHandlerException(type);
+      console.warn('Unexpected error', error);
       if (error instanceof Error) {
-        exception = error;
-        const [reasonType, reason] =
-            [(error as any).reasonType, (error as any).reason];
-        if (reasonType !== undefined && reason !== undefined) {
-          reasonDetails = {reason, reasonType};
-        }
+        exception = newTransferableException(error);
       } else {
-        exception = new Error(`Unexpected error: ${error}`);
+        exception =
+            newTransferableException(new Error(`Unexpected error: ${error}`));
       }
+    }
+
+    if (!exception) {
+      this.handler.onRequestCompleted(type);
     }
 
     // If the message contains no `requestId`, a response is not requested.
     if (!requestId) {
       return;
     }
+    this.maybeLogMessage(type, 'sending response', response?.payload);
     const responseMessage: ResponseMessage = {
       type,
       responseId: requestId,
       responsePayload: response?.payload,
+      senderId,
     };
     if (exception) {
       responseMessage.exception = exception;
-      if (reasonDetails) {
-        responseMessage.exceptionReason = reasonDetails;
-      }
     }
     this.postMessageSender.postMessage(
         responseMessage,
         this.embeddedOrigin,
-        response?.transfer,
+        extras.transfers,
     );
   }
+}
+
+// Converts a value to JSON for debug logging.
+function toDebugJson(v: any): string {
+  return JSON.stringify(v, (_key, value) => {
+    // stringify throws on bigint, so convert it.
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    return value;
+  });
 }

@@ -2,14 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/wm/overview/overview_window_drag_controller.h"
 
 #include <algorithm>
+#include <array>
 
 #include "ash/display/mouse_cursor_event_filter.h"
 #include "ash/public/cpp/shell_window_ids.h"
@@ -658,10 +654,6 @@ void OverviewWindowDragController::ContinueNormalDrag(
   // If virtual desks is enabled, we want to gradually shrink the dragged item
   // as it gets closer to get dropped into a desk mini view.
   if (virtual_desks_bar_enabled_) {
-    // TODO(sammiequon): There is a slight jump especially if we drag from the
-    // corner of a larger overview item, but this is necessary for the time
-    // being to prevent jumps from happening while shrinking. Investigate if we
-    // can satisfy all cases.
     centerpoint = location_in_screen;
 
     const auto iter = per_grid_desks_bar_data_.find(overview_grid);
@@ -857,8 +849,13 @@ OverviewWindowDragController::CompleteNormalDrag(
     const gfx::RectF target_item_bounds = item_->target_bounds();
     // Remove |item_| from overview. Leave the repositioning to the
     // |OverviewItemMoveHelper|.
-    overview_session_->RemoveItem(item_, /*item_destroying=*/false,
-                                  /*reposition=*/false);
+
+    // For the window that controls its bounds directly, wait until client moves
+    // the window.
+    if (!WindowState::Get(window)->allow_set_bounds_direct()) {
+      overview_session_->RemoveItem(item_, /*item_destroying=*/false,
+                                    /*reposition=*/false);
+    }
     item_ = nullptr;
     event_source_item_ = nullptr;
     // The |OverviewItemMoveHelper| will self destruct when we move |window| to
@@ -980,29 +977,29 @@ void OverviewWindowDragController::RecordNormalDrag(
   if (is_dragged_to_other_display) {
     DCHECK(!is_touch_dragging_);
     if (!is_tablet) {
-      constexpr OverviewDragAction kDrag[kNormalDragActionEnumSize] = {
-          OverviewDragAction::kToGridOtherDisplayClamshellMouse,
-          OverviewDragAction::kToDeskOtherDisplayClamshellMouse,
-          OverviewDragAction::kToSnapOtherDisplayClamshellMouse};
+      constexpr std::array<OverviewDragAction, kNormalDragActionEnumSize>
+          kDrag = {OverviewDragAction::kToGridOtherDisplayClamshellMouse,
+                   OverviewDragAction::kToDeskOtherDisplayClamshellMouse,
+                   OverviewDragAction::kToSnapOtherDisplayClamshellMouse};
       RecordDrag(kDrag[action]);
     }
   } else if (is_tablet) {
     if (is_touch_dragging_) {
-      constexpr OverviewDragAction kDrag[kNormalDragActionEnumSize] = {
-          OverviewDragAction::kToGridSameDisplayTabletTouch,
-          OverviewDragAction::kToDeskSameDisplayTabletTouch,
-          OverviewDragAction::kToSnapSameDisplayTabletTouch};
+      constexpr std::array<OverviewDragAction, kNormalDragActionEnumSize>
+          kDrag = {OverviewDragAction::kToGridSameDisplayTabletTouch,
+                   OverviewDragAction::kToDeskSameDisplayTabletTouch,
+                   OverviewDragAction::kToSnapSameDisplayTabletTouch};
       RecordDrag(kDrag[action]);
     }
   } else {
-    constexpr OverviewDragAction kMouseDrag[kNormalDragActionEnumSize] = {
-        OverviewDragAction::kToGridSameDisplayClamshellMouse,
-        OverviewDragAction::kToDeskSameDisplayClamshellMouse,
-        OverviewDragAction::kToSnapSameDisplayClamshellMouse};
-    constexpr OverviewDragAction kTouchDrag[kNormalDragActionEnumSize] = {
-        OverviewDragAction::kToGridSameDisplayClamshellTouch,
-        OverviewDragAction::kToDeskSameDisplayClamshellTouch,
-        OverviewDragAction::kToSnapSameDisplayClamshellTouch};
+    constexpr std::array<OverviewDragAction, kNormalDragActionEnumSize>
+        kMouseDrag = {OverviewDragAction::kToGridSameDisplayClamshellMouse,
+                      OverviewDragAction::kToDeskSameDisplayClamshellMouse,
+                      OverviewDragAction::kToSnapSameDisplayClamshellMouse};
+    constexpr std::array<OverviewDragAction, kNormalDragActionEnumSize>
+        kTouchDrag = {OverviewDragAction::kToGridSameDisplayClamshellTouch,
+                      OverviewDragAction::kToDeskSameDisplayClamshellTouch,
+                      OverviewDragAction::kToSnapSameDisplayClamshellTouch};
     RecordDrag(is_touch_dragging_ ? kTouchDrag[action] : kMouseDrag[action]);
   }
 }
@@ -1010,14 +1007,15 @@ void OverviewWindowDragController::RecordNormalDrag(
 void OverviewWindowDragController::RecordDragToClose(
     DragToCloseAction action) const {
   DCHECK(is_touch_dragging_);
-  constexpr OverviewDragAction kClamshellDrag[kDragToCloseActionEnumSize] = {
-      OverviewDragAction::kSwipeToCloseSuccessfulClamshellTouch,
-      OverviewDragAction::kSwipeToCloseCanceledClamshellTouch,
-      OverviewDragAction::kFlingToCloseClamshellTouch};
-  constexpr OverviewDragAction kTabletDrag[kDragToCloseActionEnumSize] = {
-      OverviewDragAction::kSwipeToCloseSuccessfulTabletTouch,
-      OverviewDragAction::kSwipeToCloseCanceledTabletTouch,
-      OverviewDragAction::kFlingToCloseTabletTouch};
+  constexpr std::array<OverviewDragAction, kDragToCloseActionEnumSize>
+      kClamshellDrag = {
+          OverviewDragAction::kSwipeToCloseSuccessfulClamshellTouch,
+          OverviewDragAction::kSwipeToCloseCanceledClamshellTouch,
+          OverviewDragAction::kFlingToCloseClamshellTouch};
+  constexpr std::array<OverviewDragAction, kDragToCloseActionEnumSize>
+      kTabletDrag = {OverviewDragAction::kSwipeToCloseSuccessfulTabletTouch,
+                     OverviewDragAction::kSwipeToCloseCanceledTabletTouch,
+                     OverviewDragAction::kFlingToCloseTabletTouch};
   RecordDrag(display::Screen::GetScreen()->InTabletMode()
                  ? kTabletDrag[action]
                  : kClamshellDrag[action]);

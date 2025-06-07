@@ -23,12 +23,14 @@ import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
@@ -63,6 +65,7 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.feed.proto.wire.ReliabilityLoggingEnums.DiscoverLaunchResult;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.url.JUnitTestGURLs;
 
 import java.nio.charset.StandardCharsets;
@@ -79,6 +82,7 @@ public class SingleWebFeedStreamTest {
     private static final String TEST_URL = JUnitTestGURLs.EXAMPLE_URL.getSpec();
     private static final OpenUrlOptions DEFAULT_OPEN_URL_OPTIONS = new OpenUrlOptions() {};
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     private Activity mActivity;
     private RecyclerView mRecyclerView;
     private FakeLinearLayoutManager mLayoutManager;
@@ -93,10 +97,11 @@ public class SingleWebFeedStreamTest {
     @Captor private ArgumentCaptor<Snackbar> mSnackbarCaptor;
     @Mock private BottomSheetController mBottomSheetController;
     @Mock private WindowAndroid mWindowAndroid;
+    @Mock private ModalDialogManager mModalDialogManager;
     @Mock private FeedSurfaceScope mSurfaceScope;
     @Mock private FeedReliabilityLogger mReliabilityLogger;
     @Mock private Supplier<ShareDelegate> mShareDelegateSupplier;
-    private StubSnackbarController mSnackbarController = new StubSnackbarController();
+    private final StubSnackbarController mSnackbarController = new StubSnackbarController();
     @Mock private Runnable mMockRunnable;
     @Mock private Callback<Boolean> mMockRefreshCallback;
     @Mock private FeedStream.ShareHelperWrapper mShareHelper;
@@ -131,7 +136,6 @@ public class SingleWebFeedStreamTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         mActivity = Robolectric.buildActivity(Activity.class).get();
 
         FeedServiceBridgeJni.setInstanceForTesting(mFeedServiceBridgeJniMock);
@@ -143,6 +147,7 @@ public class SingleWebFeedStreamTest {
                 .thenReturn(LOAD_MORE_TRIGGER_LOOKAHEAD);
         when(mFeedServiceBridgeJniMock.getLoadMoreTriggerScrollDistanceDp())
                 .thenReturn(LOAD_MORE_TRIGGER_SCROLL_DISTANCE_DP);
+        when(mWindowAndroid.getModalDialogManager()).thenReturn(mModalDialogManager);
 
         mFeedStream =
                 new FeedStream(

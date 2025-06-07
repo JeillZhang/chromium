@@ -5,10 +5,9 @@
 #include "chrome/browser/digital_credentials/digital_identity_provider_desktop.h"
 
 #include <memory>
+#include <variant>
 
 #include "base/containers/span.h"
-#include "base/functional/overloaded.h"
-#include "base/json/json_writer.h"
 #include "base/values.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/digital_credentials/digital_identity_low_risk_origins.h"
@@ -21,7 +20,6 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/qr_code_generator/bitmap_generator.h"
-#include "components/url_formatter/elide_url.h"
 #include "content/public/browser/cross_device_request_info.h"
 #include "content/public/browser/digital_credentials_cross_device.h"
 #include "content/public/browser/digital_identity_provider.h"
@@ -29,6 +27,7 @@
 #include "crypto/random.h"
 #include "device/fido/cable/v2_constants.h"
 #include "device/fido/cable/v2_handshake.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/dialog_model.h"
 #include "ui/views/accessibility/view_accessibility.h"
@@ -102,9 +101,9 @@ DigitalIdentityProviderDesktop::DigitalIdentityProviderDesktop() = default;
 
 DigitalIdentityProviderDesktop::~DigitalIdentityProviderDesktop() = default;
 
-bool DigitalIdentityProviderDesktop::IsLowRiskOrigin(
-    const url::Origin& to_check) const {
-  return digital_credentials::IsLowRiskOrigin(to_check);
+bool DigitalIdentityProviderDesktop::IsLastCommittedOriginLowRisk(
+    content::RenderFrameHost& render_frame_host) const {
+  return digital_credentials::IsLastCommittedOriginLowRisk(render_frame_host);
 }
 
 DigitalIdentityInterstitialAbortCallback
@@ -169,25 +168,25 @@ void DigitalIdentityProviderDesktop::Transact(
 
 void DigitalIdentityProviderDesktop::OnEvent(const std::string& qr_url,
                                              Event event) {
-  absl::visit(base::Overloaded{
-                  [this, qr_url](SystemEvent event) {
-                    switch (event) {
-                      case SystemEvent::kBluetoothNotPowered:
-                        ShowBluetoothManualTurnOnDialog();
-                        break;
-                      case SystemEvent::kNeedPermission:
-                        // The user is being asked for Bluetooth permission by
-                        // the system. Nothing for Chrome UI to do.
-                        break;
-                      case SystemEvent::kReady:
-                        bluetooth_manual_dialog_controller_.reset();
-                        ShowQrCodeDialog(qr_url);
-                        break;
-                    }
-                  },
-                  [this](device::cablev2::Event event) { OnCableEvent(event); },
-              },
-              event);
+  std::visit(absl::Overload{
+                 [this, qr_url](SystemEvent event) {
+                   switch (event) {
+                     case SystemEvent::kBluetoothNotPowered:
+                       ShowBluetoothManualTurnOnDialog();
+                       break;
+                     case SystemEvent::kNeedPermission:
+                       // The user is being asked for Bluetooth permission by
+                       // the system. Nothing for Chrome UI to do.
+                       break;
+                     case SystemEvent::kReady:
+                       bluetooth_manual_dialog_controller_.reset();
+                       ShowQrCodeDialog(qr_url);
+                       break;
+                   }
+                 },
+                 [this](device::cablev2::Event event) { OnCableEvent(event); },
+             },
+             event);
 }
 
 void DigitalIdentityProviderDesktop::OnCableEvent(
@@ -221,16 +220,12 @@ void DigitalIdentityProviderDesktop::OnCableEvent(
 void DigitalIdentityProviderDesktop::OnFinished(
     base::expected<Response, Error> result) {
   if (result.has_value()) {
-    std::string encoded_result =
-        base::WriteJsonWithOptions(result.value().value(),
-                                   base::JSONWriter::OPTIONS_PRETTY_PRINT)
-            .value_or("");
-    std::move(callback_).Run(std::move(encoded_result));
+    std::move(callback_).Run(std::move(result.value().value()));
     return;
   }
 
-  absl::visit(
-      base::Overloaded{
+  std::visit(
+      absl::Overload{
           [this](SystemError error) {
             EndRequestWithError(RequestStatusForMetrics::kErrorOther);
           },
@@ -270,16 +265,15 @@ void DigitalIdentityProviderDesktop::ShowQrCodeDialog(
     const std::string& qr_url) {
   std::u16string dialog_title =
       l10n_util::GetStringUTF16(IDS_WEB_DIGITAL_CREDENTIALS_QR_TITLE);
-  std::u16string dialog_body = l10n_util::GetStringFUTF16(
-      IDS_WEB_DIGITAL_CREDENTIALS_QR_BODY,
-      url_formatter::FormatOriginForSecurityDisplay(
-          rp_origin_, url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC));
+  std::u16string dialog_body =
+      l10n_util::GetStringUTF16(IDS_WEB_DIGITAL_CREDENTIALS_QR_BODY);
   EnsureDialogCreated()->TryShow(
       /*accept_button=*/std::nullopt, base::OnceClosure(),
       ui::DialogModel::Button::Params(),
       base::BindOnce(&DigitalIdentityProviderDesktop::OnCanceled,
                      weak_ptr_factory_.GetWeakPtr()),
-      dialog_title, dialog_body, MakeQrCodeImageView(qr_url));
+      dialog_title, dialog_body, MakeQrCodeImageView(qr_url),
+      /*show_progress_bar=*/false);
 }
 
 void DigitalIdentityProviderDesktop::ShowBluetoothManualTurnOnDialog() {
@@ -313,9 +307,10 @@ void DigitalIdentityProviderDesktop::ShowConnectingToPhoneDialog() {
       ui::DialogModel::Button::Params(),
       base::BindOnce(&DigitalIdentityProviderDesktop::OnCanceled,
                      weak_ptr_factory_.GetWeakPtr()),
-      std::move(title_text), /*dialog_body=*/u"",
-      DigitalIdentityMultiStepDialog::ConfigureHeaderIllustration(
-          std::move(illustration)));
+      /*dialog_title=*/u"", /*dialog_body=*/u"",
+      DigitalIdentityMultiStepDialog::CreateHeaderView(
+          std::move(title_text), /*body_text=*/u"", std::move(illustration)),
+      /*show_progress_bar=*/true);
 }
 
 void DigitalIdentityProviderDesktop::ShowContinueStepsOnThePhoneDialog() {
@@ -334,9 +329,10 @@ void DigitalIdentityProviderDesktop::ShowContinueStepsOnThePhoneDialog() {
       ui::DialogModel::Button::Params(),
       base::BindOnce(&DigitalIdentityProviderDesktop::OnCanceled,
                      weak_ptr_factory_.GetWeakPtr()),
-      std::move(title_text), /*dialog_body=*/u"",
-      DigitalIdentityMultiStepDialog::ConfigureHeaderIllustration(
-          std::move(illustration)));
+      /*dialog_title=*/u"", /*dialog_body=*/u"",
+      DigitalIdentityMultiStepDialog::CreateHeaderView(
+          std::move(title_text), /*body_text=*/u"", std::move(illustration)),
+      /*show_progress_bar=*/true);
 }
 
 void DigitalIdentityProviderDesktop::OnCableConnectingTimerComplete() {

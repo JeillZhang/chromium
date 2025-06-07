@@ -63,8 +63,9 @@ LayoutObject* HTMLButtonElement::CreateLayoutObject(
   if (display == EDisplay::kInlineGrid || display == EDisplay::kGrid ||
       display == EDisplay::kInlineFlex || display == EDisplay::kFlex ||
       display == EDisplay::kInlineLayoutCustom ||
-      display == EDisplay::kLayoutCustom)
+      display == EDisplay::kLayoutCustom) {
     return HTMLFormControlElement::CreateLayoutObject(style);
+  }
   return MakeGarbageCollected<LayoutBlockFlow>(this);
 }
 
@@ -107,35 +108,84 @@ bool HTMLButtonElement::IsPresentationAttribute(
   return HTMLFormControlElement::IsPresentationAttribute(name);
 }
 
+// static
+std::optional<HTMLButtonElement::Type> HTMLButtonElement::TypeFromString(
+    const AtomicString& string) {
+  if (EqualIgnoringASCIICase(string, "reset")) {
+    return kReset;
+  } else if (EqualIgnoringASCIICase(string, "button")) {
+    return kButton;
+  } else if (EqualIgnoringASCIICase(string, "submit")) {
+    return kSubmit;
+  } else {
+    return std::nullopt;
+  }
+}
+
 void HTMLButtonElement::ParseAttribute(
     const AttributeModificationParams& params) {
   if (params.name == html_names::kTypeAttr) {
-    if (EqualIgnoringASCIICase(params.new_value, "reset")) {
-      type_ = kReset;
-    } else if (EqualIgnoringASCIICase(params.new_value, "button")) {
-      type_ = kButton;
+    if (std::optional<HTMLButtonElement::Type> type =
+            TypeFromString(params.new_value)) {
+      SetTypeInternal(*type);
     } else {
       if (!params.new_value.IsNull()) {
         if (params.new_value.empty()) {
           UseCounter::Count(GetDocument(),
                             WebFeature::kButtonTypeAttrEmptyString);
-        } else if (!EqualIgnoringASCIICase(params.new_value, "submit")) {
+        } else {
           UseCounter::Count(GetDocument(), WebFeature::kButtonTypeAttrInvalid);
         }
       }
-      type_ = kSubmit;
+      if (RuntimeEnabledFeatures::HTMLCommandAttributesEnabled() &&
+          (FastHasAttribute(html_names::kCommandAttr) ||
+           FastHasAttribute(html_names::kCommandforAttr))) {
+        UseCounter::Count(
+            GetDocument(),
+            WebFeature::kButtonTypeAttrInvalidWithCommandOrCommandfor);
+        SetTypeInternal(kButton);
+      } else {
+        SetTypeInternal(kSubmit);
+      }
     }
-    UpdateWillValidateCache();
-    if (formOwner() && isConnected())
+    if (formOwner() && isConnected()) {
       formOwner()->InvalidateDefaultButtonStyle();
+    }
+  } else if (params.name == html_names::kCommandAttr ||
+             params.name == html_names::kCommandforAttr) {
+    bool has_type = FastHasAttribute(html_names::kTypeAttr);
+    auto type = TypeFromString(FastGetAttribute(html_names::kTypeAttr));
+    bool type_is_button = type && *type == kButton;
+    if ((!has_type || !type_is_button)) {
+      UseCounter::Count(
+          GetDocument(),
+          WebFeature::kButtonTypeAttrInvalidWithCommandOrCommandfor);
+    }
+
+    if (RuntimeEnabledFeatures::HTMLCommandAttributesEnabled() &&
+        !params.new_value.IsNull() && !type) {
+      // https://html.spec.whatwg.org/multipage/form-elements.html#dom-button-type
+      // Type, as reflected in the IDL, must be "button" if there are command
+      // attributes without an explicit valid type attribute set.
+      SetTypeInternal(kButton);
+    }
   } else {
-    if (params.name == html_names::kFormactionAttr)
+    if (params.name == html_names::kFormactionAttr) {
       LogUpdateAttributeIfIsolatedWorldAndInDocument("button", params);
+    }
     HTMLFormControlElement::ParseAttribute(params);
   }
 }
 
-Element* HTMLButtonElement::commandForElement() {
+void HTMLButtonElement::SetTypeInternal(Type type) {
+  type_ = type;
+  UpdateWillValidateCache();
+  if (formOwner() && isConnected()) {
+    formOwner()->InvalidateDefaultButtonStyle();
+  }
+}
+
+Element* HTMLButtonElement::commandForElement() const {
   if (!RuntimeEnabledFeatures::HTMLCommandAttributesEnabled()) {
     return nullptr;
   }
@@ -168,7 +218,6 @@ AtomicString HTMLButtonElement::command() const {
       return lower_action;
     }
   }
-  NOTREACHED();
 }
 
 CommandEventType HTMLButtonElement::GetCommandEventType(
@@ -201,14 +250,15 @@ CommandEventType HTMLButtonElement::GetCommandEventType(
     return CommandEventType::kShowModal;
   }
 
+  if (RuntimeEnabledFeatures::HTMLCommandRequestCloseEnabled() &&
+      EqualIgnoringASCIICase(action, keywords::kRequestClose)) {
+    return CommandEventType::kRequestClose;
+  }
+
   // V2 commands go below this point
 
   if (!RuntimeEnabledFeatures::HTMLCommandActionsV2Enabled()) {
     return CommandEventType::kNone;
-  }
-
-  if (EqualIgnoringASCIICase(action, keywords::kRequestClose)) {
-    return CommandEventType::kRequestClose;
   }
 
   // Input/Select Cases
@@ -265,12 +315,27 @@ void HTMLButtonElement::DefaultEventHandler(Event& event) {
   if (event.type() == event_type_names::kDOMActivate) {
     bool potentialCommand = (FastHasAttribute(html_names::kCommandforAttr) ||
                              FastHasAttribute(html_names::kCommandAttr));
-    bool implicitSubmit =
-        type_ == kSubmit && !FastHasAttribute(html_names::kTypeAttr);
-
     if (!IsDisabledFormControl()) {
+      if (Form() && RuntimeEnabledFeatures::HTMLCommandAttributesEnabled() &&
+          type_ == kButton) {
+        if (!EqualIgnoringASCIICase(FastGetAttribute(html_names::kTypeAttr),
+                                    "button")) {
+          DCHECK(type_ == kButton);
+          AddConsoleMessage(mojom::blink::ConsoleMessageSource::kOther,
+                            mojom::blink::ConsoleMessageLevel::kWarning,
+                            "Buttons associated with forms that include "
+                            "command or commandfor attributes are "
+                            "ambiguous, and require a type=button attribute. "
+                            "No action will be taken.");
+          return;
+        }
+      }
+
       if (Form() && type_ == kSubmit) {
-        if (implicitSubmit && potentialCommand) {
+        if (!EqualIgnoringASCIICase(FastGetAttribute(html_names::kTypeAttr),
+                                    "submit") &&
+            potentialCommand) {
+          DCHECK(type_ == kSubmit);
           AddConsoleMessage(mojom::blink::ConsoleMessageSource::kOther,
                             mojom::blink::ConsoleMessageLevel::kWarning,
                             "Buttons associated with forms that include "
@@ -291,14 +356,15 @@ void HTMLButtonElement::DefaultEventHandler(Event& event) {
         return;
       }
       if (Form() && type_ == kReset) {
-        if (potentialCommand) {
-          AddConsoleMessage(mojom::blink::ConsoleMessageSource::kOther,
-                            mojom::blink::ConsoleMessageLevel::kWarning,
-                            "Buttons with a type of reset will ignore the "
-                            "command or commandfor attributes.");
-        }
         Form()->reset();
         event.SetDefaultHandled();
+        if (potentialCommand) {
+          AddConsoleMessage(
+              mojom::blink::ConsoleMessageSource::kOther,
+              mojom::blink::ConsoleMessageLevel::kWarning,
+              "Buttons with an explicit type=reset will always reset a form, "
+              "so command or commandfor attributes will be ignored.");
+        }
         return;
       }
     }
@@ -346,8 +412,9 @@ bool HTMLButtonElement::HasActivationBehavior() const {
 
 bool HTMLButtonElement::WillRespondToMouseClickEvents() {
   if (!IsDisabledFormControl() && Form() &&
-      (type_ == kSubmit || type_ == kReset))
+      (type_ == kSubmit || type_ == kReset)) {
     return true;
+  }
   return HTMLFormControlElement::WillRespondToMouseClickEvents();
 }
 
@@ -364,8 +431,9 @@ void HTMLButtonElement::SetActivatedSubmit(bool flag) {
 }
 
 void HTMLButtonElement::AppendToFormData(FormData& form_data) {
-  if (type_ == kSubmit && !GetName().empty() && is_activated_submit_)
+  if (type_ == kSubmit && !GetName().empty() && is_activated_submit_) {
     form_data.AppendFromElement(GetName(), Value());
+  }
 }
 
 void HTMLButtonElement::AccessKeyAction(

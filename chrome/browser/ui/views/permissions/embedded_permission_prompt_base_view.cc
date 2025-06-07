@@ -13,6 +13,7 @@
 #include "chrome/browser/ui/views/chrome_widget_sublevel.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "components/permissions/features.h"
+#include "components/permissions/permission_util.h"
 #include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -130,9 +131,16 @@ EmbeddedPermissionPromptBaseView::EmbeddedPermissionPromptBaseView(
   views::View::ConvertRectToScreen(content_view, &element_rect_);
 }
 
-EmbeddedPermissionPromptBaseView::~EmbeddedPermissionPromptBaseView() = default;
+EmbeddedPermissionPromptBaseView::~EmbeddedPermissionPromptBaseView() {
+  permissions::PermissionUmaUtil::RecordBrowserAlwaysActiveWhilePrompting(
+      request_type(), /*embedded_permission_element_initiated*/ true,
+      record_browser_always_active_value());
+}
 
 void EmbeddedPermissionPromptBaseView::Show() {
+  permissions::PermissionUmaUtil::RecordPromptShownInActiveBrowser(
+      request_type(), /*embedded_permission_element_initiated*/ true,
+      record_browser_always_active_value());
   CreateWidget();
   ShowWidget();
 }
@@ -333,7 +341,7 @@ void EmbeddedPermissionPromptBaseView::AddRequestLine(
   AddElementIdentifierToLabel(*label, index);
 
   label->SetTextStyle(views::style::STYLE_BODY_3);
-  label->SetEnabledColorId(kColorPermissionPromptRequestText);
+  label->SetEnabledColor(kColorPermissionPromptRequestText);
 
   line_container->SetProperty(views::kMarginsKey,
                               gfx::Insets().set_top(BODY_TOP_MARGIN));

@@ -7,6 +7,7 @@
 
 #import "base/uuid.h"
 
+enum class TabGroupActionType;
 @class TabGroupsPanelMediator;
 
 // Delegate protocol for the tab group panel mediator.
@@ -20,8 +21,16 @@
 // bottom on iPhone to confirm that the group with `syncID` is going to be
 // deleted.
 - (void)tabGroupsPanelMediator:(TabGroupsPanelMediator*)tabGroupsPanelMediator
-    showDeleteConfirmationWithSyncID:(const base::Uuid)syncID
-                          sourceView:(UIView*)sourceView;
+    showDeleteGroupConfirmationWithSyncID:(const base::Uuid)syncID
+                               sourceView:(UIView*)sourceView;
+
+// Starts the leave or delete shared group flow Ahoring to `sourceView` on iPad
+// or at the bottom on iPhone.
+- (void)tabGroupsPanelMediator:(TabGroupsPanelMediator*)tabGroupsPanelMediator
+    startLeaveOrDeleteSharedGroupWithSyncID:(const base::Uuid)syncID
+                                 groupTitle:(NSString*)groupTitle
+                                  forAction:(TabGroupActionType)actionType
+                                 sourceView:(UIView*)sourceView;
 
 @end
 

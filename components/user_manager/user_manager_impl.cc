@@ -27,6 +27,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/system/sys_info.h"
@@ -34,6 +35,7 @@
 #include "base/task/thread_pool.h"
 #include "base/values.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/ash/components/settings/cros_settings.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "chromeos/ash/components/settings/user_login_permission_tracker.h"
@@ -43,6 +45,7 @@
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/multi_user/multi_user_sign_in_policy.h"
 #include "components/user_manager/user_directory_integrity_manager.h"
+#include "components/user_manager/user_manager_policy_util.h"
 #include "components/user_manager/user_manager_pref_names.h"
 #include "components/user_manager/user_names.h"
 #include "components/user_manager/user_type.h"
@@ -182,7 +185,7 @@ UserList UserManagerImpl::FindLoginAllowedUsersFrom(
   for (User* user : users) {
     // Skip kiosk apps for login screen user list. Kiosk apps as pods (aka new
     // kiosk UI) is currently disabled and it gets the apps directly from
-    // KioskChromeAppManager and WebKioskAppManager.
+    // KioskChromeAppManager and KioskWebAppManager.
     if (user->IsKioskType()) {
       continue;
     }
@@ -262,9 +265,7 @@ const AccountId& UserManagerImpl::GetLastSessionActiveAccountId() const {
 }
 
 void UserManagerImpl::UserLoggedIn(const AccountId& account_id,
-                                   const std::string& username_hash,
-                                   bool browser_restart,
-                                   bool is_child) {
+                                   const std::string& username_hash) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!last_session_active_account_id_initialized_) {
@@ -335,8 +336,8 @@ bool UserManagerImpl::EnsureUser(const AccountId& account_id,
       }
       break;
 
-    case UserType::kKioskApp:
-    case UserType::kWebKioskApp:
+    case UserType::kKioskChromeApp:
+    case UserType::kKioskWebApp:
     case UserType::kKioskIWA:
       // Do nothing. User should be already there.
       break;
@@ -535,11 +536,25 @@ void UserManagerImpl::RemoveUser(const AccountId& account_id,
                                  UserRemovalReason reason) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  UserDirectoryIntegrityManager integrity_manager(local_state_.get());
+  const User* const user = FindUser(account_id);
+
   // Misconfigured user would not be included in GetPersistedUsers(),
   // account for them separately.
-  if (!CanUserBeRemoved(FindUser(account_id)) &&
-      !integrity_manager.IsUserMisconfigured(account_id)) {
+  // TODO(crbug.com/404898436): Find a better way for the special handling.
+  if (reason == UserRemovalReason::MISCONFIGURED_USER) {
+    if (user && user->IsDeviceLocalAccount()) {
+      // Device local account users are created from policy and should only be
+      // remove from the user list on policy change. So just remove crypothome
+      // for them instead of a full removal.
+      delegate_->RemoveCryptohomeAsync(account_id);
+    } else {
+      RemoveUserInternal(account_id, reason);
+    }
+
+    return;
+  }
+
+  if (!CanUserBeRemoved(user)) {
     return;
   }
 
@@ -978,14 +993,15 @@ bool UserManagerImpl::IsLoggedInAsGuest() const {
   return IsUserLoggedIn() && active_user_->GetType() == UserType::kGuest;
 }
 
-bool UserManagerImpl::IsLoggedInAsKioskApp() const {
+bool UserManagerImpl::IsLoggedInAsKioskChromeApp() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return IsUserLoggedIn() && active_user_->GetType() == UserType::kKioskApp;
+  return IsUserLoggedIn() &&
+         active_user_->GetType() == UserType::kKioskChromeApp;
 }
 
-bool UserManagerImpl::IsLoggedInAsWebKioskApp() const {
+bool UserManagerImpl::IsLoggedInAsKioskWebApp() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return IsUserLoggedIn() && active_user_->GetType() == UserType::kWebKioskApp;
+  return IsUserLoggedIn() && active_user_->GetType() == UserType::kKioskWebApp;
 }
 
 bool UserManagerImpl::IsLoggedInAsKioskIWA() const {
@@ -1365,14 +1381,14 @@ void UserManagerImpl::LoadDeviceLocalAccounts(
       continue;
     }
 
-    auto type =
-        delegate_->GetDeviceLocalAccountUserType(account_id.GetUserEmail());
-    if (!type.has_value()) {
-      NOTREACHED();
-    }
+    auto device_local_account_type =
+        policy::GetDeviceLocalAccountType(account_id.GetUserEmail());
+    CHECK(device_local_account_type.has_value());
 
     // Using `new` to access a non-public constructor.
-    user_storage_.push_back(base::WrapUnique(new User(account_id, *type)));
+    user_storage_.push_back(base::WrapUnique(new User(
+        account_id,
+        DeviceLocalAccountTypeToUserType(*device_local_account_type))));
     persisted_users_.push_back(user_storage_.back().get());
   }
 }

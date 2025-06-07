@@ -18,6 +18,7 @@
 #include "ash/constants/ash_pref_names.h"
 #include "ash/public/cpp/accelerator_actions.h"
 #include "ash/public/cpp/accelerators_util.h"
+#include "ash/public/cpp/capture_mode/capture_mode_api.h"
 #include "ash/public/mojom/accelerator_configuration.mojom-shared.h"
 #include "ash/public/mojom/accelerator_configuration.mojom.h"
 #include "ash/public/mojom/accelerator_info.mojom-forward.h"
@@ -35,6 +36,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/prefs/pref_member.h"
 #include "mojo/public/cpp/bindings/clone_traits.h"
@@ -461,6 +463,8 @@ bool ShouldExcludeItem(const AcceleratorLayoutDetails& details) {
       return true;
     case kToggleCameraAllowed:
       return !features::IsToggleCameraShortcutEnabled();
+    case kStartSunfishSession:
+      return !CanShowSunfishOrScannerUi();
   }
 
   return false;

@@ -41,7 +41,7 @@
 
 #include "base/win/scoped_handle.h"
 #include "media/base/win/dxgi_device_manager.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #endif
 
 namespace content {
@@ -117,12 +117,12 @@ class VideoCaptureBufferPoolTest
     DCHECK(dxgi_device_manager);
     d3d11_device_ = dxgi_device_manager->GetDevice().Get();
     DCHECK(d3d11_device_);
-    pool_ = new media::VideoCaptureBufferPoolImpl(
+    pool_ = base::MakeRefCounted<media::VideoCaptureBufferPoolImpl>(
         GetBufferType(), kTestBufferPoolSize,
         std::make_unique<media::VideoCaptureBufferTrackerFactoryImpl>(
             std::move(dxgi_device_manager)));
 #else
-    pool_ = new media::VideoCaptureBufferPoolImpl(
+    pool_ = base::MakeRefCounted<media::VideoCaptureBufferPoolImpl>(
         media::VideoCaptureBufferType::kSharedMemory, kTestBufferPoolSize);
 #endif
   }
@@ -364,11 +364,8 @@ gfx::GpuMemoryBufferHandle CreateHandle(ID3D11Device* d3d11_device) {
       &texture_handle);
   EXPECT_HRESULT_SUCCEEDED(hr);
 
-  gfx::GpuMemoryBufferHandle result;
-  result.type = gfx::GpuMemoryBufferType::DXGI_SHARED_HANDLE;
-  result.set_dxgi_handle(
+  return gfx::GpuMemoryBufferHandle(
       gfx::DXGIHandle(base::win::ScopedHandle(texture_handle)));
-  return result;
 }
 
 }  // namespace

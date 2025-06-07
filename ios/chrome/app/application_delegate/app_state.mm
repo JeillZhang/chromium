@@ -72,6 +72,9 @@ BOOL ApplicationIsInBackground() {
   // Container for observers.
   UIBlockerManagerObserverList* _uiBlockerManagerObservers;
 
+  // List of connected profileStates.
+  NSMutableArray<ProfileState*>* _profileStates;
+
   // Agents attached to this app state.
   NSMutableArray<id<AppStateAgent>>* _agents;
 
@@ -108,6 +111,7 @@ BOOL ApplicationIsInBackground() {
   if (self) {
     _observers = [AppStateObserverList list];
     _uiBlockerManagerObservers = [UIBlockerManagerObserverList list];
+    _profileStates = [[NSMutableArray alloc] init];
     _agents = [[NSMutableArray alloc] init];
     _startupInformation = startupInformation;
     _appCommandDispatcher = [[CommandDispatcher alloc] init];
@@ -203,6 +207,16 @@ BOOL ApplicationIsInBackground() {
   [_observers removeObserver:observer];
 }
 
+- (void)profileStateCreated:(ProfileState*)profileState {
+  [_profileStates addObject:profileState];
+  [_observers appState:self profileStateConnected:profileState];
+}
+
+- (void)profileStateDestroyed:(ProfileState*)profileState {
+  [_profileStates removeObject:profileState];
+  [_observers appState:self profileStateDisconnected:profileState];
+}
+
 - (void)addAgent:(id<AppStateAgent>)agent {
   DCHECK(agent);
   [_agents addObject:agent];
@@ -264,6 +278,10 @@ BOOL ApplicationIsInBackground() {
                                                    NSDictionary* bindings) {
         return scene.activationLevel >= SceneActivationLevelForegroundInactive;
       }]];
+}
+
+- (NSArray<ProfileState*>*)profileStates {
+  return [_profileStates copy];
 }
 
 #pragma mark - Internal methods.
@@ -367,9 +385,6 @@ BOOL ApplicationIsInBackground() {
 
 - (void)sceneState:(SceneState*)sceneState
     transitionedToActivationLevel:(SceneActivationLevel)level {
-  if (level >= SceneActivationLevelForegroundActive) {
-    [_observers appState:self sceneDidBecomeActive:sceneState];
-  }
   crash_keys::SetForegroundScenesCount([self foregroundScenes].count);
 }
 

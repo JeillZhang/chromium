@@ -10,6 +10,7 @@
 #include "base/metrics/statistics_recorder.h"
 #include "base/trace_event/histogram_scope.h"
 #include "base/trace_event/trace_event.h"
+#include "base/trace_event/trace_id_helper.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "services/tracing/public/cpp/perfetto/macros.h"
 #include "third_party/perfetto/protos/perfetto/trace/track_event/chrome_histogram_sample.pbzero.h"
@@ -80,7 +81,8 @@ void BackgroundTracingAgentImpl::OnHistogramChanged(
     const std::string& rule_id,
     base::Histogram::Sample32 histogram_lower_value,
     base::Histogram::Sample32 histogram_upper_value,
-    const char* histogram_name,
+    std::optional<uint64_t> event_id,
+    std::string_view histogram_name,
     uint64_t name_hash,
     base::Histogram::Sample32 actual_value) {
   if (actual_value < histogram_lower_value ||
@@ -88,10 +90,10 @@ void BackgroundTracingAgentImpl::OnHistogramChanged(
     return;
   }
 
-  uint64_t flow_id = base::trace_event::HistogramScope::GetFlowId().value_or(
-      base::trace_event::GetNextGlobalTraceId());
-
-  TRACE_EVENT("toplevel,latency", "HistogramSampleTrigger",
+  auto track = perfetto::NamedTrack("HistogramSamples");
+  uint64_t flow_id =
+      event_id.value_or(base::trace_event::GetNextGlobalTraceId());
+  TRACE_EVENT_INSTANT("toplevel,latency", "HistogramSampleTrigger", track,
               [&](perfetto::EventContext ctx) {
                 perfetto::protos::pbzero::ChromeHistogramSample* new_sample =
                     ctx.event()->set_chrome_histogram_sample();

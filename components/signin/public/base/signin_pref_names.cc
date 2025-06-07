@@ -24,15 +24,14 @@ const char kAccountInfo[] = "account_info";
 
 // Whether the "clear on exit" migration is complete.
 // If this preference is not true, then the user needs to be migrated.
-// If a user has set clear cookies on exit prior to the activation of
-// `switches:: kExplicitBrowserSigninUIOnDesktop` which changes the behavior of
-// signed in users, they will need to do a migration.
-// The user can be migrated in various ways:
+// If a user has set clear cookies on exit prior to the activation of explicit
+// signin which changes the behavior of signed in users, they will need to do a
+// migration. The user can be migrated in various ways:
 // - the first time they launch Chrome, if they don't use the cookie setting
 // - by changing the value of the setting when it has the new behavior
 // - by seeing a notice dialog if they close the browser while being in a state
 //   where the new cookie setting behavior makes a difference (signed in with
-//   Uno and non-syncing).
+//   explicit signin and non-syncing).
 const char kCookieClearOnExitMigrationNoticeComplete[] =
     "signin.cookie_clear_on_exit_migration_notice_complete";
 
@@ -75,6 +74,12 @@ const char kGoogleServicesLastSyncingUsername[] =
 // signed-in users, no matter whether they were syncing or not.
 const char kGoogleServicesLastSignedInUsername[] =
     "google.services.last_signed_in_username";
+
+// Holds a copy of what `kGoogleServicesLastSyncingGaiaId` contained before it
+// was updated to contain the latest value, which happens when the Sync consent
+// is granted.
+const char kGoogleServicesSecondLastSyncingGaiaId[] =
+    "google.services.second_last_gaia_id";
 
 // Device id scoped to single signin. This device id will be regenerated if user
 // signs out and signs back in. When refresh token is requested for this user it
@@ -140,6 +145,14 @@ const char kHistorySyncSuccessiveDeclineCount[] =
 // Android, but has a separate implementation there which doesn't use this pref.
 const char kRestrictAccountsToPatterns[] =
     "signin.restrict_accounts_to_patterns";
+
+// Boolean that represent whether signin is allowed by the user. It is also used
+// to synchronize kSigninAllowed across profiles. This is used to
+// ensure that all profiles respect the setting while `kSigninAllowed` only
+// applies to a single profile. This is the UX we want on iOS since there are
+// multi profiles but not exposed to the user, so we should treat this setting
+// as affecting all profiles.
+const char kSigninAllowedOnDevice[] = "signin.allowed_on_device";
 #endif  // BUILDFLAG(IS_IOS)
 
 // Boolean which indicates if the user is allowed to sign into Chrome on the
@@ -174,8 +187,7 @@ const char kUserCloudSigninPolicyResponseFromPolicyTestPage[] =
 // Registers that the sign in occurred with an explicit user action.
 // Affected by all signin sources except when signing in to Chrome caused by a
 // web sign in or by an unknown source.
-// Note: this pref is only recorded when the
-// `switches::kExplicitBrowserSigninUIOnDesktop` is enabled.
+// Note: this pref is only recorded when explicit signin is enabled.
 const char kExplicitBrowserSignin[] =
     "signin.signin_with_explicit_browser_signin_on";
 

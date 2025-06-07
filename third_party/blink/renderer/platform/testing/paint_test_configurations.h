@@ -14,9 +14,21 @@
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/web/web_heap.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
-#include "ui/native_theme/native_theme_features.h"
+#include "ui/native_theme/features/native_theme_features.h"
 
 namespace blink {
+
+class CullRectTestConfig {
+ public:
+  CullRectTestConfig() {
+    feature_.InitAndEnableFeatureWithParameters(
+        features::kExpandCompositedCullRect,
+        {{"pixels", "4000"}, {"changed_enough", "512"}});
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_;
+};
 
 inline constexpr unsigned kUnderInvalidationChecking = 1 << 0;
 inline constexpr unsigned kFluentScrollbar = 1 << 1;
@@ -28,7 +40,8 @@ class PaintTestConfigurations
     : public testing::WithParamInterface<unsigned>,
       private ScopedPaintUnderInvalidationCheckingForTest,
       private ScopedElementCaptureForTest,
-      private ScopedRasterInducingScrollForTest {
+      private ScopedRasterInducingScrollForTest,
+      private CullRectTestConfig {
  public:
   PaintTestConfigurations()
       : ScopedPaintUnderInvalidationCheckingForTest(GetParam() &

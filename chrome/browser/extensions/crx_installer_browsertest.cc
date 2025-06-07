@@ -20,8 +20,10 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
+#include "base/one_shot_event.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/test_future.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
@@ -29,16 +31,15 @@
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/download/download_crx_util.h"
-#include "chrome/browser/extensions/delayed_install_manager.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/extension_install_prompt_show_params.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_sync_util.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/fake_safe_browsing_database_manager.h"
 #include "chrome/browser/extensions/forced_extensions/install_stage_tracker.h"
+#include "chrome/browser/extensions/install_approval.h"
 #include "chrome/browser/extensions/permissions/scripting_permissions_modifier.h"
 #include "chrome/browser/extensions/scoped_database_manager_for_test.h"
 #include "chrome/browser/profiles/profile.h"
@@ -56,10 +57,13 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/delayed_install_manager.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/browser/extension_util.h"
 #include "extensions/browser/install/crx_install_error.h"
 #include "extensions/browser/install/sandboxed_unpacker_failure_reason.h"
 #include "extensions/browser/management_policy.h"
@@ -82,9 +86,8 @@
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_switches.h"
-#include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
+#include "chrome/browser/ash/test/kiosk_app_logged_in_browser_test_mixin.h"
 #include "chrome/browser/extensions/extension_assets_manager_chromeos.h"
-#include "components/user_manager/scoped_user_manager.h"
 #endif
 
 namespace extensions {
@@ -204,11 +207,11 @@ class ManagementPolicyMock : public ManagementPolicy::Provider {
 
 class ExtensionCrxInstallerTest : public ExtensionBrowserTest {
  protected:
-  std::unique_ptr<WebstoreInstaller::Approval> GetApproval(
+  std::unique_ptr<InstallApproval> GetApproval(
       const char* manifest_dir,
       const extensions::ExtensionId& id,
       bool strict_manifest_checks) {
-    std::unique_ptr<WebstoreInstaller::Approval> result;
+    std::unique_ptr<InstallApproval> result;
 
     base::ScopedAllowBlockingForTesting allow_io;
     base::FilePath ext_path = test_data_dir_.AppendASCII(manifest_dir);
@@ -219,7 +222,7 @@ class ExtensionCrxInstallerTest : public ExtensionBrowserTest {
       return result;
     }
 
-    return WebstoreInstaller::Approval::CreateWithNoInstallPrompt(
+    return InstallApproval::CreateWithNoInstallPrompt(
         browser()->profile(), id, std::move(*parsed_manifest),
         strict_manifest_checks);
   }
@@ -274,7 +277,7 @@ class ExtensionCrxInstallerTest : public ExtensionBrowserTest {
                             .Set("manifest_version", 2));
     builder.SetID(extension_id);
     builder.SetPath(temp_dir.GetPath());
-    extension_service()->AddExtension(builder.Build().get());
+    extension_registrar()->AddExtension(builder.Build());
 
     const Extension* extension = GetInstalledExtension(extension_id);
     ASSERT_NE(nullptr, extension);
@@ -290,14 +293,14 @@ class ExtensionCrxInstallerTest : public ExtensionBrowserTest {
     std::move(quit_closure).Run();
   }
 
-  void RunCrxInstaller(const WebstoreInstaller::Approval* approval,
+  void RunCrxInstaller(const InstallApproval* approval,
                        std::unique_ptr<ExtensionInstallPrompt> prompt,
                        CrxInstaller::InstallerResultCallback callback,
                        const base::FilePath& crx_path) {
     base::RunLoop run_loop;
 
     scoped_refptr<CrxInstaller> installer(
-        CrxInstaller::Create(extension_service(), std::move(prompt), approval));
+        CrxInstaller::Create(profile(), std::move(prompt), approval));
     installer->set_allow_silent_install(true);
     installer->set_is_gallery_install(true);
     installer->AddInstallerCallback(
@@ -317,7 +320,7 @@ class ExtensionCrxInstallerTest : public ExtensionBrowserTest {
     base::RunLoop run_loop;
 
     scoped_refptr<CrxInstaller> installer(
-        CrxInstaller::Create(extension_service(), std::move(prompt)));
+        CrxInstaller::Create(profile(), std::move(prompt)));
     installer->set_allow_silent_install(true);
     installer->set_is_gallery_install(true);
     installer->AddInstallerCallback(
@@ -337,7 +340,7 @@ class ExtensionCrxInstallerTest : public ExtensionBrowserTest {
     base::RunLoop run_loop;
 
     scoped_refptr<CrxInstaller> installer(
-        CrxInstaller::Create(extension_service(), std::move(prompt)));
+        CrxInstaller::Create(profile(), std::move(prompt)));
     installer->set_delete_source(true);
     installer->AddInstallerCallback(
         base::BindOnce(&ExtensionCrxInstallerTest::InstallerCallback,
@@ -356,7 +359,7 @@ class ExtensionCrxInstallerTest : public ExtensionBrowserTest {
                          MockPromptProxy* mock_install_prompt) {
     base::FilePath ext_path = test_data_dir_.AppendASCII(ext_relpath);
 
-    std::unique_ptr<WebstoreInstaller::Approval> approval;
+    std::unique_ptr<InstallApproval> approval;
     if (!id.empty()) {
       approval = GetApproval(ext_relpath, id, true);
     }
@@ -550,9 +553,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, AllowOffStore) {
         CreateMockPromptProxyForBrowser(browser());
 
     scoped_refptr<CrxInstaller> crx_installer(
-        CrxInstaller::Create(extension_service(), mock_prompt->CreatePrompt()));
-    crx_installer->set_install_cause(
-        extension_misc::INSTALL_CAUSE_USER_DOWNLOAD);
+        CrxInstaller::Create(profile(), mock_prompt->CreatePrompt()));
+    crx_installer->set_was_triggered_by_user_download();
 
     if (kTestData[i]) {
       crx_installer->set_off_store_install_allow_reason(
@@ -606,8 +608,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest,
       "ldnnhddmnhbkjipkidpdiheffobcpfmf");
   base::FilePath base_path = test_data_dir_.AppendASCII("delayed_install");
 
-  ExtensionService* service = extension_service();
-  ASSERT_TRUE(service);
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser()->profile());
   ASSERT_TRUE(registry);
 
@@ -631,7 +631,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest,
   ASSERT_FALSE(v2_path.empty());
   ASSERT_TRUE(UpdateExtensionWaitForIdle(extension_id, v2_path, 0));
 
-  DelayedInstallManager* manager = service->delayed_install_manager();
+  DelayedInstallManager* manager = DelayedInstallManager::Get(profile());
+  ASSERT_TRUE(manager);
   ASSERT_EQ(1u, manager->delayed_installs().size());
   extension = registry->enabled_extensions().GetByID(extension_id);
   ASSERT_EQ("1.0", extension->version().GetString());
@@ -692,7 +693,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, NonStrictManifestCheck) {
   // the newly published version hasn't fully propagated to all the download
   // servers yet. So load the v2 manifest, but then install the v1 crx file.
   extensions::ExtensionId id = "ooklpoaelmiimcjipecogjfcejghbogp";
-  std::unique_ptr<WebstoreInstaller::Approval> approval =
+  std::unique_ptr<InstallApproval> approval =
       GetApproval("crx_installer/v2_no_permission_change/", id, false);
 
   RunCrxInstaller(approval.get(), mock_prompt->CreatePrompt(),
@@ -712,7 +713,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest,
   // the newly published version hasn't fully propagated to all the download
   // servers yet. So load the v2 manifest, but then install the v1 crx file.
   const extensions::ExtensionId id = "ooklpoaelmiimcjipecogjfcejghbogp";
-  std::unique_ptr<WebstoreInstaller::Approval> approval =
+  std::unique_ptr<InstallApproval> approval =
       GetApproval("crx_installer/v2_no_permission_change/", id, false);
 
   RunCrxInstaller(
@@ -993,25 +994,25 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest,
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
-IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, KioskOnlyTest) {
+IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, KioskOnlyUninstallableTest) {
   base::ScopedAllowBlockingForTesting allow_io;
   // Expect kiosk_only extensions are not allowed outside kiosk.
   base::FilePath crx_path = test_data_dir_.AppendASCII("kiosk/kiosk_only.crx");
   EXPECT_FALSE(InstallExtension(crx_path, 0));
-  LOG(INFO) << "Extension didn't install in non-kiosk mode.";
+}
 
-  // Simulate a ChromeOS kiosk user. |scoped_user_manager| will take over
-  // lifetime of |user_manager|.
-  auto fake_user_manager = std::make_unique<ash::FakeChromeUserManager>();
-  const AccountId account_id(AccountId::FromUserEmail("example@example.com"));
-  auto* kiosk_user = fake_user_manager->AddKioskAppUser(account_id);
-  fake_user_manager->LoginUser(account_id);
-  TestingProfile kiosk_profile;
-  ash::ProfileHelper::Get()->SetUserToProfileMappingForTesting(kiosk_user,
-                                                               &kiosk_profile);
+class ExtensionCrxInstallerKioskTest
+    : public InProcessBrowserTestMixinHostSupport<ExtensionCrxInstallerTest> {
+ public:
+  ExtensionCrxInstallerKioskTest() { set_chromeos_user_ = false; }
 
-  user_manager::ScopedUserManager scoped_user_manager(
-      std::move(fake_user_manager));
+ private:
+  ash::KioskAppLoggedInBrowserTestMixin kiosk_mixin_{&mixin_host_,
+                                                     "kiosk-account"};
+};
+
+IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerKioskTest, InstallTest) {
+  base::FilePath crx_path = test_data_dir_.AppendASCII("kiosk/kiosk_only.crx");
   EXPECT_TRUE(InstallExtension(crx_path, 1));
   LOG(INFO) << "Extension installed in simulated kiosk mode.";
 }
@@ -1045,7 +1046,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, InstallToSharedLocation) {
 
 IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, DoNotSync) {
   scoped_refptr<CrxInstaller> crx_installer(
-      CrxInstaller::CreateSilent(extension_service()));
+      CrxInstaller::CreateSilent(profile()));
   crx_installer->set_do_not_sync(true);
 
   base::test::TestFuture<std::optional<CrxInstallError>> installer_done_future;
@@ -1078,13 +1079,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, UpdateWithFileAccess) {
   base::FilePath crx_with_file_permission = PackExtension(ext_source);
   ASSERT_FALSE(crx_with_file_permission.empty());
 
-  ExtensionService* service = extension_service();
-
   const extensions::ExtensionId extension_id(
       "bdkapipdccfifhdghmblnenbbncfcpid");
   {
     // Install extension.
-    scoped_refptr<CrxInstaller> installer(CrxInstaller::CreateSilent(service));
+    scoped_refptr<CrxInstaller> installer(
+        CrxInstaller::CreateSilent(profile()));
     base::test::TestFuture<std::optional<CrxInstallError>>
         installer_done_future;
     installer->AddInstallerCallback(
@@ -1109,7 +1109,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, UpdateWithFileAccess) {
     UninstallExtension(extension_id);
     EXPECT_FALSE(ExtensionPrefs::Get(profile())->AllowFileAccess(extension_id));
 
-    scoped_refptr<CrxInstaller> installer(CrxInstaller::CreateSilent(service));
+    scoped_refptr<CrxInstaller> installer(
+        CrxInstaller::CreateSilent(profile()));
     base::test::TestFuture<std::optional<CrxInstallError>>
         installer_done_future;
     installer->AddInstallerCallback(
@@ -1130,7 +1131,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, UpdateWithFileAccess) {
     EXPECT_TRUE(ExtensionPrefs::Get(profile())->AllowFileAccess(extension_id));
     base::FilePath crx_update_with_file_permission = PackExtension(ext_source);
 
-    scoped_refptr<CrxInstaller> installer(CrxInstaller::CreateSilent(service));
+    scoped_refptr<CrxInstaller> installer(
+        CrxInstaller::CreateSilent(profile()));
     base::test::TestFuture<std::optional<CrxInstallError>>
         installer_done_future;
     installer->AddInstallerCallback(
@@ -1144,6 +1146,66 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, UpdateWithFileAccess) {
     EXPECT_TRUE(ExtensionPrefs::Get(profile())->AllowFileAccess(extension_id));
     EXPECT_TRUE(extension->creation_flags() & Extension::ALLOW_FILE_ACCESS);
   }
+}
+
+#if !defined(LEAK_SANITIZER)
+// This test intentionally leaks a CrxInstaller object at shutdown.
+IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, InstallDuringShutdown) {
+  scoped_refptr<CrxInstaller> installer(CrxInstaller::CreateSilent(profile()));
+  installer->set_allow_silent_install(true);
+  base::FilePath crx_path = test_data_dir_.AppendASCII("crx_installer/v1.crx");
+  installer->InstallCrx(crx_path);
+
+  // Simulate a task holding the installer object alive.
+  installer->AddRef();
+
+  // Exit the test while the installer is still running. No crash.
+}
+#endif  // !defined(LEAK_SANITIZER)
+
+// Tests that the Extensions.ExtensionInstalled.NewFromWebstore histogram is
+// only emitted when a new extension from the webstore is installed. If any
+// installed extensions are already from the webstore the histogram will not
+// emit.
+IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, NewInstallFromWebStore) {
+  {
+    SCOPED_TRACE("waiting for all extensions to load");
+    ExtensionSystem* extension_system = ExtensionSystem::Get(profile());
+    ASSERT_TRUE(extension_system);
+    base::RunLoop run_loop;
+    extension_system->ready().Post(FROM_HERE, run_loop.QuitClosure());
+    run_loop.Run();
+  }
+
+  // Confirm that no previous extensions are installed from the webstore.
+  ASSERT_FALSE(util::AnyCurrentlyInstalledExtensionIsFromWebstore(profile()));
+
+  base::HistogramTester histogram_tester;
+  // Install extension and confirm histogram is emitted.
+  const Extension* extension =
+      InstallExtensionFromWebstoreTriggeredByUserDownload(
+          test_data_dir_.AppendASCII("good.crx"), 1);
+
+  ASSERT_TRUE(extension);
+  histogram_tester.ExpectTotalCount(
+      "Extensions.ExtensionInstalled.NewFromWebstore",
+      /*expected_count=*/1);
+  histogram_tester.ExpectBucketCount(
+      "Extensions.ExtensionInstalled.NewFromWebstore", true,
+      /*expected_count=*/1);
+
+  // Install another webstore extension and confirm the histogram is not emitted
+  // again.
+  const Extension* extension2 =
+      InstallExtensionFromWebstoreTriggeredByUserDownload(
+          test_data_dir_.AppendASCII("simple_with_icon.crx"), 1);
+  ASSERT_TRUE(extension2);
+  histogram_tester.ExpectTotalCount(
+      "Extensions.ExtensionInstalled.NewFromWebstore",
+      /*expected_count=*/1);
+  histogram_tester.ExpectBucketCount(
+      "Extensions.ExtensionInstalled.NewFromWebstore", true,
+      /*expected_count=*/1);
 }
 
 class ExtensionCrxInstallerTestWithWithholdingUI
@@ -1172,7 +1234,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionCrxInstallerTestWithWithholdingUI,
       CreateMockPromptProxyForBrowserWithConfirmMode(browser(), mode);
 
   scoped_refptr<CrxInstaller> crx_installer(
-      CrxInstaller::Create(extension_service(), mock_prompt->CreatePrompt()));
+      CrxInstaller::Create(profile(), mock_prompt->CreatePrompt()));
 
   // Install a simple extension with google.com as a permission.
   base::RunLoop run_loop;

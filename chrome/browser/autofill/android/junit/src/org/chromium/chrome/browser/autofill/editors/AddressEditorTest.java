@@ -11,14 +11,11 @@ import static org.hamcrest.Matchers.isEmptyString;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,7 +28,6 @@ import static org.chromium.chrome.browser.autofill.editors.EditorProperties.CUST
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.DELETE_CONFIRMATION_TEXT;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.DELETE_CONFIRMATION_TITLE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.DONE_RUNNABLE;
-import static org.chromium.chrome.browser.autofill.editors.EditorProperties.DropdownFieldProperties.DROPDOWN_KEY_VALUE_LIST;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.EDITOR_FIELDS;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FOOTER_MESSAGE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.ERROR_MESSAGE;
@@ -39,7 +35,6 @@ import static org.chromium.chrome.browser.autofill.editors.EditorProperties.Fiel
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.LABEL;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldProperties.VALUE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.ItemType.TEXT_INPUT;
-import static org.chromium.chrome.browser.autofill.editors.EditorProperties.SHOW_REQUIRED_INDICATOR;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.TextFieldProperties.TEXT_FIELD_TYPE;
 import static org.chromium.chrome.browser.autofill.editors.EditorProperties.setDropdownKey;
 
@@ -66,19 +61,20 @@ import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.autofill.AutofillAddress;
 import org.chromium.chrome.browser.autofill.AutofillProfileBridge;
-import org.chromium.chrome.browser.autofill.AutofillProfileBridge.AutofillAddressUiComponent;
 import org.chromium.chrome.browser.autofill.AutofillProfileBridgeJni;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.PersonalDataManagerFactory;
 import org.chromium.chrome.browser.autofill.PhoneNumberUtil;
 import org.chromium.chrome.browser.autofill.PhoneNumberUtilJni;
 import org.chromium.chrome.browser.autofill.editors.AddressEditorCoordinator.Delegate;
-import org.chromium.chrome.browser.autofill.editors.EditorProperties.DropdownKeyValue;
 import org.chromium.chrome.browser.autofill.editors.EditorProperties.FieldItem;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
+import org.chromium.components.autofill.AutofillAddressEditorUiInfo;
+import org.chromium.components.autofill.AutofillAddressUiComponent;
 import org.chromium.components.autofill.AutofillProfile;
+import org.chromium.components.autofill.DropdownKeyValue;
 import org.chromium.components.autofill.FieldType;
 import org.chromium.components.autofill.RecordType;
 import org.chromium.components.signin.base.CoreAccountInfo;
@@ -202,20 +198,14 @@ public class AddressEditorTest {
         mActivityScenarioRule.getScenario().onActivity(activity -> mActivity = activity);
 
         AutofillProfileBridgeJni.setInstanceForTesting(mAutofillProfileBridgeJni);
-        doAnswer(
-                        invocation -> {
-                            List<Integer> requiredFields =
-                                    (List<Integer>) invocation.getArguments()[1];
-                            requiredFields.addAll(
-                                    List.of(
-                                            FieldType.NAME_FULL,
-                                            FieldType.ADDRESS_HOME_CITY,
-                                            FieldType.ADDRESS_HOME_DEPENDENT_LOCALITY,
-                                            FieldType.ADDRESS_HOME_ZIP));
-                            return null;
-                        })
-                .when(mAutofillProfileBridgeJni)
-                .getRequiredFields(anyString(), anyList());
+        when(mAutofillProfileBridgeJni.getRequiredFields(anyString()))
+                .thenReturn(
+                        new int[] {
+                            FieldType.NAME_FULL,
+                            FieldType.ADDRESS_HOME_CITY,
+                            FieldType.ADDRESS_HOME_DEPENDENT_LOCALITY,
+                            FieldType.ADDRESS_HOME_ZIP
+                        });
         PhoneNumberUtilJni.setInstanceForTesting(mPhoneNumberUtilJni);
         when(mPhoneNumberUtilJni.isPossibleNumber(anyString(), anyString())).thenReturn(true);
 
@@ -226,7 +216,6 @@ public class AddressEditorTest {
         when(mSyncService.getSelectedTypes()).thenReturn(new HashSet());
         SyncServiceFactory.setInstanceForTesting(mSyncService);
 
-        when(mPersonalDataManager.isCountryEligibleForAccountStorage(anyString())).thenReturn(true);
         when(mPersonalDataManager.getDefaultCountryCodeForNewAddress()).thenReturn("US");
         PersonalDataManagerFactory.setInstanceForTesting(mPersonalDataManager);
 
@@ -242,52 +231,14 @@ public class AddressEditorTest {
     }
 
     private void setUpSupportedCountries(List<DropdownKeyValue> supportedCountries) {
-        doAnswer(
-                        invocation -> {
-                            List<String> contryCodes = (List<String>) invocation.getArguments()[0];
-                            List<String> contryNames = (List<String>) invocation.getArguments()[1];
-
-                            for (DropdownKeyValue keyValue : supportedCountries) {
-                                contryCodes.add(keyValue.getKey());
-                                contryNames.add(keyValue.getValue().toString());
-                            }
-
-                            return null;
-                        })
-                .when(mAutofillProfileBridgeJni)
-                .getSupportedCountries(anyList(), anyList());
+        when(mAutofillProfileBridgeJni.getSupportedCountries()).thenReturn(supportedCountries);
     }
 
     private void setUpAddressUiComponents(
             List<AutofillAddressUiComponent> addressUiComponents, String countryCode) {
-        doAnswer(
-                        invocation -> {
-                            List<Integer> componentIds =
-                                    (List<Integer>) invocation.getArguments()[3];
-                            List<String> componentNames =
-                                    (List<String>) invocation.getArguments()[4];
-                            List<Integer> componentRequired =
-                                    (List<Integer>) invocation.getArguments()[5];
-                            List<Integer> componentLength =
-                                    (List<Integer>) invocation.getArguments()[6];
-
-                            for (AutofillAddressUiComponent component : addressUiComponents) {
-                                componentIds.add(component.id);
-                                componentNames.add(component.label);
-                                componentRequired.add(component.isRequired ? 1 : 0);
-                                componentLength.add(component.isFullLine ? 1 : 0);
-                            }
-                            return "EN";
-                        })
-                .when(mAutofillProfileBridgeJni)
-                .getAddressUiComponents(
-                        eq(countryCode),
-                        anyString(),
-                        anyInt(),
-                        anyList(),
-                        anyList(),
-                        anyList(),
-                        anyList());
+        when(mAutofillProfileBridgeJni.getAddressEditorUiInfo(
+                        eq(countryCode), anyString(), anyInt()))
+                .thenReturn(new AutofillAddressEditorUiInfo("EN", addressUiComponents));
     }
 
     private void setUpAddressUiComponents(List<AutofillAddressUiComponent> addressUiComponents) {
@@ -318,7 +269,6 @@ public class AddressEditorTest {
             @Nullable String expectedRecordTypeNotice) {
         assertNotNull(editorModel);
 
-        assertFalse(editorModel.get(SHOW_REQUIRED_INDICATOR));
         assertEquals(expectedDeleteTitle, editorModel.get(DELETE_CONFIRMATION_TITLE));
         assertEquals(expectedDeleteText, editorModel.get(DELETE_CONFIRMATION_TEXT));
         assertEquals(expectedRecordTypeNotice, editorModel.get(FOOTER_MESSAGE));
@@ -1164,135 +1114,6 @@ public class AddressEditorTest {
         assertEquals("Google", profile.getInfo(FieldType.COMPANY_NAME));
         assertEquals("90291", profile.getInfo(FieldType.ADDRESS_HOME_ZIP));
         assertEquals("", profile.getInfo(FieldType.ADDRESS_HOME_SORTING_CODE));
-    }
-
-    @Test
-    @SmallTest
-    public void accountSavingDisallowedForUnsupportedCountry() {
-        setUpAddressUiComponents(SUPPORTED_ADDRESS_FIELDS, "US");
-        setUpAddressUiComponents(SUPPORTED_ADDRESS_FIELDS, "CU");
-        when(mPersonalDataManager.isEligibleForAddressAccountStorage()).thenReturn(true);
-        when(mPersonalDataManager.isCountryEligibleForAccountStorage(eq("CU"))).thenReturn(false);
-        mAddressEditor =
-                new AddressEditorCoordinator(
-                        mActivity, mDelegate, mProfile, /* saveToDisk= */ false);
-        mAddressEditor.setEditorDialogForTesting(mEditorDialog);
-        mAddressEditor.showEditorDialog();
-
-        PropertyModel editorModel = mAddressEditor.getEditorModelForTesting();
-        assertNotNull(editorModel);
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(11, editorFields.size());
-
-        PropertyModel countryDropdown = editorFields.get(0).model;
-        setDropdownKey(countryDropdown, "CU");
-
-        // Set values of the required fields.
-        editorFields.get(1).model.set(VALUE, "New Name");
-        editorFields.get(3).model.set(VALUE, "Locality");
-        editorFields.get(4).model.set(VALUE, "Dependent locality");
-        editorFields.get(7).model.set(VALUE, "Postal code");
-        editorFields.get(8).model.set(VALUE, "Street address");
-        editorModel.get(DONE_RUNNABLE).run();
-
-        verify(mDelegate, times(1)).onDone(mAddressCapture.capture());
-        verify(mDelegate, times(0)).onCancel();
-        AutofillAddress address = mAddressCapture.getValue();
-        assertNotNull(address);
-        assertEquals(RecordType.LOCAL_OR_SYNCABLE, address.getProfile().getRecordType());
-    }
-
-    @Test
-    @SmallTest
-    public void countryDropDownExcludesUnsupportedCountries_saveInAccountFlow() {
-        setUpAddressUiComponents(SUPPORTED_ADDRESS_FIELDS);
-        when(mPersonalDataManager.isCountryEligibleForAccountStorage(eq("CU"))).thenReturn(false);
-        mAddressEditor =
-                new AddressEditorCoordinator(
-                        mActivity,
-                        mDelegate,
-                        mProfile,
-                        new AutofillAddress(
-                                mActivity,
-                                new AutofillProfile(sAccountProfile),
-                                mPersonalDataManager),
-                        SAVE_NEW_ADDRESS_PROFILE,
-                        /* saveToDisk= */ false);
-        mAddressEditor.setEditorDialogForTesting(mEditorDialog);
-        mAddressEditor.showEditorDialog();
-
-        PropertyModel editorModel = mAddressEditor.getEditorModelForTesting();
-        assertNotNull(editorModel);
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(11, editorFields.size());
-
-        assertThat(
-                editorFields.get(0).model.get(DROPDOWN_KEY_VALUE_LIST).stream()
-                        .map(DropdownKeyValue::getKey)
-                        .collect(Collectors.toList()),
-                containsInAnyOrder("US", "DE"));
-    }
-
-    @Test
-    @SmallTest
-    public void countryDropDownExcludesUnsupportedCountries_MigrationFlow() {
-        setUpAddressUiComponents(SUPPORTED_ADDRESS_FIELDS);
-        when(mPersonalDataManager.isCountryEligibleForAccountStorage(eq("CU"))).thenReturn(false);
-        mAddressEditor =
-                new AddressEditorCoordinator(
-                        mActivity,
-                        mDelegate,
-                        mProfile,
-                        new AutofillAddress(
-                                mActivity,
-                                new AutofillProfile(sLocalProfile),
-                                mPersonalDataManager),
-                        MIGRATE_EXISTING_ADDRESS_PROFILE,
-                        /* saveToDisk= */ false);
-        mAddressEditor.setEditorDialogForTesting(mEditorDialog);
-        mAddressEditor.showEditorDialog();
-
-        PropertyModel editorModel = mAddressEditor.getEditorModelForTesting();
-        assertNotNull(editorModel);
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(11, editorFields.size());
-
-        assertThat(
-                editorFields.get(0).model.get(DROPDOWN_KEY_VALUE_LIST).stream()
-                        .map(DropdownKeyValue::getKey)
-                        .collect(Collectors.toList()),
-                containsInAnyOrder("US", "DE"));
-    }
-
-    @Test
-    @SmallTest
-    public void countryDropDownExcludesUnsupportedCountries_editExistingAccountProfile() {
-        setUpAddressUiComponents(SUPPORTED_ADDRESS_FIELDS);
-        when(mPersonalDataManager.isCountryEligibleForAccountStorage(eq("CU"))).thenReturn(false);
-        mAddressEditor =
-                new AddressEditorCoordinator(
-                        mActivity,
-                        mDelegate,
-                        mProfile,
-                        new AutofillAddress(
-                                mActivity,
-                                new AutofillProfile(sAccountProfile),
-                                mPersonalDataManager),
-                        UPDATE_EXISTING_ADDRESS_PROFILE,
-                        /* saveToDisk= */ false);
-        mAddressEditor.setEditorDialogForTesting(mEditorDialog);
-        mAddressEditor.showEditorDialog();
-
-        PropertyModel editorModel = mAddressEditor.getEditorModelForTesting();
-        assertNotNull(editorModel);
-        ListModel<FieldItem> editorFields = editorModel.get(EDITOR_FIELDS);
-        assertEquals(11, editorFields.size());
-
-        assertThat(
-                editorFields.get(0).model.get(DROPDOWN_KEY_VALUE_LIST).stream()
-                        .map(DropdownKeyValue::getKey)
-                        .collect(Collectors.toList()),
-                containsInAnyOrder("US", "DE"));
     }
 
     @Test

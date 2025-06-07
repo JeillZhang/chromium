@@ -42,17 +42,21 @@ import org.chromium.base.TraceEvent;
 import org.chromium.base.UserDataHost;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.version_info.VersionInfo;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityUtils;
 import org.chromium.chrome.browser.WarmupManager;
 import org.chromium.chrome.browser.app.ChromeActivity;
+import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.compositor.CompositorViewHolder;
 import org.chromium.chrome.browser.content.ContentUtils;
 import org.chromium.chrome.browser.content.WebContentsFactory;
+import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
+import org.chromium.chrome.browser.gesturenav.GestureNavigationUtils;
 import org.chromium.chrome.browser.native_page.NativePageAssassin;
 import org.chromium.chrome.browser.night_mode.NightModeUtils;
 import org.chromium.chrome.browser.offlinepages.OfflinePageUtils;
@@ -62,10 +66,14 @@ import org.chromium.chrome.browser.pdf.PdfUtils;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.rlz.RevenueStats;
 import org.chromium.chrome.browser.tab.TabUtils.UseDesktopUserAgentCaller;
+import org.chromium.chrome.browser.tabmodel.TabClosureParams;
+import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.chrome.browser.tabwindow.TabWindowManager;
 import org.chromium.chrome.browser.ui.native_page.FrozenNativePage;
 import org.chromium.chrome.browser.ui.native_page.NativePage;
 import org.chromium.chrome.browser.ui.native_page.NativePage.SmoothTransitionDelegate;
 import org.chromium.components.autofill.AutofillFeatures;
+import org.chromium.components.autofill.AutofillManagerWrapper;
 import org.chromium.components.autofill.AutofillProvider;
 import org.chromium.components.autofill.AutofillProviderUMA;
 import org.chromium.components.autofill.AutofillSelectionActionMenuDelegate;
@@ -134,8 +142,11 @@ class TabImpl implements Tab {
     /** The Profile associated with this tab. */
     private final Profile mProfile;
 
+    /** The tab model this tab is currently attached to. */
+    private @Nullable ObservableSupplier<Tab> mCurrentTabSupplier;
+
     /**
-     * An Application {@link Context}.  Unlike {@link #mActivity}, this is the only one that is
+     * An Application {@link Context}. Unlike {@link #mActivity}, this is the only one that is
      * publicly exposed to help prevent leaking the {@link Activity}.
      */
     private final Context mThemedApplicationContext;
@@ -170,7 +181,7 @@ class TabImpl implements Tab {
      * The {@link TabViewManager} associated with this Tab that is responsible for managing custom
      * views.
      */
-    private TabViewManagerImpl mTabViewManager;
+    private final TabViewManagerImpl mTabViewManager;
 
     /** A list of Tab observers.  These are used to broadcast Tab events to listeners. */
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
@@ -228,10 +239,10 @@ class TabImpl implements Tab {
      */
     private boolean mIsNativePageCommitPending;
 
-    private TabDelegateFactory mDelegateFactory;
+    private @Nullable TabDelegateFactory mDelegateFactory;
 
     /** Listens for views related to the tab to be attached or detached. */
-    private OnAttachStateChangeListener mAttachStateChangeListener;
+    private final OnAttachStateChangeListener mAttachStateChangeListener;
 
     /** Whether the tab can currently be interacted with. */
     private boolean mInteractableState;
@@ -255,6 +266,7 @@ class TabImpl implements Tab {
     private int mRootId;
     private @Nullable Token mTabGroupId;
     private boolean mTabHasSensitiveContent;
+    private boolean mIsPinned;
     private @TabUserAgent int mUserAgent = TabUserAgent.DEFAULT;
 
     /**
@@ -430,6 +442,12 @@ class TabImpl implements Tab {
             }
         } else {
             updateIsDetached(window);
+
+            // Clear the current tab supplier during detachment/reparenting to indicate that the
+            // tab is not held by another tab model. For unclear reasons, removeTab() doesn't
+            // always get invoked on the previous tab model before the tab is attached to the new
+            // tab model (at least in tests).
+            mCurrentTabSupplier = null;
         }
 
         // Notify the event to observers only when we do the reparenting task, not when we simply
@@ -648,10 +666,19 @@ class TabImpl implements Tab {
         return ContextUtils.activityFromContext(window.getContext().get()) != null;
     }
 
+    @CalledByNative
+    @Override
+    public boolean isActivated() {
+        if (mCurrentTabSupplier == null) return false;
+
+        return this == mCurrentTabSupplier.get();
+    }
+
     /**
      * The parent tab for the current tab is set and the DelegateFactory is updated if it is not set
      * already. This happens only if the tab has been detached and the parent has not been set yet,
      * for example, for the spare tab before loading url.
+     *
      * @param parent The tab that caused this tab to be opened.
      */
     @Override
@@ -1016,21 +1043,6 @@ class TabImpl implements Tab {
     public final void hide(@TabHidingType int type) {
         try {
             TraceEvent.begin("Tab.hide");
-
-            if (ChromeFeatureList.isEnabled(
-                    ChromeFeatureList
-                            .ANDROID_DISCONNECT_FILE_CHOOSER_ON_TAB_DEACTIVATE_KILL_SWITCH)) {
-                WebContents webContents = getWebContents();
-                // File select related dialogs typical does not have indication on which origin or
-                // tab made the request. So to avoid security issues from user confusion, if a tab
-                // changes makes this no longer the active tab, then disconnect any file select
-                // dialogs. Notably only want to do this for tab change, but not (as an example)
-                // for hiding the activity.
-                if (type == TabHidingType.CHANGED_TABS && webContents != null) {
-                    webContents.disconnectFileSelectListenerIfAny();
-                }
-            }
-
             if (isHidden()) return;
             mIsHidden = true;
             updateInteractableState();
@@ -1156,14 +1168,14 @@ class TabImpl implements Tab {
      */
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     void initialize(
-            Tab parent,
+            @Nullable Tab parent,
             @Nullable @TabCreationState Integer creationState,
             @Nullable LoadUrlParams loadUrlParams,
             @Nullable String pendingTitle,
-            WebContents webContents,
-            @Nullable TabDelegateFactory delegateFactory,
+            @Nullable WebContents webContents,
+            TabDelegateFactory delegateFactory,
             boolean initiallyHidden,
-            TabState tabState,
+            @Nullable TabState tabState,
             boolean initializeRenderer) {
         try {
             TraceEvent.begin("Tab.initialize");
@@ -1245,7 +1257,7 @@ class TabImpl implements Tab {
             int themeColor = 0;
             if (tabState != null) {
                 appId = tabState.openerAppId;
-                themeColor = tabState.getThemeColor();
+                themeColor = tabState.themeColor;
                 hasThemeColor = tabState.hasThemeColor();
             }
             if (hasThemeColor != null) {
@@ -1279,6 +1291,7 @@ class TabImpl implements Tab {
         setTabGroupId(state.tabGroupId);
         setUserAgent(state.userAgent);
         setTabHasSensitiveContent(state.tabHasSensitiveContent);
+        setIsPinned(state.isPinned);
     }
 
     /**
@@ -1293,9 +1306,18 @@ class TabImpl implements Tab {
     final void setImportance(@ChildProcessImportance int importance) {
         if (mImportance == importance) return;
         mImportance = importance;
-        WebContents webContents = getWebContents();
-        if (webContents == null) return;
-        webContents.setImportance(mImportance);
+        updateImportance(getWebContents(), mImportance);
+    }
+
+    private static void updateImportance(
+            WebContents webContents, @ChildProcessImportance int importance) {
+        if (webContents == null
+                || ChromeFeatureList.isEnabled(ChromeFeatureList.PROCESS_RANK_POLICY_ANDROID)) {
+            // When ProcessRankPolicyAndroid of performance manager is enabled, the policy updates
+            // the page importance.
+            return;
+        }
+        webContents.setPrimaryMainFrameImportance(importance);
     }
 
     /** Hides the current {@link NativePage}, if any, and shows the {@link WebContents}'s view. */
@@ -1306,19 +1328,21 @@ class TabImpl implements Tab {
         updateTitle();
     }
 
-    void updateWindowAndroid(WindowAndroid windowAndroid) {
-        // TODO(yusufo): mWindowAndroid can never be null until crbug.com/657007 is fixed.
-        assert windowAndroid != null;
-
+    void updateWindowAndroid(@Nullable WindowAndroid windowAndroid) {
         if (mWindowAndroid != null) {
             mWindowAndroid.getOcclusionSupplier().removeObserver(mOcclusionCallback);
         }
 
         mWindowAndroid = windowAndroid;
         WebContents webContents = getWebContents();
-        if (webContents != null) webContents.setTopLevelNativeWindow(mWindowAndroid);
+        if (webContents != null) {
+            assert mWindowAndroid != null;
+            webContents.setTopLevelNativeWindow(mWindowAndroid);
+        }
 
-        windowAndroid.getOcclusionSupplier().addObserver(mOcclusionCallback);
+        if (windowAndroid != null) {
+            windowAndroid.getOcclusionSupplier().addObserver(mOcclusionCallback);
+        }
 
         // updateIsDetached will also update the web contents visibility if the
         // occlusion has changed.
@@ -1886,11 +1910,11 @@ class TabImpl implements Tab {
             hideNativePage(false, null);
 
             if (oldWebContents != null) {
-                oldWebContents.setImportance(ChildProcessImportance.NORMAL);
+                updateImportance(oldWebContents, ChildProcessImportance.NORMAL);
                 getWebContentsAccessibility(oldWebContents).setObscuredByAnotherView(false);
             }
 
-            mWebContents.setImportance(mImportance);
+            updateImportance(mWebContents, mImportance);
 
             ContentUtils.setUserAgentOverride(
                     mWebContents,
@@ -1899,7 +1923,7 @@ class TabImpl implements Tab {
             mContentView.addOnAttachStateChangeListener(mAttachStateChangeListener);
             updateInteractableState();
 
-            mWebContentsDelegate = createWebContentsDelegate();
+            updateWebContentsDelegate();
 
             // TODO(crbug.com/40942165): Find a better way of indicating this is a background tab
             // (or
@@ -1944,9 +1968,12 @@ class TabImpl implements Tab {
         }
     }
 
-    private TabWebContentsDelegateAndroidImpl createWebContentsDelegate() {
+    private void updateWebContentsDelegate() {
+        if (mWebContentsDelegate != null) {
+            mWebContentsDelegate.destroy();
+        }
         TabWebContentsDelegateAndroid delegate = mDelegateFactory.createWebContentsDelegate(this);
-        return new TabWebContentsDelegateAndroidImpl(this, delegate);
+        mWebContentsDelegate = new TabWebContentsDelegateAndroidImpl(this, delegate);
     }
 
     /**
@@ -1966,8 +1993,7 @@ class TabImpl implements Tab {
                                 .addOnAttachStateChangeListener(mAttachStateChangeListener);
                     }
                     if (isDisplayingBackForwardAnimation()) {
-                        assert ChromeFeatureList.isEnabled(
-                                        ChromeFeatureList.BACK_FORWARD_TRANSITIONS)
+                        assert GestureNavigationUtils.areBackForwardTransitionsEnabled()
                                 : "Must not draw bf screenshot if back forward transition is"
                                         + " disabled";
                         mNativePageSmoothTransitionDelegate = mNativePage.enableSmoothTransition();
@@ -2017,7 +2043,7 @@ class TabImpl implements Tab {
         // Update the delegate factory, then recreate and propagate all delegates.
         mDelegateFactory = factory;
 
-        mWebContentsDelegate = createWebContentsDelegate();
+        updateWebContentsDelegate();
 
         WebContents webContents = getWebContents();
         if (webContents != null) {
@@ -2180,26 +2206,15 @@ class TabImpl implements Tab {
         }
         AutofillManager manager =
                 ContextUtils.getApplicationContext().getSystemService(AutofillManager.class);
-        if (manager == null) {
-            return;
-        }
-        if (!manager.isAutofillSupported()) {
+        if (!AutofillManagerWrapper.isAutofillSupported(manager)) {
             // If Android Autofill is not supported, the metric shouldn't be logged because it tells
             // about cases when 3P mode could be used, but it isn't used.
             return;
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            ComponentName componentName = null;
-            try {
-                componentName = manager.getAutofillServiceComponentName();
-            } catch (Exception e) {
-                // The exception is com.android.internal.util.SyncResultReceiver.TimeoutException,
-                // can't handle it because:
-                // - The exception isn't public in the Android API.
-                // - Different Android versions handle it differently.
-                // The generic Exception is used to catch various cases. (See: crbug.com/1186406)
-            }
+            ComponentName componentName =
+                    AutofillManagerWrapper.getAutofillServiceComponentName(manager);
             if (componentName != null) {
                 RecordHistogram.recordEnumeratedHistogram(
                         UMA_AUTOFILL_THIRD_PARTY_MODE_DISABLED_PROVIDER,
@@ -2232,6 +2247,24 @@ class TabImpl implements Tab {
     }
 
     @Override
+    public boolean isTabInPWA() {
+        // TODO(crbug.com/417720713): replace deprecated getActivity with something else.
+        ChromeActivity activity = getActivity();
+        if (activity == null) return false;
+        @ActivityType int activityType = activity.getActivityType();
+        return activityType == ActivityType.WEB_APK
+                || activityType == ActivityType.TRUSTED_WEB_ACTIVITY;
+    }
+
+    @Override
+    public boolean isTabInBrowser() {
+        // TODO(crbug.com/417720713): replace deprecated getActivity with something else.
+        ChromeActivity activity = getActivity();
+        if (activity == null) return false;
+        return activity.getActivityType() == ActivityType.TABBED;
+    }
+
+    @Override
     public long getTimestampMillis() {
         return mTimestampMillis;
     }
@@ -2248,6 +2281,7 @@ class TabImpl implements Tab {
      * @return parent identifier for the {@link Tab}
      */
     @Override
+    @CalledByNative
     public int getParentId() {
         return mParentId;
     }
@@ -2272,11 +2306,13 @@ class TabImpl implements Tab {
     }
 
     @Override
+    @CalledByNative
     public @Nullable Token getTabGroupId() {
         return mTabGroupId;
     }
 
     @Override
+    @CalledByNative
     public void setTabGroupId(@Nullable Token tabGroupId) {
         assert tabGroupId == null || !tabGroupId.isZero() : "A TabGroupId token must be non-zero.";
         if (Objects.equals(mTabGroupId, tabGroupId) || isDestroyed()) return;
@@ -2343,6 +2379,7 @@ class TabImpl implements Tab {
     }
 
     @Override
+    @CalledByNative
     public @TabLaunchType int getTabLaunchTypeAtCreation() {
         return mTabLaunchTypeAtCreation;
     }
@@ -2383,9 +2420,10 @@ class TabImpl implements Tab {
 
     /**
      * Destroys the current {@link WebContents}.
+     *
      * @param deleteNativeWebContents Whether or not to delete the native WebContents pointer.
      */
-    private final void destroyWebContents(boolean deleteNativeWebContents) {
+    private void destroyWebContents(boolean deleteNativeWebContents) {
         if (mWebContents == null) return;
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM
@@ -2411,7 +2449,10 @@ class TabImpl implements Tab {
             ((TabViewAndroidDelegate) contentsToDestroy.getViewAndroidDelegate()).destroy();
         }
         mWebContents = null;
-        mWebContentsDelegate = null;
+        if (mWebContentsDelegate != null) {
+            mWebContentsDelegate.destroy();
+            mWebContentsDelegate = null;
+        }
 
         assert mNativeTabAndroid != 0;
         if (deleteNativeWebContents) {
@@ -2552,10 +2593,57 @@ class TabImpl implements Tab {
     }
 
     @Override
+    @CalledByNative
+    public boolean getIsPinned() {
+        return mIsPinned;
+    }
+
+    @Override
+    @CalledByNative
+    public void setIsPinned(boolean isPinned) {
+        if (mIsPinned == isPinned || isDestroyed()) return;
+        mIsPinned = isPinned;
+        for (TabObserver observer : mObservers) {
+            observer.onTabPinnedStateChanged(this, isPinned);
+        }
+    }
+
+    @Override
     public void onTabRestoredFromArchivedTabModel() {
         for (TabObserver observer : mObservers) {
             observer.onTabUnarchived(this);
         }
+    }
+
+    @Override
+    public void onAddedToTabModel(ObservableSupplier<Tab> currentTabSupplier) {
+        // Tabs should not be attached to multiple tab models.
+        assert mCurrentTabSupplier == null;
+
+        mCurrentTabSupplier = currentTabSupplier;
+    }
+
+    @Override
+    public void onRemovedFromTabModel(ObservableSupplier<Tab> currentTabSupplier) {
+        // Usually mCurrentTabSupplier should equal currentTabSupplier when it's removed from the
+        // TabModel. However, during reparenting it appears there are situations where the tab is
+        // not removed from the original TabModel before being added to the new TabModel. In these
+        // cases, mCurrentTabSupplier will be null as a result of the logic in updateAttachment().
+        assert mCurrentTabSupplier == null || mCurrentTabSupplier == currentTabSupplier;
+
+        mCurrentTabSupplier = null;
+    }
+
+    @CalledByNative
+    public static void closeTabFromNative(Tab tab) {
+        TabWindowManager manager = TabWindowManagerSingleton.getInstance();
+        TabModel model = manager.getTabModelForTab(tab);
+        if (model == null) return;
+
+        model.getTabRemover()
+                .closeTabs(
+                        TabClosureParams.closeTab(tab).allowUndo(false).build(),
+                        /* allowDialog= */ false);
     }
 
     @NativeMethods

@@ -337,6 +337,7 @@ struct PaymentOptions {
   PaymentCredentialInstrument instrument;
   string? payee_name;
   url.mojom.Origin? payee_origin;
+  array<ShownPaymentEntityLogo>? payment_entities_logos;
   array<uint8>? browser_bound_public_key;
 };
 
@@ -354,6 +355,21 @@ struct PaymentCredentialInstrument {
   bool iconMustBeShown;
 };
 
+// TODO(https://crbug.com/40193778): Convert to a non-mojo struct when
+// PaymentOptions is converted to a non-mojo struct.
+struct ShownPaymentEntityLogo {
+  url.mojom.Url url;
+  string label;
+};
+
+// RemoteDesktopClientOverride allows an allowlisted origin to perform WebAuthn
+// operations on behalf of another origin. This enables remote desktop clients
+// to proxy WebAuthn requests from a remote machine.
+//
+// SECURITY: This field comes from the renderer process and MUST NOT be trusted
+// without validation. The browser process will only honor this override if the
+// "caller origin" is explicitly allowlisted via an enterprise policy.
+//
 // https://github.com/w3c/webauthn/wiki/Explainer:-WebAuthn-Remote-Desktop-Support
 struct RemoteDesktopClientOverride {
   url.mojom.Origin origin;
@@ -383,7 +399,7 @@ enum Mediation {
 struct PublicKeyCredentialRequestOptions {
   Mediation mediation = Mediation.MODAL;
 
-  // Aflag word corresponding to the flags in credential_type_flags.mojom,
+  // A flag word corresponding to the flags in credential_type_flags.mojom,
   // representing the types of credentials that were indicated in the request.
   int32 requested_credential_type_flags;
 

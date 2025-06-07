@@ -229,10 +229,11 @@ UILabel* CreateGooglePhotosTitleLabel(NSString* title) {
   self.navigationController.navigationBar.maximumContentSizeCategory =
       UIContentSizeCategoryExtraExtraLarge;
   // Create the skip button.
-  UIBarButtonItem* cancelButtonItem = [[UIBarButtonItem alloc]
-      initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
-                           target:self
-                           action:@selector(cancelButtonAction:)];
+  UIBarButtonItem* cancelButtonItem =
+      [[UIBarButtonItem alloc] initWithTitle:l10n_util::GetNSString(IDS_CANCEL)
+                                       style:UIBarButtonItemStylePlain
+                                      target:self
+                                      action:@selector(cancelButtonAction:)];
   cancelButtonItem.accessibilityIdentifier =
       kAccountPickerCancelButtonAccessibilityIdentifier;
   self.navigationItem.rightBarButtonItem = cancelButtonItem;
@@ -307,7 +308,8 @@ UILabel* CreateGooglePhotosTitleLabel(NSString* title) {
   _identityButtonControl =
       [[IdentityButtonControl alloc] initWithFrame:CGRectZero];
   _identityButtonControl.arrowDirection = IdentityButtonControlArrowRight;
-  _identityButtonControl.identityViewStyle = IdentityViewStyleConsistency;
+  _identityButtonControl.identityViewStyle =
+      IdentityViewStyleConsistencyDefaultIdentity;
   [_identityButtonControl addTarget:self
                              action:@selector(identityButtonControlAction:
                                                                  forEvent:)

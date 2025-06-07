@@ -179,7 +179,6 @@ static_library("protocol") {
     "sdp_message.h",
     "secure_channel_factory.cc",
     "secure_channel_factory.h",
-    "session.cc",
     "session.h",
     "session_authz_authenticator.cc",
     "session_authz_authenticator.h",
@@ -460,5 +459,6 @@ source_set("unit_tests") {
     "//testing/gmock",
     "//testing/gtest",
     "//third_party/libjingle_xmpp:rtc_xmllite",
+    "//third_party/webrtc_overrides:webrtc_component",
   ]
 }

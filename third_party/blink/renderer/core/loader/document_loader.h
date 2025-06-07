@@ -41,11 +41,11 @@
 #include "mojo/public/cpp/bindings/shared_remote.h"
 #include "net/storage_access_api/status.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/common/fenced_frame/redacted_fenced_frame_config.h"
 #include "third_party/blink/public/common/frame/view_transition_state.h"
 #include "third_party/blink/public/common/loader/loading_behavior_flag.h"
 #include "third_party/blink/public/common/permissions_policy/document_policy.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
 #include "third_party/blink/public/common/scheduler/task_attribution_id.h"
 #include "third_party/blink/public/common/subresource_load_metrics.h"
 #include "third_party/blink/public/mojom/fenced_frame/fenced_frame.mojom-blink.h"
@@ -214,10 +214,8 @@ class CORE_EXPORT DocumentLoader : public GarbageCollected<DocumentLoader>,
           code_cache_host,
       CrossVariantMojoRemote<mojom::blink::CodeCacheHostInterfaceBase>
           code_cache_host_for_background) override;
-  WebString OriginCalculationDebugInfo() const override {
-    return origin_calculation_debug_info_;
-  }
   bool HasLoadedNonInitialEmptyDocument() const override;
+  bool IsForDiscard() const override;
 
   MHTMLArchive* Archive() const { return archive_.Get(); }
 
@@ -427,7 +425,8 @@ class CORE_EXPORT DocumentLoader : public GarbageCollected<DocumentLoader>,
   scoped_refptr<BackgroundCodeCacheHost> CreateBackgroundCodeCacheHost();
   static void DisableCodeCacheForTesting();
 
-  mojo::PendingRemote<mojom::blink::CodeCacheHost> CreateWorkerCodeCacheHost();
+  // This method is used for workers and iframes loaded without navigation.
+  mojo::PendingRemote<mojom::blink::CodeCacheHost> CreateCodeCacheHost();
 
   HashMap<KURL, EarlyHintsPreloadEntry> GetEarlyHintsPreloadedResources();
 
@@ -649,7 +648,8 @@ class CORE_EXPORT DocumentLoader : public GarbageCollected<DocumentLoader>,
   std::unique_ptr<PolicyContainer> policy_container_;
 
   // The permissions policy to be applied to the window at initialization time.
-  const std::optional<ParsedPermissionsPolicy> initial_permissions_policy_;
+  const std::optional<network::ParsedPermissionsPolicy>
+      initial_permissions_policy_;
 
   // These fields are copied from WebNavigationParams, see there for definition.
   DocumentToken token_;
@@ -698,11 +698,6 @@ class CORE_EXPORT DocumentLoader : public GarbageCollected<DocumentLoader>,
       content_security_notifier_;
 
   const scoped_refptr<SecurityOrigin> origin_to_commit_;
-
-  // Information about how `origin_to_commit_` was calculated, to help debug if
-  // it differs from the origin calculated on the browser side.
-  // TODO(https://crbug.com/1220238): Remove this.
-  AtomicString origin_calculation_debug_info_;
 
   blink::BlinkStorageKey storage_key_;
 
@@ -860,7 +855,7 @@ class CORE_EXPORT DocumentLoader : public GarbageCollected<DocumentLoader>,
 
   // Indicates which browsing context group this frame belongs to. It is only
   // set for a main frame committing in another browsing context group.
-  const std::optional<BrowsingContextGroupInfo> browsing_context_group_info_;
+  const std::optional<base::UnguessableToken> browsing_context_group_token_;
 
   // Runtime feature state override is applied to the document. They are applied
   // before JavaScript context creation (i.e. CreateParserPostCommit).

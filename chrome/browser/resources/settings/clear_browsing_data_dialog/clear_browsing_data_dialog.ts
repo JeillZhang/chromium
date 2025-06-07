@@ -92,14 +92,6 @@ export class SettingsClearBrowsingDataDialogElement extends
   static get properties() {
     return {
       /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
-      /**
        * The current sync status, supplied by SyncBrowserProxy.
        */
       syncStatus: Object,
@@ -173,16 +165,6 @@ export class SettingsClearBrowsingDataDialogElement extends
       },
 
       showPasswordsDeletionDialog_: {
-        type: Boolean,
-        value: false,
-      },
-
-      isSignedIn_: {
-        type: Boolean,
-        value: false,
-      },
-
-      isSyncConsented_: {
         type: Boolean,
         value: false,
       },
@@ -261,30 +243,28 @@ export class SettingsClearBrowsingDataDialogElement extends
   }
 
   // TODO(dpapad): make |syncStatus| private.
-  syncStatus: SyncStatus|undefined;
-  private counters_: {[k: string]: string};
-  private clearFromOptions_: DropdownMenuOptionList;
-  private clearingInProgress_: boolean;
-  private clearingDataAlertString_: string;
-  private clearButtonDisabled_: boolean;
-  private showHistoryDeletionDialog_: boolean;
-  private showPasswordsDeletionDialogLater_: boolean;
-  private showPasswordsDeletionDialog_: boolean;
-  private isSignedIn_: boolean;
-  private isSyncConsented_: boolean;
-  private isSyncingHistory_: boolean;
-  private shouldShowCookieException_: boolean;
+  declare syncStatus: SyncStatus|undefined;
+  declare private counters_: {[k: string]: string};
+  declare private clearFromOptions_: DropdownMenuOptionList;
+  declare private clearingInProgress_: boolean;
+  declare private clearingDataAlertString_: string;
+  declare private clearButtonDisabled_: boolean;
+  declare private showHistoryDeletionDialog_: boolean;
+  declare private showPasswordsDeletionDialogLater_: boolean;
+  declare private showPasswordsDeletionDialog_: boolean;
+  declare private isSyncingHistory_: boolean;
+  declare private shouldShowCookieException_: boolean;
   // <if expr="not is_chromeos">
-  private isClearPrimaryAccountAllowed_: boolean;
-  private isSyncPaused_: boolean;
-  private hasPassphraseError_: boolean;
-  private hasOtherSyncError_: boolean;
+  declare private isClearPrimaryAccountAllowed_: boolean;
+  declare private isSyncPaused_: boolean;
+  declare private hasPassphraseError_: boolean;
+  declare private hasOtherSyncError_: boolean;
   // </if>
-  private selectedTabIndex_: number;
-  private tabsNames_: string[];
-  private googleSearchHistoryString_: TrustedHTML;
-  private isNonGoogleDse_: boolean;
-  private nonGoogleSearchHistoryString_: TrustedHTML;
+  declare private selectedTabIndex_: number;
+  declare private tabsNames_: string[];
+  declare private googleSearchHistoryString_: TrustedHTML;
+  declare private isNonGoogleDse_: boolean;
+  declare private nonGoogleSearchHistoryString_: TrustedHTML;
   private focusOutlineManager_: FocusOutlineManager;
 
   private browserProxy_: ClearBrowsingDataBrowserProxy =
@@ -303,7 +283,8 @@ export class SettingsClearBrowsingDataDialogElement extends
     this.addWebUiListener(
         'update-sync-state', this.updateSyncState_.bind(this));
     this.addWebUiListener(
-        'update-counter-text', this.updateCounterText_.bind(this));
+        'browsing-data-counter-text-update',
+        this.updateCounterText_.bind(this));
 
     this.addEventListener(
         'settings-boolean-control-change', this.updateClearButtonState_);
@@ -373,8 +354,6 @@ export class SettingsClearBrowsingDataDialogElement extends
    * depending on sync and signin state.
    */
   private updateSyncState_(event: UpdateSyncStateEvent) {
-    this.isSignedIn_ = event.signedIn;
-    this.isSyncConsented_ = event.syncConsented;
     this.isSyncingHistory_ = event.syncingHistory;
     this.shouldShowCookieException_ = event.shouldShowCookieException;
     this.$.clearBrowsingDataDialog.classList.add('fully-rendered');
@@ -636,30 +615,68 @@ export class SettingsClearBrowsingDataDialogElement extends
 
   // <if expr="not is_chromeos">
   private shouldShowFooter_(): boolean {
-    if (!!this.syncStatus &&
-        this.syncStatus.signedInState === SignedInState.SYNCING) {
-      return true;
+    if (!this.syncStatus) {
+      return false;
     }
-    return this.isClearPrimaryAccountAllowed_ && this.isSignedIn_;
+
+    switch (this.syncStatus.signedInState) {
+      case SignedInState.SIGNED_IN:
+        return this.isClearPrimaryAccountAllowed_;
+      case SignedInState.SYNCING:
+        return true;
+      case SignedInState.WEB_ONLY_SIGNED_IN:
+      case SignedInState.SIGNED_OUT:
+      case SignedInState.SIGNED_IN_PAUSED:
+        return false;
+    }
+
+    return false;
   }
 
   /**
    * @return Whether the signed info description should be shown in the footer.
    */
   private showSigninInfo_(): boolean {
-    return this.isSignedIn_ && this.isClearPrimaryAccountAllowed_ &&
-        (!this.syncStatus ||
-         this.syncStatus.signedInState !== SignedInState.SYNCING);
+    if (!this.syncStatus) {
+      return false;
+    }
+
+    return this.syncStatus.signedInState === SignedInState.SIGNED_IN &&
+        this.isClearPrimaryAccountAllowed_;
   }
 
   /**
    * @return Whether the synced info description should be shown in the footer.
    */
   private showSyncInfo_(): boolean {
-    return !this.showSigninInfo_() && !!this.syncStatus &&
-        !this.syncStatus.hasError;
+    if (!this.syncStatus) {
+      return false;
+    }
+
+    return !this.showSigninInfo_() && !this.syncStatus.hasError;
   }
   // </if>
+
+  /**
+   * @return Whether the search history box should be shown.
+   */
+  private showSearchHistoryBox_(): boolean {
+    if (!this.syncStatus) {
+      return false;
+    }
+
+    switch (this.syncStatus.signedInState) {
+      case SignedInState.SIGNED_IN_PAUSED:
+      case SignedInState.SIGNED_IN:
+      case SignedInState.SYNCING:
+        return true;
+      case SignedInState.WEB_ONLY_SIGNED_IN:
+      case SignedInState.SIGNED_OUT:
+        return false;
+    }
+
+    return false;
+  }
 
   private onTimePeriodChanged_() {
     const dropdownMenu = this.getTimeRangeDropdownForCurrentPage_();

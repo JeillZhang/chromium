@@ -50,17 +50,6 @@ void LayoutHTMLCanvas::PaintReplaced(const PaintInfo& paint_info,
   HTMLCanvasPainter(*this).PaintReplaced(paint_info, paint_offset);
 }
 
-void LayoutHTMLCanvas::DidInvalidatePaintForPlacedElement(
-    Element* placedElement) {
-  DCHECK(RuntimeEnabledFeatures::CanvasPlaceElementEnabled());
-  auto* canvas = To<HTMLCanvasElement>(GetNode());
-  DCHECK(canvas->HasPlacedElements());
-  InvalidateDisplayItemClients(PaintInvalidationReason::kSubtree);
-  // TODO(issues.chromium.org/379143301): We should only invalidate the sub rect
-  // of whatever placed element was invalidated.
-  canvas->MarkPlacedElementDirty(placedElement);
-}
-
 void LayoutHTMLCanvas::CanvasSizeChanged() {
   NOT_DESTROYED();
   gfx::Size canvas_size = To<HTMLCanvasElement>(GetNode())->Size();
@@ -86,6 +75,7 @@ PhysicalNaturalSizingInfo LayoutHTMLCanvas::GetNaturalDimensions() const {
 }
 
 bool LayoutHTMLCanvas::DrawsBackgroundOntoContentLayer() const {
+  NOT_DESTROYED();
   auto* canvas = To<HTMLCanvasElement>(GetNode());
   if (canvas->SurfaceLayerBridge())
     return false;
@@ -133,9 +123,12 @@ void LayoutHTMLCanvas::Trace(Visitor* visitor) const {
 bool LayoutHTMLCanvas::IsChildAllowed(LayoutObject* child,
                                       const ComputedStyle& style) const {
   NOT_DESTROYED();
-  return IsA<Element>(GetNode()) && !child->IsText() &&
-         To<HTMLCanvasElement>(GetNode())->HasPlacedElements() &&
-         RuntimeEnabledFeatures::CanvasPlaceElementEnabled();
+  if (!IsA<Element>(GetNode()) || child->IsText()) {
+    return false;
+  }
+
+  const auto* canvas = To<HTMLCanvasElement>(GetNode());
+  return canvas->layoutSubtree();
 }
 
 }  // namespace blink

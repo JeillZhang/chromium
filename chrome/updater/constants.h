@@ -5,6 +5,8 @@
 #ifndef CHROME_UPDATER_CONSTANTS_H_
 #define CHROME_UPDATER_CONSTANTS_H_
 
+#include <optional>
+
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/update_client/update_client_errors.h"
@@ -13,14 +15,6 @@ namespace updater {
 
 // Key for storing the installer version in the install settings dictionary.
 inline constexpr char kInstallerVersion[] = "installer_version";
-
-// The updater specific app ID. Defined in the .cc file so that the updater
-// branding constants don't leak in this public header.
-extern const char kUpdaterAppId[];
-
-// The app ID used to qualify the updater. Defined in the .cc file so that the
-// updater branding constants don't leak in this public header.
-extern const char kQualificationAppId[];
 
 // The name of the updater program image.
 #if BUILDFLAG(IS_WIN)
@@ -142,6 +136,14 @@ inline constexpr char kTestSwitch[] = "test";
 // Run in recovery mode.
 inline constexpr char kRecoverSwitch[] = "recover";
 
+// This switch does the following:
+// * Force-installs the metainstaller that is run with this switch and makes it
+//   the active `updater`.
+// * Installs the application(s) that are implicitly specified in the tagged
+//   metainstaller, or explicitly specified using the `--install` or `--handoff`
+//   parameters.
+inline constexpr char kForceInstallSwitch[] = "force-install";
+
 // The version of the program triggering recovery.
 inline constexpr char kBrowserVersionSwitch[] = "browser-version";
 
@@ -221,12 +223,6 @@ inline constexpr char kOfflineDirSwitch[] =
 // that scenario.
 inline constexpr char kAppArgsSwitch[] = "appargs";  // backward-compatibility.
 
-// If provided alongside the update or install switch, a value is written to the
-// local preferences indicating that the Chrome Enterprise Companion App
-// experiment should be enabled.
-// TODO(crbug.com/342180612): Remove once the application has fully launched.
-inline constexpr char kEnableCecaExperimentSwitch[] = "enable-ceca-experiment";
-
 // The "expect-elevated" switch indicates that updater setup should be running
 // elevated (at high integrity). This switch is needed to avoid running into a
 // loop trying (but failing repeatedly) to elevate updater setup when attempting
@@ -243,11 +239,6 @@ inline constexpr char kCmdLineExpectDeElevated[] = "expect-de-elevated";
 // is now trying to install the app per-user.
 inline constexpr char kCmdLinePrefersUser[] = "prefers-user";
 
-// Environment variables. Defined in the .cc file so that the updater branding
-// constants don't leak in this public header.
-extern const char kUsageStatsEnabled[];
-inline constexpr char kUsageStatsEnabledValueEnabled[] = "1";
-
 // File system paths.
 //
 // The directory name where CRX apps get installed. This is provided for demo
@@ -261,15 +252,18 @@ inline constexpr char kUninstallScript[] = "uninstall.cmd";
 // Developer override keys.
 inline constexpr char kDevOverrideKeyUrl[] = "url";
 inline constexpr char kDevOverrideKeyCrashUploadUrl[] = "crash_upload_url";
-inline constexpr char kDevOverrideKeyDeviceManagementUrl[] =
-    "device_management_url";
 inline constexpr char kDevOverrideKeyAppLogoUrl[] = "app_logo_url";
+inline constexpr char kDevOverrideKeyEventLoggingUrl[] = "event_logging_url";
 inline constexpr char kDevOverrideKeyUseCUP[] = "use_cup";
 inline constexpr char kDevOverrideKeyInitialDelay[] = "initial_delay";
 inline constexpr char kDevOverrideKeyServerKeepAliveSeconds[] =
     "server_keep_alive";
 inline constexpr char kDevOverrideKeyCrxVerifierFormat[] =
     "crx_verifier_format";
+inline constexpr char kDevOverrideKeyMinumumEventLoggingCooldownSeconds[] =
+    "minimum_event_logging_cooldown_seconds";
+inline constexpr char kDevOverrideKeyEventLoggingPermissionProvider[] =
+    "event_logging_permission_provider";
 inline constexpr char kDevOverrideKeyDictPolicies[] = "dict_policies";
 
 // TODO(crbug.com/389965546): remove this once the checked-in old updater builds
@@ -299,20 +293,15 @@ inline constexpr base::TimeDelta kWaitForSetupLock = base::Seconds(5);
 inline constexpr base::TimeDelta kDefaultLastCheckPeriod =
     base::Hours(4) + base::Minutes(30);
 
-#if BUILDFLAG(IS_WIN)
-// How often the installer progress from registry is sampled. This value may
-// be changed to provide a smoother progress experience (crbug.com/1067475).
-inline constexpr int kWaitForInstallerProgressSec = 1;
-#elif BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC)
 // How long to wait for launchd changes to be reported by launchctl.
 inline constexpr int kWaitForLaunchctlUpdateSec = 5;
 #endif  // BUILDFLAG(IS_MAC)
 
-#if BUILDFLAG(IS_MAC)
-// The user defaults suite name. Defined in the .cc file so that the updater
-// branding constants don't leak in this public header.
-extern const char kUserDefaultsSuiteName[];
-#endif  // BUILDFLAG(IS_MAC)
+// The minimum period between remote event logging transmissions. The server may
+// instruct the client to backoff for a longer period.
+inline constexpr base::TimeDelta kMinimumEventLoggingCooldown =
+    base::Minutes(15);
 
 // Install Errors.
 //
@@ -601,10 +590,6 @@ inline constexpr char kSourcePlatformPolicyManager[] = "not-defined";
 // doesn't actually matter.
 inline constexpr bool kCloudPolicyOverridesPlatformPolicyDefaultValue = true;
 #endif
-
-// Serializes updater installs. Defined in the .cc file so that the updater
-// branding constants don't leak in this public header.
-extern const char kSetupMutex[];
 
 inline constexpr int kUninstallPingReasonUninstalled = 0;
 inline constexpr int kUninstallPingReasonUserNotAnOwner = 1;

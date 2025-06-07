@@ -8,6 +8,7 @@
 #import "base/debug/dump_without_crashing.h"
 #import "base/memory/raw_ptr.h"
 #import "base/memory/scoped_refptr.h"
+#import "base/metrics/user_metrics.h"
 #import "ios/chrome/browser/favicon/model/favicon_loader.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_password_check_manager.h"
@@ -118,9 +119,11 @@ DetailsContext ComputeDetailsContextFromWarningType(WarningType warning_type) {
 }
 
 - (void)start {
+  base::RecordAction(
+      base::UserMetricsAction("MobilePasswordIssuesCoordinatorStart"));
   [super start];
 
-  ProfileIOS* profile = self.browser->GetProfile();
+  ProfileIOS* profile = self.profile;
   _mediator = [[PasswordIssuesMediator alloc]
         initForWarningType:_warningType
       passwordCheckManager:IOSChromePasswordCheckManagerFactory::GetForProfile(

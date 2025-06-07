@@ -7,10 +7,10 @@ package org.chromium.components.signin.base;
 import android.graphics.Bitmap;
 import android.text.TextUtils;
 
-import androidx.annotation.Nullable;
-
 import org.jni_zero.CalledByNative;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.components.signin.AccountEmailDisplayHook;
 import org.chromium.components.signin.SigninConstants;
 import org.chromium.components.signin.Tribool;
@@ -22,10 +22,11 @@ import java.util.HashMap;
  *
  * This class has a native counterpart called AccountInfo.
  */
+@NullMarked
 public class AccountInfo extends CoreAccountInfo {
     /** Used to instantiate `AccountInfo`. */
     public static class Builder {
-        private CoreAccountInfo mCoreAccountInfo;
+        private final CoreAccountInfo mCoreAccountInfo;
         private String mFullName = "";
         private String mGivenName = "";
         private @Nullable String mHostedDomain;
@@ -98,7 +99,7 @@ public class AccountInfo extends CoreAccountInfo {
     private final @Nullable String mHostedDomain;
 
     private final @Nullable Bitmap mAccountImage;
-    private AccountCapabilities mAccountCapabilities;
+    private final AccountCapabilities mAccountCapabilities;
 
     /** Used from JNI to marshal `AccountInfo` from C++ to Java. */
     @CalledByNative
@@ -161,7 +162,7 @@ public class AccountInfo extends CoreAccountInfo {
     /**
      * Management domain for the account. Can only be called if `isManaged` returns `Tribool.TRUE`.
      */
-    public String getManagementDomain() {
+    public @Nullable String getManagementDomain() {
         if (isManaged() != Tribool.TRUE) {
             throw new IllegalStateException("The account isn't managed (or the status is unknown)");
         }
@@ -189,7 +190,7 @@ public class AccountInfo extends CoreAccountInfo {
     }
 
     @CalledByNative
-    private String getRawHostedDomain() {
+    private @Nullable String getRawHostedDomain() {
         return mHostedDomain;
     }
 }

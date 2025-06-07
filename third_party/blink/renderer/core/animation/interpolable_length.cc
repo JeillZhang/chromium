@@ -135,7 +135,7 @@ InterpolableLength* InterpolableLength::MaybeConvertLength(
     const CSSProperty& property,
     float zoom,
     std::optional<EInterpolateSize> interpolate_size) {
-  if (!length.IsSpecified()) {
+  if (!length.CanConvertToCalculation()) {
     CSSValueID keyword = LengthTypeToCSSValueID(length.GetType());
     if (keyword == CSSValueID::kInvalid ||
         !LengthPropertyFunctions::CanAnimateKeyword(property, keyword)) {
@@ -145,7 +145,7 @@ InterpolableLength* InterpolableLength::MaybeConvertLength(
   }
 
   if (length.IsCalculated() && length.GetCalculationValue().IsExpression()) {
-    auto unzoomed_calc = length.GetCalculationValue().Zoom(1.0 / zoom);
+    const auto* unzoomed_calc = length.GetCalculationValue().Zoom(1.0 / zoom);
     return MakeGarbageCollected<InterpolableLength>(
         *CSSMathExpressionNode::Create(*unzoomed_calc));
   }
@@ -481,7 +481,7 @@ Length InterpolableLength::CreateLength(
       // CSSPrimitiveValue::ConvertToLength.
       pixels = CSSPrimitiveValue::ClampToCSSLengthRange(pixels);
     }
-    return Length(CalculationValue::Create(
+    return Length(MakeGarbageCollected<CalculationValue>(
         PixelsAndPercent(pixels, ClampTo<float>(percentage),
                          /*has_explicit_pixels=*/true,
                          /*has_explicit_percent=*/true),
@@ -596,7 +596,7 @@ void InterpolableLength::Add(const InterpolableValue& other) {
     return;
   }
 
-  CSSMathExpressionNode* result =
+  const CSSMathExpressionNode* result =
       CSSMathExpressionOperation::CreateArithmeticOperationAndSimplifyCalcSize(
           &AsExpression(), &other_length.AsExpression(), CSSMathOperator::kAdd);
   CHECK(result)
@@ -616,10 +616,10 @@ void InterpolableLength::ScaleAndAdd(double scale,
     return;
   }
 
-  CSSMathExpressionNode* scaled =
+  const CSSMathExpressionNode* scaled =
       CSSMathExpressionOperation::CreateArithmeticOperationAndSimplifyCalcSize(
           &AsExpression(), NumberNode(scale), CSSMathOperator::kMultiply);
-  CSSMathExpressionNode* result =
+  const CSSMathExpressionNode* result =
       CSSMathExpressionOperation::CreateArithmeticOperationAndSimplifyCalcSize(
           scaled, &other_length.AsExpression(), CSSMathOperator::kAdd);
   CHECK(result)
@@ -658,15 +658,15 @@ void InterpolableLength::Interpolate(const InterpolableValue& to,
     return;
   }
 
-  CSSMathExpressionNode* blended_from =
+  const CSSMathExpressionNode* blended_from =
       CSSMathExpressionOperation::CreateArithmeticOperationAndSimplifyCalcSize(
           &AsExpression(), NumberNode(1 - progress),
           CSSMathOperator::kMultiply);
-  CSSMathExpressionNode* blended_to =
+  const CSSMathExpressionNode* blended_to =
       CSSMathExpressionOperation::CreateArithmeticOperationAndSimplifyCalcSize(
           &to_length.AsExpression(), NumberNode(progress),
           CSSMathOperator::kMultiply);
-  CSSMathExpressionNode* result_expression =
+  const CSSMathExpressionNode* result_expression =
       CSSMathExpressionOperation::CreateArithmeticOperationAndSimplifyCalcSize(
           blended_from, blended_to, CSSMathOperator::kAdd);
   CHECK(result_expression)

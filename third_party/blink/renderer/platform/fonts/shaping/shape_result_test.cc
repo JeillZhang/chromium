@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include <array>
 
 #include "base/containers/span.h"
@@ -14,13 +9,14 @@
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_test_utilities.h"
-#include "third_party/blink/renderer/platform/fonts/shaping/shape_result_inline_headers.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/shape_result_run.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_spacing.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_test_info.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/testing/font_test_base.h"
 #include "third_party/blink/renderer/platform/testing/font_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 namespace blink {
@@ -34,7 +30,7 @@ class FontsHolder : public GarbageCollected<FontsHolder> {
     }
   }
 
-  Member<Font> fonts[3];
+  std::array<Member<Font>, 3> fonts;
 };
 }  // namespace
 
@@ -86,7 +82,7 @@ class ShapeResultTest : public FontTestBase {
   }
 
   const Font* GetFont(FontType type) const {
-    return fonts_holder->fonts[static_cast<size_t>(type)];
+    return UNSAFE_TODO(fonts_holder->fonts[static_cast<size_t>(type)]);
   }
 
   FontCachePurgePreventer font_cache_purge_preventer;
@@ -454,6 +450,26 @@ TEST_F(ShapeResultTest, DISABLED_ComputeInkBoundsWithNonZeroOffset) {
   EXPECT_FALSE(result->ComputeInkBounds().IsEmpty());
 }
 
+TEST_F(ShapeResultTest, LetterSpacingNotAppliedForCursiveScripts) {
+  // خطية النصية
+  String string(
+      u"\u062E\u0637\u0651\u064E\u064A\u0651\u064E\u0020"
+      u"\u0627\u0644\u0646\u0651\u064E\u0635\u0651\u064E");
+
+  HarfBuzzShaper shaper(string);
+  auto* result = shaper.Shape(GetFont(kArabicFont), TextDirection::kRtl);
+
+  // Letter spacing should not be applied.
+  ShapeResultSpacing<String> spacing(string);
+  FontDescription font_description;
+  font_description.SetLetterSpacing(5);
+  font_description.SetWordSpacing(20);
+  spacing.SetSpacing(font_description);
+  result->ApplySpacing(spacing);
+  EXPECT_FALSE(spacing.IsLetterSpacingAppliedForTesting());
+  EXPECT_TRUE(spacing.IsWordSpacingAppliedForTesting());
+}
+
 // Tests for CaretPositionForOffset
 struct CaretPositionForOffsetTestData {
   // The string that should be processed.
@@ -682,6 +698,8 @@ INSTANTIATE_TEST_SUITE_P(
     testing::ValuesIn(caret_position_for_offset_test_data));
 
 TEST_P(CaretPositionForOffsetTest, CaretPositionForOffsets) {
+  ScopedNoFontAntialiasingForTest disable_no_font_antialiasing_for_test(false);
+
   const auto& test_data = GetParam();
   String text_string(test_data.string);
   HarfBuzzShaper shaper(text_string);
@@ -1134,6 +1152,8 @@ INSTANTIATE_TEST_SUITE_P(
     testing::ValuesIn(caret_offset_for_position_test_data));
 
 TEST_P(CaretOffsetForPositionTest, OffsetForPositions) {
+  ScopedNoFontAntialiasingForTest disable_no_font_antialiasing_for_test(false);
+
   const auto& test_data = GetParam();
   String text_string(test_data.string);
   HarfBuzzShaper shaper(text_string);

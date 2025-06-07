@@ -18,6 +18,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
+#include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/graphics/test/fake_gles2_interface.h"
 #include "third_party/blink/renderer/platform/graphics/test/fake_web_graphics_context_3d_provider.h"
 #include "third_party/blink/renderer/platform/graphics/test/gpu_test_utils.h"
@@ -53,13 +54,14 @@ gpu::SyncToken GenTestSyncToken(GLbyte id) {
   return token;
 }
 
-scoped_refptr<StaticBitmapImage> CreateBitmap() {
-  auto client_si = gpu::ClientSharedImage::CreateForTesting();
+scoped_refptr<StaticBitmapImage> CreateBitmap(
+    gpu::SharedImageUsageSet usage = gpu::SharedImageUsageSet()) {
+  auto client_si = gpu::ClientSharedImage::CreateForTesting(usage);
 
   return AcceleratedStaticBitmapImage::CreateFromCanvasSharedImage(
-      std::move(client_si), GenTestSyncToken(100), 0,
-      SkImageInfo::MakeN32Premul(100, 100),
-      SharedGpuContext::ContextProviderWrapper(),
+      std::move(client_si), GenTestSyncToken(100), 0, gfx::Size(100, 100),
+      GetN32FormatForCanvas(), kPremul_SkAlphaType,
+      gfx::ColorSpace::CreateSRGB(), SharedGpuContext::ContextProviderWrapper(),
       base::PlatformThread::CurrentRef(),
       base::MakeRefCounted<base::NullTaskRunner>(), base::DoNothing());
 }
@@ -92,7 +94,8 @@ TEST_F(AcceleratedStaticBitmapImageTest, SkImageCached) {
 }
 
 TEST_F(AcceleratedStaticBitmapImageTest, CopyToTextureSynchronization) {
-  auto bitmap = CreateBitmap();
+  auto bitmap = CreateBitmap(gpu::SHARED_IMAGE_USAGE_GLES2_READ |
+                             gpu::SHARED_IMAGE_USAGE_GLES2_WRITE);
 
   MockGLES2InterfaceWithSyncTokenSupport destination_gl;
 
@@ -119,9 +122,9 @@ TEST_F(AcceleratedStaticBitmapImageTest, CopyToTextureSynchronization) {
   gfx::Point dest_point(0, 0);
   gfx::Rect source_sub_rectangle(0, 0, 10, 10);
   ASSERT_TRUE(bitmap->CopyToTexture(
-      &destination_gl, GL_TEXTURE_2D, 1 /*dest_texture_id*/,
-      0 /*dest_texture_level*/, false /*unpack_premultiply_alpha*/,
-      false /*unpack_flip_y*/, dest_point, source_sub_rectangle));
+      &destination_gl, GL_TEXTURE_2D, /*dest_texture_id=*/1,
+      /*dest_level=*/0, kUnpremul_SkAlphaType, kTopLeft_GrSurfaceOrigin,
+      dest_point, source_sub_rectangle));
 
   testing::Mock::VerifyAndClearExpectations(&gl_);
   testing::Mock::VerifyAndClearExpectations(&destination_gl);

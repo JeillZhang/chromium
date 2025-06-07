@@ -11,6 +11,8 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
+#include "base/values.h"
 #include "net/base/load_states.h"
 #include "net/base/network_anonymization_key.h"
 #include "net/base/request_priority.h"
@@ -34,7 +36,7 @@ class SSLCertRequestInfo;
 class HttpStream;
 struct NetErrorDetails;
 
-// Manages a single HttpStreamRequest and its associated Job(s).
+// Manages a single HttpStreamRequest or a preconnect. Creates and owns Jobs.
 class HttpStreamPool::JobController : public HttpStreamPool::Job::Delegate,
                                       public HttpStreamRequest::Helper {
  public:
@@ -50,10 +52,9 @@ class HttpStreamPool::JobController : public HttpStreamPool::Job::Delegate,
 
   ~JobController() override;
 
-  // Creates an HttpStreamRequest and starts Job(s) to handle it.
-  std::unique_ptr<HttpStreamRequest> RequestStream(
-      HttpStreamRequest::Delegate* delegate,
-      const NetLogWithSource& net_log);
+  // Takes over the responsibility of processing an already created `request`.
+  void HandleStreamRequest(HttpStreamRequest* stream_request,
+                           HttpStreamRequest::Delegate* delegate);
 
   // Requests that enough connections/sessions for `num_streams` be opened.
   // `callback` is only invoked when the return value is `ERR_IO_PENDING`.
@@ -80,12 +81,15 @@ class HttpStreamPool::JobController : public HttpStreamPool::Job::Delegate,
                           int status,
                           const SSLInfo& ssl_info) override;
   void OnNeedsClientAuth(Job* job, SSLCertRequestInfo* cert_info) override;
+  void OnPreconnectComplete(Job* job, int status) override;
 
   // HttpStreamRequest::Helper implementation:
   LoadState GetLoadState() const override;
   void OnRequestComplete() override;
   int RestartTunnelWithProxyAuth() override;
   void SetPriority(RequestPriority priority) override;
+
+  base::Value::Dict GetInfoAsValue() const;
 
  private:
   // Represents an alternative endpoint for the request.
@@ -133,6 +137,9 @@ class HttpStreamPool::JobController : public HttpStreamPool::Job::Delegate,
   // Calls the request's client auth callback.
   void CallOnNeedsClientAuth(SSLCertRequestInfo* cert_info);
 
+  // Resets `job` and invokes the preconnect callback.
+  void ResetJobAndInvokePreconnectCallback(Job* job, int status);
+
   // Sets the result of `job`.
   void SetJobResult(Job* job, int status);
 
@@ -168,8 +175,14 @@ class HttpStreamPool::JobController : public HttpStreamPool::Job::Delegate,
 
   const NetLogWithSource net_log_;
 
+  const base::TimeTicks created_time_;
+
+  // Fields specific to stream request.
   raw_ptr<HttpStreamRequest::Delegate> delegate_;
   raw_ptr<HttpStreamRequest> stream_request_;
+
+  // Field specific to preconnect.
+  CompletionOnceCallback preconnect_callback_;
 
   std::unique_ptr<Job> origin_job_;
   std::optional<int> origin_job_result_;

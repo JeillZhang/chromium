@@ -17,6 +17,7 @@
 #include "base/thread_annotations.h"
 #include "base/threading/sequence_bound.h"
 #include "components/services/storage/public/mojom/local_storage_control.mojom.h"
+#include "components/services/storage/public/mojom/partition.mojom.h"
 #include "components/services/storage/public/mojom/session_storage_control.mojom.h"
 #include "components/services/storage/public/mojom/storage_usage_info.mojom.h"
 #include "content/browser/child_process_security_policy_impl.h"
@@ -140,7 +141,8 @@ class CONTENT_EXPORT DOMStorageContextWrapper
   ~DOMStorageContextWrapper() override;
 
   void MaybeBindSessionStorageControl();
-  void MaybeBindLocalStorageControl();
+  void MaybeBindLocalStorageControl(
+      storage::mojom::LocalStorageLifecycle lifecycle);
   scoped_refptr<SessionStorageNamespaceImpl> MaybeGetExistingNamespace(
       const std::string& namespace_id) const;
 

@@ -63,6 +63,8 @@ class CORE_EXPORT DocumentSpeculationRules
   void LinkGainedOrLostComputedStyle(HTMLAnchorElementBase* link);
   void DocumentStyleUpdated();
   void ChildStyleRecalcBlocked(Element* root);
+  void DisplayLockedRootsForceUpdateEnded(
+      const HeapVector<Member<Element>>& roots);
   void DidStyleChildren(Element* root);
   void DisplayLockedElementDisconnected(Element* root);
 
@@ -155,7 +157,7 @@ class CORE_EXPORT DocumentSpeculationRules
   // re-traverse the document to find all links when a new ruleset is
   // added/removed.
   HeapHashMap<Member<HTMLAnchorElementBase>,
-              Member<HeapVector<Member<SpeculationCandidate>>>>
+              Member<GCedHeapVector<Member<SpeculationCandidate>>>>
       matched_links_;
   HeapHashSet<Member<HTMLAnchorElementBase>> unmatched_links_;
   HeapHashSet<Member<HTMLAnchorElementBase>> pending_links_;

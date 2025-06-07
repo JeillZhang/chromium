@@ -104,6 +104,7 @@ export type ShimlessCustomElementType = HTMLElement&{
   hidden?: boolean,
   errorCode?: RmadErrorCode,
   getStartedButtonClicked?: boolean,
+  canExit?: boolean,
   allButtonsDisabled?: boolean,
   onNextButtonClick?: () => Promise<{stateResult: StateResult}>,
   onExitButtonClick?: () => Promise<{stateResult: StateResult}>,
@@ -719,6 +720,7 @@ export class ShimlessRma extends ShimlessRmaBase {
       // buttons.
       currentPageComponent.getStartedButtonClicked = false;
       currentPageComponent.confirmExitButtonClicked = false;
+      currentPageComponent.canExit = stateResult.canExit;
     }
 
     this.setAllButtonsState(
@@ -781,7 +783,7 @@ export class ShimlessRma extends ShimlessRmaBase {
       return;
     }
 
-    component!.allButtonsDisabled = this.allButtonsDisabled;
+    component.allButtonsDisabled = this.allButtonsDisabled;
   }
 
   updateButtonState(buttonName: string, buttonState: ButtonState): void {
@@ -802,15 +804,15 @@ export class ShimlessRma extends ShimlessRmaBase {
     const page = this.loadComponent(this.currentPage.componentIs);
     assert(page, 'Could not find page ' + this.currentPage.componentIs);
     assert(
-        page!.onNextButtonClick,
+        page.onNextButtonClick,
         'No onNextButtonClick for ' + this.currentPage.componentIs);
     assert(
-        typeof page!.onNextButtonClick === 'function',
+        typeof page.onNextButtonClick === 'function',
         'onNextButtonClick not a function for ' + this.currentPage.componentIs);
     this.nextButtonClicked = true;
     this.setAllButtonsState(
         /* shouldDisableButtons= */ true, /* showBusyStateOverlay= */ true);
-    page!.onNextButtonClick()
+    page.onNextButtonClick()
         .then((stateResult) => {
           this.processStateResult(stateResult);
         })
@@ -855,7 +857,7 @@ export class ShimlessRma extends ShimlessRmaBase {
     // Show exit button spinner on the landing page
     const currentPageComponent =
         this.loadComponent(this.currentPage.componentIs);
-    currentPageComponent!.confirmExitButtonClicked = true;
+    currentPageComponent.confirmExitButtonClicked = true;
 
     this.setAllButtonsState(
         /* shouldDisableButtons= */ true, /* showBusyStateOverlay= */ true);

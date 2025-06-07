@@ -21,12 +21,14 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/with_feature_override.h"
+#include "build/branding_buildflags.h"
 #include "components/google/core/common/google_util.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/search_engines/regulatory_extension_type.h"
 #include "components/search_engines/search_engines_switches.h"
 #include "components/search_engines/search_terms_data.h"
 #include "components/search_engines/template_url_data.h"
+#include "components/search_engines/template_url_data_util.h"
 #include "components/search_engines/testing_search_terms_data.h"
 #include "net/base/url_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -40,6 +42,10 @@ using PolicyOrigin = TemplateURLData::PolicyOrigin;
 using RequestSource = SearchTermsData::RequestSource;
 
 namespace {
+
+const bool kEnableBuiltinSearchProviderAssets =
+    !!BUILDFLAG(ENABLE_BUILTIN_SEARCH_PROVIDER_ASSETS);
+
 bool IsLowerCase(const std::u16string& str) {
   return str == base::i18n::ToLower(str);
 }
@@ -1007,7 +1013,7 @@ TEST_F(TemplateURLTest, GetRegulatoryExtensionType) {
   }
 
   {
-    data.created_from_play_api = true;
+    data.regulatory_origin = RegulatoryExtensionType::kAndroidEEA;
     TemplateURL url(data);
     EXPECT_EQ(RegulatoryExtensionType::kAndroidEEA,
               url.GetRegulatoryExtensionType());
@@ -1155,60 +1161,6 @@ TEST_F(TemplateURLTest, ReplaceCurrentPageUrl) {
     EXPECT_EQ(entry.expected_result, result.spec());
   }
 }
-
-#if BUILDFLAG(IS_ANDROID)
-// Tests appending attribution parameter to queries originating from Play API
-// search engine.
-TEST_F(TemplateURLTest, PlayAPIAttributionEnabled) {
-  const struct TestData {
-    const char* url;
-    std::u16string terms;
-    bool created_from_play_api;
-    const char* output;
-  } test_data[] = {
-      {"http://foo/?q={searchTerms}", u"bar", false, "http://foo/?q=bar"},
-      {"http://foo/?q={searchTerms}", u"bar", true,
-       "http://foo/?q=bar&chrome_dse_attribution=1"}};
-  TemplateURLData data;
-  for (const auto& entry : test_data) {
-    data.SetURL(entry.url);
-    data.created_from_play_api = entry.created_from_play_api;
-    TemplateURL url(data);
-    EXPECT_TRUE(url.url_ref().IsValid(search_terms_data_));
-    ASSERT_TRUE(url.url_ref().SupportsReplacement(search_terms_data_));
-    GURL result(url.url_ref().ReplaceSearchTerms(
-        TemplateURLRef::SearchTermsArgs(entry.terms), search_terms_data_));
-    ASSERT_TRUE(result.is_valid());
-    EXPECT_EQ(entry.output, result.spec());
-  }
-}
-
-TEST_F(TemplateURLTest, PlayAPIAttributionDisabled) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      switches::kRemoveSearchEngineChoiceAttribution);
-  const struct TestData {
-    const char* url;
-    std::u16string terms;
-    bool created_from_play_api;
-    const char* output;
-  } test_data[] = {
-      {"http://foo/?q={searchTerms}", u"bar", false, "http://foo/?q=bar"},
-      {"http://foo/?q={searchTerms}", u"bar", true, "http://foo/?q=bar"}};
-  TemplateURLData data;
-  for (const auto& entry : test_data) {
-    data.SetURL(entry.url);
-    data.created_from_play_api = entry.created_from_play_api;
-    TemplateURL url(data);
-    EXPECT_TRUE(url.url_ref().IsValid(search_terms_data_));
-    ASSERT_TRUE(url.url_ref().SupportsReplacement(search_terms_data_));
-    GURL result(url.url_ref().ReplaceSearchTerms(
-        TemplateURLRef::SearchTermsArgs(entry.terms), search_terms_data_));
-    ASSERT_TRUE(result.is_valid());
-    EXPECT_EQ(entry.output, result.spec());
-  }
-}
-#endif
 
 TEST_F(TemplateURLTest, Suggestions) {
   struct TestData {
@@ -2568,7 +2520,7 @@ TEST_F(TemplateURLTest, GenerateURL_NoRegulatoryExtensions) {
   }
 
   {
-    data.created_from_play_api = true;
+    data.regulatory_origin = RegulatoryExtensionType::kAndroidEEA;
     TemplateURL t_url(data);
 
     EXPECT_EQ(t_url.GenerateSearchURL(search_terms_data_, u"user query").spec(),
@@ -2614,7 +2566,7 @@ TEST_F(TemplateURLTest, GenerateURL_WithEmptyRegulatoryExtensions) {
   }
 
   {
-    data.created_from_play_api = true;
+    data.regulatory_origin = RegulatoryExtensionType::kAndroidEEA;
     TemplateURL t_url(data);
 
     EXPECT_EQ(t_url.GenerateSearchURL(search_terms_data_, u"user query").spec(),
@@ -2675,7 +2627,7 @@ TEST_F(TemplateURLTest, GenerateURL_WithFullRegulatoryExtensions) {
   }
 
   {
-    data.created_from_play_api = true;
+    data.regulatory_origin = RegulatoryExtensionType::kAndroidEEA;
     TemplateURL t_url(data);
     const char* expected_search_url =
         "https://search/?q=user+query&eea_search_param=abc";
@@ -2756,7 +2708,7 @@ TEST_F(TemplateURLTest,
   }
 
   {
-    data.created_from_play_api = true;
+    data.regulatory_origin = RegulatoryExtensionType::kAndroidEEA;
     TemplateURL t_url(data);
 
     base::HistogramTester histogram_tester;
@@ -2811,7 +2763,7 @@ TEST_F(TemplateURLTest, GenerateURL_RegulatoryExtensionVariantHistograms) {
   }
 
   {
-    data.created_from_play_api = true;
+    data.regulatory_origin = RegulatoryExtensionType::kAndroidEEA;
     TemplateURL t_url(data);
 
     {
@@ -3078,6 +3030,48 @@ TEST_F(TemplateURLTest, ImageSearchBrandingLabel) {
   data.image_search_branding_label = u"fooimages";
   TemplateURL image_branding_url(data);
   EXPECT_EQ(u"fooimages", image_branding_url.image_search_branding_label());
+}
+
+TEST_F(TemplateURLTest, GetBuiltinImageResourceId_FromPrepopulatedEngine) {
+  std::unique_ptr<TemplateURLData> t_url_data =
+      TemplateURLDataFromPrepopulatedEngine(TemplateURLPrepopulateData::google);
+  TemplateURL t_url(*t_url_data.get());
+
+  std::string expected_resource_id = kEnableBuiltinSearchProviderAssets
+                                         ? "IDR_SEARCH_ENGINE_GOOGLE_IMAGE"
+                                         : "IDR_DEFAULT_FAVICON";
+  EXPECT_EQ(t_url.GetBuiltinImageResourceId(), expected_resource_id);
+}
+
+TEST_F(TemplateURLTest,
+       GetBuiltinImageResourceId_FromPrepopulatedEngineWithoutResources) {
+  // Relies on Baidu not having built-in resources, the test would start failing
+  // if that changes.
+  std::unique_ptr<TemplateURLData> t_url_data =
+      TemplateURLDataFromPrepopulatedEngine(TemplateURLPrepopulateData::baidu);
+  TemplateURL t_url(*t_url_data.get());
+  EXPECT_EQ(t_url.GetBuiltinImageResourceId(), "IDR_DEFAULT_FAVICON");
+}
+
+TEST_F(TemplateURLTest, GetBuiltinImageResourceId_FromAssignedData) {
+  TemplateURLData data;
+  data.prepopulate_id = TemplateURLPrepopulateData::google.id;
+  TemplateURL t_url(data);
+
+  std::string expected_resource_id = kEnableBuiltinSearchProviderAssets
+                                         ? "IDR_SEARCH_ENGINE_GOOGLE_IMAGE"
+                                         : "IDR_DEFAULT_FAVICON";
+  EXPECT_EQ(t_url.GetBuiltinImageResourceId(), expected_resource_id);
+}
+
+TEST_F(TemplateURLTest, GetBuiltinImageResourceId_FromCustomEngine) {
+  TemplateURLData data;
+  data.SetShortName(TemplateURLPrepopulateData::google.name);
+  data.SetKeyword(TemplateURLPrepopulateData::google.keyword);
+  data.SetURL(TemplateURLPrepopulateData::google.search_url);
+  TemplateURL t_url(data);
+
+  EXPECT_EQ(t_url.GetBuiltinImageResourceId(), "IDR_DEFAULT_FAVICON");
 }
 
 struct IsBetterThanEngineTestEngine {

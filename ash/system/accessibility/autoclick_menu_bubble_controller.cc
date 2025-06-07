@@ -22,6 +22,7 @@
 #include "ash/wm/workspace_controller.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
+#include "base/strings/string_number_conversions.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/layer.h"
@@ -198,7 +199,7 @@ void AutoclickMenuBubbleController::ShowBubble(AutoclickEventType type,
   menu_view_ = new AutoclickMenuView(type, position);
   menu_view_->SetBorder(views::CreateEmptyBorder(
       gfx::Insets::TLBR(kUnifiedTopShortcutSpacing, 0, 0, 0)));
-  bubble_view_->AddChildView(menu_view_.get());
+  bubble_view_->AddChildViewRaw(menu_view_.get());
 
   bubble_widget_ = views::BubbleDialogDelegateView::CreateBubble(bubble_view_);
   TrayBackgroundView::InitializeBubbleAnimations(bubble_widget_);

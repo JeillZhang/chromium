@@ -8,7 +8,9 @@
 #import "base/files/file_path.h"
 #import "base/files/file_util.h"
 #import "base/logging.h"
+#import "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
+#import "base/test/allow_check_is_test_for_testing.h"
 #import "base/time/time.h"
 #import "components/data_sharing/public/data_sharing_service.h"
 #import "components/data_sharing/test_support/mock_preview_server_proxy.h"
@@ -231,9 +233,11 @@ void DataSharingServiceHooks(
 std::unique_ptr<ShareKitService> CreateShareKitService(
     data_sharing::DataSharingService* data_sharing_service,
     collaboration::CollaborationService* collaboration_service,
-    tab_groups::TabGroupSyncService* sync_service) {
-  return std::make_unique<TestShareKitService>(
-      data_sharing_service, collaboration_service, sync_service);
+    tab_groups::TabGroupSyncService* sync_service,
+    TabGroupService* tab_group_service) {
+  return std::make_unique<TestShareKitService>(data_sharing_service,
+                                               collaboration_service,
+                                               sync_service, tab_group_service);
 }
 
 std::unique_ptr<password_manager::BulkLeakCheckServiceInterface>
@@ -266,7 +270,7 @@ GetOverriddenRecipientsFetcher() {
 }
 
 void SetUpTestsIfPresent() {
-  // No-op for Earl Grey.
+  base::test::AllowCheckIsTestForTesting();
 }
 
 void RunTestsIfPresent() {
@@ -352,6 +356,11 @@ void WipeProfileIfRequested(int argc, char* argv[]) {
       setPersistentDomain:[NSDictionary dictionary]
                   forName:[[NSBundle mainBundle] bundleIdentifier]];
   [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+base::TimeDelta
+GetOverriddenDelayForRequestingTurningOnCredentialProviderExtension() {
+  return base::Seconds(2);
 }
 
 }  // namespace tests_hook

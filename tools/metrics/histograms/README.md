@@ -161,6 +161,8 @@ Enums logged in histograms must:
 - not renumber or reuse enumerator values. When adding a new enumerator, append
   the new enumerator to the end. When removing an unused enumerator, comment it
   out, making it clear the value was previously used.
+  - Note that enum labels may be revised in some cases; see
+    [Revising Histograms](#revising).
 
 If your enum histogram has a catch-all / miscellaneous bucket, put that bucket
 first (`= 0`). This makes the bucket easy to find on the dashboard if additional
@@ -602,7 +604,7 @@ If you have <enum> or <variant> entries that need to be updated to match code,
 you can use
 [HistogramEnumReader](https://cs.chromium.org/chromium/src/base/test/metrics/histogram_enum_reader.h)
 or
-[HistogramVariantsReader](https://cs.chromium.org/chromium/src/base/test/metrics/histogram_enum_reader.h)
+[HistogramVariantsReader](https://cs.chromium.org/chromium/src/base/test/metrics/histogram_variants_reader.h)
 to read and verify the expected values in a unit test. This prevents a mismatch
 between code and histogram data from slipping through CQ.
 
@@ -620,14 +622,26 @@ to remind you that users who update frequently / quickly are biased. Best take
 the initial statistics with a grain of salt; they're probably *mostly* right but
 not entirely so.
 
-## Revising Histograms
+## Revising Histograms {#revising}
 
 When changing the semantics of a histogram (when it's emitted, what the buckets
-represent, the bucket range or number of buckets, etc.), create a new histogram
-with a new name. Otherwise analysis that mixes the data pre- and post- change
-may be misleading. If the histogram name is still the best name choice, the
-recommendation is to simply append a '2' to the name. See [Cleaning Up Histogram
-Entries](#obsolete) for details on how to handle the XML changes.
+represent, the bucket range or number of buckets for numeric histograms, etc.),
+create a new histogram with a new name. A new histogram name is not required
+when adding a new value to an enum if users will not move between buckets, and
+bucket proportion is not meaningful. Otherwise analysis that mixes the data pre-
+and post- change may be misleading. If the histogram name is still the best name
+choice, the recommendation is to simply append a '2' to the name. See
+[Cleaning Up Histogram Entries](#obsolete) for details on how to handle the XML
+changes.
+
+Changes to a histogram are allowed in some cases when the semantics have not
+changed at all. Here are some examples that would be allowed:
+- A histogram's summary can be rewritten to be more accurate.
+- An enum bucket's label can be changed, as long it still refers to the same
+  thing that it did before, e.g. if an enum listed some manufacturer's products,
+  and the manufacturer later renamed one of them.
+  - Note that downstream tooling will apply the updated label to past data
+    retroactively.
 
 ## Deleting Histograms
 

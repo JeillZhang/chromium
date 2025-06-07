@@ -449,6 +449,7 @@ bool MimeHandlerViewGuest::ShouldResumeRequestsForCreatedWindow() {
 }
 
 bool MimeHandlerViewGuest::IsWebContentsCreationOverridden(
+    content::RenderFrameHost* opener,
     content::SiteInstance* source_site_instance,
     content::mojom::WindowContainerType window_container_type,
     const GURL& opener_url,
@@ -542,7 +543,8 @@ void MimeHandlerViewGuest::DidFinishNavigation(
   guest_view::GuestView<MimeHandlerViewGuest>::DidFinishNavigation(
       navigation_handle);
 
-  if (!IsObservedNavigationWithinGuest(navigation_handle)) {
+  if (!IsObservedNavigationWithinGuest(navigation_handle) ||
+      !navigation_handle->HasCommitted()) {
     return;
   }
 

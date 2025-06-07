@@ -227,7 +227,7 @@ RoundedOmniboxResultsFrame::RoundedOmniboxResultsFrame(
   // Host the contents in its own View to simplify layout and customization.
   contents_host_ = new views::View();
   contents_host_->SetBackground(
-      views::CreateThemedSolidBackground(kColorOmniboxResultsBackground));
+      views::CreateSolidBackground(kColorOmniboxResultsBackground));
   contents_host_->SetPaintToLayer();
   contents_host_->layer()->SetFillsBoundsOpaquely(false);
 
@@ -239,18 +239,18 @@ RoundedOmniboxResultsFrame::RoundedOmniboxResultsFrame(
   contents_host_->layer()->SetIsFastRoundedCorner(true);
 
   top_background_ = new TopBackgroundView(location_bar);
-  contents_host_->AddChildView(top_background_.get());
-  contents_host_->AddChildView(contents_.get());
+  contents_host_->AddChildViewRaw(top_background_.get());
+  contents_host_->AddChildViewRaw(contents_.get());
 
   // Initialize the shadow.
   auto border = std::make_unique<views::BubbleBorder>(
       views::BubbleBorder::Arrow::NONE,
       views::BubbleBorder::Shadow::STANDARD_SHADOW);
-  border->SetCornerRadius(corner_radius);
+  border->set_rounded_corners(gfx::RoundedCornersF(corner_radius));
   border->set_md_shadow_elevation(kElevation);
   SetBorder(std::move(border));
 
-  AddChildView(contents_host_.get());
+  AddChildViewRaw(contents_host_.get());
 }
 
 RoundedOmniboxResultsFrame::~RoundedOmniboxResultsFrame() = default;

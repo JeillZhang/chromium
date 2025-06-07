@@ -13,12 +13,14 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/passwords/manage_passwords_ui_controller.h"
 #include "chrome/browser/ui/passwords/passwords_model_delegate.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/passwords/password_bubble_view_base.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/feature_engagement/public/feature_constants.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/color/color_id.h"
@@ -67,18 +69,27 @@ PasswordChangeIconViews::PasswordChangeIconViews(
       IDS_PASSWORD_MANAGER_UI_PASSWORD_CHANGE_ICON_TOOLTIP);
   SetAccessibleName(tooltip);
   UpdateTooltipText();
-  SetTooltipForToolbarPinningEnabled(tooltip);
   // This doesn't work, the icon color stays the same.
   SetIconColor(ui::kColorSysOnTonalContainer);
 }
 
 PasswordChangeIconViews::~PasswordChangeIconViews() = default;
 
-void PasswordChangeIconViews::SetState(password_manager::ui::State state) {
+void PasswordChangeIconViews::SetState(password_manager::ui::State state,
+                                       bool is_blocklisted) {
+  const bool password_change_blocked =
+      is_blocklisted &&
+      base::FeatureList::IsEnabled(features::kSavePasswordsContextualUi);
   bool should_be_visible =
+      !password_change_blocked &&
       state == password_manager::ui::State::PASSWORD_CHANGE_STATE &&
       !delegate()->ShouldHidePageActionIcon(this);
   SetVisible(should_be_visible);
+  if (state == password_manager::ui::State::PASSWORD_CHANGE_STATE) {
+    std::u16string tooltip = l10n_util::GetStringUTF16(
+        IDS_PASSWORD_MANAGER_UI_PASSWORD_CHANGE_ICON_TOOLTIP);
+    SetTooltipForToolbarPinningEnabled(tooltip);
+  }
 
   PasswordChangeDelegate* password_change_delegate =
       GetWebContents() ? PasswordsModelDelegateFromWebContents(GetWebContents())
@@ -106,7 +117,11 @@ void PasswordChangeIconViews::UpdateImpl() {
 }
 
 void PasswordChangeIconViews::OnExecuting(
-    PageActionIconView::ExecuteSource source) {}
+    PageActionIconView::ExecuteSource source) {
+  browser()->window()->NotifyFeaturePromoFeatureUsed(
+      feature_engagement::kIPHPasswordsSaveRecoveryPromoFeature,
+      FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
+}
 
 bool PasswordChangeIconViews::OnMousePressed(const ui::MouseEvent& event) {
   bool result = PageActionIconView::OnMousePressed(event);
@@ -121,6 +136,7 @@ const gfx::VectorIcon& PasswordChangeIconViews::GetVectorIcon() const {
     case PasswordChangeDelegate::State::kPasswordSuccessfullyChanged:
     case PasswordChangeDelegate::State::kPasswordChangeFailed:
     case PasswordChangeDelegate::State::kChangePasswordFormNotFound:
+    case PasswordChangeDelegate::State::kOtpDetected:
       return vector_icons::kPasswordManagerIcon;
     case PasswordChangeDelegate::State::kWaitingForChangePasswordForm:
     case PasswordChangeDelegate::State::kChangingPassword:
@@ -140,13 +156,11 @@ void PasswordChangeIconViews::SetTooltipForToolbarPinningEnabled(
     const std::u16string& tooltip) {
   // TODO(crbug.com/353777476): Strip out pinned toolbar button code into a
   // shared controller for page action and pinned button.
-  if (features::IsToolbarPinningEnabled()) {
-    BrowserActions* browser_actions = browser()->browser_actions();
-    actions::ActionManager::Get()
-        .FindAction(kActionShowPasswordsBubbleOrPage,
-                    browser_actions->root_action_item())
-        ->SetTooltipText(tooltip);
-  }
+  BrowserActions* browser_actions = browser()->browser_actions();
+  actions::ActionManager::Get()
+      .FindAction(kActionShowPasswordsBubbleOrPage,
+                  browser_actions->root_action_item())
+      ->SetTooltipText(tooltip);
 }
 
 void PasswordChangeIconViews::UpdateIconAndLabel() {

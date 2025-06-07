@@ -25,12 +25,13 @@ import org.chromium.base.task.BackgroundOnlyAsyncTask;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskRunner;
 import org.chromium.base.task.TaskTraits;
-import org.chromium.chrome.browser.app.tabmodel.TabWindowManagerSingleton;
+import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.chrome.browser.tabpersistence.TabStateDirectory;
 import org.chromium.chrome.browser.tabpersistence.TabStateFileManager;
+import org.chromium.chrome.browser.tabwindow.TabWindowManager;
 
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
@@ -107,8 +108,7 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
             mOtherMetadataFileName = null;
         }
         mMergeTabsOnStartup = mergeTabsOnStartup;
-        TabWindowManager tabWindowManager = TabWindowManagerSingleton.getInstance();
-        mMaxSelectors = tabWindowManager.getMaxSimultaneousSelectors();
+        mMaxSelectors = TabWindowManager.MAX_SELECTORS;
     }
 
     /**
@@ -263,7 +263,7 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
             File otherStateDir =
                     new File(
                             TabStateDirectory.getOrCreateBaseStateDirectory(), Integer.toString(i));
-            if (otherStateDir == null || !otherStateDir.exists()) continue;
+            if (!otherStateDir.exists()) continue;
 
             // Rename tab state file.
             oldMetadataFile = new File(otherStateDir, LEGACY_SAVED_STATE_FILE);
@@ -457,7 +457,7 @@ public class TabbedModeTabPersistencePolicy implements TabPersistencePolicy {
 
         private String[] mTabFileNames;
         private String[] mThumbnailFileNames;
-        private Supplier<SparseBooleanArray> mOtherTabSupplier;
+        private final Supplier<SparseBooleanArray> mOtherTabSupplier;
         private SparseBooleanArray mOtherTabIds; // Tab in use by other selectors, not be deleted.
 
         CleanUpTabStateDataTask(

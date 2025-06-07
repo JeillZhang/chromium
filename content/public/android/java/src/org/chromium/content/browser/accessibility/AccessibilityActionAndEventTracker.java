@@ -15,7 +15,7 @@ import java.util.LinkedList;
 /** Helper class for tracking accessibility actions and events for end-to-end tests. */
 @NullMarked
 public class AccessibilityActionAndEventTracker {
-    private LinkedList<String> mEvents;
+    private final LinkedList<String> mEvents;
     private boolean mTestComplete;
 
     public AccessibilityActionAndEventTracker() {
@@ -106,19 +106,11 @@ public class AccessibilityActionAndEventTracker {
      * For any events with significant info, we append this to the end of the string in square
      * braces. For example, for the TYPE_ANNOUNCEMENT events we append the announcement text.
      *
-     * @param event             AccessibilityEvent event to get a string for
-     * @return                  String representation of the given event
+     * @param event AccessibilityEvent event to get a string for
+     * @return String representation of the given event
      */
     private static @Nullable String eventToString(AccessibilityEvent event) {
-        // Convert event type to a human readable String (except TYPE_WINDOW_CONTENT_CHANGED with no
-        // CONTENT_CHANGE_TYPE_STATE_DESCRIPTION flag)
-        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-                && (event.getContentChangeTypes()
-                                & AccessibilityEvent.CONTENT_CHANGE_TYPE_STATE_DESCRIPTION)
-                        == 0) {
-            return null;
-        }
-
+        // Convert event type to a human readable String
         StringBuilder builder = new StringBuilder();
         builder.append(AccessibilityEvent.eventTypeToString(event.getEventType()));
 

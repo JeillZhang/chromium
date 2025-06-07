@@ -9,23 +9,22 @@ import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
-
-import static org.chromium.ui.test.util.MockitoHelper.doCallback;
 
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.app.Instrumentation.ActivityMonitor;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
-import android.os.Bundle;
+import android.os.Build;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ProgressBar;
 
+import androidx.annotation.ColorInt;
 import androidx.test.filters.MediumTest;
 import androidx.test.filters.SmallTest;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -45,7 +44,6 @@ import org.mockito.junit.MockitoRule;
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.BuildInfo;
-import org.chromium.base.Callback;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.task.PostTask;
@@ -56,6 +54,7 @@ import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.HistogramWatcher;
+import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.ScalableTimeout;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
@@ -78,14 +77,15 @@ import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.search_engines.DefaultSearchEngineDialogHelperUtils;
 import org.chromium.chrome.browser.search_engines.SearchEnginePromoType;
 import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
-import org.chromium.chrome.browser.signin.AppRestrictionSupplier;
 import org.chromium.chrome.browser.signin.SigninFirstRunFragment;
+import org.chromium.chrome.browser.ui.signin.DialogWhenLargeContentLayout;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
+import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.externalauth.ExternalAuthUtils;
-import org.chromium.components.policy.AbstractAppRestrictionsProvider;
+import org.chromium.components.policy.test.annotations.Policies;
 import org.chromium.components.search_engines.TemplateUrl;
 import org.chromium.components.signin.AccountManagerFacadeProvider;
 import org.chromium.components.signin.test.util.FakeAccountManagerFacade;
@@ -118,7 +118,6 @@ public class FirstRunIntegrationTest {
     @Rule public SigninTestRule mSigninTestRule = new SigninTestRule();
 
     @Mock private ExternalAuthUtils mExternalAuthUtilsMock;
-    @Mock public AppRestrictionSupplier mMockAppRestrictionInfo;
 
     private final Set<Class> mSupportedActivities =
             Set.of(
@@ -136,7 +135,7 @@ public class FirstRunIntegrationTest {
     private Instrumentation mInstrumentation;
     private Context mContext;
 
-    private FirstRunActivityTestObserver mTestObserver = new FirstRunActivityTestObserver();
+    private final FirstRunActivityTestObserver mTestObserver = new FirstRunActivityTestObserver();
     private Activity mLastActivity;
 
     @Before
@@ -204,28 +203,11 @@ public class FirstRunIntegrationTest {
         return (T) mLastActivity;
     }
 
-    private void setHasAppRestrictionForMock() {
-        doCallback((Callback<Boolean> callback) -> callback.onResult(true))
-                .when(mMockAppRestrictionInfo)
-                .getHasAppRestriction(any());
-        AppRestrictionSupplier.setInitializedInstanceForTest(mMockAppRestrictionInfo);
-    }
-
     private void skipTosDialogViaPolicy() {
-        setHasAppRestrictionForMock();
-        Bundle restrictions = new Bundle();
-        AbstractAppRestrictionsProvider.setTestRestrictions(restrictions);
 
         FakeEnterpriseInfo fakeEnterpriseInfo = new FakeEnterpriseInfo();
         fakeEnterpriseInfo.initialize(new EnterpriseInfo.OwnedState(true, false));
         EnterpriseInfo.setInstanceForTest(fakeEnterpriseInfo);
-    }
-
-    private void enableCloudManagementViaPolicy() {
-        setHasAppRestrictionForMock();
-        Bundle restrictions = new Bundle();
-        restrictions.putString("CloudManagementEnrollmentToken", TEST_ENROLLMENT_TOKEN);
-        AbstractAppRestrictionsProvider.setTestRestrictions(restrictions);
     }
 
     private void launchCustomTabs(String url) {
@@ -331,7 +313,7 @@ public class FirstRunIntegrationTest {
 
     private FakeAccountManagerFacade.UpdateBlocker blockOnFlowIsKnown() {
         AccountManagerFacadeProvider.setInstanceForTests(mFakeAccountManagerFacade);
-        return mFakeAccountManagerFacade.blockGetCoreAccountInfos(/* populateCache= */ false);
+        return mFakeAccountManagerFacade.blockGetAccounts(/* populateCache= */ false);
     }
 
     @Test
@@ -677,6 +659,9 @@ public class FirstRunIntegrationTest {
 
     @Test
     @MediumTest
+    // A fake AppRestriction is injected in order to trigger the corresponding code in
+    // AppRestrictionsProvider.
+    @Policies.Add(@Policies.Item(key = "NoncePolicy", string = "true"))
     // TODO(crbug.com/40142602): Change this test case when policy can handle cases when ToS
     // is accepted in Browser App.
     public void testSkipTosPage_WithCctPolicy() throws Exception {
@@ -797,15 +782,15 @@ public class FirstRunIntegrationTest {
 
         // Inspired by https://crbug.com/1207683 where a notification was dropped because native
         // initialized before the first fragment was attached to the activity.
-        var blocker = blockOnFlowIsKnown();
+        FirstRunActivity firstRunActivity;
+        try (var ignored = blockOnFlowIsKnown()) {
+            launchViewIntent(TEST_URL);
+            firstRunActivity = waitForFirstRunActivity();
+            CriteriaHelper.pollUiThread(
+                    () -> firstRunActivity.getNativeInitializationPromise().isFulfilled(),
+                    "native never initialized.");
+        }
 
-        launchViewIntent(TEST_URL);
-        FirstRunActivity firstRunActivity = waitForFirstRunActivity();
-        CriteriaHelper.pollUiThread(
-                () -> firstRunActivity.getNativeInitializationPromise().isFulfilled(),
-                "native never initialized.");
-
-        blocker.close();
         clickThroughFirstRun(firstRunActivity, testCase);
         verifyUrlEquals(TEST_URL, waitAndGetUriFromChromeActivity(ChromeTabbedActivity.class));
     }
@@ -830,35 +815,38 @@ public class FirstRunIntegrationTest {
 
     @Test
     @MediumTest
+    @Policies.Add(@Policies.Item(key = "ForceSafeSearch", string = "true"))
     // Child accounts are not supported on automotive devices.
     @Restriction({DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
     public void testSigninFirstRunPageShownBeforeChildStatusFetch() throws Exception {
         // ChildAccountStatusSupplier uses AppRestrictions to quickly detect non-supervised cases,
         // so pretend there are AppRestrictions set by FamilyLink.
-        setHasAppRestrictionForMock();
-        var ignored = blockOnFlowIsKnown();
-        initializePreferences(new FirstRunPagesTestCase());
+        try (var ignored = blockOnFlowIsKnown()) {
+            initializePreferences(new FirstRunPagesTestCase());
 
-        FirstRunActivity firstRunActivity = launchFirstRunActivity();
-        new FirstRunNavigationHelper(firstRunActivity).ensureWelcomePageIsCurrentPage();
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    ProgressBar progressBar =
-                            ((SigninFirstRunFragment)
-                                            firstRunActivity.getCurrentFragmentForTesting())
-                                    .getView()
-                                    .findViewById(R.id.fre_native_and_policy_load_progress_spinner);
-                    // Replace the progress bar with a placeholder to allow other checks. Currently
-                    // the progress bar cannot be stopped otherwise due to some espresso issues
-                    // (crbug/1115067).
-                    progressBar.setIndeterminateDrawable(
-                            new ColorDrawable(
-                                    SemanticColorUtils.getDefaultBgColor(firstRunActivity)));
-                });
+            FirstRunActivity firstRunActivity = launchFirstRunActivity();
+            new FirstRunNavigationHelper(firstRunActivity).ensureWelcomePageIsCurrentPage();
+            ThreadUtils.runOnUiThreadBlocking(
+                    () -> {
+                        ProgressBar progressBar =
+                                ((SigninFirstRunFragment)
+                                                firstRunActivity.getCurrentFragmentForTesting())
+                                        .getView()
+                                        .findViewById(
+                                                R.id.fre_native_and_policy_load_progress_spinner);
+                        // Replace the progress bar with a placeholder to allow other checks.
+                        // Currently
+                        // the progress bar cannot be stopped otherwise due to some espresso issues
+                        // (crbug.com/1115067).
+                        progressBar.setIndeterminateDrawable(
+                                new ColorDrawable(
+                                        SemanticColorUtils.getDefaultBgColor(firstRunActivity)));
+                    });
 
-        onView(withId(R.id.fre_logo)).check(matches(isDisplayed()));
-        onView(withId(R.id.fre_native_and_policy_load_progress_spinner))
-                .check(matches(isDisplayed()));
+            onView(withId(R.id.fre_logo)).check(matches(isDisplayed()));
+            onView(withId(R.id.fre_native_and_policy_load_progress_spinner))
+                    .check(matches(isDisplayed()));
+        }
     }
 
     @Test
@@ -881,32 +869,39 @@ public class FirstRunIntegrationTest {
 
     @Test
     @MediumTest
+    // A fake AppRestriction is injected in order to trigger the corresponding code in
+    // AppRestrictionsProvider.
+    @Policies.Add(@Policies.Item(key = "NoncePolicy", string = "true"))
     public void testNativeInitBeforeFragmentSkip() throws Exception {
         FirstRunPagesTestCase testCase = new FirstRunPagesTestCase().withoutSignIn();
         initializePreferences(testCase);
         skipTosDialogViaPolicy();
-        var blocker = blockOnFlowIsKnown();
 
-        launchCustomTabs(TEST_URL);
-        FirstRunActivity firstRunActivity = waitForFirstRunActivity();
-        CriteriaHelper.pollUiThread(
-                () -> firstRunActivity.getNativeInitializationPromise().isFulfilled(),
-                "native never initialized.");
+        FirstRunActivity firstRunActivity;
+        try (var ignored = blockOnFlowIsKnown()) {
+            launchCustomTabs(TEST_URL);
+            firstRunActivity = waitForFirstRunActivity();
+            CriteriaHelper.pollUiThread(
+                    () -> firstRunActivity.getNativeInitializationPromise().isFulfilled(),
+                    "native never initialized.");
+        }
 
-        blocker.close();
         clickThroughFirstRun(firstRunActivity, testCase);
         verifyUrlEquals(TEST_URL, waitAndGetUriFromChromeActivity(CustomTabActivity.class));
     }
 
     @Test
     @MediumTest
+    @Policies.Add(
+            @Policies.Item(
+                    key = "CloudManagementEnrollmentToken",
+                    string = TEST_ENROLLMENT_TOKEN))
     // Sign-in is not supported on automotive devices.
     @Restriction({DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
     public void testCloudManagementDoesNotBlockFirstRun() throws Exception {
         // Ensures FRE is not blocked if cloud management is enabled.
         FirstRunPagesTestCase testCase = FirstRunPagesTestCase.createWithShowAllPromos();
         initializePreferences(testCase);
-        enableCloudManagementViaPolicy();
 
         launchViewIntent(TEST_URL);
         FirstRunActivity firstRunActivity = waitForFirstRunActivity();
@@ -1099,12 +1094,62 @@ public class FirstRunIntegrationTest {
 
     @Test
     @SmallTest
+    @MinAndroidSdkLevel(Build.VERSION_CODES.R)
+    // Automotive devices do not support coloring the system bars.
+    @Restriction(DeviceRestriction.RESTRICTION_TYPE_NON_AUTO)
     @Features.EnableFeatures({ChromeFeatureList.EDGE_TO_EDGE_EVERYWHERE})
-    // TODO(crbug.com/378133407): Extend tests
     public void testEdgeToEdgeEverywhere() {
         FirstRunPagesTestCase testCase = FirstRunPagesTestCase.createWithShowAllPromos();
         initializePreferences(testCase);
-        launchFirstRunActivity();
+        FirstRunActivity activity = launchFirstRunActivity();
+
+        EdgeToEdgeSystemBarColorHelper edgeToEdgeSystemBarColorHelper =
+                activity.getEdgeToEdgeManager().getEdgeToEdgeSystemBarColorHelper();
+        @ColorInt int backgroundColor;
+        if (DialogWhenLargeContentLayout.shouldShowAsDialog(activity)) {
+            backgroundColor = DialogWhenLargeContentLayout.getDialogBackgroundColor(activity);
+        } else {
+            backgroundColor = SemanticColorUtils.getDefaultBgColor(activity);
+        }
+        Assert.assertEquals(backgroundColor, edgeToEdgeSystemBarColorHelper.getStatusBarColor());
+        Assert.assertEquals(
+                backgroundColor, edgeToEdgeSystemBarColorHelper.getNavigationBarColor());
+    }
+
+    @Test
+    @SmallTest
+    @MinAndroidSdkLevel(Build.VERSION_CODES.R)
+    // Automotive devices do not support coloring the system bars.
+    @Restriction(DeviceRestriction.RESTRICTION_TYPE_NON_AUTO)
+    @Features.EnableFeatures({ChromeFeatureList.EDGE_TO_EDGE_EVERYWHERE})
+    public void testEdgeToEdgeEverywhere_testLargeContentLayout() {
+        DialogWhenLargeContentLayout.enableShouldShowAsDialogForTesting(
+                /* shouldShowAsDialog= */ true);
+        FirstRunPagesTestCase testCase = FirstRunPagesTestCase.createWithShowAllPromos();
+        initializePreferences(testCase);
+        FirstRunActivity activity = launchFirstRunActivity();
+
+        EdgeToEdgeSystemBarColorHelper edgeToEdgeSystemBarColorHelper =
+                activity.getEdgeToEdgeManager().getEdgeToEdgeSystemBarColorHelper();
+
+        @ColorInt
+        int backgroundColor = DialogWhenLargeContentLayout.getDialogBackgroundColor(activity);
+        Assert.assertEquals(backgroundColor, edgeToEdgeSystemBarColorHelper.getStatusBarColor());
+        Assert.assertEquals(
+                backgroundColor, edgeToEdgeSystemBarColorHelper.getNavigationBarColor());
+    }
+
+    @Test
+    @SmallTest
+    @Features.DisableFeatures({ChromeFeatureList.EDGE_TO_EDGE_EVERYWHERE})
+    public void testLargeContentLayout() {
+        DialogWhenLargeContentLayout.enableShouldShowAsDialogForTesting(
+                /* shouldShowAsDialog= */ true);
+        FirstRunPagesTestCase testCase = FirstRunPagesTestCase.createWithShowAllPromos();
+        initializePreferences(testCase);
+        FirstRunActivity activity = launchFirstRunActivity();
+        Assert.assertEquals(
+                Color.BLACK, activity.getWindowAndroid().getWindow().getStatusBarColor());
     }
 
     private void clickButton(final Activity activity, final int id, final String message) {
@@ -1333,7 +1378,7 @@ public class FirstRunIntegrationTest {
      */
     private static class TestFirstRunFlowSequencerDelegate
             extends FirstRunFlowSequencer.FirstRunFlowSequencerDelegate {
-        private FirstRunPagesTestCase mTestCase;
+        private final FirstRunPagesTestCase mTestCase;
 
         public TestFirstRunFlowSequencerDelegate(
                 FirstRunPagesTestCase testCase, OneshotSupplier<ProfileProvider> profileProvider) {

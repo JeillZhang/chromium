@@ -10,6 +10,7 @@
 
 #include "base/memory/raw_ref.h"
 #include "components/autofill/core/browser/autofill_field.h"
+#include "components/autofill/core/browser/country_type.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "url/origin.h"
@@ -92,6 +93,10 @@ class FormStructureRationalizer {
   // likely be filled with the the first, second, third, and fourth,
   // respectively, block of four digits.
   void RationalizeCreditCardNumberOffsets(LogManager* log_manager);
+
+  // Sets the format strings. For now, only date format strings such as
+  // "YYYY-MM-DD" are supported.
+  void RationalizeFormatStrings(LogManager* log_manager);
 
   // Rewrites two or three (not necessarily consecutive)
   // ADDRESS_HOME_STREET_ADDRESS fields in the same section into address line 1,

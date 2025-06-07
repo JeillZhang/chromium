@@ -34,6 +34,15 @@ enum class PAFeatureEnabledProcesses {
   kAllProcesses,
 };
 
+enum class SchedulerLoopQuarantineBranchType {
+  // The global quarantine branch, shared across threads.
+  kGlobal,
+  // Default configuration for thread-local branches on new threads.
+  kThreadLocalDefault,
+  // Specialized configuration for the main thread of a process.
+  kMain,
+};
+
 }  // namespace internal
 
 BASE_EXPORT BASE_DECLARE_FEATURE(kPartitionAllocUnretainedDanglingPtr);
@@ -162,15 +171,9 @@ BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(MemoryTaggingEnabledProcesses,
 // enabled.
 BASE_EXPORT BASE_DECLARE_FEATURE(kKillPartitionAllocMemoryTagging);
 BASE_EXPORT BASE_DECLARE_FEATURE(kPartitionAllocPermissiveMte);
-BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(
-    bool,
-    kBackupRefPtrAsanEnableDereferenceCheckParam);
-BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(
-    bool,
-    kBackupRefPtrAsanEnableExtractionCheckParam);
-BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(
-    bool,
-    kBackupRefPtrAsanEnableInstantiationCheckParam);
+BASE_EXPORT BASE_DECLARE_FEATURE(kAsanBrpDereferenceCheck);
+BASE_EXPORT BASE_DECLARE_FEATURE(kAsanBrpExtractionCheck);
+BASE_EXPORT BASE_DECLARE_FEATURE(kAsanBrpInstantiationCheck);
 BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(BucketDistributionMode,
                                        kPartitionAllocBucketDistributionParam);
 
@@ -216,13 +219,6 @@ BASE_EXPORT int GetThreadCacheMinCachedMemoryForPurgingBytes();
 
 BASE_EXPORT BASE_DECLARE_FEATURE(kPartitionAllocDisableBRPInBufferPartition);
 
-// This feature is additionally gated behind a buildflag because
-// pool offset freelists cannot be represented when PartitionAlloc uses
-// 32-bit pointers.
-#if PA_BUILDFLAG(USE_FREELIST_DISPATCHER)
-BASE_EXPORT BASE_DECLARE_FEATURE(kUsePoolOffsetFreelists);
-#endif
-
 // When set, partitions use a larger ring buffer and free memory less
 // aggressively when in the foreground.
 BASE_EXPORT BASE_DECLARE_FEATURE(kPartitionAllocAdjustSizeWhenInForeground);
@@ -240,6 +236,10 @@ BASE_EXPORT BASE_DECLARE_FEATURE(kPartitionAllocShadowMetadata);
 BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(ShadowMetadataEnabledProcesses,
                                        kShadowMetadataEnabledProcessesParam);
 #endif  // PA_CONFIG(ENABLE_SHADOW_METADATA)
+
+#if PA_BUILDFLAG(ENABLE_PARTITION_LOCK_PRIORITY_INHERITANCE)
+BASE_EXPORT BASE_DECLARE_FEATURE(kPartitionAllocUsePriorityInheritanceLocks);
+#endif  // PA_BUILDFLAG(ENABLE_PARTITION_LOCK_PRIORITY_INHERITANCE)
 
 }  // namespace base::features
 

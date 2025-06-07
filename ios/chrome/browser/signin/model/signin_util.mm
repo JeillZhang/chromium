@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/signin/model/signin_util.h"
 
+#import "base/check_is_test.h"
 #import "base/containers/to_vector.h"
 #import "base/no_destructor.h"
 #import "base/strings/sys_string_conversions.h"
@@ -15,7 +16,6 @@
 #import "google_apis/gaia/core_account_id.h"
 #import "google_apis/gaia/gaia_auth_util.h"
 #import "google_apis/gaia/gaia_id.h"
-#import "ios/chrome/app/tests_hook.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
@@ -34,6 +34,12 @@ const char kAccountInfoKeyFullName[] = "full_name";
 const char kAccountInfoKeyGivenName[] = "given_name";
 const char kAccountInfoKeyPictureUrl[] = "picture_url";
 const char kHistorySyncEnabled[] = "history_sync_enabled";
+
+// Information about the device restore. The value is loaded by
+// `LoadDeviceRestoreData()`.
+static std::optional<signin::RestoreData> g_restore_data;
+static_assert(
+    std::is_trivially_destructible<std::optional<signin::RestoreData>>::value);
 
 // Copies a string value from a dictionary if the given key is present.
 void CopyStringFromDict(std::string& to,
@@ -61,6 +67,17 @@ AccountInfo DictToAccountInfo(const base::Value::Dict& dict) {
   CopyStringFromDict(account.given_name, dict, kAccountInfoKeyGivenName);
   CopyStringFromDict(account.picture_url, dict, kAccountInfoKeyPictureUrl);
   return account;
+}
+
+// Loads data related to the device restore. This method needs to be called
+// before IO is disallowed on UI thread. This method is called by
+// `IsFirstSessionAfterDeviceRestore()` or `LastDeviceRestoreTimestamp()`.
+const signin::RestoreData& LoadDeviceRestoreData(
+    base::OnceClosure completion = base::DoNothing()) {
+  if (!g_restore_data.has_value()) {
+    g_restore_data = LoadDeviceRestoreDataInternal(std::move(completion));
+  }
+  return g_restore_data.value();
 }
 
 }  // namespace
@@ -98,18 +115,15 @@ CGSize GetSizeForIdentityAvatarSize(IdentityAvatarSize avatar_size) {
   return CGSizeMake(size, size);
 }
 
-signin::Tribool IsFirstSessionAfterDeviceRestore() {
-  if (SimulatePostDeviceRestore()) {
-    return signin::Tribool::kTrue;
-  }
-  static signin::Tribool is_first_session_after_device_restore =
-      signin::Tribool::kUnknown;
-  static dispatch_once_t once;
-  dispatch_once(&once, ^{
-    is_first_session_after_device_restore =
-        IsFirstSessionAfterDeviceRestoreInternal();
-  });
-  return is_first_session_after_device_restore;
+signin::Tribool IsFirstSessionAfterDeviceRestore(base::OnceClosure completion) {
+  const signin::RestoreData& restore_data =
+      LoadDeviceRestoreData(std::move(completion));
+  return restore_data.is_first_session_after_device_restore;
+}
+
+std::optional<base::Time> LastDeviceRestoreTimestamp() {
+  const signin::RestoreData& restore_data = LoadDeviceRestoreData();
+  return restore_data.last_restore_timestamp;
 }
 
 void StorePreRestoreIdentity(PrefService* profile_pref,
@@ -164,9 +178,7 @@ void RunSystemCapabilitiesPrefetch(NSArray<id<SystemIdentity>>* identities) {
   }
 }
 
-bool SimulatePostDeviceRestore() {
-  // We simulate post device restore if required either by experimental settings
-  // or test flag.
-  return tests_hook::SimulatePostDeviceRestore() ||
-         experimental_flags::SimulatePostDeviceRestore();
+void ResetDeviceRestoreDataForTesting() {
+  CHECK_IS_TEST();
+  g_restore_data.reset();
 }

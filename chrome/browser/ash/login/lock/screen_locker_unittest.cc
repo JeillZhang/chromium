@@ -9,13 +9,14 @@
 #include "ash/login/test_login_screen.h"
 #include "ash/public/cpp/login_screen_model.h"
 #include "ash/public/cpp/login_types.h"
+#include "base/check_deref.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#include "chrome/browser/ash/settings/device_settings_test_helper.h"
+#include "chrome/browser/ash/settings/scoped_test_device_settings_service.h"
 #include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
 #include "chrome/browser/certificate_provider/certificate_provider_service.h"
 #include "chrome/browser/certificate_provider/certificate_provider_service_factory.h"
@@ -31,6 +32,7 @@
 #include "chromeos/ash/components/cryptohome/system_salt_getter.h"
 #include "chromeos/ash/components/dbus/biod/biod_client.h"
 #include "chromeos/ash/components/dbus/concierge/concierge_client.h"
+#include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
 #include "chromeos/ash/components/dbus/userdataauth/cryptohome_misc_client.h"
 #include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
 #include "chromeos/ash/components/install_attributes/stub_install_attributes.h"
@@ -73,6 +75,7 @@ class ScreenLockerUnitTest : public testing::Test {
     chromeos::TpmManagerClient::InitializeFake();
     CryptohomeMiscClient::InitializeFake();
     UserDataAuthClient::InitializeFake();
+    SessionManagerClient::InitializeFake();
 
     // MojoSystemInfoDispatcher dependency:
     bluez::BluezDBusManager::GetSetterForTesting();
@@ -97,8 +100,8 @@ class ScreenLockerUnitTest : public testing::Test {
     user_profile_ = testing_profile_manager_->CreateTestingProfile(
         test_account_id_.GetUserEmail());
 
-    session_controller_client_ =
-        std::make_unique<SessionControllerClientImpl>();
+    session_controller_client_ = std::make_unique<SessionControllerClientImpl>(
+        CHECK_DEREF(TestingBrowserProcess::GetGlobal()->local_state()));
     session_controller_client_->Init();
 
     login_screen_client_ = std::make_unique<LoginScreenClientImpl>();
@@ -152,6 +155,7 @@ class ScreenLockerUnitTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
 
     LoginState::Shutdown();
+    SessionManagerClient::Shutdown();
     bluez::BluezDBusManager::Shutdown();
     UserDataAuthClient::Shutdown();
     CryptohomeMiscClient::Shutdown();
@@ -184,7 +188,7 @@ class ScreenLockerUnitTest : public testing::Test {
   TestLoginScreen test_login_screen_;
   std::unique_ptr<LoginScreenClientImpl> login_screen_client_;
 
-  ScopedDeviceSettingsTestHelper device_settings_test_helper_;
+  ScopedTestDeviceSettingsService device_settings_service_;
   TestSessionController test_session_controller_;
   std::unique_ptr<SessionControllerClientImpl> session_controller_client_;
   std::unique_ptr<AssistantBrowserDelegateImpl> assistant_delegate_;

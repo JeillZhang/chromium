@@ -7,6 +7,7 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/system/toast_data.h"
+#include "ash/webui/boca_ui/url_constants.h"
 #include "ash/webui/system_apps/public/system_web_app_type.h"
 #include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
@@ -40,7 +41,9 @@
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
 #include "content/public/test/url_loader_interceptor.h"
+#include "extensions/common/extension_urls.h"
 #include "net/dns/mock_host_resolver.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
 #include "services/network/public/cpp/resource_request_body.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/base/window_open_disposition.h"
@@ -51,12 +54,13 @@ using ::testing::NotNull;
 namespace ash {
 namespace {
 
-constexpr char kTabUrl1Host[] = "example.com";
+constexpr char kTabUrl1Host[] = "www.example.com";
 constexpr char kTabUrl1SubDomainHost[] = "example.child.com";
 constexpr char kTabUrl1FrontSubDomainHost[] = "sub.example.com";
-constexpr char kTabUrl2Host[] = "company.org";
+constexpr char kTabUrl2Host[] = "www.company.org";
 constexpr char kTabUrlRedirectHost[] = "redirect-url.com";
-constexpr char kCWSHost[] = "chromewebstore.google.com";
+constexpr char kTabGoogleHost[] = "www.google.com";
+constexpr char kTabGoogleDocsHost[] = "docs.google.com";
 
 // Fake delegate implementation for the `OnTaskNotificationsManager` to minimize
 // dependency on Ash UI.
@@ -78,26 +82,24 @@ class FakeOnTaskNotificationsManagerDelegate
   std::set<std::string> notifications_shown_;
 };
 
-class OnTaskLockedSessionNavigationThrottleInteractiveUITest
+class OnTaskLockedSessionNavigationThrottleInteractiveUITestBase
     : public InProcessBrowserTest {
  protected:
-  OnTaskLockedSessionNavigationThrottleInteractiveUITest() {
+  OnTaskLockedSessionNavigationThrottleInteractiveUITestBase() {
     // Initialize the MockClock.
     boca::MockClock::Get();
 
     // Enable Boca and consumer experience for testing purposes. This is used
     // to set up the Boca SWA for OnTask.
     scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kBoca, features::kBocaConsumer},
+        /*enabled_features=*/{features::kBoca, features::kBocaConsumer,
+                              features::kOnDeviceSpeechRecognition},
         /*disabled_features=*/{});
   }
 
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
     SystemWebAppManager::Get(profile())->InstallSystemAppsForTesting();
-    host_resolver()->AddRule("*", "127.0.0.1");
-    embedded_test_server()->AddDefaultHandlers(GetChromeTestDataDir());
-    ASSERT_TRUE(embedded_test_server()->Start());
     system_web_app_manager_ =
         std::make_unique<boca::OnTaskSystemWebAppManagerImpl>(profile());
 
@@ -177,6 +179,18 @@ class OnTaskLockedSessionNavigationThrottleInteractiveUITest
       fake_notifications_delegate_ptr_;
 };
 
+class OnTaskLockedSessionNavigationThrottleInteractiveUITest
+    : public OnTaskLockedSessionNavigationThrottleInteractiveUITestBase {
+ protected:
+  void SetUpOnMainThread() override {
+    OnTaskLockedSessionNavigationThrottleInteractiveUITestBase::
+        SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
+    embedded_test_server()->AddDefaultHandlers(GetChromeTestDataDir());
+    ASSERT_TRUE(embedded_test_server()->Start());
+  }
+};
+
 IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
                        AllowFormSubmission) {
   // Launch OnTask SWA.
@@ -238,7 +252,11 @@ IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
   ASSERT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
             tab_url);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      boca_app_browser, embedded_test_server()->GetURL(kCWSHost, "/")));
+      boca_app_browser, extension_urls::GetWebstoreLaunchURL()));
+  EXPECT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            tab_url);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      boca_app_browser, extension_urls::GetNewWebstoreLaunchURL()));
   EXPECT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
             tab_url);
 }
@@ -326,6 +344,40 @@ IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
   EXPECT_NE(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
             different_domain_url);
   VerifyUrlBlockedToastShown(/*toast_was_shown=*/true);
+}
+
+IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
+                       AllowNavigationsToBocaHomepage) {
+  // Launch OnTask SWA.
+  base::test::TestFuture<bool> launch_future;
+  system_web_app_manager()->LaunchSystemWebAppAsync(
+      launch_future.GetCallback());
+  ASSERT_TRUE(launch_future.Get());
+  Browser* const boca_app_browser = FindBocaSystemWebAppBrowser();
+  ASSERT_THAT(boca_app_browser, NotNull());
+  ASSERT_TRUE(boca_app_browser->IsLockedForOnTask());
+
+  // Set up window tracker to track the app window.
+  const SessionID window_id = boca_app_browser->session_id();
+  ASSERT_TRUE(window_id.is_valid());
+  system_web_app_manager()->SetWindowTrackerForSystemWebAppWindow(
+      window_id, /*observers=*/{});
+
+  // Spawn tab for testing purposes.
+  CreateBackgroundTabAndWait(window_id,
+                             embedded_test_server()->GetURL(kTabUrl1Host, "/"),
+                             ::boca::LockedNavigationOptions::BLOCK_NAVIGATION);
+  auto* const tab_strip_model = boca_app_browser->tab_strip_model();
+  ASSERT_EQ(tab_strip_model->count(), 2);
+  tab_strip_model->ActivateTabAt(1);
+  WaitForUrlBlocklistUpdate();
+
+  // Navigate to Boca homepage and verify it goes through.
+  const GURL boca_app_url(boca::kChromeBocaAppUntrustedURL);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(boca_app_browser, boca_app_url));
+  EXPECT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            boca_app_url);
+  VerifyUrlBlockedToastShown(/*toast_was_shown=*/false);
 }
 
 IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
@@ -1164,6 +1216,227 @@ IN_PROC_BROWSER_TEST_F(OnTaskLockedSessionNavigationThrottleInteractiveUITest,
   ui_test_utils::NavigateToURL(&navigate_params);
   EXPECT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
             url_1);
+}
+
+class OnTaskLockedSessionNavigationThrottleWorkspaceNavigationInteractiveUITest
+    : public OnTaskLockedSessionNavigationThrottleInteractiveUITestBase {
+ protected:
+  // Override the embedded test server accessor so we use the HTTPS server that
+  // we set up for the test.
+  net::EmbeddedTestServer* embedded_test_server() { return &https_server_; }
+
+  void SetUpOnMainThread() override {
+    OnTaskLockedSessionNavigationThrottleInteractiveUITestBase::
+        SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
+    embedded_test_server()->AddDefaultHandlers(GetChromeTestDataDir());
+    embedded_test_server()->SetSSLConfig(
+        net::test_server::EmbeddedTestServer::CERT_OK);
+    ASSERT_TRUE(embedded_test_server()->Start());
+  }
+
+ private:
+  // In order to prevent HTTPS redirects with workspace URL navigation, we set
+  // up a test server that supports SSL.
+  net::EmbeddedTestServer https_server_{
+      net::test_server::EmbeddedTestServer::TYPE_HTTPS};
+};
+
+IN_PROC_BROWSER_TEST_F(
+    OnTaskLockedSessionNavigationThrottleWorkspaceNavigationInteractiveUITest,
+    AllowAndBlockUrlsForWorkspaceNavRestriction) {
+  // Launch OnTask SWA.
+  base::test::TestFuture<bool> launch_future;
+  system_web_app_manager()->LaunchSystemWebAppAsync(
+      launch_future.GetCallback());
+  ASSERT_TRUE(launch_future.Get());
+  Browser* const boca_app_browser = FindBocaSystemWebAppBrowser();
+  ASSERT_THAT(boca_app_browser, NotNull());
+  ASSERT_TRUE(boca_app_browser->IsLockedForOnTask());
+
+  // Set up window tracker to track the app window.
+  const SessionID window_id = boca_app_browser->session_id();
+  ASSERT_TRUE(window_id.is_valid());
+  system_web_app_manager()->SetWindowTrackerForSystemWebAppWindow(
+      window_id, /*observers=*/{});
+
+  // Spawn tab for testing purposes.
+  CreateBackgroundTabAndWait(
+      window_id, embedded_test_server()->GetURL(kTabGoogleHost, "/"),
+      ::boca::LockedNavigationOptions::WORKSPACE_NAVIGATION);
+  auto* const tab_strip_model = boca_app_browser->tab_strip_model();
+  ASSERT_EQ(tab_strip_model->count(), 2);
+  tab_strip_model->ActivateTabAt(1);
+  WaitForUrlBlocklistUpdate();
+
+  // Navigate to URLs that should be allowed to go through.
+  const GURL google_docs_url =
+      embedded_test_server()->GetURL(kTabGoogleDocsHost, "/some-doc");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(boca_app_browser, google_docs_url));
+  EXPECT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            google_docs_url);
+  WaitForUrlBlocklistUpdate();
+
+  const GURL google_search_url =
+      embedded_test_server()->GetURL(kTabGoogleHost, "/search?q=test");
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(boca_app_browser, google_search_url));
+  EXPECT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            google_search_url);
+  WaitForUrlBlocklistUpdate();
+  VerifyUrlBlockedToastShown(/*toast_was_shown=*/false);
+
+  // Navigate to URLs that should be blocked.
+  const GURL different_domain_url =
+      embedded_test_server()->GetURL(kTabUrl2Host, "/");
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(boca_app_browser, different_domain_url));
+  EXPECT_NE(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            different_domain_url);
+  VerifyUrlBlockedToastShown(/*toast_was_shown=*/true);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    OnTaskLockedSessionNavigationThrottleWorkspaceNavigationInteractiveUITest,
+    AllowAndBlockUrlsForWorkspaceNavRestrictionOnNewTab) {
+  // Launch OnTask SWA.
+  base::test::TestFuture<bool> launch_future;
+  system_web_app_manager()->LaunchSystemWebAppAsync(
+      launch_future.GetCallback());
+  ASSERT_TRUE(launch_future.Get());
+  Browser* const boca_app_browser = FindBocaSystemWebAppBrowser();
+  ASSERT_THAT(boca_app_browser, NotNull());
+  ASSERT_TRUE(boca_app_browser->IsLockedForOnTask());
+
+  // Set up window tracker to track the app window.
+  const SessionID window_id = boca_app_browser->session_id();
+  ASSERT_TRUE(window_id.is_valid());
+  system_web_app_manager()->SetWindowTrackerForSystemWebAppWindow(
+      window_id, /*observers=*/{});
+
+  // Spawn tab for testing purposes.
+  CreateBackgroundTabAndWait(
+      window_id, embedded_test_server()->GetURL(kTabGoogleHost, "/"),
+      ::boca::LockedNavigationOptions::WORKSPACE_NAVIGATION);
+  auto* const tab_strip_model = boca_app_browser->tab_strip_model();
+  ASSERT_EQ(tab_strip_model->count(), 2);
+  tab_strip_model->ActivateTabAt(1);
+  WaitForUrlBlocklistUpdate();
+
+  // Spawn child tab to simulate opening a new link.
+  const GURL google_docs_url =
+      embedded_test_server()->GetURL(kTabGoogleDocsHost, "/some-doc");
+  SpawnChildTabWithURL(boca_app_browser, google_docs_url);
+  content::RunAllTasksUntilIdle();
+  ASSERT_EQ(tab_strip_model->count(), 3);
+  EXPECT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            google_docs_url);
+  WaitForUrlBlocklistUpdate();
+  VerifyUrlBlockedToastShown(/*toast_was_shown=*/false);
+
+  // Verify we cannot navigate to other URLs.
+  const GURL different_domain_url =
+      embedded_test_server()->GetURL(kTabUrl2Host, "/");
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(boca_app_browser, different_domain_url));
+  EXPECT_NE(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            different_domain_url);
+  VerifyUrlBlockedToastShown(/*toast_was_shown=*/true);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    OnTaskLockedSessionNavigationThrottleWorkspaceNavigationInteractiveUITest,
+    BlockWorkspaceUrlsForOtherNavRestriction) {
+  // Launch OnTask SWA.
+  base::test::TestFuture<bool> launch_future;
+  system_web_app_manager()->LaunchSystemWebAppAsync(
+      launch_future.GetCallback());
+  ASSERT_TRUE(launch_future.Get());
+  Browser* const boca_app_browser = FindBocaSystemWebAppBrowser();
+  ASSERT_THAT(boca_app_browser, NotNull());
+  ASSERT_TRUE(boca_app_browser->IsLockedForOnTask());
+
+  // Set up window tracker to track the app window.
+  const SessionID window_id = boca_app_browser->session_id();
+  ASSERT_TRUE(window_id.is_valid());
+  system_web_app_manager()->SetWindowTrackerForSystemWebAppWindow(
+      window_id, /*observers=*/{});
+
+  // Spawn tab for testing purposes.
+  CreateBackgroundTabAndWait(
+      window_id, embedded_test_server()->GetURL(kTabUrl1Host, "/"),
+      ::boca::LockedNavigationOptions::DOMAIN_NAVIGATION);
+  auto* const tab_strip_model = boca_app_browser->tab_strip_model();
+  ASSERT_EQ(tab_strip_model->count(), 2);
+  tab_strip_model->ActivateTabAt(1);
+  WaitForUrlBlocklistUpdate();
+
+  // Verify sub-domains are allowed.
+  const GURL url_1_front_subdomain =
+      embedded_test_server()->GetURL(kTabUrl1FrontSubDomainHost, "/");
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(boca_app_browser, url_1_front_subdomain));
+  EXPECT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            url_1_front_subdomain);
+  WaitForUrlBlocklistUpdate();
+  VerifyUrlBlockedToastShown(/*toast_was_shown=*/false);
+
+  // Verify workspace URL navigations are blocked.
+  const GURL google_docs_url =
+      embedded_test_server()->GetURL(kTabGoogleDocsHost, "/some-doc");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(boca_app_browser, google_docs_url));
+  EXPECT_NE(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            google_docs_url);
+
+  const GURL google_url = embedded_test_server()->GetURL(kTabGoogleHost, "/");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(boca_app_browser, google_url));
+  EXPECT_NE(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            google_url);
+  VerifyUrlBlockedToastShown(/*toast_was_shown=*/true);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    OnTaskLockedSessionNavigationThrottleWorkspaceNavigationInteractiveUITest,
+    AllowOneLevelDeepNavigationWithGoogleCaptcha) {
+  // Launch OnTask SWA.
+  base::test::TestFuture<bool> launch_future;
+  system_web_app_manager()->LaunchSystemWebAppAsync(
+      launch_future.GetCallback());
+  ASSERT_TRUE(launch_future.Get());
+  Browser* const boca_app_browser = FindBocaSystemWebAppBrowser();
+  ASSERT_THAT(boca_app_browser, NotNull());
+  ASSERT_TRUE(boca_app_browser->IsLockedForOnTask());
+
+  // Set up window tracker to track the app window.
+  const SessionID window_id = boca_app_browser->session_id();
+  ASSERT_TRUE(window_id.is_valid());
+  system_web_app_manager()->SetWindowTrackerForSystemWebAppWindow(
+      window_id, /*observers=*/{});
+
+  // Spawn tab for testing purposes.
+  CreateBackgroundTabAndWait(
+      window_id, embedded_test_server()->GetURL(kTabUrl1Host, "/"),
+      ::boca::LockedNavigationOptions::LIMITED_NAVIGATION);
+  auto* const tab_strip_model = boca_app_browser->tab_strip_model();
+  ASSERT_EQ(tab_strip_model->count(), 2);
+  tab_strip_model->ActivateTabAt(1);
+  WaitForUrlBlocklistUpdate();
+
+  // Navigate to Google search and simulate Captcha redirect.
+  const GURL google_search_url =
+      embedded_test_server()->GetURL(kTabGoogleHost, "/search?q=test");
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(boca_app_browser, google_search_url));
+  EXPECT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            google_search_url);
+
+  const GURL google_captcha_url =
+      embedded_test_server()->GetURL(kTabGoogleHost, "/sorry/index");
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(boca_app_browser, google_captcha_url));
+  EXPECT_EQ(tab_strip_model->GetActiveWebContents()->GetLastCommittedURL(),
+            google_captcha_url);
+  VerifyUrlBlockedToastShown(/*toast_was_shown=*/false);
 }
 
 }  // namespace

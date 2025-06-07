@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/passwords/password_add_username_view.h"
 
 #include "base/functional/callback.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/ui/passwords/ui_utils.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/passwords/views_utils.h"
@@ -106,7 +107,7 @@ PasswordAddUsernameView::PasswordAddUsernameView(
       .SetDefault(
           views::kMarginsKey,
           gfx::Insets::VH(ChromeLayoutProvider::Get()->GetDistanceMetric(
-                              DISTANCE_CONTROL_LIST_VERTICAL),
+                              views::DISTANCE_CONTROL_LIST_VERTICAL),
                           0));
 
   std::unique_ptr<views::Label> body_text = CreateBodyText(margins().width());

@@ -2,14 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/app_list/views/search_box_view.h"
 
 #include <algorithm>
+#include <array>
 #include <map>
 #include <memory>
 #include <string>
@@ -28,6 +24,7 @@
 #include "ash/assistant/ui/main_stage/launcher_search_iph_view.h"
 #include "ash/capture_mode/capture_mode_constants.h"
 #include "ash/capture_mode/capture_mode_controller.h"
+#include "ash/capture_mode/sunfish_scanner_feature_watcher.h"
 #include "ash/constants/ash_features.h"
 #include "ash/keyboard/ui/keyboard_ui_controller.h"
 #include "ash/public/cpp/app_list/app_list_config.h"
@@ -38,7 +35,9 @@
 #include "ash/public/cpp/capture_mode/capture_mode_api.h"
 #include "ash/public/cpp/wallpaper/wallpaper_types.h"
 #include "ash/resources/vector_icons/vector_icons.h"
+#include "ash/scanner/scanner_metrics.h"
 #include "ash/search_box/search_box_constants.h"
+#include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/style/ash_color_id.h"
 #include "ash/style/ash_color_provider.h"
@@ -46,6 +45,8 @@
 #include "ash/user_education/user_education_class_properties.h"
 #include "ash/user_education/user_education_util.h"
 #include "ash/user_education/welcome_tour/welcome_tour_metrics.h"
+#include "ash/wm/mru_window_tracker.h"
+#include "ash/wm/window_state.h"
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
 #include "base/i18n/case_conversion.h"
@@ -56,6 +57,7 @@
 #include "base/notreached.h"
 #include "base/rand_util.h"
 #include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "chromeos/ash/services/assistant/public/cpp/assistant_browser_delegate.h"
 #include "chromeos/ash/services/assistant/public/cpp/assistant_enums.h"
@@ -68,6 +70,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
+#include "ui/base/models/image_model.h"
 #include "ui/base/mojom/menu_source_type.mojom.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/chromeos/styles/cros_tokens_color_mappings.h"
@@ -127,21 +130,23 @@ constexpr int kLensColorIconSize = 24;
 
 // The default PlaceholderTextTypes used for productivity launcher. Randomly
 // selected when placeholder text would be shown.
-constexpr SearchBoxView::PlaceholderTextType kDefaultPlaceholders[] = {
-    SearchBoxView::PlaceholderTextType::kShortcuts,
-    SearchBoxView::PlaceholderTextType::kTabs,
-    SearchBoxView::PlaceholderTextType::kSettings,
-    SearchBoxView::PlaceholderTextType::kImages,
-};
+constexpr auto kDefaultPlaceholders =
+    std::to_array<SearchBoxView::PlaceholderTextType>({
+        SearchBoxView::PlaceholderTextType::kShortcuts,
+        SearchBoxView::PlaceholderTextType::kTabs,
+        SearchBoxView::PlaceholderTextType::kSettings,
+        SearchBoxView::PlaceholderTextType::kImages,
+    });
 
 // PlaceholderTextTypes used for productivity launcher for cloud gaming devices.
 // Randomly selected when placeholder text would be shown.
-constexpr SearchBoxView::PlaceholderTextType kGamingPlaceholders[4] = {
-    SearchBoxView::PlaceholderTextType::kShortcuts,
-    SearchBoxView::PlaceholderTextType::kTabs,
-    SearchBoxView::PlaceholderTextType::kSettings,
-    SearchBoxView::PlaceholderTextType::kGames,
-};
+constexpr auto kGamingPlaceholders =
+    std::to_array<SearchBoxView::PlaceholderTextType>({
+        SearchBoxView::PlaceholderTextType::kShortcuts,
+        SearchBoxView::PlaceholderTextType::kTabs,
+        SearchBoxView::PlaceholderTextType::kSettings,
+        SearchBoxView::PlaceholderTextType::kGames,
+    });
 
 constexpr gfx::RoundedCornersF kAssistantButtonBackgroundRadiiLTR = {
     18,
@@ -563,11 +568,12 @@ SearchBoxView::SearchBoxView(SearchBoxViewDelegate* delegate,
   views::ImageButton* sunfish_button = CreateSunfishButton(base::BindRepeating(
       &SearchBoxView::SunfishButtonPressed, base::Unretained(this)));
   sunfish_button->SetFlipCanvasOnPaintForRTLUI(false);
-  // TODO(http://b/361850292): Upload label for translation.
-  std::u16string sunfish_button_label(u"Select to search");
+  std::u16string sunfish_button_label(
+      l10n_util::GetStringUTF16(IDS_ASH_SUNFISH_SEARCH_BOX_BUTTON));
   sunfish_button->GetViewAccessibility().SetName(sunfish_button_label);
   sunfish_button->SetTooltipText(sunfish_button_label);
-  SetShowSunfishButton(search_box_model->show_sunfish_button());
+  // Update the visibility based on the search box model.
+  SunfishButtonVisibilityChanged();
 
   views::ImageButton* assistant_button =
       CreateAssistantButton(base::BindRepeating(
@@ -579,8 +585,12 @@ SearchBoxView::SearchBoxView(SearchBoxViewDelegate* delegate,
   assistant_button->SetTooltipText(assistant_button_label);
   SetShowAssistantButton(search_box_model->show_assistant_button());
 
-  // Create Assistant new entry point button in this method if eligibile.
-  SearchBoxView::ShowAssistantNewEntryPointChanged();
+  views::ImageButton* assistant_new_entry_point_button =
+      CreateAssistantNewEntryPointButton(base::BindRepeating(
+          &SearchBoxView::AssistantNewEntryPointButtonPressed,
+          base::Unretained(this)));
+  assistant_new_entry_point_button->SetFlipCanvasOnPaintForRTLUI(false);
+  ShowAssistantNewEntryPointChanged();
 
   GetViewAccessibility().SetRole(ax::mojom::Role::kTextField);
   UpdateAccessibleValue();
@@ -815,15 +825,8 @@ void SearchBoxView::OnThemeChanged() {
       views::ImageButton::STATE_NORMAL,
       ui::ImageModel::FromVectorIcon(views::kIcCloseIcon, button_icon_color,
                                      GetSearchBoxIconSize()));
-  if (IsSunfishSessionAllowed()) {
-    sunfish_button()->SetImageModel(
-        views::ImageButton::STATE_NORMAL,
-        ui::ImageModel::FromVectorIcon(
-            features::IsSunfishFeatureEnabled() ? kLensColorIcon : kScannerIcon,
-            button_icon_color,
-            features::IsSunfishFeatureEnabled() ? kLensColorIconSize
-                                                : GetSearchBoxIconSize()));
-  }
+  // Update the icon of the Sunfish-session button.
+  SunfishButtonVisibilityChanged();
   assistant_button()->SetImageModel(
       views::ImageButton::STATE_NORMAL,
       ui::ImageModel::FromVectorIcon(
@@ -1271,12 +1274,34 @@ void SearchBoxView::SunfishButtonPressed() {
   if (is_app_list_bubble_) {
     // Only hide the launcher bubble in clamshell mode.
     view_delegate_->DismissAppList();
+  } else {
+    // Otherwise, show the last active window if one exists.
+    MruWindowTracker::WindowList windows =
+        Shell::Get()->mru_window_tracker()->BuildMruWindowList(kActiveDesk);
+    if (!windows.empty()) {
+      WindowState::Get(windows.front())->Activate();
+    }
+  }
+
+  SunfishScannerFeatureWatcher* feature_watcher =
+      Shell::Get()->sunfish_scanner_feature_watcher();
+  feature_watcher->UpdateFeatureStates();
+
+  if (!feature_watcher->CanShowSunfishOrScannerUi()) {
+    // The Sunfish-session allowed state changed between when the launcher was
+    // shown and when the the button was clicked.
+    // No need to manually hide the Sunfish button here -
+    // `AppListControllerImpl` should have hidden the icon already from the
+    // `UpdateFeatureStates()` call.
+    return;
   }
 
   // If the user presses the button, there is no need to show the nudge anymore,
   // so set the pref to its limit.
   SetSunfishLauncherNudgeShownCount(capture_mode::kSunfishNudgeMaxShownCount);
 
+  RecordScannerFeatureUserState(
+      ScannerFeatureUserState::kSunfishSessionStartedFromLauncherButton);
   CaptureModeController::Get()->StartSunfishSession();
 }
 
@@ -1739,31 +1764,23 @@ void SearchBoxView::ShowAssistantNewEntryPointChanged() {
                         ->search_box()
                         ->show_assistant_new_entry_point_button();
 
-  if (show && !assistant_new_entry_point_button()) {
-    views::ImageButton* assistant_new_entry_point_button =
-        CreateAssistantNewEntryPointButton(base::BindRepeating(
-            &SearchBoxView::AssistantNewEntryPointButtonPressed,
-            base::Unretained(this)));
-    assistant_new_entry_point_button->SetFlipCanvasOnPaintForRTLUI(false);
+  if (show) {
+    ui::ImageModel gemini_icon = AppListModelProvider::Get()
+                                     ->search_model()
+                                     ->search_box()
+                                     ->gemini_icon();
+    // In prod, gemini icon is provided as an image. We can assume that this is
+    // an image instead of other data types.
+    if (gemini_icon.IsImage()) {
+      // Gemini icon includes margins. Use button size instead of search box
+      // icon size, which contains margins, to avoid having duplicated margins.
+      gemini_icon = ui::ImageModel::FromImage(gfx::ResizedImage(
+          gemini_icon.GetImage(),
+          assistant_new_entry_point_button()->GetPreferredSize()));
+    }
 
-    // `AssistantBrowserDelegate::Get` has `DCHECK`. It's not allowed to call if
-    // `AssistantBrowserDelegate` is not available, and that is the case for
-    // some tests. `AssistantBrowserDelegate` should be available if visibility
-    // is determined to be eligible (i.e., show=true) as querying visibility
-    // requires access to the delegate.
-    assistant::AssistantBrowserDelegate* assistant_browser_delegate =
-        assistant::AssistantBrowserDelegate::Get();
-    CHECK(assistant_browser_delegate);
-
-    // Assistant new entry point icon includes margins. Use button size
-    // instead of search box icon size, which contains margins, to avoid
-    // having duplicated margins.
-    assistant_new_entry_point_button->SetImageModel(
-        views::ImageButton::STATE_NORMAL,
-        ui::ImageModel::FromImage(gfx::ResizedImage(
-            ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-                assistant_browser_delegate->GetNewEntryPointIconResourceId()),
-            assistant_new_entry_point_button->GetPreferredSize())));
+    assistant_new_entry_point_button()->SetImageModel(
+        views::ImageButton::STATE_NORMAL, gemini_icon);
 
     std::string name = AppListModelProvider::Get()
                            ->search_model()
@@ -1772,18 +1789,33 @@ void SearchBoxView::ShowAssistantNewEntryPointChanged() {
     CHECK(!name.empty())
         << "New entry point name must be set if a profile is eligible for the "
            "new entry point";
-    assistant_new_entry_point_button->SetTooltipText(base::UTF8ToUTF16(name));
-    assistant_new_entry_point_button->GetViewAccessibility().SetName(name);
+    assistant_new_entry_point_button()->SetTooltipText(base::UTF8ToUTF16(name));
+    assistant_new_entry_point_button()->GetViewAccessibility().SetName(name);
   }
 
   SetShowAssistantNewEntryPointButton(show);
 }
 
-void SearchBoxView::ShowSunfishChanged() {
-  SetShowSunfishButton(AppListModelProvider::Get()
-                           ->search_model()
-                           ->search_box()
-                           ->show_sunfish_button());
+void SearchBoxView::SunfishButtonVisibilityChanged() {
+  SearchBoxModel::SunfishButtonVisibility visibility =
+      AppListModelProvider::Get()
+          ->search_model()
+          ->search_box()
+          ->sunfish_button_visibility();
+  bool shown = visibility != SearchBoxModel::SunfishButtonVisibility::kHidden;
+  SetShowSunfishButton(shown);
+
+  if (shown) {
+    bool is_sunfish_icon =
+        visibility ==
+        SearchBoxModel::SunfishButtonVisibility::kShownWithSunfishIcon;
+    sunfish_button()->SetImageModel(
+        views::ImageButton::STATE_NORMAL,
+        ui::ImageModel::FromVectorIcon(
+            is_sunfish_icon ? kLensColorIcon : kScannerIcon,
+            kColorAshButtonIconColor,
+            is_sunfish_icon ? kLensColorIconSize : GetSearchBoxIconSize()));
+  }
 }
 
 void SearchBoxView::UpdateIphViewVisibility(bool can_show_iph) {
@@ -1811,7 +1843,7 @@ void SearchBoxView::UpdateIphViewVisibility(bool can_show_iph) {
 
     auto radii = base::i18n::IsRTL() ? kAssistantButtonBackgroundRadiiRTL
                                      : kAssistantButtonBackgroundRadiiLTR;
-    assistant_button()->SetBackground(views::CreateThemedRoundedRectBackground(
+    assistant_button()->SetBackground(views::CreateRoundedRectBackground(
         kColorAshControlBackgroundColorInactive, radii));
 
     auto highlight_path_generator =

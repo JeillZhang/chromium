@@ -207,7 +207,13 @@ export class Service implements ServiceInterface {
     chrome.metricsPrivate.recordUserAction(
         isEnabled ? 'Extensions.ExtensionEnabled' :
                     'Extensions.ExtensionDisabled');
-    chrome.management.setEnabled(id, isEnabled);
+    return chrome.management.setEnabled(id, isEnabled)
+        .catch(
+            _ => {
+                // The `setEnabled` call can reasonably fail for a number of
+                // reasons, including that the user chose to deny a re-enable
+                // dialog. Silently ignore these errors.
+            });
   }
 
   setItemAllowedIncognito(id: string, isAllowedIncognito: boolean) {
@@ -279,7 +285,12 @@ export class Service implements ServiceInterface {
   }
 
   repairItem(id: string): void {
-    chrome.developerPrivate.repairExtension(id);
+    chrome.developerPrivate.repairExtension(id).catch(
+        _ => {
+            // This can legitimately fail (e.g. if a reinstall is already
+            // in progress). Ignore the error to avoid crashing the browser,
+            // since WebUI errors are treated as crashes.
+        });
   }
 
   showItemOptionsPage(extension: chrome.developerPrivate.ExtensionInfo): void {
@@ -524,7 +535,7 @@ export class Service implements ServiceInterface {
     return chrome.developerPrivate.dismissMv2DeprecationNoticeForExtension(id);
   }
 
-  uploadItemToAccount(id: string): Promise<void> {
+  uploadItemToAccount(id: string): Promise<boolean> {
     return chrome.developerPrivate.uploadExtensionToAccount(id);
   }
 

@@ -17,7 +17,9 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,6 +43,7 @@ import org.mockito.quality.Strictness;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
@@ -51,6 +54,7 @@ import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.TabArchiveSettings;
 import org.chromium.chrome.browser.tab.TabArchiverImpl;
+import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
 import org.chromium.chrome.browser.tabmodel.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorBase;
@@ -58,9 +62,11 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStore;
 import org.chromium.chrome.browser.tasks.tab_management.TabSwitcherSearchTestUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
-import org.chromium.components.omnibox.OmniboxFeatureList;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.components.tab_group_sync.SavedTabGroup;
+import org.chromium.components.tab_group_sync.TabGroupSyncService;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -71,17 +77,18 @@ import java.util.concurrent.TimeUnit;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @DoNotBatch(reason = "Test interacts with activity shutdown and thus is incompatible with batching")
-@EnableFeatures({
-    ChromeFeatureList.ANDROID_TAB_DECLUTTER,
-    ChromeFeatureList.ANDROID_TAB_DECLUTTER_RESCUE_KILLSWITCH
+@EnableFeatures({ChromeFeatureList.ANDROID_TAB_DECLUTTER_RESCUE_KILLSWITCH})
+@DisableFeatures({
+    ChromeFeatureList.ANDROID_TAB_DECLUTTER_ARCHIVE_ALL_BUT_ACTIVE,
+    ChromeFeatureList.ANDROID_TAB_DECLUTTER_ARCHIVE_TAB_GROUPS
 })
-@DisableFeatures(ChromeFeatureList.ANDROID_TAB_DECLUTTER_ARCHIVE_ALL_BUT_ACTIVE)
 public class ArchivedTabModelOrchestratorTest {
     private static final String TEST_PATH = "/chrome/test/data/android/about.html";
     private static final String TEST_PATH_2 = "/chrome/test/data/android/google.html";
+    private static final String SYNC_GROUP_ID1 = "test_sync_group_id1";
 
     private static class FakeDeferredStartupHandler extends DeferredStartupHandler {
-        private List<Runnable> mTasks = new ArrayList<>();
+        private final List<Runnable> mTasks = new ArrayList<>();
 
         @Override
         public void addDeferredTask(Runnable task) {
@@ -97,7 +104,8 @@ public class ArchivedTabModelOrchestratorTest {
     }
 
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.LENIENT);
 
@@ -107,6 +115,7 @@ public class ArchivedTabModelOrchestratorTest {
     @Mock private TabPersistentStore mArchivedTabPersistentStore;
     @Mock private TabPersistentStore mNormalTabPersistentStore;
     @Mock private TabModelSelectorBase mTabModelSelector;
+    @Mock private TabGroupSyncService mTabGroupSyncService;
 
     private Profile mProfile;
     private FakeDeferredStartupHandler mDeferredStartupHandler;
@@ -119,9 +128,12 @@ public class ArchivedTabModelOrchestratorTest {
 
     @Before
     public void setUp() throws Exception {
+        TabGroupSyncServiceFactory.setForTesting(mTabGroupSyncService);
+        when(mTabGroupSyncService.getAllGroupIds()).thenReturn(new String[] {});
+
         mDeferredStartupHandler = new FakeDeferredStartupHandler();
         DeferredStartupHandler.setInstanceForTests(mDeferredStartupHandler);
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.startOnBlankPage();
 
         runOnUiThreadBlocking(
                 () -> {
@@ -203,10 +215,10 @@ public class ArchivedTabModelOrchestratorTest {
         CriteriaHelper.pollUiThread(() -> 1 == mRegularTabModel.getCount());
         assertEquals(1, mArchivedTabModel.getCount());
 
-        verify(mArchivedTabPersistentStore).setSkipSaveTabList(true);
-        verify(mArchivedTabPersistentStore).setSkipSaveTabList(false);
-        verify(mNormalTabPersistentStore).setSkipSaveTabList(true);
-        verify(mNormalTabPersistentStore).setSkipSaveTabList(false);
+        verify(mArchivedTabPersistentStore).pauseSaveTabList();
+        verify(mArchivedTabPersistentStore).resumeSaveTabList();
+        verify(mNormalTabPersistentStore).pauseSaveTabList();
+        verify(mNormalTabPersistentStore).resumeSaveTabList();
     }
 
     @Test
@@ -288,6 +300,7 @@ public class ArchivedTabModelOrchestratorTest {
     @Test
     @MediumTest
     public void testRescueTabs_FeatureFlag() {
+        setupSavedTabGroup();
         finishLoading();
         mActivityTestRule.loadUrlInNewTab(
                 mActivityTestRule.getTestServer().getURL(TEST_PATH), /* incognito= */ false);
@@ -319,6 +332,7 @@ public class ArchivedTabModelOrchestratorTest {
                     mOrchestrator.setTabPersistentStoreForTesting(mArchivedTabPersistentStore);
 
                     mOrchestrator.resetRescueArchivedTabsForTesting();
+                    mOrchestrator.resetRescueArchivedTabGroupsForTesting();
                     mOrchestrator.rescueArchivedTabs(
                             (TabbedModeTabModelOrchestrator)
                                     mActivityTestRule
@@ -329,15 +343,17 @@ public class ArchivedTabModelOrchestratorTest {
 
         CriteriaHelper.pollUiThread(() -> 2 == mRegularTabModel.getCount());
         assertEquals(0, mArchivedTabModel.getCount());
-        verify(mArchivedTabPersistentStore).setSkipSaveTabList(true);
-        verify(mArchivedTabPersistentStore).setSkipSaveTabList(false);
-        verify(mNormalTabPersistentStore).setSkipSaveTabList(true);
-        verify(mNormalTabPersistentStore).setSkipSaveTabList(false);
+        verify(mTabGroupSyncService, times(2)).updateArchivalStatus(eq(SYNC_GROUP_ID1), eq(false));
+        verify(mArchivedTabPersistentStore).pauseSaveTabList();
+        verify(mArchivedTabPersistentStore).resumeSaveTabList();
+        verify(mNormalTabPersistentStore).pauseSaveTabList();
+        verify(mNormalTabPersistentStore).resumeSaveTabList();
     }
 
     @Test
     @MediumTest
     public void testRescueTabs_ArchiveDisabled() {
+        setupSavedTabGroup();
         finishLoading();
         mActivityTestRule.loadUrlInNewTab(
                 mActivityTestRule.getTestServer().getURL(TEST_PATH), /* incognito= */ false);
@@ -360,16 +376,19 @@ public class ArchivedTabModelOrchestratorTest {
         runOnUiThreadBlocking(
                 () -> {
                     mOrchestrator.resetRescueArchivedTabsForTesting();
+                    mOrchestrator.resetRescueArchivedTabGroupsForTesting();
                     mTabArchiveSettings.setArchiveEnabled(false);
                 });
 
         CriteriaHelper.pollUiThread(() -> mRegularTabModel.getCount() == 2);
         assertEquals(0, mArchivedTabModel.getCount());
+        verify(mTabGroupSyncService, times(2)).updateArchivalStatus(eq(SYNC_GROUP_ID1), eq(false));
     }
 
     @Test
     @MediumTest
     public void testRescueTabs_ArchiveDisabledWhileNoOrchestatorsRegistered() {
+        setupSavedTabGroup();
         finishLoading();
         mActivityTestRule.loadUrlInNewTab(
                 mActivityTestRule.getTestServer().getURL(TEST_PATH), /* incognito= */ false);
@@ -395,6 +414,7 @@ public class ArchivedTabModelOrchestratorTest {
                 () -> {
                     mOrchestrator.unregisterTabModelOrchestrator(mTabbedModeOrchestrator);
                     mOrchestrator.resetRescueArchivedTabsForTesting();
+                    mOrchestrator.resetRescueArchivedTabGroupsForTesting();
                     mTabArchiveSettings.setArchiveEnabled(false);
                 });
         CriteriaHelper.pollUiThread(() -> mArchivedTabModel.getCount() == 1);
@@ -406,6 +426,7 @@ public class ArchivedTabModelOrchestratorTest {
                 });
         CriteriaHelper.pollUiThread(() -> mRegularTabModel.getCount() == 2);
         assertEquals(0, mArchivedTabModel.getCount());
+        verify(mTabGroupSyncService, times(2)).updateArchivalStatus(eq(SYNC_GROUP_ID1), eq(false));
     }
 
     @Test
@@ -460,7 +481,7 @@ public class ArchivedTabModelOrchestratorTest {
 
     @Test
     @MediumTest
-    @EnableFeatures(OmniboxFeatureList.ANDROID_HUB_SEARCH)
+    @DisabledTest(message = "crbug.com/397730179")
     public void testOpenArchivedTabFromHubSearch() {
         finishLoading();
         mActivityTestRule.loadUrl(mActivityTestRule.getTestServer().getURL(TEST_PATH));
@@ -504,7 +525,6 @@ public class ArchivedTabModelOrchestratorTest {
 
     @Test
     @MediumTest
-    @EnableFeatures(OmniboxFeatureList.ANDROID_HUB_SEARCH)
     public void testOpenArchivedTabFromHubSearch_Incognito() {
         finishLoading();
         mActivityTestRule.loadUrl(mActivityTestRule.getTestServer().getURL(TEST_PATH));
@@ -541,5 +561,14 @@ public class ArchivedTabModelOrchestratorTest {
 
         onView(allOf(withId(R.id.line_2), withText(containsString(TEST_PATH))))
                 .check(doesNotExist());
+    }
+
+    private void setupSavedTabGroup() {
+        SavedTabGroup savedTabGroup = new SavedTabGroup();
+        savedTabGroup.syncId = SYNC_GROUP_ID1;
+        savedTabGroup.archivalTimeMs = System.currentTimeMillis();
+
+        when(mTabGroupSyncService.getAllGroupIds()).thenReturn(new String[] {SYNC_GROUP_ID1});
+        when(mTabGroupSyncService.getGroup(SYNC_GROUP_ID1)).thenReturn(savedTabGroup);
     }
 }

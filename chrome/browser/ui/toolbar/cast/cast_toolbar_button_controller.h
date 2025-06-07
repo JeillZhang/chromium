@@ -94,16 +94,19 @@ class CastToolbarButtonController : public media_router::IssuesObserver,
   // or the overflow menu.
   bool ShouldEnableAction() const;
 
+  bool GetHasLocalDisplayRouteForTesting() { return has_local_display_route_; }
+  bool GetHasIssueForTesting() { return has_issue_; }
+
  private:
   friend class CastToolbarButtonControllerUnitTest;
-  FRIEND_TEST_ALL_PREFIXES(CastToolbarButtonControllerUnitTest,
-                           EphemeralIconForIssues);
-  FRIEND_TEST_ALL_PREFIXES(CastToolbarButtonControllerUnitTest,
-                           EphemeralIconForDialog);
 
   // Adds or removes the Cast icon to/from the toolbar if necessary,
   // depending on whether or not we have issues, local routes or a dialog.
   virtual void MaybeToggleIconVisibility();
+
+  // Updates the kActionMediaRouterToggleMediaRemoting ActionItem based on
+  // changes to the pref.
+  void UpdateToggleMediaRouterRemotingAction();
 
   // The profile |this| is associated with. There should be one instance of this
   // class per profile.

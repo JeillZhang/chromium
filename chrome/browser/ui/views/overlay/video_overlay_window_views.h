@@ -11,7 +11,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/picture_in_picture/auto_pip_setting_overlay_view.h"
-#include "chromeos/ui/frame/highlight_border_overlay.h"
 #include "components/global_media_controls/public/views/media_progress_view.h"
 #include "content/public/browser/overlay_window.h"
 #include "content/public/browser/video_picture_in_picture_window_controller.h"
@@ -20,6 +19,10 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/views/view_observer.h"
 #include "ui/views/widget/widget.h"
+
+#if BUILDFLAG(IS_CHROMEOS)
+#include "chromeos/ui/frame/highlight_border_overlay.h"
+#endif
 
 namespace views {
 class ImageView;
@@ -34,6 +37,7 @@ class BackToTabLabelButton;
 class CloseImageButton;
 class HangUpButton;
 class OverlayWindowBackToTabButton;
+class OverlayWindowLiveCaptionDialog;
 class OverlayWindowMinimizeButton;
 class PlaybackImageButton;
 class ResizeHandleButton;
@@ -70,6 +74,7 @@ class VideoOverlayWindowViews : public content::VideoOverlayWindow,
   // VideoOverlayWindow:
   void Close() override;
   void ShowInactive() override;
+  bool IsVisible() const override;
   void Hide() override;
   gfx::Rect GetBounds() override;
   void UpdateNaturalSize(const gfx::Size& natural_size) override;
@@ -93,7 +98,6 @@ class VideoOverlayWindowViews : public content::VideoOverlayWindow,
 
   // views::Widget:
   bool IsActive() const override;
-  bool IsVisible() const override;
   void OnNativeFocus() override;
   void OnNativeBlur() override;
   gfx::Size GetMinimumSize() const override;
@@ -168,6 +172,8 @@ class VideoOverlayWindowViews : public content::VideoOverlayWindow,
   gfx::Rect GetPreviousSlideControlsBounds();
   gfx::Rect GetNextSlideControlsBounds();
   gfx::Rect GetProgressViewBounds();
+  gfx::Rect GetLiveCaptionButtonBounds();
+  gfx::Rect GetLiveCaptionDialogBounds();
 
   PlaybackImageButton* play_pause_controls_view_for_testing() const;
   SimpleOverlayWindowImageButton* replay_10_seconds_button_for_testing() const;
@@ -184,6 +190,9 @@ class VideoOverlayWindowViews : public content::VideoOverlayWindow,
       const;
   global_media_controls::MediaProgressView* progress_view_for_testing() const;
   views::Label* timestamp_for_testing() const;
+  views::Label* live_status_for_testing() const;
+  SimpleOverlayWindowImageButton* live_caption_button_for_testing() const;
+  OverlayWindowLiveCaptionDialog* live_caption_dialog_for_testing() const;
   views::ImageView* favicon_view_for_testing() const;
   views::Label* origin_for_testing() const;
   CloseImageButton* close_button_for_testing() const;
@@ -311,6 +320,8 @@ class VideoOverlayWindowViews : public content::VideoOverlayWindow,
   void UpdateTimestampLabel(base::TimeDelta current_time,
                             base::TimeDelta duration);
 
+  void OnLiveCaptionButtonPressed();
+
   void OnFaviconReceived(const SkBitmap& image);
   void UpdateFavicon(const gfx::ImageSkia& favicon);
 
@@ -368,6 +379,8 @@ class VideoOverlayWindowViews : public content::VideoOverlayWindow,
   raw_ptr<views::View> controls_top_scrim_view_ = nullptr;
   raw_ptr<views::View> controls_bottom_scrim_view_ = nullptr;
   raw_ptr<views::View> controls_container_view_ = nullptr;
+  raw_ptr<views::View> playback_controls_container_view_ = nullptr;
+  raw_ptr<views::View> vc_controls_container_view_ = nullptr;
   raw_ptr<views::ImageView> favicon_view_ = nullptr;
   raw_ptr<views::Label> origin_ = nullptr;
   raw_ptr<CloseImageButton> close_controls_view_ = nullptr;
@@ -390,6 +403,9 @@ class VideoOverlayWindowViews : public content::VideoOverlayWindow,
   raw_ptr<SimpleOverlayWindowImageButton> next_slide_controls_view_ = nullptr;
   raw_ptr<global_media_controls::MediaProgressView> progress_view_ = nullptr;
   raw_ptr<views::Label> timestamp_ = nullptr;
+  raw_ptr<views::Label> live_status_ = nullptr;
+  raw_ptr<SimpleOverlayWindowImageButton> live_caption_button_ = nullptr;
+  raw_ptr<OverlayWindowLiveCaptionDialog> live_caption_dialog_ = nullptr;
   raw_ptr<AutoPipSettingOverlayView> overlay_view_ = nullptr;
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -402,36 +418,29 @@ class VideoOverlayWindowViews : public content::VideoOverlayWindow,
   // used to toggle play/pause/replay button.
   PlaybackState playback_state_for_testing_ = kEndOfVideo;
 
-  // Whether or not the skip ad button will be shown. This is the
-  // case when Media Session "skipad" action is handled by the website.
+  // True if the Media Session "skipad" action is handled by the website.
   bool show_skip_ad_button_ = false;
 
-  // Whether or not the next track button will be shown. This is the
-  // case when Media Session "nexttrack" action is handled by the website.
+  // True if the Media Session "nexttrack" action is handled by the website.
   bool show_next_track_button_ = false;
 
-  // Whether or not the previous track button will be shown. This is the
-  // case when Media Session "previoustrack" action is handled by the website.
+  // True if the Media Session "previoustrack" action is handled by the website.
   bool show_previous_track_button_ = false;
 
-  // Whether or not the toggle microphone button will be shown. This is the case
-  // when Media Session "togglemicrophone" action is handled by the website.
+  // True if the Media Session "togglemicrophone" action is handled by the
+  // website.
   bool show_toggle_microphone_button_ = false;
 
-  // Whether or not the toggle camera button will be shown. This is the case
-  // when Media Session "togglecamera" action is handled by the website.
+  // True if the Media Session "togglecamera" action is handled by the website.
   bool show_toggle_camera_button_ = false;
 
-  // Whether or not the hang up button will be shown. This is the case when
-  // Media Session "hangup" action is handled by the website.
+  // True if the Media Session "hangup" action is handled by the website.
   bool show_hang_up_button_ = false;
 
-  // Whether or not the previous slide button will be shown. This is the
-  // case when Media Session "previousslide" action is handled by the website.
+  // True if the Media Session "previousslide" action is handled by the website.
   bool show_previous_slide_button_ = false;
 
-  // Whether or not the next slide button will be shown. This is the
-  // case when Media Session "nextslide" action is handled by the website.
+  // True if the Media Session "nextslide" action is handled by the website.
   bool show_next_slide_button_ = false;
 
   // Tracks whether or not the progress bar is currently being dragged by the
@@ -442,6 +451,9 @@ class VideoOverlayWindowViews : public content::VideoOverlayWindow,
   // Tracks the current position of media playback. Used for seeking to the
   // proper time when the user interacts with the progress bar.
   media_session::MediaPosition position_;
+
+  // True if the video in the picture-in-picture window is live.
+  bool is_live_ = false;
 
   // Whether or not the current frame sink for the surface displayed in the
   // |video_view_| is registered as the child of the overlay window frame sink.

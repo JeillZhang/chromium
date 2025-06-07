@@ -19,13 +19,9 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/css/style_rule.h"
 
+#include "base/compiler_specific.h"
 #include "third_party/blink/renderer/core/css/cascade_layer.h"
 #include "third_party/blink/renderer/core/css/css_container_rule.h"
 #include "third_party/blink/renderer/core/css/css_counter_style_rule.h"
@@ -500,14 +496,16 @@ const CSSPropertyValueSet& StyleRule::Properties() const {
 StyleRule::StyleRule(const StyleRule& other, size_t flattened_size)
     : StyleRuleBase(kStyle), properties_(other.Properties().MutableCopy()) {
   for (unsigned i = 0; i < flattened_size; ++i) {
-    new (&SelectorArray()[i]) CSSSelector(other.SelectorArray()[i]);
+    UNSAFE_TODO(new (&SelectorArray()[i])
+                    CSSSelector(other.SelectorArray()[i]));
   }
   if (other.child_rules_ != nullptr) {
     // Since we are getting copied, we also need to copy any child rules
     // so that both old and new can be freely mutated. This also
     // parses them eagerly (see comment in StyleSheetContents'
     // copy constructor).
-    child_rules_ = MakeGarbageCollected<HeapVector<Member<StyleRuleBase>>>();
+    child_rules_ =
+        MakeGarbageCollected<GCedHeapVector<Member<StyleRuleBase>>>();
     child_rules_->ReserveInitialCapacity(other.child_rules_->size());
     for (const StyleRuleBase* child_rule : *other.child_rules_) {
       child_rules_->push_back(child_rule->Copy());
@@ -523,9 +521,8 @@ StyleRule::~StyleRule() {
     selector->~CSSSelector();
     if (is_last) {
       break;
-    } else {
-      ++selector;
     }
+    UNSAFE_TODO(++selector);
   }
 }
 
@@ -535,6 +532,23 @@ MutableCSSPropertyValueSet& StyleRule::MutableProperties() {
     properties_ = properties_->MutableCopy();
   }
   return *To<MutableCSSPropertyValueSet>(properties_.Get());
+}
+
+void StyleRule::WrapperInsertRule(CSSStyleSheet* parent_sheet,
+                                  unsigned index,
+                                  StyleRuleBase* rule) {
+  EnsureChildRules();
+  child_rules_->insert(index, rule);
+  if (parent_sheet) {
+    parent_sheet->Contents()->NotifyRuleChanged(rule);
+  }
+}
+
+void StyleRule::WrapperRemoveRule(CSSStyleSheet* parent_sheet, unsigned index) {
+  if (parent_sheet) {
+    parent_sheet->Contents()->NotifyRuleChanged((*child_rules_)[index]);
+  }
+  child_rules_->erase(UNSAFE_TODO(child_rules_->begin() + index));
 }
 
 bool StyleRule::PropertiesHaveFailedOrCanceledSubresources() const {
@@ -556,7 +570,7 @@ void StyleRule::TraceAfterDispatch(blink::Visitor* visitor) const {
   const CSSSelector* current = SelectorArray();
   do {
     visitor->Trace(*current);
-  } while (!(current++)->IsLastInSelectorList());
+  } while (!(UNSAFE_TODO(current++))->IsLastInSelectorList());
 
   StyleRuleBase::TraceAfterDispatch(visitor);
 }
@@ -596,7 +610,7 @@ StyleRuleBase* StyleRuleBase::Renest(StyleRule* new_parent) {
       }
       auto* new_rule = StyleRule::Create(
           selectors, To<StyleRule>(this)->Properties().ImmutableCopyIfNeeded());
-      if (HeapVector<Member<StyleRuleBase>>* child_rules =
+      if (GCedHeapVector<Member<StyleRuleBase>>* child_rules =
               To<StyleRule>(this)->ChildRules()) {
         for (StyleRuleBase* child_rule : *child_rules) {
           new_rule->AddChildRule(child_rule->Renest(new_rule));
@@ -1014,6 +1028,7 @@ StyleRuleFunction::StyleRuleFunction(
 void StyleRuleFunction::TraceAfterDispatch(blink::Visitor* visitor) const {
   StyleRuleGroup::TraceAfterDispatch(visitor);
   visitor->Trace(parameters_);
+  visitor->Trace(layer_);
 }
 
 StyleRuleMixin::StyleRuleMixin(AtomicString name, StyleRule* fake_parent_rule)

@@ -14,7 +14,6 @@
 #include "base/test/bind.h"
 #include "build/build_config.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/reauth_result.h"
 #include "chrome/browser/signin/web_signin_interceptor.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
@@ -222,20 +221,21 @@ IN_PROC_BROWSER_TEST_F(SignInViewControllerInteractiveBrowserTest,
 
           // Verify that the correct action was selected in confirming the
           // dialog.
-          Steps(WaitForEvent(kConstrainedDialogWebViewElementId,
-                             kEmailConfirmationCompleted),
-                CheckResult([&] { return chosen_action; },
-                            SigninEmailConfirmationDialog::CREATE_NEW_USER)),
+          RunSubsequence(
+              WaitForEvent(kConstrainedDialogWebViewElementId,
+                           kEmailConfirmationCompleted),
+              CheckResult([&] { return chosen_action; },
+                          SigninEmailConfirmationDialog::CREATE_NEW_USER)),
 
           // Verify that the dialog closes correctly.
-          Steps(WaitForHide(kConstrainedDialogWebViewElementId),
-                CheckResult(
-                    [&] {
-                      return browser()
-                          ->signin_view_controller()
-                          ->ShowsModalDialog();
-                    },
-                    false))));
+          RunSubsequence(WaitForHide(kConstrainedDialogWebViewElementId),
+                         CheckResult(
+                             [&] {
+                               return browser()
+                                   ->signin_view_controller()
+                                   ->ShowsModalDialog();
+                             },
+                             false))));
 }
 
 // Tests that the confirm button is focused by default in the signin error
@@ -253,6 +253,14 @@ IN_PROC_BROWSER_TEST_F(SignInViewControllerBrowserTest,
       browser()
           ->signin_view_controller()
           ->GetModalDialogWebContentsForTesting());
+
+  // Before sending key events, make sure paint-holding does not drop input
+  // events.
+  content::SimulateEndOfPaintHoldingOnPrimaryMainFrame(
+      browser()
+          ->signin_view_controller()
+          ->GetModalDialogWebContentsForTesting());
+
   ASSERT_TRUE(ui_test_utils::SendKeyPressSync(browser(), ui::VKEY_RETURN,
                                               /*control=*/false,
                                               /*shift=*/false, /*alt=*/false,
@@ -287,7 +295,8 @@ IN_PROC_BROWSER_TEST_F(SignInViewControllerBrowserTest,
   signin::SigninChoice result;
   browser()->signin_view_controller()->ShowModalManagedUserNoticeDialog(
       std::make_unique<signin::EnterpriseProfileCreationDialogParams>(
-          account_info, /*is_oidc_account=*/false, /*force_new_profile=*/true,
+          account_info, /*is_oidc_account=*/false,
+          /*turn_sync_on_signed_profile=*/false, /*force_new_profile=*/true,
           /*show_link_data_option=*/true,
           /*process_user_choice_callback=*/
           base::BindOnce([](signin::SigninChoice* result,

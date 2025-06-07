@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_payment_item.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_payment_shipping_option.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_payment_validation_errors.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_secure_payment_confirmation_availability.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
@@ -232,20 +233,23 @@ void ValidateShippingOptionOrPaymentItem(const T* item,
   DCHECK(item->amount()->hasCurrency());
 
   if (item->label().length() > PaymentRequest::kMaxStringLength) {
-    exception_state.ThrowTypeError("The label for " + item_name +
-                                   " cannot be longer than 1024 characters");
+    exception_state.ThrowTypeError(
+        WTF::StrCat({"The label for ", item_name,
+                     " cannot be longer than 1024 characters"}));
     return;
   }
 
   if (item->amount()->currency().length() > PaymentRequest::kMaxStringLength) {
-    exception_state.ThrowTypeError("The currency code for " + item_name +
-                                   " cannot be longer than 1024 characters");
+    exception_state.ThrowTypeError(
+        WTF::StrCat({"The currency code for ", item_name,
+                     " cannot be longer than 1024 characters"}));
     return;
   }
 
   if (item->amount()->value().length() > PaymentRequest::kMaxStringLength) {
-    exception_state.ThrowTypeError("The amount value for " + item_name +
-                                   " cannot be longer than 1024 characters");
+    exception_state.ThrowTypeError(
+        WTF::StrCat({"The amount value for ", item_name,
+                     " cannot be longer than 1024 characters"}));
     return;
   }
 
@@ -268,7 +272,8 @@ void ValidateShippingOptionOrPaymentItem(const T* item,
     execution_context.AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
         mojom::ConsoleMessageSource::kJavaScript,
         mojom::ConsoleMessageLevel::kError,
-        "Empty " + item_name + " label may be confusing the user"));
+        WTF::StrCat(
+            {"Empty ", item_name, " label may be confusing the user"})));
     return;
   }
 }
@@ -295,7 +300,8 @@ void ValidateAndConvertDisplayItems(
     ExecutionContext& execution_context,
     ExceptionState& exception_state) {
   if (input.size() > PaymentRequest::kMaxListSize) {
-    exception_state.ThrowTypeError("At most 1024 " + item_names + " allowed");
+    exception_state.ThrowTypeError(
+        WTF::StrCat({"At most 1024 ", item_names, " allowed"}));
     return;
   }
 
@@ -725,17 +731,17 @@ void ValidateAndConvertPaymentMethodData(
             &execution_context)) {
       if (input.size() > 1) {
         exception_state.ThrowRangeError(
-            String(kSecurePaymentConfirmationMethod) +
-            " must be the only payment method identifier specified in the "
-            "PaymentRequest constructor.");
+            WTF::StrCat({kSecurePaymentConfirmationMethod,
+                         " must be the only payment method identifier "
+                         "specified in the PaymentRequest constructor."}));
         return;
       } else if (options->requestShipping() || options->requestPayerName() ||
                  options->requestPayerEmail() || options->requestPayerPhone()) {
-        exception_state.ThrowRangeError(
-            String(kSecurePaymentConfirmationMethod) +
-            " payment method identifier cannot be used with "
-            "\"requestShipping\", \"requestPayerName\", \"requestPayerEmail\", "
-            "or \"requestPayerPhone\" options.");
+        exception_state.ThrowRangeError(WTF::StrCat(
+            {kSecurePaymentConfirmationMethod,
+             " payment method identifier cannot be used with "
+             "\"requestShipping\", \"requestPayerName\", "
+             "\"requestPayerEmail\", or \"requestPayerPhone\" options."}));
         return;
       }
     }
@@ -745,9 +751,9 @@ void ValidateAndConvertPaymentMethodData(
         !CSPAllowsConnectToSource(url, /*url_before_redirects=*/url,
                                   /*did_follow_redirect=*/false,
                                   execution_context)) {
-      exception_state.ThrowRangeError(
-          payment_method_data->supportedMethod() +
-          " payment method identifier violates Content Security Policy.");
+      exception_state.ThrowRangeError(WTF::StrCat(
+          {payment_method_data->supportedMethod(),
+           " payment method identifier violates Content Security Policy."}));
       return;
     }
 
@@ -818,38 +824,72 @@ void RecordActivationlessShow(ExecutionContext* execution_context,
   }
 }
 
-void OnIsSecurePaymentConfirmationAvailableResponse(
+V8SecurePaymentConfirmationAvailability::Enum
+ToV8SecurePaymentConfirmationAvailabilityEnum(
+    payments::mojom::blink::SecurePaymentConfirmationAvailabilityEnum value) {
+  switch (value) {
+    case payments::mojom::blink::SecurePaymentConfirmationAvailabilityEnum::
+        kAvailable:
+      return V8SecurePaymentConfirmationAvailability::Enum::kAvailable;
+    case payments::mojom::blink::SecurePaymentConfirmationAvailabilityEnum::
+        kUnavailableUnknownReason:
+      return V8SecurePaymentConfirmationAvailability::Enum::
+          kUnavailableUnknownReason;
+    case payments::mojom::blink::SecurePaymentConfirmationAvailabilityEnum::
+        kUnavailableFeatureNotEnabled:
+      return V8SecurePaymentConfirmationAvailability::Enum::
+          kUnavailableFeatureNotEnabled;
+    case payments::mojom::blink::SecurePaymentConfirmationAvailabilityEnum::
+        kUnavailableNoPermissionPolicy:
+      return V8SecurePaymentConfirmationAvailability::Enum::
+          kUnavailableNoPermissionPolicy;
+    case payments::mojom::blink::SecurePaymentConfirmationAvailabilityEnum::
+        kUnavailableNoUserVerifyingPlatformAuthenticator:
+      return V8SecurePaymentConfirmationAvailability::Enum::
+          kUnavailableNoUserVerifyingPlatformAuthenticator;
+  };
+}
+
+void OnSecurePaymentConfirmationAvailabilityResponse(
     std::unique_ptr<ScopedPromiseResolver> scoped_resolver,
-    bool is_available) {
-  auto* resolver = scoped_resolver->Release()->DowncastTo<IDLBoolean>();
-  resolver->Resolve(is_available);
+    payments::mojom::blink::SecurePaymentConfirmationAvailabilityEnum result) {
+  auto* resolver = scoped_resolver->Release()
+                       ->DowncastTo<V8SecurePaymentConfirmationAvailability>();
+  resolver->Resolve(V8SecurePaymentConfirmationAvailability(
+      ToV8SecurePaymentConfirmationAvailabilityEnum(result)));
 }
 }  // namespace
 
 // static
-ScriptPromise<IDLBoolean> PaymentRequest::isSecurePaymentConfirmationAvailable(
+ScriptPromise<V8SecurePaymentConfirmationAvailability>
+PaymentRequest::securePaymentConfirmationAvailability(
     ScriptState* script_state) {
-  auto* resolver =
-      MakeGarbageCollected<ScriptPromiseResolver<IDLBoolean>>(script_state);
+  auto* resolver = MakeGarbageCollected<
+      ScriptPromiseResolver<V8SecurePaymentConfirmationAvailability>>(
+      script_state);
   auto promise = resolver->Promise();
 
   if (!RuntimeEnabledFeatures::SecurePaymentConfirmationEnabled(
           ExecutionContext::From(script_state))) {
-    resolver->Resolve(false);
+    resolver->Resolve(V8SecurePaymentConfirmationAvailability(
+        V8SecurePaymentConfirmationAvailability::Enum::
+            kUnavailableFeatureNotEnabled));
     return promise;
   }
 
   if (!ExecutionContext::From(script_state)
            ->IsFeatureEnabled(
                network::mojom::PermissionsPolicyFeature::kPayment)) {
-    resolver->Resolve(false);
+    resolver->Resolve(V8SecurePaymentConfirmationAvailability(
+        V8SecurePaymentConfirmationAvailability::Enum::
+            kUnavailableNoPermissionPolicy));
     return promise;
   }
 
   CredentialManagerProxy::From(script_state)
       ->SecurePaymentConfirmationService()
-      ->IsSecurePaymentConfirmationAvailable(
-          WTF::BindOnce(&OnIsSecurePaymentConfirmationAvailableResponse,
+      ->SecurePaymentConfirmationAvailability(
+          WTF::BindOnce(&OnSecurePaymentConfirmationAvailabilityResponse,
                         std::make_unique<ScopedPromiseResolver>(resolver)));
 
   return promise;
@@ -937,7 +977,9 @@ ScriptPromise<PaymentResponse> PaymentRequest::show(
   DomWindow()->ConsumePaymentRequestToken();
   LocalFrame::ConsumeTransientUserActivation(local_frame);
 
-  VLOG(2) << "Renderer: PaymentRequest (" << id_.Utf8() << "): show()";
+  VLOG(2) << "Renderer: PaymentRequest (" << id_.Utf8() << "): show(); "
+          << "has_transient_user_activation=" << has_transient_user_activation
+          << ", has_delegated_activation: " << has_delegated_activation;
 
   UseCounter::Count(GetExecutionContext(), WebFeature::kPaymentRequestShow);
 
@@ -1368,10 +1410,10 @@ PaymentRequest::PaymentRequest(
       execution_context->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
           mojom::blink::ConsoleMessageSource::kJavaScript,
           mojom::blink::ConsoleMessageLevel::kError,
-          "Payment method \"" + data->supported_method +
-              "\" cannot be used with \"requestShipping\", "
-              "\"requestPayerName\", "
-              "\"requestPayerEmail\", or \"requestPayerPhone\"."));
+          WTF::StrCat({"Payment method \"", data->supported_method,
+                       "\" cannot be used with \"requestShipping\", "
+                       "\"requestPayerName\", \"requestPayerEmail\", or "
+                       "\"requestPayerPhone\"."})));
     }
   }
 

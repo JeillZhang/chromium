@@ -290,6 +290,10 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
 - (void)addHistoryServiceTypedURL:(const GURL&)URL
                    visitTimestamp:(base::Time)visitTimestamp;
 
+// Sets the page `title` for `URL` in the History Service.
+- (void)setHistoryServiceTitle:(const std::string_view&)title
+                       forPage:(const GURL&)URL;
+
 // Deletes typed URL from HistoryService.
 - (void)deleteHistoryServiceTypedURL:(const GURL&)URL;
 
@@ -359,9 +363,6 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
 // Simulates opening `url` from another application.
 - (void)simulateExternalAppURLOpeningWithURL:(NSURL*)url;
 - (void)simulateExternalAppURLOpeningAndWaitUntilOpenedWithGURL:(GURL)url;
-
-// Simulates opening the add account sign-in flow from the web.
-- (void)simulateAddAccountFromWeb;
 
 // Closes the current tab and waits for the UI to complete.
 - (void)closeCurrentTab;
@@ -558,11 +559,6 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
 
 #pragma mark - Sync Utilities (EG2)
 
-// Waits for the sync feature to be enabled/disabled. See SyncService::
-// IsSyncFeatureEnabled() for details. If not succeeded a GREYAssert is induced.
-- (void)waitForSyncFeatureEnabled:(BOOL)isEnabled
-                      syncTimeout:(base::TimeDelta)timeout;
-
 // Waits for sync to become fully active; see
 // SyncService::TransportState::ACTIVE for details. If not succeeded a
 // GREYAssert is induced.
@@ -730,6 +726,9 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
 // Returns YES if UKM feature is enabled.
 - (BOOL)isUKMEnabled [[nodiscard]];
 
+// Returns YES if DWA feature is enabled.
+- (BOOL)isDWAEnabled [[nodiscard]];
+
 // Returns YES if kTestFeature is enabled.
 - (BOOL)isTestFeatureEnabled;
 
@@ -756,9 +755,6 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
 
 // Returns whether the UseLensToSearchForImage feature is enabled;
 - (BOOL)isUseLensToSearchForImageEnabled;
-
-// Returns whether the Web Channels feature is enabled.
-- (BOOL)isWebChannelsEnabled;
 
 // Returns whether the Tab Group Sync feature is enabled.
 - (BOOL)isTabGroupSyncEnabled;
@@ -824,6 +820,7 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
 - (bool)localStateBooleanPref:(const std::string&)prefName;
 - (int)localStateIntegerPref:(const std::string&)prefName;
 - (std::string)localStateStringPref:(const std::string&)prefName;
+- (base::Time)localStateTimePref:(const std::string&)prefName;
 
 // Sets the integer value for the local state pref with `prefName`. `value`
 // can be either a casted enum or any other numerical value. Local State
@@ -892,6 +889,13 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
 
 // Copies `text` into the clipboard from the app's perspective.
 - (void)copyTextToPasteboard:(NSString*)text;
+
+// Copies `link` as NSURL into the clipboard from the app's perspective.
+- (void)copyLinkAsURLToPasteBoard:(NSString*)link;
+
+// Copies `image` as NSData with PNG representation into the clipboard from the
+// app's perspective.
+- (void)copyImageToPasteboard:(UIImage*)image;
 
 #pragma mark - Context Menus Utilities (EG2)
 
@@ -990,6 +994,11 @@ id<GREYAction> grey_longPressWithDuration(base::TimeDelta duration);
 
 // Forces an override of the variations stored permanent country.
 - (void)overrideVariationsServiceStoredPermanentCountry:(NSString*)country;
+
+#pragma mark - Shared Tab Groups Utilities
+
+// Waits for the MessagingBackendService to be initialized.
+- (NSError*)waitForMessagingBackendServiceInitialized;
 
 @end
 

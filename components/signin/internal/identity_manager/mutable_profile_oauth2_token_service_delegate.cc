@@ -22,6 +22,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/signin/internal/identity_manager/profile_oauth2_token_service.h"
@@ -346,8 +347,10 @@ MutableProfileOAuth2TokenServiceDelegate::CreateAccessTokenFetcher(
   std::string refresh_token = GetRefreshToken(account_id);
   DCHECK(!refresh_token.empty());
 #if BUILDFLAG(ENABLE_BOUND_SESSION_CREDENTIALS)
-  if (token_binding_helper_ &&
-      token_binding_helper_->HasBindingKey(account_id)) {
+  bool is_refresh_token_bound = IsRefreshTokenBound(account_id);
+  if (base::FeatureList::IsEnabled(
+          switches::kUseIssueTokenToFetchAccessTokens) ||
+      is_refresh_token_bound) {
     // `CoreAccountId` is always equal to Gaia ID on DICE platforms.
     // We cannot get Gaia ID from `account_tracker_service_` as it's sometimes
     // unknown and the only way of getting it requires an access token, which
@@ -360,7 +363,7 @@ MutableProfileOAuth2TokenServiceDelegate::CreateAccessTokenFetcher(
         std::string(version_info::GetVersionNumber()),
         std::string(
             version_info::GetChannelString(client_->GetClientChannel())));
-    if (token_binding_challenge.empty()) {
+    if (token_binding_challenge.empty() || !is_refresh_token_bound) {
       return fetcher;
     }
     // `fetcher_wrapper` makes `fetcher` wait until a binding key assertion is
@@ -474,8 +477,7 @@ void MutableProfileOAuth2TokenServiceDelegate::InvalidateTokenForMultilogin(
 }
 
 void MutableProfileOAuth2TokenServiceDelegate::LoadCredentialsInternal(
-    const CoreAccountId& primary_account_id,
-    bool is_syncing) {
+    const CoreAccountId& primary_account_id) {
   if (load_credentials_state() ==
       signin::LoadCredentialsState::LOAD_CREDENTIALS_IN_PROGRESS) {
     VLOG(1) << "Load credentials operation already in progress";
@@ -510,7 +512,6 @@ void MutableProfileOAuth2TokenServiceDelegate::LoadCredentialsInternal(
   }
 
   loading_primary_account_id_ = primary_account_id;
-  loading_is_syncing_ = is_syncing;
   web_data_service_request_ = token_web_data_->GetAllTokens(this);
 }
 
@@ -569,7 +570,6 @@ void MutableProfileOAuth2TokenServiceDelegate::OnWebDataServiceRequestDone(
 #endif
 
   loading_primary_account_id_ = CoreAccountId();
-  loading_is_syncing_ = false;
   FinishLoadingCredentials();
 }
 
@@ -613,14 +613,9 @@ void MutableProfileOAuth2TokenServiceDelegate::LoadAllCredentialsIntoMemory(
       case RevokeAllTokensOnLoad::kNo:
         break;
       case RevokeAllTokensOnLoad::kDeleteSiteDataOnExit:
-        if (switches::IsExplicitBrowserSigninUIOnDesktopEnabled()) {
-          // With Uno, tokens are not revoked when clearing cookies if the user
-          // is signed in non-syncing.
-          revoke_token =
-              loading_primary_account_id_.empty() || loading_is_syncing_;
-        } else {
-          revoke_token = true;
-        }
+        // Tokens are not revoked when clearing cookies if the user
+        // is signed in non-syncing.
+        revoke_token = loading_primary_account_id_.empty();
         break;
       case RevokeAllTokensOnLoad::kExplicitRevoke:
         revoke_token = true;
@@ -813,7 +808,6 @@ void MutableProfileOAuth2TokenServiceDelegate::RevokeAllCredentialsInternal(
     // then the tokens should be revoked on load.
     revoke_all_tokens_on_load_ = RevokeAllTokensOnLoad::kExplicitRevoke;
     loading_primary_account_id_ = CoreAccountId();
-    loading_is_syncing_ = false;
   }
 
   // Make a temporary copy of the account ids.

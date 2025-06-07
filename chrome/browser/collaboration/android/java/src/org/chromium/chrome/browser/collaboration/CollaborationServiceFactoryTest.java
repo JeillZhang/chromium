@@ -28,12 +28,15 @@ import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.components.collaboration.CollaborationControllerDelegate;
 import org.chromium.components.collaboration.CollaborationService;
+import org.chromium.components.collaboration.CollaborationServiceLeaveOrDeleteEntryPoint;
+import org.chromium.components.collaboration.CollaborationServiceShareOrManageEntryPoint;
 import org.chromium.components.collaboration.CollaborationStatus;
 import org.chromium.components.collaboration.ServiceStatus;
 import org.chromium.components.collaboration.SigninStatus;
 import org.chromium.components.collaboration.SyncStatus;
 import org.chromium.components.data_sharing.GroupData;
 import org.chromium.components.data_sharing.member_role.MemberRole;
+import org.chromium.components.tab_group_sync.EitherId.EitherGroupId;
 import org.chromium.url.GURL;
 
 import java.util.concurrent.CountDownLatch;
@@ -61,7 +64,15 @@ public class CollaborationServiceFactoryTest {
 
                     @Override
                     public void startShareOrManageFlow(
-                            CollaborationControllerDelegate delegate, String syncId) {}
+                            CollaborationControllerDelegate delegate,
+                            EitherGroupId eitherId,
+                            @CollaborationServiceShareOrManageEntryPoint int entry) {}
+
+                    @Override
+                    public void startLeaveOrDeleteFlow(
+                            CollaborationControllerDelegate delegate,
+                            EitherGroupId eitherId,
+                            @CollaborationServiceLeaveOrDeleteEntryPoint int entry) {}
 
                     @Override
                     public ServiceStatus getServiceStatus() {
@@ -90,6 +101,12 @@ public class CollaborationServiceFactoryTest {
                     public void deleteGroup(String groupId, Callback<Boolean> callback) {
                         callback.onResult(false);
                     }
+
+                    @Override
+                    public void addObserver(Observer observer) {}
+
+                    @Override
+                    public void removeObserver(Observer observer) {}
                 };
 
         CollaborationServiceFactory.setForTesting(testService);
@@ -155,7 +172,7 @@ public class CollaborationServiceFactoryTest {
 
     @Test
     @MediumTest
-    @DisableFeatures(ChromeFeatureList.DATA_SHARING)
+    @DisableFeatures({ChromeFeatureList.DATA_SHARING, ChromeFeatureList.DATA_SHARING_JOIN_ONLY})
     public void testServiceCreation_EmptyService() throws TimeoutException {
         LibraryLoader.getInstance().ensureInitialized();
         mActivityTestRule.startMainActivityOnBlankPage();

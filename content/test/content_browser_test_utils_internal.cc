@@ -1135,18 +1135,6 @@ bool CommitNavigationPauser::WillProcessDidCommitNavigation(
   return false;
 }
 
-// TODO(crbug.com/40278950): Use
-// `WebFrameWidgetImpl::NotifySwapAndPresentationTime` instead.
-void WaitForCopyableViewInWebContents(WebContents* web_contents) {
-  WaitForCopyableViewInFrame(web_contents->GetPrimaryMainFrame());
-}
-
-void WaitForCopyableViewInFrame(RenderFrameHost* render_frame_host) {
-  base::test::TestFuture<void> future;
-  NotifyCopyableViewInFrame(render_frame_host, future.GetCallback());
-  CHECK(future.Wait());
-}
-
 namespace {
 
 // Helper to return a 200 OK non-cacheable response for a first request, and
@@ -1182,6 +1170,37 @@ void AddRedirectOnSecondNavigationHandler(net::EmbeddedTestServer* server) {
       "/redirect-on-second-navigation",
       base::BindRepeating(&RedirectToTargetOnSecondNavigation,
                           base::OwnedRef(navigation_counter))));
+}
+
+LoadingStartObserver::LoadingStartObserver(WebContents* web_contents,
+                                           Callback callback)
+    : WebContentsObserver(web_contents), callback_(std::move(callback)) {}
+
+LoadingStartObserver::~LoadingStartObserver() = default;
+
+void LoadingStartObserver::DidStartLoading() {
+  callback_.Run();
+}
+
+LoadingStopObserver::LoadingStopObserver(WebContents* web_contents,
+                                         Callback callback)
+    : WebContentsObserver(web_contents), callback_(std::move(callback)) {}
+
+LoadingStopObserver::~LoadingStopObserver() = default;
+
+void LoadingStopObserver::DidStopLoading() {
+  callback_.Run();
+}
+
+LoadFinishObserver::LoadFinishObserver(WebContents* web_contents,
+                                       Callback callback)
+    : WebContentsObserver(web_contents), callback_(std::move(callback)) {}
+
+LoadFinishObserver::~LoadFinishObserver() = default;
+
+void LoadFinishObserver::DidFinishLoad(RenderFrameHost* render_frame_host,
+                                       const GURL& validated_url) {
+  callback_.Run(render_frame_host, validated_url);
 }
 
 }  // namespace content

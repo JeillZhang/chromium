@@ -29,6 +29,7 @@
 #include "ui/accessibility/platform/ax_platform_node.h"
 #import "ui/base/cocoa/user_interface_item_command_handler.h"
 #import "ui/base/cocoa/window_size_constants.h"
+#include "ui/gfx/native_widget_types.h"
 
 namespace {
 
@@ -128,6 +129,16 @@ void OrderChildWindow(NSWindow* child_window,
 - (BOOL)_isNonactivatingPanel;
 @end
 
+struct NSEdgeAndCornerThicknesses {
+  double top, topLeft, left, bottomLeft, bottom, bottomRight, right, topRight;
+};
+
+@interface NSWindow (NSWindowResizing)
++ (void)_getExteriorResizeEdgeThicknesses:
+            (NSEdgeAndCornerThicknesses*)outThicknesses
+                             forStyleMask:(NSWindowStyleMask)styleMask;
+@end
+
 // Private API as of at least macOS 13.
 @interface NSWindow (NSWindow_Theme)
 - (void)_regularMinimizeToDock;
@@ -198,7 +209,6 @@ void OrderChildWindow(NSWindow* child_window,
   BOOL _willUpdateRestorableState;
   BOOL _willSaveRestorableStateAfterDelay;
   BOOL _isEnforcingNeverMadeVisible;
-  BOOL _preventKeyWindow;
   BOOL _activationIndependence;
   BOOL _isTooltip;
   BOOL _isHeadless;
@@ -210,6 +220,7 @@ void OrderChildWindow(NSWindow* child_window,
 @synthesize isTooltip = _isTooltip;
 @synthesize isHeadless = _isHeadless;
 @synthesize isShufflingForOrdering = _isShufflingForOrdering;
+@synthesize preventKeyWindow = _preventKeyWindow;
 @synthesize childWindowAddedHandler = _childWindowAddedHandler;
 @synthesize childWindowRemovedHandler = _childWindowRemovedHandler;
 @synthesize commandDispatchParentOverride = _commandDispatchParentOverride;
@@ -423,6 +434,22 @@ void OrderChildWindow(NSWindow* child_window,
     return YES;
   }
   return [super _isNonactivatingPanel];
+}
+
++ (void)_getExteriorResizeEdgeThicknesses:
+            (NSEdgeAndCornerThicknesses*)outThicknesses
+                             forStyleMask:(NSWindowStyleMask)styleMask {
+  // Ensure non-titled resizable windows have a reasonable exterior resize area.
+  // By default, they might have none, making resizing difficult.
+  // Override to titled window's resize edge thickness (4px on macOS 15).
+  if (styleMask & NSWindowStyleMaskResizable) {
+    return [super
+        _getExteriorResizeEdgeThicknesses:outThicknesses
+                             forStyleMask:styleMask | NSWindowStyleMaskTitled];
+  }
+
+  return [super _getExteriorResizeEdgeThicknesses:outThicknesses
+                                     forStyleMask:styleMask];
 }
 
 // Ignore [super canBecome{Key,Main}Window]. The default is NO for windows with
@@ -703,12 +730,11 @@ void OrderChildWindow(NSWindow* child_window,
 
   _willUpdateRestorableState = NO;
 
-  // On macOS 12+, create restorable state archives with secure encoding. See
-  // the article at
+  // Create restorable state archives with secure encoding. See the article at
   // https://sector7.computest.nl/post/2022-08-process-injection-breaking-all-macos-security-layers-with-a-single-vulnerability/
   // for more details.
-  NSKeyedArchiver* encoder = [[NSKeyedArchiver alloc]
-      initRequiringSecureCoding:base::mac::MacOSMajorVersion() >= 12];
+  NSKeyedArchiver* encoder =
+      [[NSKeyedArchiver alloc] initRequiringSecureCoding:YES];
   encoder.delegate = self;
   [self encodeRestorableStateWithCoder:encoder];
   [encoder finishEncoding];
@@ -806,8 +832,9 @@ void OrderChildWindow(NSWindow* child_window,
 // NSWindow overrides (NSAccessibility informal protocol implementation).
 
 - (NSString*)accessibilityDocument {
-  if (id root = [self rootAccessibilityObject]) {
-    if (auto* cocoaNode = ui::AXPlatformNode::FromNativeViewAccessible(root)) {
+  if (id<NSAccessibility> root = [self rootAccessibilityObject]) {
+    if (auto* cocoaNode = ui::AXPlatformNode::FromNativeViewAccessible(
+            gfx::NativeViewAccessible(root))) {
       return [NSString stringWithUTF8String:cocoaNode->GetRootURL().c_str()];
     }
   }

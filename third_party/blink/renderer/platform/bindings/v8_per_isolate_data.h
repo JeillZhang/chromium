@@ -23,16 +23,13 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_V8_PER_ISOLATE_DATA_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_V8_PER_ISOLATE_DATA_H_
 
+#include <array>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "gin/public/gin_embedders.h"
 #include "gin/public/isolate_holder.h"
@@ -246,11 +243,13 @@ class PLATFORM_EXPORT V8PerIsolateData final {
   };
 
   UserData* GetUserData(UserData::Key key) const {
-    return user_data_[static_cast<size_t>(key)];
+    // SAFETY: user_data_ size based upon UserData::Key::kNumberOfKeys.
+    return UNSAFE_BUFFERS(user_data_[static_cast<size_t>(key)]);
   }
 
   void SetUserData(UserData::Key key, UserData* data) {
-    user_data_[static_cast<size_t>(key)] = data;
+    // SAFETY: user_data_ size based upon UserData::Key::kNumberOfKeys.
+    UNSAFE_BUFFERS(user_data_[static_cast<size_t>(key)]) = data;
   }
 
   void SetTopOfDictionaryStack(DictionaryConversionContext* top) {
@@ -339,8 +338,9 @@ class PLATFORM_EXPORT V8PerIsolateData final {
   bool is_handling_recursion_level_error_ = false;
 
   Persistent<ScriptRegexp> password_regexp_;
-  Persistent<UserData>
-      user_data_[static_cast<size_t>(UserData::Key::kNumberOfKeys)];
+  std::array<Persistent<UserData>,
+             static_cast<size_t>(UserData::Key::kNumberOfKeys)>
+      user_data_;
 
   Persistent<ActiveScriptWrappableManager> active_script_wrappable_manager_;
 

@@ -44,12 +44,13 @@
 #include "base/win/scoped_localalloc.h"
 #include "base/win/windows_version.h"
 #include "chrome/installer/util/lzma_util.h"
+#include "chrome/updater/branded_constants.h"
 #include "chrome/updater/constants.h"
 #include "chrome/updater/ping_configurator.h"
 #include "chrome/updater/tag.h"
-#include "chrome/updater/update_usage_stats_task.h"
 #include "chrome/updater/updater_branding.h"
 #include "chrome/updater/updater_scope.h"
+#include "chrome/updater/usage_stats_permissions.h"
 #include "chrome/updater/util/util.h"
 #include "chrome/updater/util/win_util.h"
 #include "chrome/updater/win/installer/configuration.h"
@@ -107,9 +108,7 @@ base::ScopedClosureRunner CreateSplashScreen() {
 
   ui_initialized_event.Wait();
   return base::ScopedClosureRunner(base::BindOnce(
-      [](HWND splash_hwnd) {
-        ::SendMessage(splash_hwnd, WM_CLOSE, 0, 0);
-      },
+      [](HWND splash_hwnd) { ::SendMessage(splash_hwnd, WM_CLOSE, 0, 0); },
       splash_hwnd));
 }
 
@@ -142,7 +141,8 @@ void SendPing(int exit_code, int extra_code) {
                         {
                             .event_type =
                                 update_client::protocol_request::kEventInstall,
-                            .result = 0,
+                            .result = update_client::protocol_request::
+                                kEventResultError,
                             .error_code = exit_code,
                             .extra_code1 = extra_code,
                         },
@@ -456,7 +456,7 @@ ProcessExitResult InstallerMain(HMODULE module,
            L" ", cmd_line_args.get()}));
 
   const UpdaterScope scope = GetUpdaterScopeForCommandLine(command_line);
-  usage_stats_enable = AreRawUsageStatsEnabled(scope);
+  usage_stats_enable = AnyAppEnablesUsageStats(scope);
   const std::optional<tagging::TagArgs> tag_args =
       GetTagArgsForCommandLine(command_line).tag_args;
   if (tag_args) {

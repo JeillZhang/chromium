@@ -2099,11 +2099,11 @@ TEST_F(AXPlatformNodeTextRangeProviderTest, TestITextRangeProviderMoveFormat) {
                   /*expected_count*/ 1);
   EXPECT_UIA_MOVE(text_range_provider, TextUnit_Format,
                   /*count*/ 2,
-                  /*expected_text*/ L"Paragraph 1\n",
+                  /*expected_text*/ L"Paragraph 1",
                   /*expected_count*/ 2);
   EXPECT_UIA_MOVE(text_range_provider, TextUnit_Format,
                   /*count*/ 1,
-                  /*expected_text*/ L"Paragraph 2\nParagraph 3\n",
+                  /*expected_text*/ L"Paragraph 2\nParagraph 3",
                   /*expected_count*/ 1);
   EXPECT_UIA_MOVE(text_range_provider, TextUnit_Format,
                   /*count*/ 1,
@@ -2123,7 +2123,7 @@ TEST_F(AXPlatformNodeTextRangeProviderTest, TestITextRangeProviderMoveFormat) {
   // Move backward.
   EXPECT_UIA_MOVE(text_range_provider, TextUnit_Format,
                   /*count*/ -4,
-                  /*expected_text*/ L"bold text\n",
+                  /*expected_text*/ L"bold text",
                   /*expected_count*/ -4);
   EXPECT_UIA_MOVE(text_range_provider, TextUnit_Format,
                   /*count*/ -1,
@@ -4514,18 +4514,15 @@ TEST_F(AXPlatformNodeTextRangeProviderTest,
     // |text_node| has a grammar error on "some text", a highlight for the
     // first word, a spelling error for the second word, a "spelling-error"
     // highlight for the fourth word, and a "grammar-error" highlight for the
-    // fifth word. So the range has both spelling and grammar error and also
-    // highlighted text.
+    // fifth word. So the range has mixed attributes.
     base::win::ScopedVariant annotation_types_variant;
     EXPECT_HRESULT_SUCCEEDED(text_range_provider->GetAttributeValue(
         UIA_AnnotationTypesAttributeId, annotation_types_variant.Receive()));
 
-    EXPECT_EQ(annotation_types_variant.type(), VT_ARRAY | VT_I4);
-    std::vector<int> expected_annotations = {AnnotationType_SpellingError,
-                                             AnnotationType_GrammarError,
-                                             AnnotationType_Highlighted};
-    EXPECT_UIA_SAFEARRAY_EQ(V_ARRAY(annotation_types_variant.ptr()),
-                            expected_annotations);
+    EXPECT_UIA_TEXTRANGE_EQ(text_range_provider,
+                            L"some text and some other text");
+    EXPECT_UIA_TEXTATTRIBUTE_MIXED(text_range_provider,
+                                   UIA_AnnotationTypesAttributeId);
   }
 
   {
@@ -4636,15 +4633,15 @@ TEST_F(AXPlatformNodeTextRangeProviderTest,
 
   {
     // |heading_text_node| has a a spelling error for one word, and no
-    // annotations for the remaining text, so the range has spelling error.
+    // annotations for the remaining text, so the entire range has mixed
+    // annotations.
     base::win::ScopedVariant annotation_types_variant;
     EXPECT_HRESULT_SUCCEEDED(heading_text_range_provider->GetAttributeValue(
         UIA_AnnotationTypesAttributeId, annotation_types_variant.Receive()));
 
-    EXPECT_EQ(annotation_types_variant.type(), VT_ARRAY | VT_I4);
-    std::vector<int> expected_annotations = {AnnotationType_SpellingError};
-    EXPECT_UIA_SAFEARRAY_EQ(V_ARRAY(annotation_types_variant.ptr()),
-                            expected_annotations);
+    EXPECT_UIA_TEXTRANGE_EQ(heading_text_range_provider, L"more text");
+    EXPECT_UIA_TEXTATTRIBUTE_MIXED(heading_text_range_provider,
+                                   UIA_AnnotationTypesAttributeId);
   }
 
   {
@@ -4675,9 +4672,9 @@ TEST_F(AXPlatformNodeTextRangeProviderTest,
     // |heading_text_node| = "more text" (without quotes)
     // In this, 'text' is annotated with a spelling error.
     //
-    // We want to test for spelling errors in 'text' selection combined with
-    // character(s) from adjacent anchor(s) which do not have any such
-    // annotations.
+    // We want to test for mixed annotation in 'text' selection for spelling
+    // error text combined with character(s) from adjacent anchor(s) which do
+    // not have any such annotations.
     //
     // start: TextPosition, anchor_id=4, text_offset=5,
     //        annotated_text=more <t>ext marked text
@@ -4685,21 +4682,17 @@ TEST_F(AXPlatformNodeTextRangeProviderTest,
     //        annotated_text=more text m<a>rked text
     AXPlatformNodeWin* owner = static_cast<AXPlatformNodeWin*>(
         AXPlatformNodeFromNode(heading_text_node));
-    ComPtr<AXPlatformNodeTextRangeProviderWin> range_with_annotations;
+    ComPtr<AXPlatformNodeTextRangeProviderWin> mixed_text_range_provider;
     CreateTextRangeProviderWin(
-        range_with_annotations, owner,
+        mixed_text_range_provider, owner,
         /*start_anchor=*/heading_text_node, /*start_offset=*/5,
         /*start_affinity*/ ax::mojom::TextAffinity::kDownstream,
-        /*end_anchor=*/mark_text_node, /*end_offset=*/1,
+        /*end_anchor=*/mark_text_node, /*end_offset=*/4,
         /*end_affinity*/ ax::mojom::TextAffinity::kDownstream);
 
-    base::win::ScopedVariant annotation_types_variant;
-    EXPECT_HRESULT_SUCCEEDED(range_with_annotations->GetAttributeValue(
-        UIA_AnnotationTypesAttributeId, annotation_types_variant.Receive()));
-
-    std::vector<int> expected_annotations = {AnnotationType_SpellingError};
-    EXPECT_UIA_SAFEARRAY_EQ(V_ARRAY(annotation_types_variant.ptr()),
-                            expected_annotations);
+    EXPECT_UIA_TEXTRANGE_EQ(mixed_text_range_provider, L"textmark");
+    EXPECT_UIA_TEXTATTRIBUTE_MIXED(mixed_text_range_provider,
+                                   UIA_AnnotationTypesAttributeId);
   }
 
   {
@@ -8091,6 +8084,88 @@ TEST_F(AXPlatformNodeTextRangeProviderTest,
   BOOL are_same;
   original->Compare(after_deletion_expected.Get(), &are_same);
   EXPECT_TRUE(are_same);
+}
+
+// This test validates that the move-by-format operation does not include the
+// trailing newline characters. This is important because Narrator's heading
+// navigation, built using this move-by-format operation, expects the range to
+// be fully contained within the anchor. When a trailing newline character is
+// included, it often indicates that the end endpoint is at the start of the
+// next anchor instead of being at the end of the current anchor.
+TEST_F(AXPlatformNodeTextRangeProviderTest,
+       MoveByFormatDoesNotIncludeTrailingNewlines) {
+  AXNodeData static_text_1;
+  static_text_1.id = 2;
+  static_text_1.role = ax::mojom::Role::kStaticText;
+  static_text_1.SetName("before");
+  static_text_1.AddBoolAttribute(
+      ax::mojom::BoolAttribute::kIsLineBreakingObject, true);
+
+  AXNodeData heading_data;
+  heading_data.id = 3;
+  heading_data.role = ax::mojom::Role::kHeading;
+  heading_data.SetName("Heading");
+  heading_data.AddBoolAttribute(ax::mojom::BoolAttribute::kIsLineBreakingObject,
+                                true);
+
+  AXNodeData static_text_2;
+  static_text_2.id = 4;
+  static_text_2.role = ax::mojom::Role::kStaticText;
+  static_text_2.SetName("Heading");
+  heading_data.child_ids = {static_text_2.id};
+
+  AXNodeData paragraph_data;
+  paragraph_data.id = 5;
+  paragraph_data.role = ax::mojom::Role::kParagraph;
+  paragraph_data.AddBoolAttribute(
+      ax::mojom::BoolAttribute::kIsLineBreakingObject, true);
+
+  AXNodeData static_text_3;
+  static_text_3.id = 6;
+  static_text_3.role = ax::mojom::Role::kStaticText;
+  static_text_3.SetName("after");
+  paragraph_data.child_ids = {static_text_3.id};
+
+  AXNodeData root_data;
+  root_data.id = 1;
+  root_data.role = ax::mojom::Role::kRootWebArea;
+  root_data.child_ids = {static_text_1.id, heading_data.id, paragraph_data.id};
+
+  AXTreeUpdate update;
+  update.has_tree_data = true;
+  update.root_id = root_data.id;
+  update.nodes = {root_data,     static_text_1,  heading_data,
+                  static_text_2, paragraph_data, static_text_3};
+  update.tree_data.tree_id = AXTreeID::CreateNewAXTreeID();
+
+  Init(update);
+
+  AXNode* root_node = GetRoot();
+  ComPtr<ITextRangeProvider> text_range_provider;
+  GetTextRangeProviderFromTextNode(text_range_provider, root_node);
+
+  EXPECT_UIA_MOVE(text_range_provider, TextUnit_Format,
+                  /*count*/ 0,
+                  /*expected_text*/
+                  L"before\nHeading\nafter",
+                  /*expected_count*/ 0);
+
+  // Here, we expect the newline character because we're using the
+  // MoveEndpointByUnit function, which moves only one endpoint to unit
+  // boundary. It should expand to the enclosing unit like Move does when moving
+  // both endpoints.
+  EXPECT_UIA_MOVE_ENDPOINT_BY_UNIT(
+      text_range_provider, TextPatternRangeEndpoint_End, TextUnit_Format,
+      /*count*/ -2,
+      /*expected_text*/
+      L"before\n",
+      /*expected_count*/ -2);
+
+  EXPECT_UIA_MOVE(text_range_provider, TextUnit_Format,
+                  /*count*/ 1,
+                  /*expected_text*/
+                  L"Heading",
+                  /*expected_count*/ 1);
 }
 
 }  // namespace ui

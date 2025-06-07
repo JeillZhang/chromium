@@ -246,8 +246,8 @@ class FakeMojoMediaClient : public media::MojoMediaClient {
       media::mojom::CommandBufferIdPtr command_buffer_id,
       media::RequestOverlayInfoCB request_overlay_info_cb,
       const gfx::ColorSpace& target_color_space,
-      mojo::PendingRemote<media::stable::mojom::StableVideoDecoder>
-          oop_video_decoder) override {
+      mojo::PendingRemote<media::mojom::VideoDecoder> oop_video_decoder)
+      override {
     return std::make_unique<media::FakeVideoDecoder>(
         0 /* decoder_id */, 0 /* decoding_delay */,
         13 /* max_parallel_decoding_requests */, media::BytesDecodedCB());
@@ -287,20 +287,19 @@ class FakeInterfaceFactory : public media::mojom::InterfaceFactory {
   // FakeMojoMediaClient will create a FakeGpuVideoDecoder.
   void CreateVideoDecoder(
       mojo::PendingReceiver<media::mojom::VideoDecoder> receiver,
-      mojo::PendingRemote<media::stable::mojom::StableVideoDecoder>
-          dst_video_decoder) override {
+      mojo::PendingRemote<media::mojom::VideoDecoder> dst_video_decoder)
+      override {
     video_decoder_receivers_.Add(
         std::make_unique<media::MojoVideoDecoderService>(
             &mojo_media_client_, &cdm_service_context_,
-            mojo::PendingRemote<media::stable::mojom::StableVideoDecoder>()),
+            mojo::PendingRemote<media::mojom::VideoDecoder>()),
         std::move(receiver));
   }
 
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
-  void CreateStableVideoDecoder(
-      mojo::PendingReceiver<media::stable::mojom::StableVideoDecoder>
-          video_decoder) override {
-    // TODO(b/327268445): we'll need to complete this for GTFO OOP-VD testing.
+  void CreateVideoDecoderWithTracker(
+      mojo::PendingReceiver<media::mojom::VideoDecoder> receiver,
+      mojo::PendingRemote<media::mojom::VideoDecoderTracker> tracker) override {
   }
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 
@@ -323,12 +322,6 @@ class FakeInterfaceFactory : public media::mojom::InterfaceFactory {
       mojo::PendingRemote<media::mojom::FlingingRendererClientExtension>
           client_extension,
       mojo::PendingReceiver<media::mojom::Renderer> receiver) override {}
-  void CreateMediaPlayerRenderer(
-      mojo::PendingRemote<media::mojom::MediaPlayerRendererClientExtension>
-          client_extension_remote,
-      mojo::PendingReceiver<media::mojom::Renderer> receiver,
-      mojo::PendingReceiver<media::mojom::MediaPlayerRendererExtension>
-          renderer_extension_receiver) override {}
 #endif  // BUILDFLAG(IS_ANDROID)
 #if BUILDFLAG(IS_WIN)
   void CreateMediaFoundationRenderer(
@@ -534,6 +527,7 @@ class MojoGpuVideoAcceleratorFactoriesTest : public testing::Test {
   scoped_refptr<TestGpuChannelHost> gpu_channel_host_;
   scoped_refptr<MockContextProviderCommandBuffer> mock_context_provider_;
   std::unique_ptr<gpu::CommandBufferProxyImpl> gpu_command_buffer_proxy_;
+  NullMediaLog media_log_;
   FakeVEAProviderImpl fake_vea_provider_;
 
 #if BUILDFLAG(ENABLE_MOJO_VIDEO_DECODER)
@@ -638,7 +632,7 @@ TEST_F(MojoGpuVideoAcceleratorFactoriesDeathTest, CreateVideoDecoderFailed) {
 
   EXPECT_DCHECK_DEATH({
     EXPECT_EQ(gpu_video_accelerator_factories->CreateVideoDecoder(
-                  nullptr, std::move(mock_cb)),
+                  &media_log_, std::move(mock_cb)),
               nullptr);
   });
 }
@@ -725,7 +719,7 @@ TEST_F(MojoGpuVideoAcceleratorFactoriesTest, CreateVideoDecoder) {
       CreateGpuVideoAcceleratorFactories(true, false);
 
   EXPECT_NE(gpu_video_accelerator_factories->CreateVideoDecoder(
-                nullptr, std::move(mock_cb)),
+                &media_log_, std::move(mock_cb)),
             nullptr);
 }
 #else

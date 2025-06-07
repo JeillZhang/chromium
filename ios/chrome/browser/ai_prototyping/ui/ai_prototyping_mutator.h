@@ -32,6 +32,12 @@ enum TabOrganizationRequest_TabOrganizationModelStrategy : int;
     (optimization_guide::proto::
          TabOrganizationRequest_TabOrganizationModelStrategy)strategy;
 
+// Executes an enhanced calendar request with a given (optional) prompt and
+// selected text.
+- (void)executeEnhancedCalendarQueryWithPrompt:(NSString*)prompt
+                                  selectedText:(NSString*)selectedText;
+;
+
 @end
 
 #endif  // IOS_CHROME_BROWSER_AI_PROTOTYPING_UI_AI_PROTOTYPING_MUTATOR_H_

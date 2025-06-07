@@ -10,12 +10,11 @@
 #include "base/time/default_tick_clock.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
-#include "chrome/browser/media/media_engagement_service.h"
+#include "chrome/browser/media/media_engagement_service.h"  // nogncheck crbug.com/422038808
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 #include "chrome/browser/permissions/permission_decision_auto_blocker_factory.h"
-#include "chrome/browser/picture_in_picture/auto_picture_in_picture_tab_strip_observer_helper.h"
-#include "chrome/browser/picture_in_picture/auto_pip_setting_helper.h"
+#include "chrome/browser/picture_in_picture/auto_picture_in_picture_tab_observer_helper_base.h"
 #include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/recently_audible_helper.h"
@@ -25,7 +24,14 @@
 #include "content/public/browser/media_session_service.h"
 #include "media/base/media_switches.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/frame/user_activation_state.h"
+
+// TODO(crbug.com/421608904): integrate setting helper with auto-pip on Android
+// once permission UX is finalized.
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/picture_in_picture/auto_pip_setting_helper.h"
+#endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
@@ -43,13 +49,11 @@ AutoPictureInPictureTabHelper::AutoPictureInPictureTabHelper(
       media_engagement_service_(MediaEngagementService::Get(
           Profile::FromBrowserContext(web_contents->GetBrowserContext()))),
       clock_(base::DefaultTickClock::GetInstance()) {
-  // `base::Unretained` is safe here since we own `tab_strip_observer_helper_`.
-  tab_strip_observer_helper_ =
-      std::make_unique<AutoPictureInPictureTabStripObserverHelper>(
-          web_contents,
-          base::BindRepeating(
-              &AutoPictureInPictureTabHelper::OnTabActivatedChanged,
-              base::Unretained(this)));
+  // `base::Unretained` is safe here since we own `tab_observer_helper_`.
+  tab_observer_helper_ = AutoPictureInPictureTabObserverHelperBase::Create(
+      web_contents,
+      base::BindRepeating(&AutoPictureInPictureTabHelper::OnTabActivatedChanged,
+                          base::Unretained(this)));
 
   // Connect to receive audio focus events.
   mojo::Remote<media_session::mojom::AudioFocusManager> audio_focus_remote;
@@ -82,7 +86,9 @@ bool AutoPictureInPictureTabHelper::HasAutoPictureInPictureBeenRegistered()
 void AutoPictureInPictureTabHelper::PrimaryPageChanged(content::Page& page) {
   has_ever_registered_for_auto_picture_in_picture_ = false;
   // On navigation, forget any 'allow once' state.
+#if !BUILDFLAG(IS_ANDROID)
   auto_pip_setting_helper_.reset();
+#endif  // !BUILDFLAG(IS_ANDROID)
 
   StopAndResetAsyncTasks();
 }
@@ -121,19 +127,27 @@ void AutoPictureInPictureTabHelper::MaybeRecordPictureInPictureChanged(
   current_enter_pip_time_ = std::nullopt;
 
   if (auto_pip_trigger_reason_ ==
-      AutoPipSettingHelper::AutoPipReason::kVideoConferencing) {
+      media::PictureInPictureEventsInfo::AutoPipReason::kVideoConferencing) {
     UMA_HISTOGRAM_CUSTOM_TIMES(
         "Media.AutoPictureInPicture.EnterPictureInPicture.AutomaticReason."
         "VideoConferencing.TotalTime",
         total_pip_time, base::Milliseconds(1), base::Minutes(2), 50);
+    UMA_HISTOGRAM_CUSTOM_TIMES(
+        "Media.AutoPictureInPicture.EnterPictureInPicture.AutomaticReason."
+        "VideoConferencing.TotalTimeV2",
+        total_pip_time, base::Milliseconds(1), base::Hours(10), 100);
     AccumulateTotalPipTimeForSession(total_pip_time,
                                      /*is_video_conferencing=*/true);
   } else if (auto_pip_trigger_reason_ ==
-             AutoPipSettingHelper::AutoPipReason::kMediaPlayback) {
+             media::PictureInPictureEventsInfo::AutoPipReason::kMediaPlayback) {
     UMA_HISTOGRAM_CUSTOM_TIMES(
         "Media.AutoPictureInPicture.EnterPictureInPicture.AutomaticReason."
         "MediaPlayback.TotalTime",
         total_pip_time, base::Milliseconds(1), base::Minutes(2), 50);
+    UMA_HISTOGRAM_CUSTOM_TIMES(
+        "Media.AutoPictureInPicture.EnterPictureInPicture.AutomaticReason."
+        "MediaPlayback.TotalTimeV2",
+        total_pip_time, base::Milliseconds(1), base::Hours(10), 100);
     AccumulateTotalPipTimeForSession(total_pip_time,
                                      /*is_video_conferencing=*/false);
   }
@@ -151,6 +165,11 @@ void AutoPictureInPictureTabHelper::MaybeRecordTotalPipTimeForSession() {
         "VideoConferencing.TotalTimeForSession",
         total_video_conferencing_pip_time_for_session_.value(),
         base::Milliseconds(1), base::Minutes(2), 50);
+    base::UmaHistogramCustomTimes(
+        "Media.AutoPictureInPicture.EnterPictureInPicture.AutomaticReason."
+        "VideoConferencing.TotalTimeForSessionV2",
+        total_video_conferencing_pip_time_for_session_.value(),
+        base::Milliseconds(1), base::Hours(10), 100);
   }
 
   if (total_media_playback_pip_time_for_session_) {
@@ -159,6 +178,11 @@ void AutoPictureInPictureTabHelper::MaybeRecordTotalPipTimeForSession() {
         "MediaPlayback.TotalTimeForSession",
         total_media_playback_pip_time_for_session_.value(),
         base::Milliseconds(1), base::Minutes(2), 50);
+    base::UmaHistogramCustomTimes(
+        "Media.AutoPictureInPicture.EnterPictureInPicture.AutomaticReason."
+        "MediaPlayback.TotalTimeForSessionV2",
+        total_media_playback_pip_time_for_session_.value(),
+        base::Milliseconds(1), base::Hours(10), 100);
   }
 
   total_video_conferencing_pip_time_for_session_ = std::nullopt;
@@ -177,6 +201,8 @@ void AutoPictureInPictureTabHelper::MediaPictureInPictureChanged(
     is_in_auto_picture_in_picture_ = false;
     MaybeRecordPictureInPictureChanged(false);
     MaybeStartOrStopObservingTabStrip();
+    auto_pip_trigger_reason_ =
+        media::PictureInPictureEventsInfo::AutoPipReason::kUnknown;
     return;
   }
 
@@ -206,7 +232,7 @@ void AutoPictureInPictureTabHelper::OnTabActivatedChanged(
   if (is_tab_activated_) {
     OnTabBecameActive();
   } else {
-    auto* active_contents = tab_strip_observer_helper_->GetActiveWebContents();
+    auto* active_contents = tab_observer_helper_->GetActiveWebContents();
     if (auto* active_tab_helper =
             active_contents ? FromWebContents(active_contents) : nullptr) {
       // There is a tab helper that's associated with the newly active contents.
@@ -276,6 +302,10 @@ void AutoPictureInPictureTabHelper::MediaSessionActionsChanged(
 void AutoPictureInPictureTabHelper::MaybeEnterAutoPictureInPicture() {
   if (!IsEligibleForAutoPictureInPicture(
           /*should_record_blocking_metrics=*/true)) {
+    if (content::MediaSession* media_session =
+            content::MediaSession::GetIfExists(web_contents())) {
+      media_session->ReportAutoPictureInPictureInfoChanged();
+    }
     return;
   }
   auto_picture_in_picture_activation_time_ =
@@ -327,7 +357,8 @@ void AutoPictureInPictureTabHelper::MaybeExitAutoPictureInPicture() {
   blocked_due_to_content_setting_ = false;
   MaybeRecordPictureInPictureChanged(false);
   StopAndResetAsyncTasks();
-  auto_pip_trigger_reason_ = AutoPipSettingHelper::AutoPipReason::kUnknown;
+  auto_pip_trigger_reason_ =
+      media::PictureInPictureEventsInfo::AutoPipReason::kUnknown;
 
   if (!is_in_auto_picture_in_picture_) {
     return;
@@ -340,9 +371,9 @@ void AutoPictureInPictureTabHelper::MaybeExitAutoPictureInPicture() {
 void AutoPictureInPictureTabHelper::MaybeStartOrStopObservingTabStrip() {
   if (is_enter_auto_picture_in_picture_available_ ||
       is_in_auto_picture_in_picture_) {
-    tab_strip_observer_helper_->StartObserving();
+    tab_observer_helper_->StartObserving();
   } else {
-    tab_strip_observer_helper_->StopObserving();
+    tab_observer_helper_->StopObserving();
   }
 }
 
@@ -391,21 +422,27 @@ bool AutoPictureInPictureTabHelper::IsEligibleForAutoPictureInPicture(
   if (setting == CONTENT_SETTING_BLOCK) {
     blocked_due_to_content_setting_ = true;
 
+// TODO(crbug.com/421608904): simplify code path once permission UX is finalized
+// and auto_pip_setting_helper_ is used in Android code path.
+#if !BUILDFLAG(IS_ANDROID)
     if (should_record_blocking_metrics) {
       EnsureAutoPipSettingHelper();
       auto_pip_setting_helper_->OnAutoPipBlockedByPermission(GetAutoPipReason(),
                                                              GetUkmSourceId());
     }
+#endif  // !BUILDFLAG(IS_ANDROID)
     return false;
   } else if (setting == CONTENT_SETTING_ASK &&
              Profile::FromBrowserContext(web_contents()->GetBrowserContext())
                  ->IsIncognitoProfile()) {
     blocked_due_to_content_setting_ = true;
 
+#if !BUILDFLAG(IS_ANDROID)
     if (should_record_blocking_metrics) {
       EnsureAutoPipSettingHelper();
       auto_pip_setting_helper_->OnAutoPipBlockedByIncognito(GetAutoPipReason());
     }
+#endif  // !BUILDFLAG(IS_ANDROID)
     return false;
   }
 
@@ -511,12 +548,14 @@ void AutoPictureInPictureTabHelper::ScheduleUrlSafetyCheck() {
 #endif
 }
 
+#if !BUILDFLAG(IS_ANDROID)
 void AutoPictureInPictureTabHelper::EnsureAutoPipSettingHelper() {
   if (!auto_pip_setting_helper_) {
     auto_pip_setting_helper_ = AutoPipSettingHelper::CreateForWebContents(
         web_contents(), host_content_settings_map_, auto_blocker_);
   }
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 std::optional<content::RenderFrameHost*>
 AutoPictureInPictureTabHelper::GetPrimaryMainRoutedFrame() const {
@@ -527,6 +566,19 @@ AutoPictureInPictureTabHelper::GetPrimaryMainRoutedFrame() const {
   }
 
   auto* rfh = media_session->GetRoutedFrame();
+
+  // Default to using the WebContents primary main frame for browser initiated
+  // auto picture in picture, where the MediaSession routed frame may not exist
+  // (a MediaSession routed frame is guaranteed to exist if the user manually
+  // registered a MediaSession `enterpictureinpicture` action handler). This is
+  // in line with the current requirement of only allowing auto picture in
+  // picture from the top frame.
+  if (base::FeatureList::IsEnabled(
+          blink::features::kBrowserInitiatedAutomaticPictureInPicture) &&
+      rfh == nullptr) {
+    rfh = web_contents()->GetPrimaryMainFrame();
+  }
+
   if (!rfh || !rfh->IsInPrimaryMainFrame()) {
     return std::nullopt;
   }
@@ -546,15 +598,33 @@ std::optional<ukm::SourceId> AutoPictureInPictureTabHelper::GetUkmSourceId()
   return {rfh.value()->GetPageUkmSourceId()};
 }
 
-AutoPipSettingHelper::AutoPipReason
+media::PictureInPictureEventsInfo::AutoPipReason
 AutoPictureInPictureTabHelper::GetAutoPipReason() const {
   if (IsUsingCameraOrMicrophone()) {
-    return AutoPipSettingHelper::AutoPipReason::kVideoConferencing;
+    return media::PictureInPictureEventsInfo::AutoPipReason::kVideoConferencing;
   } else if (MeetsVideoPlaybackConditions()) {
-    return AutoPipSettingHelper::AutoPipReason::kMediaPlayback;
+    return media::PictureInPictureEventsInfo::AutoPipReason::kMediaPlayback;
   }
 
-  return AutoPipSettingHelper::AutoPipReason::kUnknown;
+  return media::PictureInPictureEventsInfo::AutoPipReason::kUnknown;
+}
+
+media::PictureInPictureEventsInfo::AutoPipInfo
+AutoPictureInPictureTabHelper::GetAutoPipInfo() const {
+  return media::PictureInPictureEventsInfo::AutoPipInfo{
+      .auto_pip_reason = GetAutoPipTriggerReason(),
+      .has_audio_focus = has_audio_focus_,
+      .is_playing = is_playing_,
+      .was_recently_audible = WasRecentlyAudible(),
+      .has_safe_url = has_safe_url_,
+      .meets_media_engagement_conditions = MeetsMediaEngagementConditions(),
+      .blocked_due_to_content_setting = blocked_due_to_content_setting_,
+  };
+}
+
+media::PictureInPictureEventsInfo::AutoPipReason
+AutoPictureInPictureTabHelper::GetAutoPipTriggerReason() const {
+  return auto_pip_trigger_reason_;
 }
 
 bool AutoPictureInPictureTabHelper::IsInAutoPictureInPicture() const {
@@ -568,6 +638,7 @@ bool AutoPictureInPictureTabHelper::AreAutoPictureInPicturePreconditionsMet()
   return base::TimeTicks::Now() < auto_picture_in_picture_activation_time_;
 }
 
+#if !BUILDFLAG(IS_ANDROID)
 std::unique_ptr<AutoPipSettingOverlayView>
 AutoPictureInPictureTabHelper::CreateOverlayPermissionViewIfNeeded(
     base::OnceClosure close_pip_cb,
@@ -590,8 +661,10 @@ AutoPictureInPictureTabHelper::CreateOverlayPermissionViewIfNeeded(
       std::move(close_pip_cb), auto_pip_trigger_reason_, GetUkmSourceId(),
       anchor_view, arrow);
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 void AutoPictureInPictureTabHelper::OnUserClosedWindow() {
+#if !BUILDFLAG(IS_ANDROID)
   if (!auto_pip_setting_helper_) {
     // There is definitely no auto-pip UI showing, so ignore this.  Either this
     // isn't auto-pip, or we didn't need to ask the user about it.
@@ -601,6 +674,7 @@ void AutoPictureInPictureTabHelper::OnUserClosedWindow() {
   // There might be the auto-pip setting UI shown, so forward this.
   auto_pip_setting_helper_->OnUserClosedWindow(GetAutoPipReason(),
                                                GetUkmSourceId());
+#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 void AutoPictureInPictureTabHelper::OnTabBecameActive() {

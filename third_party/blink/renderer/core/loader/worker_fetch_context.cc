@@ -198,14 +198,6 @@ void WorkerFetchContext::PrepareRequest(
   request.SetStorageAccessApiStatus(
       GetExecutionContext()->GetStorageAccessApiStatus());
 
-  if (!RuntimeEnabledFeatures::
-          MinimimalResourceRequestPrepBeforeCacheLookupEnabled()) {
-    std::optional<WebURL> overriden_url =
-        web_context_->WillSendRequest(request.Url());
-    if (overriden_url.has_value()) {
-      request.SetUrl(*overriden_url);
-    }
-  }
   WrappedResourceRequest webreq(request);
   web_context_->FinalizeRequest(webreq);
   if (auto* worker_scope = DynamicTo<WorkerGlobalScope>(*global_scope_)) {
@@ -218,6 +210,10 @@ void WorkerFetchContext::PrepareRequest(
   }
 
   probe::PrepareRequest(Probe(), nullptr, request, options, resource_type);
+
+  request.SetAllowsDeviceBoundSessionRegistration(
+      RuntimeEnabledFeatures::DeviceBoundSessionCredentialsEnabled(
+          GetExecutionContext()));
 }
 
 void WorkerFetchContext::AddAdditionalRequestHeaders(ResourceRequest& request) {
@@ -246,18 +242,14 @@ void WorkerFetchContext::ModifyRequestForMixedContentUpgrade(
   MixedContentChecker::UpgradeInsecureRequest(
       request, &GetResourceFetcherProperties().GetFetchClientSettingsObject(),
       global_scope_, mojom::blink::RequestContextFrameType::kNone,
-      global_scope_->ContentSettingsClient());
+      global_scope_->ContentSettingsClient(), nullptr);
 }
 
 void WorkerFetchContext::PopulateResourceRequestBeforeCacheAccess(
     const ResourceLoaderOptions& options,
     ResourceRequest& request) {
-  DCHECK(RuntimeEnabledFeatures::
-             MinimimalResourceRequestPrepBeforeCacheLookupEnabled());
-
-  if (!RuntimeEnabledFeatures::PreloadLinkRelDataUrlsEnabled()) {
-    ModifyRequestForMixedContentUpgrade(request);
-  }
+  ModifyRequestForMixedContentUpgrade(request);
+  request.SetTopFrameOrigin(GetTopFrameOrigin());
 }
 
 void WorkerFetchContext::WillSendRequest(ResourceRequest& request) {
@@ -273,19 +265,10 @@ void WorkerFetchContext::UpgradeResourceRequestForLoader(
     const std::optional<float> resource_width,
     ResourceRequest& out_request,
     const ResourceLoaderOptions& options) {
-  if (!GetResourceFetcherProperties().IsDetached())
+  if (!GetResourceFetcherProperties().IsDetached()) {
     probe::SetDevToolsIds(Probe(), out_request, options.initiator_info);
-  if (!RuntimeEnabledFeatures::
-          MinimimalResourceRequestPrepBeforeCacheLookupEnabled()) {
-    MixedContentChecker::UpgradeInsecureRequest(
-        out_request,
-        &GetResourceFetcherProperties().GetFetchClientSettingsObject(),
-        global_scope_, mojom::RequestContextFrameType::kNone,
-        global_scope_->ContentSettingsClient());
   }
   SetFirstPartyCookie(out_request);
-  if (!out_request.TopFrameOrigin())
-    out_request.SetTopFrameOrigin(GetTopFrameOrigin());
 }
 
 const FeatureContext* WorkerFetchContext::GetFeatureContext() const {

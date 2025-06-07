@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/functional/callback_forward.h"
+#include "base/memory/scoped_refptr.h"
 #include "chrome/browser/ui/ash/editor_menu/editor_menu_card_context.h"
 #include "chrome/browser/ui/ash/magic_boost/magic_boost_card_controller.h"
 #include "chrome/browser/ui/ash/read_write_cards/read_write_cards_manager.h"
@@ -18,20 +19,24 @@
 #include "chromeos/ash/components/editor_menu/public/cpp/editor_context.h"
 #include "chromeos/ash/components/editor_menu/public/cpp/editor_mode.h"
 
+class ApplicationLocaleStorage;
 class QuickAnswersControllerImpl;
+class ReadWriteCardController;
 
 namespace content {
 class BrowserContext;
 struct ContextMenuParams;
 }  // namespace content
 
+namespace network {
+class SharedURLLoaderFactory;
+}  // namespace network
+
 namespace chromeos {
 
 namespace editor_menu {
 class EditorMenuControllerImpl;
 }  // namespace editor_menu
-
-class ReadWriteCardController;
 
 using OptInFeatures = crosapi::mojom::MagicBoostController::OptInFeatures;
 
@@ -40,7 +45,12 @@ using OptInFeatures = crosapi::mojom::MagicBoostController::OptInFeatures;
 // EditorMenuController, or nullptr.
 class ReadWriteCardsManagerImpl : public ReadWriteCardsManager {
  public:
-  ReadWriteCardsManagerImpl();
+  // `application_locale_storage` must not be null and must outlive `this`.
+  // `shared_url_loader_factory` should be the instance associated with browser
+  // process.
+  ReadWriteCardsManagerImpl(
+      ApplicationLocaleStorage* application_locale_storage,
+      scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory);
   ReadWriteCardsManagerImpl(const ReadWriteCardsManagerImpl&) = delete;
   ReadWriteCardsManagerImpl& operator=(const ReadWriteCardsManagerImpl&) =
       delete;

@@ -22,6 +22,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/process/process.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -635,9 +636,8 @@ class NetworkServiceTestHelper::NetworkServiceTestImpl
   void GetEnvironmentVariableValue(
       const std::string& name,
       GetEnvironmentVariableValueCallback callback) override {
-    std::string value;
-    base::Environment::Create()->GetVar(name, &value);
-    std::move(callback).Run(value);
+    std::move(callback).Run(
+        base::Environment::Create()->GetVar(name).value_or(std::string()));
   }
 
   void Log(const std::string& message, LogCallback callback) override {
@@ -801,6 +801,14 @@ class NetworkServiceTestHelper::NetworkServiceTestImpl
     std::move(callback).Run();
   }
 #endif  // BUILDFLAG(IS_WIN)
+
+  void IsHappyEyeballsV3Enabled(
+      IsHappyEyeballsV3EnabledCallback callback) override {
+    const bool enabled = network::NetworkService::GetNetworkServiceForTesting()
+                             ->host_resolver_manager()
+                             ->IsHappyEyeballsV3Enabled();
+    std::move(callback).Run(enabled);
+  }
 
  private:
   void OnMemoryPressure(

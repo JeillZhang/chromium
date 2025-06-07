@@ -115,6 +115,7 @@ DispatchEventResult DispatchTextInputEvent(LocalFrame* frame,
 }
 
 PlainTextRange GetSelectionOffsets(const SelectionInDOMTree& selection) {
+  TRACE_EVENT0("blink", "GetSelectionOffsets");
   const EphemeralRange range = selection.ComputeRange();
   if (range.IsNull())
     return PlainTextRange();
@@ -219,11 +220,8 @@ void TypingCommand::DeleteSelection(Document& document, Options options) {
   if (TypingCommand* last_typing_command =
           LastTypingCommandIfStillOpenForTyping(frame)) {
     UpdateSelectionIfDifferentFromCurrentSelection(last_typing_command, frame);
+    last_typing_command->input_type_ = InputEvent::InputType::kNone;
 
-    if (RuntimeEnabledFeatures::
-            ResetInputTypeToNoneBeforeCharacterInputEnabled()) {
-      last_typing_command->input_type_ = InputEvent::InputType::kNone;
-    }
     // InputMethodController uses this function to delete composition
     // selection.  It won't be aborted.
     last_typing_command->DeleteSelection(options & kSmartDelete,
@@ -269,10 +267,7 @@ void TypingCommand::DeleteKeyPressed(Document& document,
         UpdateSelectionIfDifferentFromCurrentSelection(last_typing_command,
                                                        frame);
         EditingState editing_state;
-        if (RuntimeEnabledFeatures::
-                ResetInputTypeToNoneBeforeCharacterInputEnabled()) {
-          last_typing_command->input_type_ = InputEvent::InputType::kNone;
-        }
+        last_typing_command->input_type_ = InputEvent::InputType::kNone;
         last_typing_command->DeleteKeyPressed(granularity, options & kKillRing,
                                               &editing_state);
         return;
@@ -387,6 +382,7 @@ void TypingCommand::InsertText(
     TextCompositionType composition_type,
     const bool is_incremental_insertion,
     InputEvent::InputType input_type) {
+  TRACE_EVENT0("blink", "TypingCommand::InsertText");
   DCHECK(!document.NeedsLayoutTreeUpdate());
   LocalFrame* frame = document.GetFrame();
   DCHECK(frame);
@@ -496,10 +492,7 @@ bool TypingCommand::InsertLineBreak(Document& document) {
           LastTypingCommandIfStillOpenForTyping(document.GetFrame())) {
     EditingState editing_state;
     EventQueueScope event_queue_scope;
-    if (RuntimeEnabledFeatures::
-            ResetInputTypeToNoneBeforeCharacterInputEnabled()) {
-      last_typing_command->input_type_ = InputEvent::InputType::kNone;
-    }
+    last_typing_command->input_type_ = InputEvent::InputType::kNone;
     last_typing_command->InsertLineBreak(&editing_state);
     return !editing_state.IsAborted();
   }
@@ -514,10 +507,7 @@ bool TypingCommand::InsertParagraphSeparatorInQuotedContent(
           LastTypingCommandIfStillOpenForTyping(document.GetFrame())) {
     EditingState editing_state;
     EventQueueScope event_queue_scope;
-    if (RuntimeEnabledFeatures::
-            ResetInputTypeToNoneBeforeCharacterInputEnabled()) {
-      last_typing_command->input_type_ = InputEvent::InputType::kNone;
-    }
+    last_typing_command->input_type_ = InputEvent::InputType::kNone;
     last_typing_command->InsertParagraphSeparatorInQuotedContent(
         &editing_state);
     return !editing_state.IsAborted();
@@ -533,10 +523,7 @@ bool TypingCommand::InsertParagraphSeparator(Document& document) {
           LastTypingCommandIfStillOpenForTyping(document.GetFrame())) {
     EditingState editing_state;
     EventQueueScope event_queue_scope;
-    if (RuntimeEnabledFeatures::
-            ResetInputTypeToNoneBeforeCharacterInputEnabled()) {
-      last_typing_command->input_type_ = InputEvent::InputType::kNone;
-    }
+    last_typing_command->input_type_ = InputEvent::InputType::kNone;
     last_typing_command->InsertParagraphSeparator(&editing_state);
     return !editing_state.IsAborted();
   }

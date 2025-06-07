@@ -8,28 +8,18 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
-import android.app.Activity;
+import android.os.Build.VERSION_CODES;
 
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.Robolectric;
+import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 
 /** Tests for {@link XrUtils} class. */
 @RunWith(BaseRobolectricTestRunner.class)
+@Config(sdk = VERSION_CODES.UPSIDE_DOWN_CAKE)
 public class XrUtilsTest {
-
-    private Activity mActivity;
-
-    /** Resets the environment before each test. */
-    @Before
-    public void beforeTest() {
-        mActivity = Robolectric.setupActivity(Activity.class);
-        XrUtils.resetXrDeviceForTesting();
-        XrUtils.setXrUtilsForTesting();
-    }
 
     @Test
     public void getInstanceTest_notNull() {
@@ -38,53 +28,36 @@ public class XrUtilsTest {
     }
 
     @Test
-    public void initTest_xrNotInitializedOnNonXrDevice() {
+    public void isFsmOnXrDeviceTest_xrSpatialModeNotSetOnNonXrDevice() {
         // Test
         XrUtils.setXrDeviceForTesting(false);
-        XrUtils.getInstance().init(mActivity);
+        XrUtils.getInstance().setFullSpaceMode(true);
 
-        // Verify the XR is not initialized.
+        // Verify the XR spatial mode can't be set.
         assertFalse(
-                "The XR should not be initialized.",
-                XrUtils.getInstance().isXrInitializedForTesting());
+                "The XR device can't be in spatial mode .",
+                XrUtils.getInstance().isFsmOnXrDevice());
     }
 
     @Test
-    public void initTest_xrIsInitalizedOnXrDevice() {
+    public void isFsmOnXrDeviceTest_xrSpatialModeSetOnXrDevice() {
         // Test
         XrUtils.setXrDeviceForTesting(true);
-        XrUtils.getInstance().init(mActivity);
-
-        // Verify the xrInitialized is set.
+        XrUtils.getInstance().setFullSpaceMode(true);
+        // Verify the XR spatial mode can be set.
         assertTrue(
-                "The xr should be initialized.", XrUtils.getInstance().isXrInitializedForTesting());
+                "The XR device should be in spatial mode.",
+                XrUtils.getInstance().isFsmOnXrDevice());
     }
 
     @Test
-    public void viewInFullSpaceModeTest_isTrue() {
+    public void getFullSpaceModeTest_OnXrDevice_isTrue() {
         // Test
         XrUtils.setXrDeviceForTesting(true);
-        XrUtils.getInstance().init(mActivity);
-        XrUtils.getInstance().viewInFullSpaceMode();
-
-        // Verify the full space mode is set.
-        assertTrue("The FSM  mode should be true.", XrUtils.getInstance().isFsmOnXrDevice());
-    }
-
-    @Test
-    public void viewInFullSpaceModeTest_isFalse() {
-        // Test
-        XrUtils.setXrDeviceForTesting(false);
-        XrUtils.getInstance().init(mActivity);
-
-        // Verify the home space mode is always off by default
-        assertFalse("The FSM mode should be false.", XrUtils.getInstance().isFsmOnXrDevice());
-
-        // Test
-        XrUtils.setXrDeviceForTesting(true);
-        XrUtils.getInstance().viewInHomeSpaceMode();
-
-        // Verify the home space mode is set.
-        assertFalse("The FSM mode should be false.", XrUtils.getInstance().isFsmOnXrDevice());
+        XrUtils.getInstance().setFullSpaceMode(true);
+        // Verify if the XR full sapce mode is set.
+        assertTrue(
+                "The XR device should be in full space mode.",
+                XrUtils.getInstance().getFullSpaceMode());
     }
 }

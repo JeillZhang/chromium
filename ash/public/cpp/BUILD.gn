@@ -2,10 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/chromeos/ui_mode.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 
-assert(is_chromeos_ash)
+assert(is_chromeos)
 
 # C++ headers and sources that can be used outside ash.
 component("cpp") {
@@ -126,11 +125,8 @@ component("cpp") {
     "connectivity_services.cc",
     "connectivity_services.h",
     "coral_delegate.h",
-    "debug_delegate.h",
     "default_user_image.cc",
     "default_user_image.h",
-    "desk_profiles_delegate.cc",
-    "desk_profiles_delegate.h",
     "desk_template.cc",
     "desk_template.h",
     "esim_manager.cc",
@@ -207,6 +203,7 @@ component("cpp") {
     "lobster/lobster_enums.h",
     "lobster/lobster_feedback_preview.cc",
     "lobster/lobster_feedback_preview.h",
+    "lobster/lobster_image_candidate.cc",
     "lobster/lobster_image_candidate.h",
     "lobster/lobster_image_download_response.h",
     "lobster/lobster_metrics_state_enums.h",
@@ -218,8 +215,6 @@ component("cpp") {
     "lobster/lobster_text_input_context.h",
     "locale_update_controller.cc",
     "locale_update_controller.h",
-    "lock_screen_widget_factory.cc",
-    "lock_screen_widget_factory.h",
     "login/local_authentication_request_controller.cc",
     "login/local_authentication_request_controller.h",
     "login/local_authentication_test_api.h",
@@ -468,6 +463,7 @@ component("cpp") {
     "//components/language/core/browser:browser",
     "//components/pref_registry",
     "//components/prefs",
+    "//components/search_engines",
     "//components/sync/model",
     "//components/sync_device_info",
     "//components/tab_groups",
@@ -631,8 +627,6 @@ source_set("test_support") {
     "test/test_cast_config_controller.h",
     "test/test_coral_delegate.cc",
     "test/test_coral_delegate.h",
-    "test/test_desk_profiles_delegate.cc",
-    "test/test_desk_profiles_delegate.h",
     "test/test_image_decoder.cc",
     "test/test_image_decoder.h",
     "test/test_image_downloader.cc",

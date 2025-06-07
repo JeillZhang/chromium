@@ -23,15 +23,11 @@ class DiagnosticsSystemAppDelegate : public ash::SystemWebAppDelegate {
   bool ShouldShowInLauncher() const override;
   gfx::Size GetMinimumWindowSize() const override;
   bool ShouldCaptureNavigations() const override;
-  Browser* LaunchAndNavigateSystemWebApp(
+  ash::BrowserDelegate* LaunchAndNavigateSystemWebApp(
       Profile* profile,
       web_app::WebAppProvider* provider,
       const GURL& url,
       const apps::AppLaunchParams& params) const override;
 };
-
-// Returns a WebAppInstallInfo used to install the app.
-std::unique_ptr<web_app::WebAppInstallInfo>
-CreateWebAppInfoForDiagnosticsSystemWebApp();
 
 #endif  // CHROME_BROWSER_ASH_SYSTEM_WEB_APPS_APPS_DIAGNOSTICS_SYSTEM_WEB_APP_INFO_H_

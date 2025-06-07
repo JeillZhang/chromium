@@ -38,6 +38,7 @@
 #include "components/permissions/permission_request.h"
 #include "components/permissions/permission_request_manager.h"
 #include "components/permissions/request_type.h"
+#include "components/permissions/resolvers/content_setting_permission_resolver.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
@@ -102,7 +103,7 @@ class LayoutTestView : public views::View {
  public:
   explicit LayoutTestView(BrowserView* parent) {
     DCHECK(parent);
-    parent->AddChildView(this);
+    parent->AddChildViewRaw(this);
     parent->GetWidget()->LayoutRootViewIfNecessary();
     layout_count_ = 0;
   }
@@ -368,13 +369,6 @@ class TopControlsSlideControllerTest : public InProcessBrowserTest {
   void InjectTestController() {
     browser_view()->top_controls_slide_controller_ = CreateTestController(
         std::move(browser_view()->top_controls_slide_controller_));
-  }
-
-  void OpenUrlAtIndex(const GURL& url, int index) {
-    ASSERT_TRUE(AddTabAtIndex(index, url, ui::PAGE_TRANSITION_TYPED));
-    auto* active_contents = browser_view()->GetActiveWebContents();
-    EXPECT_TRUE(content::WaitForLoadStop(active_contents));
-    SynchronizeBrowserWithRenderer(active_contents);
   }
 
   void NavigateActiveTabToUrl(const GURL& url) {
@@ -657,8 +651,8 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, TestScrollingPage) {
 
   // Navigate to our test page that has a long vertical content which we can use
   // to test page scrolling.
-  OpenUrlAtIndex(embedded_test_server()->GetURL("/top_controls_scroll.html"),
-                 0);
+  NavigateActiveTabToUrl(
+      embedded_test_server()->GetURL("/top_controls_scroll.html"));
 
   // It's possible to hide top chrome with gesture scrolling.
   ScrollAndExpectTopChromeToBe(ScrollDirection::kDown,
@@ -676,8 +670,9 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, TestCtrlL) {
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
   EXPECT_FLOAT_EQ(top_controls_slide_controller()->GetShownRatio(), 1.f);
-  OpenUrlAtIndex(embedded_test_server()->GetURL("/top_controls_scroll.html"),
-                 0);
+  NavigateActiveTabToUrl(
+      embedded_test_server()->GetURL("/top_controls_scroll.html"));
+
   auto* active_contents = browser_view()->GetActiveWebContents();
   SCOPED_TRACE("Scrolling to fully hide the top controls.");
   ScrollAndExpectTopChromeToBe(ScrollDirection::kDown,
@@ -698,15 +693,8 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, TestCtrlL) {
 }
 
 // Fails on Linux ChromiumOS MSan Tests (https://crbug.com/1194575).
-#if BUILDFLAG(IS_CHROMEOS)
-#define MAYBE_TestScrollingPageAndSwitchingToNTP \
-  DISABLED_TestScrollingPageAndSwitchingToNTP
-#else
-#define MAYBE_TestScrollingPageAndSwitchingToNTP \
-  TestScrollingPageAndSwitchingToNTP
-#endif
 IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
-                       MAYBE_TestScrollingPageAndSwitchingToNTP) {
+                       DISABLED_TestScrollingPageAndSwitchingToNTP) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
@@ -720,8 +708,9 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
 
   // Navigate to our test page that has a long vertical content which we can use
   // to test page scrolling.
-  OpenUrlAtIndex(embedded_test_server()->GetURL("/top_controls_scroll.html"),
-                 0);
+  NavigateActiveTabToUrl(
+      embedded_test_server()->GetURL("/top_controls_scroll.html"));
+
   ASSERT_EQ(browser()->tab_strip_model()->count(), 2);
 
   // Scroll the `top_controls_scroll.html` page such that top-chrome is now
@@ -764,13 +753,7 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
       scrollable_page_contents));
 }
 
-// Fails on Linux Chromium OS Tests (https://crbug.com/1191327).
-#if BUILDFLAG(IS_CHROMEOS)
-#define MAYBE_TestClosingATab DISABLED_TestClosingATab
-#else
-#define MAYBE_TestClosingATab TestClosingATab
-#endif
-IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, MAYBE_TestClosingATab) {
+IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, TestClosingATab) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
@@ -814,9 +797,8 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, MAYBE_TestClosingATab) {
                                TopChromeShownState::kFullyHidden);
 }
 
-// Sheriff 2022/02/25; flaky test crbug/1300462
 IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
-                       DISABLED_TestFocusEditableElements) {
+                       TestFocusEditableElements) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
@@ -824,8 +806,8 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
 
   // Navigate to our test page that has a long vertical content which we can use
   // to test page scrolling.
-  OpenUrlAtIndex(embedded_test_server()->GetURL("/top_controls_scroll.html"),
-                 0);
+  NavigateActiveTabToUrl(
+      embedded_test_server()->GetURL("/top_controls_scroll.html"));
 
   SCOPED_TRACE("Initial scroll to hide the top controls.");
   ScrollAndExpectTopChromeToBe(ScrollDirection::kDown,
@@ -925,13 +907,7 @@ class BrowserViewLayoutWaiter : public views::ViewObserver {
   std::unique_ptr<base::RunLoop> run_loop_;
 };
 
-// TODO(crbug.com/40224646): Flaky under dbg and sanitizers.
-#if !defined(NDEBUG) || defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER)
-#define MAYBE_DisplayRotation DISABLED_DisplayRotation
-#else
-#define MAYBE_DisplayRotation DisplayRotation
-#endif
-IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, MAYBE_DisplayRotation) {
+IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, DisplayRotation) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
@@ -944,8 +920,9 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, MAYBE_DisplayRotation) {
 
   // Navigate to our scrollable test page, scroll with touch gestures so that
   // top-chrome is fully hidden.
-  OpenUrlAtIndex(embedded_test_server()->GetURL("/top_controls_scroll.html"),
-                 0);
+  NavigateActiveTabToUrl(
+      embedded_test_server()->GetURL("/top_controls_scroll.html"));
+
   aura::Window* browser_window = browser()->window()->GetNativeWindow();
   ui::test::EventGenerator event_generator(browser_window->GetRootWindow(),
                                            browser_window);
@@ -1064,21 +1041,15 @@ class PageStateUpdateWaiter : content::WebContentsObserver {
 // Verifies that we ignore the shown ratios sent from widgets other than that of
 // the main frame (such as widgets of the drop-down menus in web pages).
 // https://crbug.com/891471.
-// TODO(crbug.com/40848345): Flaky for dbg and ASan builds.
-#if !defined(NDEBUG) || defined(ADDRESS_SANITIZER)
-#define MAYBE_TestDropDowns DISABLED_TestDropDowns
-#else
-#define MAYBE_TestDropDowns TestDropDowns
-#endif
-IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, MAYBE_TestDropDowns) {
+IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, TestDropDowns) {
   browser_view()->frame()->Maximize();
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
   EXPECT_FLOAT_EQ(top_controls_slide_controller()->GetShownRatio(), 1.f);
 
-  OpenUrlAtIndex(embedded_test_server()->GetURL("/top_controls_scroll.html"),
-                 0);
+  NavigateActiveTabToUrl(
+      embedded_test_server()->GetURL("/top_controls_scroll.html"));
 
   // Send a mouse click event that should open the popup drop-down menu of the
   // <select> html element on the page.
@@ -1222,9 +1193,8 @@ class IntermediateShownRatioWaiter : public TestControllerObserver {
   bool seen_intermediate_ratios_ = false;
 };
 
-// TODO(crbug.com/40676580): Test is flaky.
 IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
-                       DISABLED_TestIntermediateSliding) {
+                       TestIntermediateSliding) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
@@ -1232,8 +1202,9 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
 
   // Navigate to our test page that has a long vertical content which we can use
   // to test page scrolling.
-  OpenUrlAtIndex(embedded_test_server()->GetURL("/top_controls_scroll.html"),
-                 0);
+  NavigateActiveTabToUrl(
+      embedded_test_server()->GetURL("/top_controls_scroll.html"));
+
   content::WebContents* active_contents =
       browser_view()->GetActiveWebContents();
   PageStateUpdateWaiter page_state_update_waiter(active_contents);
@@ -1333,8 +1304,9 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
   EXPECT_FLOAT_EQ(top_controls_slide_controller()->GetShownRatio(), 1.f);
 
-  OpenUrlAtIndex(embedded_test_server()->GetURL("/top_controls_scroll.html"),
-                 0);
+  NavigateActiveTabToUrl(
+      embedded_test_server()->GetURL("/top_controls_scroll.html"));
+
   EXPECT_FLOAT_EQ(top_controls_slide_controller()->GetShownRatio(), 1.f);
 
   // Triggers a display metrics change event while both gesture scrolling and
@@ -1402,7 +1374,8 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
   EXPECT_FLOAT_EQ(top_controls_slide_controller()->GetShownRatio(), 1.f);
 
   const GURL url(embedded_test_server()->GetURL("/top_controls_scroll.html"));
-  OpenUrlAtIndex(url, 0);
+  NavigateActiveTabToUrl(url);
+
   content::WebContents* active_contents =
       browser_view()->GetActiveWebContents();
   PageStateUpdateWaiter page_state_update_waiter(active_contents);
@@ -1416,15 +1389,19 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
 
   // Fire a geolocation permission request, which should show a permission
   // request bubble resulting in top chrome unhiding.
-  auto decided = [](ContentSetting, bool, bool) {};
-  permissions::PermissionRequest permission_request(
-      url, permissions::RequestType::kGeolocation, true /* user_gesture */,
-      base::BindRepeating(decided), base::DoNothing() /* delete_callback */);
+  auto decided = [](ContentSetting, bool, bool,
+                    const permissions::PermissionRequestData&) {};
+  auto permission_request = std::make_unique<permissions::PermissionRequest>(
+      std::make_unique<permissions::PermissionRequestData>(
+          std::make_unique<permissions::ContentSettingPermissionResolver>(
+              ContentSettingsType::GEOLOCATION),
+          /*user_gesture*/ true, url),
+      base::BindRepeating(decided));
   auto* permission_manager =
       permissions::PermissionRequestManager::FromWebContents(active_contents);
   TopControlsShownRatioWaiter waiter(top_controls_slide_controller());
   permission_manager->AddRequest(active_contents->GetPrimaryMainFrame(),
-                                 &permission_request);
+                                 std::move(permission_request));
   waiter.WaitForRatio(1.f);
   EXPECT_FLOAT_EQ(top_controls_slide_controller()->GetShownRatio(), 1.f);
   CheckBrowserLayout(browser_view(), TopChromeShownState::kFullyShown);
@@ -1445,16 +1422,14 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
                                TopChromeShownState::kFullyHidden);
 }
 
-// Flaky on ChromeOS bots. https://crbug.com/1033648
-IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
-                       DISABLED_TestToggleChromeVox) {
+IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, TestToggleChromeVox) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
   EXPECT_FLOAT_EQ(top_controls_slide_controller()->GetShownRatio(), 1.f);
 
-  OpenUrlAtIndex(embedded_test_server()->GetURL("/top_controls_scroll.html"),
-                 0);
+  NavigateActiveTabToUrl(
+      embedded_test_server()->GetURL("/top_controls_scroll.html"));
   content::WebContents* active_contents =
       browser_view()->GetActiveWebContents();
   PageStateUpdateWaiter page_state_update_waiter(active_contents);
@@ -1489,9 +1464,8 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
 }
 
 // Regression test for https://crbug.com/1163276.
-// TODO(crbug.com/40174370): Test times out flakily.
 IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
-                       DISABLED_NoCrashOnNewTabWhileScrolling) {
+                       NoCrashOnNewTabWhileScrolling) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());

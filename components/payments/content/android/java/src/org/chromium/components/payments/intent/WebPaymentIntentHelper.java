@@ -35,6 +35,17 @@ public class WebPaymentIntentHelper {
     /** The action name for the Pay Intent. */
     public static final String ACTION_PAY = "org.chromium.intent.action.PAY";
 
+    /**
+     * The name of the intent for the service that updates the payment method, the shipping address,
+     * or the shipping option in response to user actions in the payment app.
+     */
+    public static final String ACTION_UPDATE_PAYMENT_DETAILS =
+            "org.chromium.intent.action.UPDATE_PAYMENT_DETAILS";
+
+    /** The name of the intent for the service to check whether an app is ready to pay. */
+    public static final String ACTION_IS_READY_TO_PAY =
+            "org.chromium.intent.action.IS_READY_TO_PAY";
+
     // Freshest parameters sent to the payment app.
     public static final String EXTRA_CERTIFICATE = "certificate";
     public static final String EXTRA_MERCHANT_NAME = "merchantName";
@@ -53,6 +64,7 @@ public class WebPaymentIntentHelper {
     public static final String EXTRA_PAYMENT_OPTIONS_REQUEST_SHIPPING = "requestShipping";
     public static final String EXTRA_PAYMENT_OPTIONS_SHIPPING_TYPE = "shippingType";
     public static final String EXTRA_SHIPPING_OPTIONS = "shippingOptions";
+    public static final String EXTRA_CALLER_PACKAGE_NAME = "packageName";
 
     // Deprecated parameters sent to the payment app for backward compatibility.
     // TODO(crbug.com/40849135): Remove these parameters.
@@ -112,27 +124,20 @@ public class WebPaymentIntentHelper {
 
     /**
      * Parse the Payment Intent response.
+     *
      * @param resultCode Result code of the requested intent.
      * @param data The intent response data.
      * @param requestedPaymentOptions The merchant required payment options. This is used to
-     *          populate relevant fields in payerData.
+     *     populate relevant fields in payerData.
      * @param errorCallback Callback to handle parsing errors. Invoked synchronously.
      * @param successCallback Callback to receive the parsed data. Invoked synchronously.
-     **/
+     */
     public static void parsePaymentResponse(
             int resultCode,
             Intent data,
-            PaymentOptions requestedPaymentOptions,
+            @Nullable PaymentOptions requestedPaymentOptions,
             PaymentErrorCallback errorCallback,
             PaymentSuccessCallback successCallback) {
-        if (data == null) {
-            errorCallback.onPaymentError(ErrorStrings.MISSING_INTENT_DATA);
-            return;
-        }
-        if (data.getExtras() == null) {
-            errorCallback.onPaymentError(ErrorStrings.MISSING_INTENT_EXTRAS);
-            return;
-        }
         if (resultCode == Activity.RESULT_CANCELED) {
             errorCallback.onPaymentError(ErrorStrings.RESULT_CANCELED);
             return;
@@ -141,6 +146,15 @@ public class WebPaymentIntentHelper {
             errorCallback.onPaymentError(
                     String.format(
                             Locale.US, ErrorStrings.UNRECOGNIZED_ACTIVITY_RESULT, resultCode));
+            return;
+        }
+
+        if (data == null) {
+            errorCallback.onPaymentError(ErrorStrings.MISSING_INTENT_DATA);
+            return;
+        }
+        if (data.getExtras() == null) {
+            errorCallback.onPaymentError(ErrorStrings.MISSING_INTENT_EXTRAS);
             return;
         }
 
@@ -226,36 +240,36 @@ public class WebPaymentIntentHelper {
      * Create an intent to invoke a native payment app. This method throws IllegalArgumentException
      * for invalid arguments.
      *
-     * @param packageName The name of the package of the payment app. Only non-empty string is
-     *         allowed.
-     * @param activityName The name of the payment activity in the payment app. Only non-empty
-     *         string is allowed.
+     * @param paymentAppPackageName The name of the package of the payment app. Only non-empty
+     *     string is allowed.
+     * @param paymentAppActivityName The name of the payment activity in the payment app. Only
+     *     non-empty string is allowed.
      * @param id The unique identifier of the PaymentRequest. Only non-empty string is allowed.
      * @param merchantName The name of the merchant. Cannot be null..
      * @param schemelessOrigin The schemeless origin of this merchant. Only non-empty string is
-     *         allowed.
+     *     allowed.
      * @param schemelessIframeOrigin The schemeless origin of the iframe that invoked
-     *         PaymentRequest. Only non-empty string is allowed.
+     *     PaymentRequest. Only non-empty string is allowed.
      * @param certificateChain The site certificate chain of the merchant. Can be null when
-     *         ANDROID_PAYMENT_INTENTS_OMIT_DEPRECATED_PARAMETERS is enabled or for localhost or
-     *         local file, which are secure contexts without SSL. Each byte array cannot be null.
+     *     ANDROID_PAYMENT_INTENTS_OMIT_DEPRECATED_PARAMETERS is enabled or for localhost or local
+     *     file, which are secure contexts without SSL. Each byte array cannot be null.
      * @param methodDataMap The payment-method specific data for all applicable payment methods,
-     *         e.g., whether the app should be invoked in test or production, a merchant identifier,
-     *         or a public key. The map and its values cannot be null. The map should have at
-     *         least one entry.
+     *     e.g., whether the app should be invoked in test or production, a merchant identifier, or
+     *     a public key. The map and its values cannot be null. The map should have at least one
+     *     entry.
      * @param total The total amount. Cannot be null..
      * @param displayItems The shopping cart items. OK to be null.
      * @param modifiers The relevant payment details modifiers. OK to be null.
      * @param paymentOptions The relevant merchant requested payment options. OK to be null.
      * @param shippingOptions Merchant specified available shipping options. Should be non-empty
-     *          when paymentOptions.requestShipping is true.
+     *     when paymentOptions.requestShipping is true.
      * @param removeDeprecatedFields Whether the deprecated fields should be omitted from the
-     *          intent.
+     *     intent.
      * @return The intent to invoke the payment app.
      */
     public static Intent createPayIntent(
-            String packageName,
-            String activityName,
+            String paymentAppPackageName,
+            String paymentAppActivityName,
             String id,
             String merchantName,
             String schemelessOrigin,
@@ -269,9 +283,9 @@ public class WebPaymentIntentHelper {
             @Nullable List<PaymentShippingOption> shippingOptions,
             boolean removeDeprecatedFields) {
         Intent payIntent = new Intent();
-        checkStringNotEmpty(activityName, "activityName");
-        checkStringNotEmpty(packageName, "packageName");
-        payIntent.setClassName(packageName, activityName);
+        checkStringNotEmpty(paymentAppActivityName, "paymentAppActivityName");
+        checkStringNotEmpty(paymentAppPackageName, "paymentAppPackageName");
+        payIntent.setClassName(paymentAppPackageName, paymentAppActivityName);
         payIntent.setAction(ACTION_PAY);
         payIntent.putExtras(
                 buildPayIntentExtras(
@@ -294,26 +308,38 @@ public class WebPaymentIntentHelper {
      * Create an intent for the service that dynamically updates the payment details (e.g., total
      * price) based on user's payment method, shipping address, or shipping option.
      *
-     * @param packageName The name of the package of the payment app. Only non-empty string is
-     *     allowed.
-     * @param serviceName The name of the service. Only non-empty string is allowed.
+     * @param callerPackageName The name of the package of the calling code, e.g.,
+     *     "com.android.chrome".
+     * @param paymentAppPackageName The name of the package of the payment app. Only non-empty
+     *     string is allowed.
+     * @param paymentAppServiceName The name of the service. Only non-empty string is allowed.
      * @return The intent to invoke the service.
      */
     public static Intent createPaymentDetailsUpdateServiceIntent(
-            String packageName, String serviceName) {
+            String callerPackageName, String paymentAppPackageName, String paymentAppServiceName) {
+        checkStringNotEmpty(callerPackageName, "callerPackageName");
+        checkStringNotEmpty(paymentAppPackageName, "paymentAppPackageName");
+        checkStringNotEmpty(paymentAppServiceName, "paymentAppServiceName");
+
         Intent intent = new Intent();
-        checkStringNotEmpty(packageName, "packageName");
-        checkStringNotEmpty(serviceName, "serviceName");
-        intent.setClassName(packageName, serviceName);
+        intent.setClassName(paymentAppPackageName, paymentAppServiceName);
+        intent.setAction(ACTION_UPDATE_PAYMENT_DETAILS);
+
+        Bundle extras = new Bundle();
+        extras.putString(EXTRA_CALLER_PACKAGE_NAME, callerPackageName);
+        intent.putExtras(extras);
+
         return intent;
     }
 
     /**
      * Create an intent to invoke a service that can answer "is ready to pay" query.
      *
-     * @param packageName The name of the package of the payment app. Only non-empty string is
-     *     allowed.
-     * @param serviceName The name of the service. Only non-empty string is allowed.
+     * @param callerPackageName The name of the package of the calling code, e.g.,
+     *     "com.android.chrome".
+     * @param paymentAppPackageName The name of the package of the payment app. Only non-empty
+     *     string is allowed.
+     * @param paymentAppServiceName The name of the service. Only non-empty string is allowed.
      * @param schemelessOrigin The schemeless origin of this merchant. Only non-empty string is
      *     allowed.
      * @param schemelessIframeOrigin The schemeless origin of the iframe that invoked
@@ -331,8 +357,9 @@ public class WebPaymentIntentHelper {
      * @return The intent to invoke the service.
      */
     public static Intent createIsReadyToPayIntent(
-            String packageName,
-            String serviceName,
+            String callerPackageName,
+            String paymentAppPackageName,
+            String paymentAppServiceName,
             String schemelessOrigin,
             String schemelessIframeOrigin,
             byte @Nullable [][] certificateChain,
@@ -340,10 +367,13 @@ public class WebPaymentIntentHelper {
             boolean clearIdFields,
             boolean removeDeprecatedFields) {
         Intent isReadyToPayIntent = new Intent();
-        checkStringNotEmpty(serviceName, "serviceName");
-        checkStringNotEmpty(packageName, "packageName");
-        isReadyToPayIntent.setClassName(packageName, serviceName);
+        checkStringNotEmpty(callerPackageName, "callerPackageName");
+        checkStringNotEmpty(paymentAppServiceName, "paymentAppServiceName");
+        checkStringNotEmpty(paymentAppPackageName, "paymentAppPackageName");
+        isReadyToPayIntent.setClassName(paymentAppPackageName, paymentAppServiceName);
+        isReadyToPayIntent.setAction(ACTION_IS_READY_TO_PAY);
         Bundle extras = new Bundle();
+        extras.putString(EXTRA_CALLER_PACKAGE_NAME, callerPackageName);
         if (!clearIdFields) {
             addCommonExtrasWithIdentity(
                     schemelessOrigin,
@@ -387,6 +417,7 @@ public class WebPaymentIntentHelper {
             @Nullable List<PaymentShippingOption> shippingOptions,
             boolean removeDeprecatedFields) {
         Bundle extras = new Bundle();
+
         checkStringNotEmpty(id, "id");
         extras.putString(EXTRA_PAYMENT_REQUEST_ID, id);
 
@@ -405,12 +436,13 @@ public class WebPaymentIntentHelper {
                     EXTRA_MODIFIERS, PaymentDetailsModifier.serializeModifiers(modifiers.values()));
         }
 
-        // shippingOptions should not be null when shipping is requested.
-        if (paymentOptions != null && paymentOptions.requestShipping) {
-            if (shippingOptions == null || shippingOptions.isEmpty()) {
-                throw new IllegalArgumentException(
-                        "shippingOptions should not be null or empty when shipping is requested.");
-            }
+        // `shippingOptions` can be null when the payment app needs to send the shipping address to
+        // the merchant website in order to get the different shipping options available and their
+        // corresponding prices.
+        if (paymentOptions != null
+                && paymentOptions.requestShipping
+                && shippingOptions != null
+                && !shippingOptions.isEmpty()) {
             // ShippingOptions are populated only when shipping is requested.
             Parcelable[] serializedShippingOptionList =
                     PaymentShippingOption.buildPaymentShippingOptionList(shippingOptions);

@@ -12,14 +12,12 @@
 
 #include "base/containers/contains.h"
 #include "base/types/pass_key.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
-#include "chrome/browser/ui/tabs/tab_group_controller.h"
 #include "components/tab_groups/tab_group_color.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "components/tab_groups/tab_group_visual_data.h"
+#include "components/tabs/public/tab_group.h"
 
-TabGroupModel::TabGroupModel(TabGroupController* controller)
-    : controller_(controller) {}
+TabGroupModel::TabGroupModel() = default;
 
 TabGroupModel::~TabGroupModel() = default;
 
@@ -37,7 +35,7 @@ bool TabGroupModel::ContainsTabGroup(const tab_groups::TabGroupId& id) const {
 }
 
 TabGroup* TabGroupModel::GetTabGroup(const tab_groups::TabGroupId& id) const {
-  CHECK(ContainsTabGroup(id), base::NotFatalUntil::M127);
+  CHECK(ContainsTabGroup(id));
   return groups_.find(id)->second.get();
 }
 

@@ -72,8 +72,6 @@ const char* GetVizBreakdownToPresentationName(
     case CompositorFrameReporter::VizBreakdown::kLatchToSwapEnd:
       return "LatchToPresentation";
     default:
-      base::UmaHistogramEnumeration(
-          "Compositing.VizBreakdownToPresentationUnexpected", breakdown);
       return "Unknown";
   }
 }
@@ -249,7 +247,7 @@ void EventLatencyTracingRecorder::RecordEventLatencyTraceEvent(
         bool has_high_latency =
             (termination_time - generated_timestamp) > kHighLatencyThreshold;
         event_latency->set_has_high_latency(has_high_latency);
-        for (auto stage : event_metrics->GetHighLatencyStages()) {
+        for (const auto& stage : event_metrics->GetHighLatencyStages()) {
           // TODO(crbug.com/40228308): Consider changing the high_latency_stage
           // type from a string to enum type in chrome_track_event.proto,
           // similar to event_type.
@@ -262,10 +260,15 @@ void EventLatencyTracingRecorder::RecordEventLatencyTraceEvent(
 
         const ScrollUpdateEventMetrics* scroll_update =
             event_metrics->AsScrollUpdate();
-        if (scroll_update &&
-            scroll_update->is_janky_scrolled_frame().has_value()) {
-          event_latency->set_is_janky_scrolled_frame(
-              scroll_update->is_janky_scrolled_frame().value());
+        if (scroll_update) {
+          if (scroll_update->is_janky_scrolled_frame().has_value()) {
+            event_latency->set_is_janky_scrolled_frame(
+                scroll_update->is_janky_scrolled_frame().value());
+          }
+          if (scroll_update->is_janky_scrolled_frame_v3().has_value()) {
+            event_latency->set_is_janky_scrolled_frame_v3(
+                scroll_update->is_janky_scrolled_frame_v3().value());
+          }
         }
         if (args) {
           event_latency->set_vsync_interval_ms(
@@ -381,11 +384,6 @@ void EventLatencyTracingRecorder::RecordEventLatencyTraceEvent(
               // (because swap-end is actually the time the post swap end
               // callback is run, which can happen after presentation). In this
               // case we truncate the breakdown to presentation.
-              DCHECK(
-                  breakdown == CompositorFrameReporter::VizBreakdown::
-                                   kSwapStartToSwapEnd ||
-                  breakdown ==
-                      CompositorFrameReporter::VizBreakdown::kLatchToSwapEnd);
               breakdown_name = GetVizBreakdownToPresentationName(breakdown);
             } else {
               breakdown_name =

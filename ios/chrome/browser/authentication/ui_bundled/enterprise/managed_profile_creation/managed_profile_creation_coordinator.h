@@ -11,13 +11,22 @@
 
 @class ManagedProfileCreationCoordinator;
 @class ManagedProfileCreationMediator;
+@protocol SystemIdentity;
 
 @protocol ManagedProfileCreationCoordinatorDelegate <NSObject>
 
+// Called when the user accepted to continue to sign-in with a managed account.
+// `accepted` is YES when the user confirmed or NO if the user canceled.
+// If `browsingDataSeparate` is `YES`, the managed account gets signed in to
+// a new empty work profile. This must only be specified if
+// AreSeparateProfilesForManagedAccountsEnabled() is true.
+// If `browsingDataSeparate` is `NO`, the account gets signed in to the
+// current profile. If AreSeparateProfilesForManagedAccountsEnabled() is true,
+// this involves converting the current profile into a work profile.
 - (void)managedProfileCreationCoordinator:
             (ManagedProfileCreationCoordinator*)coordinator
                                 didAccept:(BOOL)didAccept
-                 keepBrowsingDataSeparate:(BOOL)keepBrowsingDataSeparate;
+                     browsingDataSeparate:(BOOL)browsingDataSeparate;
 
 @end
 
@@ -29,7 +38,7 @@
 // to show the ViewController created and owned by
 // ManagedProfileCreationCoordinator.
 - (instancetype)initWithBaseViewController:(UIViewController*)viewController
-                                 userEmail:(NSString*)userEmail
+                                  identity:(id<SystemIdentity>)identity
                               hostedDomain:(NSString*)hostedDomain
                                    browser:(Browser*)browser
                  skipBrowsingDataMigration:(BOOL)skipBrowsingDataMigration

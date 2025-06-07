@@ -82,24 +82,44 @@ void fct() {
   // temp = (++expected_data).data();
   temp = (++expected_data).data();
   // Expected rewrite:
-  // temp = (expected_data + 1).data();
-  temp = (expected_data + 1).data();
+  // temp = expected_data.subspan(1).data();
+  temp = expected_data.subspan(1).data();
   // Expected rewrite:
-  // temp = (expected_data + index).data();
-  temp = (expected_data + index).data();
+  // temp = expected_data.subspan(index).data();
+  temp = expected_data.subspan(index).data();
   // Expected rewrite:
-  // temp = (expected_data + offset()).data();
-  temp = (expected_data + offset()).data();
+  // temp = expected_data.subspan(offset()).data();
+  temp = expected_data.subspan(offset()).data();
   // Expected rewrite:
-  // temp = (expected_data + offset(2)).data();
-  temp = (expected_data + offset(2)).data();
+  // temp = expected_data.subspan(offset(2)).data();
+  temp = expected_data.subspan(offset(2)).data();
   // Expected rewrite:
-  // temp = (expected_data + offset(index)).data();
-  temp = (expected_data + offset(index)).data();
+  // temp = expected_data.subspan(offset(index)).data();
+  temp = expected_data.subspan(offset(index)).data();
 
   // Expected rewrite:
-  // base::span<char> ptr = &buf[0];
-  base::span<char> ptr = &buf[0];
+  // temp = expected_data.subspan(1 + index + offset(index)).data();
+  temp = expected_data.subspan(1 + index + offset(index)).data();
+
+  // Expected rewrite:
+  // temp = expected_data.subspan(1 + index - 3 + offset(index)).data();
+  temp = expected_data.subspan(1 + index - 3 + offset(index)).data();
+
+  // Expected rewrite:
+  // temp = expected_data.subspan(index * 2).data();
+  temp = expected_data.subspan(index * 2).data();
+
+  // Expected rewrite:
+  // temp = expected_data.subspan(index + 2 * 2).data();
+  temp = expected_data.subspan(index + 2 * 2).data();
+
+  // Expected rewrite:
+  // temp = expected_data.subspan(index + 2 * 2 + offset()).data();
+  temp = expected_data.subspan(index + 2 * 2 + offset()).data();
+
+  // Expected rewrite:
+  // base::span<char> ptr = buf;
+  base::span<char> ptr = buf;
   ptr[1] = 'x';
 }
 
@@ -109,8 +129,8 @@ namespace cast_exprs {
 // void modify(base::span<int> buf)
 void modify(base::span<int> buf) {
   // expected rewrite:
-  // base::span<char> temp = reinterpret_cast<char*>(buf);
-  base::span<char> temp = reinterpret_cast<char*>(buf);
+  // base::span<char> temp = base::as_writable_byte_span(buf);
+  base::span<char> temp = base::as_writable_byte_span(buf);
   temp[2] = 'c';
 }
 
@@ -118,8 +138,8 @@ void fct() {
   int buf[10];
 
   // Expected rewrite:
-  // base::span<char> as_char;
-  base::span<char> as_char = reinterpret_cast<char*>(buf);
+  // base::span<char> as_char = base::as_writable_byte_span(buf);
+  base::span<char> as_char = base::as_writable_byte_span(buf);
 
   as_char[4] = 'c';
 
@@ -165,7 +185,7 @@ const base::span<int> get_buf();
 // base::span<const int> get_buf() {
 const base::span<int> get_buf() {
   static std::vector<int> buf;
-  return &buf[0];
+  return buf;
 }
 
 void f() {
@@ -211,16 +231,16 @@ void fct() {
 
   int index = 11;
   // Expected rewrite:
-  // memcpy((buf2 + 1).data(), (buf + index).data(), 10)
-  memcpy((buf2 + 1).data(), (buf + index).data(), 10);
+  // memcpy(buf2.subspan(1).data(), buf.subspan(index).data(), 10);
+  memcpy(buf2.subspan(1).data(), buf.subspan(index).data(), 10);
 
   // Expected rewrite:
   // int i = (buf++)[0];
   int i = (buf++)[0];
   // i = (++buf)[0]
   i = (++buf)[0];
-  // i = ((buf + index)[0])
-  i = ((buf + index)[0]);
+  // i = (buf.subspan(index)[0])
+  i = (buf.subspan(index)[0]);
   // i = buf[0];
   i = buf[0];
 }

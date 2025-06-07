@@ -253,7 +253,7 @@ struct Config {
       attrib_helper.context_type = CONTEXT_TYPE_OPENGLES2;
     }
 #endif
-    attrib_helper.enable_oop_rasterization = it.GetBit();
+    attrib_helper.enable_gpu_rasterization = it.GetBit();
 
 #if defined(GPU_FUZZER_USE_STUB)
     std::vector<std::string_view> enabled_extensions;
@@ -627,13 +627,13 @@ class CommandBufferSetup {
 #endif
   }
 
-  static void APIENTRY LogGLDebugMessage(GLenum source,
-                                         GLenum type,
-                                         GLuint id,
-                                         GLenum severity,
-                                         GLsizei length,
-                                         const GLchar* message,
-                                         const GLvoid* user_param) {
+  static void GL_APIENTRY LogGLDebugMessage(GLenum source,
+                                            GLenum type,
+                                            GLuint id,
+                                            GLenum severity,
+                                            GLsizei length,
+                                            const GLchar* message,
+                                            const GLvoid* user_param) {
     LOG_IF(FATAL, (id != GL_OUT_OF_MEMORY)) << "GL Driver Message: " << message;
   }
 

@@ -11,6 +11,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/check_op.h"
@@ -22,7 +23,6 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
-#include "base/functional/overloaded.h"
 #include "base/strings/strcat.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
@@ -72,6 +72,7 @@
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-shared.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "url/gurl.h"
@@ -836,23 +837,23 @@ TEST_P(InstallIsolatedWebAppCommandBundleTest, InstallsWhenThereIsNoError) {
 
   if (bundle_info_.want_success) {
     EXPECT_THAT(result, HasValue());
-    absl::visit(
-        base::Overloaded{[&iwa_root_dir](const IwaStorageOwnedBundle& bundle) {
-                           EXPECT_TRUE(DirectoryExists(iwa_root_dir));
-                           EXPECT_TRUE(PathExists(iwa_root_dir.AppendASCII(
-                               bundle.dir_name_ascii())));
-                         },
-                         [&iwa_root_dir](const IwaStorageUnownedBundle&) {
-                           EXPECT_FALSE(DirectoryExists(iwa_root_dir));
-                         },
-                         [](const IwaStorageProxy&) { FAIL(); }},
+    std::visit(
+        absl::Overload{[&iwa_root_dir](const IwaStorageOwnedBundle& bundle) {
+                         EXPECT_TRUE(DirectoryExists(iwa_root_dir));
+                         EXPECT_TRUE(PathExists(iwa_root_dir.AppendASCII(
+                             bundle.dir_name_ascii())));
+                       },
+                       [&iwa_root_dir](const IwaStorageUnownedBundle&) {
+                         EXPECT_FALSE(DirectoryExists(iwa_root_dir));
+                       },
+                       [](const IwaStorageProxy&) { FAIL(); }},
         result->location.variant());
   } else {
     EXPECT_THAT(result, Not(HasValue()));
     // Wait till IWA directory is removed.
     task_environment()->RunUntilIdle();
-    absl::visit(
-        base::Overloaded{
+    std::visit(
+        absl::Overload{
             [&iwa_root_dir](const IwaSourceBundleWithModeAndFileOp& source) {
               switch (source.mode_and_file_op()) {
                 case IwaSourceBundleModeAndFileOp::kDevModeCopy:

@@ -631,6 +631,12 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    public void test_ariaLabelWithVisualContent() {
+        performAriaTest("aria-label-with-visual-content.html");
+    }
+
+    @Test
+    @SmallTest
     public void test_ariaLabelAugmentInnerText() {
         performAriaTest("aria-label-augment-inner-text.html");
     }
@@ -743,6 +749,12 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    public void test_ariaFocusableMenu() {
+        performAriaTest("aria-focusable-menu.html");
+    }
+
+    @Test
+    @SmallTest
     public void test_ariaMenuitemcheckbox() {
         performAriaTest("aria-menuitemcheckbox.html");
     }
@@ -787,6 +799,12 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_ariaMultiselectable() {
         performAriaTest("aria-multiselectable.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_ariaMultiselectableWithAriaLabelledBy() {
+        performAriaTest("aria-multiselectable-aria-labelledby.html");
     }
 
     @Test
@@ -854,6 +872,12 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_ariaParagraph() {
         performAriaTest("aria-paragraph.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_ariaPosinset() {
+        performAriaTest("aria-posinset.html");
     }
 
     @Test
@@ -1492,12 +1516,28 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    @CommandLineFlags.Add({"enable-blink-features=CanvasDrawElement"})
+    public void test_canvasComplexFallback() {
+        performHtmlTest("canvas-complex-fallback.html");
+    }
+
+    @Test
+    @SmallTest
+    @CommandLineFlags.Add({"enable-blink-features=CanvasDrawElement"})
+    public void test_canvasInteractiveFallback() {
+        performHtmlTest("canvas-interactive-fallback.html");
+    }
+
+    @Test
+    @SmallTest
+    @CommandLineFlags.Add({"enable-blink-features=CanvasDrawElement"})
     public void test_canvasFallback() {
         performHtmlTest("canvas-fallback.html");
     }
 
     @Test
     @SmallTest
+    @CommandLineFlags.Add({"enable-blink-features=CanvasDrawElement"})
     public void test_canvas() {
         performHtmlTest("canvas.html");
     }
@@ -1785,6 +1825,18 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_header() {
         performHtmlTest("header.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_headingWithHeadingOffset() {
+        performHtmlTest("heading-with-headingoffset.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_headingWithHeadingOffsetDialog() {
+        performHtmlTest("heading-with-headingoffset-dialog.html");
     }
 
     @Test
@@ -2263,6 +2315,12 @@ public class WebContentsAccessibilityTreeTest {
 
     @Test
     @SmallTest
+    public void test_multi_selectable() {
+        performHtmlTest("multi-selectable.html");
+    }
+
+    @Test
+    @SmallTest
     public void test_navigation() {
         performHtmlTest("navigation.html");
     }
@@ -2585,6 +2643,12 @@ public class WebContentsAccessibilityTreeTest {
     @SmallTest
     public void test_tabindexExposeChildren() {
         performHtmlTest("tabindex-expose-children.html");
+    }
+
+    @Test
+    @SmallTest
+    public void test_tabindexWithLinkChildren() {
+        performHtmlTest("tabindex-with-link-children.html");
     }
 
     @Test

@@ -57,6 +57,7 @@ class RealtimeReportingClient : public RealtimeReportingClientBase {
   // RealtimeReportingClientBase overrides:
   std::string GetProfileUserName() override;
   base::WeakPtr<RealtimeReportingClientBase> AsWeakPtr() override;
+  std::optional<ReportingSettings> GetReportingSettings() override;
 
   base::WeakPtr<RealtimeReportingClient> AsWeakPtrImpl() {
     return weak_ptr_factory_.GetWeakPtr();
@@ -72,17 +73,14 @@ class RealtimeReportingClient : public RealtimeReportingClientBase {
   // policy::CloudPolicyClient::Observer overrides:
   void OnClientError(policy::CloudPolicyClient* client) override;
 
-  // Determines if the real-time reporting feature is enabled.
-  // Obtain settings to apply to a reporting event from ConnectorsService.
-  // std::nullopt represents that reporting should not be done.
-  // Declared virtual for tests.
-  std::optional<ReportingSettings> virtual GetReportingSettings();
-
   // Report safe browsing event through real-time reporting channel, if enabled.
   // Declared as virtual for tests.
   virtual void ReportRealtimeEvent(const std::string& name,
                                    const ReportingSettings& settings,
                                    base::Value::Dict event);
+
+  base::Value::Dict ReportErrorDetails(
+      const policy::CloudPolicyClient::Result& upload_result);
 
   // Report safe browsing events that have occurred in the past but has not yet
   // been reported. This is currently used for browser crash events, which are
@@ -104,13 +102,15 @@ class RealtimeReportingClient : public RealtimeReportingClientBase {
       base::Value::Dict event_wrapper,
       bool per_profile,
       policy::CloudPolicyClient* client,
-      EnterpriseReportingEventType eventType,
+      EnterpriseReportingEventType event_type,
+      base::TimeTicks upload_started_at,
       policy::CloudPolicyClient::Result upload_result) override;
   void UploadCallback(
       ::chrome::cros::reporting::proto::UploadEventsRequest request,
       bool per_profile,
       policy::CloudPolicyClient* client,
-      EnterpriseReportingEventType eventType,
+      EnterpriseReportingEventType event_type,
+      base::TimeTicks upload_started_at,
       policy::CloudPolicyClient::Result upload_result) override;
 
 #if !BUILDFLAG(IS_CHROMEOS)

@@ -23,7 +23,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/unguessable_token.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/policy/core/common/policy_service.h"
@@ -62,8 +62,8 @@ const char kRemoteBoundWebRtcEventLogFileNamePrefix[] = "webrtc_event_log";
 
 // Important! These values may be relied on by web-apps. Do not change.
 const char kStartRemoteLoggingFailureAlreadyLogging[] = "Already logging.";
-const char kStartRemoteLoggingFailureDeadRenderProcessHost[] =
-    "RPH already dead.";
+// const char OBSOLETE_kStartRemoteLoggingFailureDeadRenderProcessHost[] =
+//     "RPH already dead.";
 const char kStartRemoteLoggingFailureFeatureDisabled[] = "Feature disabled.";
 const char kStartRemoteLoggingFailureFileCreationError[] =
     "Could not create file.";
@@ -84,6 +84,7 @@ const char kStartRemoteLoggingFailureUnknownOrInactivePeerConnection[] =
     "Unknown or inactive peer connection.";
 const char kStartRemoteLoggingFailureUnlimitedSizeDisallowed[] =
     "Unlimited size disallowed.";
+const char kBrowserContextNotFound[] = "BrowserContext not found.";
 
 const BrowserContextId kNullBrowserContextId =
     reinterpret_cast<BrowserContextId>(nullptr);

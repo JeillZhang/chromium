@@ -5,6 +5,7 @@
 #include "remoting/host/it2me/it2me_host.h"
 
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
@@ -45,7 +46,6 @@
 #include "remoting/host/host_event_logger.h"
 #include "remoting/host/host_event_reporter.h"
 #include "remoting/host/host_secret.h"
-#include "remoting/host/host_status_logger.h"
 #include "remoting/host/it2me/it2me_confirmation_dialog.h"
 #include "remoting/host/it2me/it2me_confirmation_dialog_proxy.h"
 #include "remoting/host/it2me/it2me_helpers.h"
@@ -73,11 +73,6 @@
 #include "remoting/host/chromeos/features.h"
 #endif
 
-#if BUILDFLAG(IS_LINUX)
-#include "remoting/host/linux/wayland_manager.h"
-#include "remoting/host/linux/wayland_utils.h"
-#endif  // BUILDFLAG(IS_LINUX)
-
 namespace remoting {
 
 using protocol::ErrorCode;
@@ -97,6 +92,15 @@ typedef ValidatingAuthenticator::ResultCallback ValidationResultCallback;
 // the network, such as the signal strategy. This delay ensures there is time
 // for messages (such as session-terminate) to be sent.
 constexpr base::TimeDelta kDestroyMessagingObjectDelay = base::Seconds(2);
+
+#if BUILDFLAG(IS_CHROMEOS)
+// Enabled value for ClassManagementEnabled when host belongs to a student and
+// their screen can be viewed by a teacher.
+constexpr char kClassManagementStudent[] = "student";
+// Enabled value for ClassManagementEnabled when host belongs to a teacher and
+// they would like to access their host via another device.
+constexpr char kClassManagementTeacher[] = "teacher";
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 // STL containers do not have a defined destruction orders for their elements.
 // Post(Delayed)Task relies on these containers so the destruction order is also
@@ -144,6 +148,7 @@ It2MeHost::~It2MeHost() {
 void It2MeHost::set_chrome_os_enterprise_params(
     ChromeOsEnterpriseParams params) {
 #if BUILDFLAG(IS_CHROMEOS) || !defined(NDEBUG)
+  CHECK_NE(params.request_origin, ChromeOsEnterpriseRequestOrigin::kUnknown);
   chrome_os_enterprise_params_ = std::move(params);
 #else
   NOTREACHED() << "It2MeHost::set_chrome_os_enterprise_params is only "
@@ -234,12 +239,6 @@ void It2MeHost::Connect(
 
   OnPolicyUpdate(std::move(policies));
 
-#if BUILDFLAG(IS_LINUX)
-  if (IsRunningWayland()) {
-    WaylandManager::Get()->Init(host_context_->ui_task_runner());
-  }
-#endif  // BUILDFLAG(IS_LINUX)
-
   desktop_environment_factory_ =
       std::make_unique<It2MeDesktopEnvironmentFactory>(
           host_context_->network_task_runner(), host_context_->ui_task_runner(),
@@ -280,24 +279,20 @@ void It2MeHost::ConnectOnNetworkThread(
   SetState(It2MeHostState::kStarting, ErrorCode::OK);
 
   auto connection_context = std::move(create_context).Run(host_context_.get());
-  log_to_server_ = std::move(connection_context->log_to_server);
   signal_strategy_ = std::move(connection_context->signal_strategy);
   api_token_getter_ = std::move(connection_context->api_token_getter);
-  DCHECK(log_to_server_);
   DCHECK(signal_strategy_);
 
-  if (connection_context->use_ftl_signaling) {
-    // If the host owns the signaling channel then we want to make sure that it
-    // will reconnect that channel if a transient network error occurs.
-    // FtlSignalingConnector takes a callback which will indicate whether an
-    // auth error has occurred (e.g. token expired). For our purposes, there
-    // isn't anything we need to do in this case since a new token will be
-    // generated for the next connection.
-    ftl_signaling_connector_ = std::make_unique<FtlSignalingConnector>(
-        signal_strategy_.get(), base::DoNothing());
-    ftl_signaling_connector_->Start();
-    ftl_device_id_ = connection_context->ftl_device_id;
-  }
+  // We want to make sure that the signaling channel will reconnect if a
+  // transient network error occurs.
+  // FtlSignalingConnector takes a callback which will indicate whether an
+  // auth error has occurred (e.g. token expired). For our purposes, there
+  // isn't anything we need to do in this case since a new token will be
+  // generated for the next connection.
+  ftl_signaling_connector_ = std::make_unique<FtlSignalingConnector>(
+      signal_strategy_.get(), base::DoNothing());
+  ftl_signaling_connector_->Start();
+  ftl_device_id_ = connection_context->ftl_device_id;
 
   // Check the host domain policy.
   // Skip this check for enterprise sessions, as they use the device specific
@@ -318,7 +313,8 @@ void It2MeHost::ConnectOnNetworkThread(
     }
   }
 
-  if (connection_context->use_corp_session_authz) {
+  if (connection_context->is_corp_user ||
+      connection_context->use_corp_session_authz) {
     use_corp_session_authz_ = true;
   }
 
@@ -353,7 +349,8 @@ void It2MeHost::ConnectOnNetworkThread(
         reconnect_params_->support_id);
   }
   register_request_->StartRequest(
-      signal_strategy_.get(), host_key_pair_, authorized_helper_,
+      signal_strategy_.get(), host_context_->CreateClientCertStore(),
+      host_key_pair_, authorized_helper_,
       std::move(chrome_os_enterprise_params_),
       base::BindOnce(&It2MeHost::OnReceivedSupportID,
                      weak_factory_.GetWeakPtr()));
@@ -390,11 +387,6 @@ void It2MeHost::ConnectOnNetworkThread(
 
   // Set up the desktop environment options.
   DesktopEnvironmentOptions options(DesktopEnvironmentOptions::CreateDefault());
-#if BUILDFLAG(IS_LINUX)
-  if (IsRunningWayland()) {
-    options.desktop_capture_options()->set_prefer_cursor_embedded(true);
-  }
-#endif
 
 #if BUILDFLAG(IS_CHROMEOS) || !defined(NDEBUG)
   if (is_enterprise_session()) {
@@ -404,6 +396,8 @@ void It2MeHost::ConnectOnNetworkThread(
         !chrome_os_enterprise_params_->suppress_notifications);
     options.set_terminate_upon_input(
         chrome_os_enterprise_params_->terminate_upon_input);
+    options.set_maximum_session_duration(
+        chrome_os_enterprise_params_->maximum_session_duration);
   }
 #endif
 
@@ -416,8 +410,6 @@ void It2MeHost::ConnectOnNetworkThread(
                           base::Unretained(this)),
       local_session_policies_provider_.get());
   host_->status_monitor()->AddStatusObserver(this);
-  host_status_logger_ = std::make_unique<HostStatusLogger>(
-      host_->status_monitor(), log_to_server_.get());
 
   // Create event logger.
   host_event_logger_ =
@@ -520,7 +512,7 @@ void It2MeHost::OnPolicyUpdate(base::Value::Dict policies) {
   // it until after we've finished reading the rest of the policies and started
   // the connection process.
   remote_support_connections_allowed_ =
-      policies.FindBool(GetRemoteSupportPolicyKey()).value_or(true);
+      RemoteSupportConnectionsAllowed(policies);
 
   const base::Value::List* host_domain_list =
       policies.FindList(policy::key::kRemoteAccessHostDomainList);
@@ -643,10 +635,24 @@ void It2MeHost::UpdateLocalSessionPolicies(
   local_session_policies->allow_file_transfer = false;
   local_session_policies->allow_uri_forwarding = false;
 
+  local_session_policies->allow_remote_input = true;
+
 #if BUILDFLAG(IS_CHROMEOS) || !defined(NDEBUG)
   if (is_enterprise_session()) {
     local_session_policies->curtain_required =
         chrome_os_enterprise_params_->curtain_local_user_session;
+
+    local_session_policies->allow_remote_input =
+        chrome_os_enterprise_params_->allow_remote_input;
+
+    if (!chrome_os_enterprise_params_->allow_clipboard_sync) {
+      local_session_policies->clipboard_size_bytes = 0;
+    }
+
+    if (!chrome_os_enterprise_params_->maximum_session_duration.is_zero()) {
+      local_session_policies->maximum_session_duration =
+          chrome_os_enterprise_params_->maximum_session_duration;
+    }
 
 #if BUILDFLAG(IS_CHROMEOS)
     bool enterprise_file_transfer_allowed =
@@ -806,8 +812,6 @@ void It2MeHost::DisconnectOnNetworkThread(protocol::ErrorCode error_code) {
   }
 
   register_request_ = nullptr;
-  host_status_logger_ = nullptr;
-  log_to_server_ = nullptr;
   ftl_signaling_connector_ = nullptr;
   reconnect_params_.reset();
 
@@ -941,19 +945,41 @@ void It2MeHost::OnConfirmationResult(ValidationResultCallback result_callback,
   }
 }
 
-const char* It2MeHost::GetRemoteSupportPolicyKey() const {
+bool It2MeHost::RemoteSupportConnectionsAllowed(
+    const base::Value::Dict& policies) {
 #if BUILDFLAG(IS_CHROMEOS)
   // The policy to disallow remote support connections
   // (RemoteAccessHostAllowRemoteSupportConnections) does not apply to support
-  // sessions initiated by the enterprise admin via a RemoteCommand. This case
-  // is handled specifically by the policy to disallow enterprise remote support
-  // connections (RemoteAccessHostAllowEnterpriseRemoteSupportConnections).
+  // sessions initiated by the enterprise admin via a RemoteCommand or by Class
+  // tools. These two cases are handled specifically by the policy to disallow
+  // enterprise remote support connections
+  // (RemoteAccessHostAllowEnterpriseRemoteSupportConnections) and the policy
+  // to disallow teachers from viewing student screens
+  // (ClassManagementEnabled).
   if (is_enterprise_session()) {
-    return policy::key::
-        kRemoteAccessHostAllowEnterpriseRemoteSupportConnections;
+    switch (chrome_os_enterprise_params_->request_origin) {
+      case remoting::ChromeOsEnterpriseRequestOrigin::kClassManagement:
+        if (const std::string* class_management_enabled_value =
+                policies.FindString(policy::key::kClassManagementEnabled)) {
+          return *class_management_enabled_value == kClassManagementStudent ||
+                 *class_management_enabled_value == kClassManagementTeacher;
+        }
+        return false;
+      case remoting::ChromeOsEnterpriseRequestOrigin::kEnterpriseAdmin:
+        return policies
+            .FindBool(
+                policy::key::
+                    kRemoteAccessHostAllowEnterpriseRemoteSupportConnections)
+            .value_or(true);
+      case remoting::ChromeOsEnterpriseRequestOrigin::kUnknown:
+        NOTREACHED() << "RequestOrigin is validated to be known when "
+                        "enterprise parameters are set";
+    }
   }
 #endif
-  return policy::key::kRemoteAccessHostAllowRemoteSupportConnections;
+  return policies
+      .FindBool(policy::key::kRemoteAccessHostAllowRemoteSupportConnections)
+      .value_or(true);
 }
 
 It2MeHostFactory::It2MeHostFactory() = default;

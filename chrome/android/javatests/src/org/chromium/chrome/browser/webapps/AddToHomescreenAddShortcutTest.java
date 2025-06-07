@@ -155,7 +155,7 @@ public class AddToHomescreenAddShortcutTest {
         private String mTitle;
 
         // The type of of dialog expected to show (at the time of submission).
-        private @AppType int mExpectedDialogType;
+        private final @AppType int mExpectedDialogType;
 
         TestAddToHomescreenCoordinator(
                 WebContents webContents,
@@ -394,6 +394,19 @@ public class AddToHomescreenAddShortcutTest {
                                     .getModel(false)
                                     .getCount(),
                             Matchers.is(2));
+                });
+
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    Criteria.checkThat(
+                            mActivityTestRule
+                                    .getActivity()
+                                    .getTabModelSelector()
+                                    .getModel(false)
+                                    .getTabAt(1)
+                                    .getUrl()
+                                    .isEmpty(),
+                            Matchers.is(false));
                 });
 
         TabModel tabModel = mActivityTestRule.getActivity().getTabModelSelector().getModel(false);

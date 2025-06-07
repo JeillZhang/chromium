@@ -8,9 +8,11 @@
 #include <functional>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "base/barrier_callback.h"
 #include "base/functional/callback.h"
+#include "base/types/optional_ref.h"
 #include "components/autofill/content/browser/bad_message.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
 #include "components/autofill/core/browser/form_structure.h"
@@ -27,7 +29,6 @@
 #include "mojo/public/cpp/bindings/message.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy_features.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "url/origin.h"
 
@@ -71,10 +72,7 @@ FormData Lift(ContentAutofillDriver& source, FormData form) {
     unstripped_url = rfh.GetLastCommittedOrigin().GetURL();
   }
   form.set_url(StripAuthAndParams(unstripped_url));
-  if (base::FeatureList::IsEnabled(
-          features::kAutofillIncludeUrlInCrowdsourcing)) {
-    form.set_full_url(StripAuth(unstripped_url));
-  }
+  form.set_full_url(StripAuth(unstripped_url));
 
   // The form signature must be calculated after setting FormData::url.
   FormSignature signature = CalculateFormSignature(form);
@@ -140,6 +138,22 @@ base::OnceCallback<void(Args...)> Lift(ContentAutofillDriver& source,
       raw_ref(source), std::move(cb));
 }
 
+base::optional_ref<const PasswordSuggestionRequest> Lift(
+    ContentAutofillDriver& source,
+    const std::optional<PasswordSuggestionRequest>& request) {
+  if (!request) {
+    return std::nullopt;
+  }
+  // These indices are equal to fields().size() for a manual requests.
+  if ((request->username_field_index > request->form_data.fields().size()) ||
+      (request->password_field_index > request->form_data.fields().size())) {
+    mojo::ReportBadMessage(
+        "username_field_index or password_field_index cannot be greater than "
+        "form.fields.size()!");
+  }
+  return request;
+}
+
 // WithNewVersion() bumps the FormData::version of each form. This should be
 // called for every browser form before it enters AutofillManager so that
 // AutofillManager can distinguish newer and older forms.
@@ -156,7 +170,8 @@ template <typename T>
                  base::TimeTicks,
                  gfx::Rect,
                  std::u16string,
-                 std::vector<FormGlobalId>>)
+                 std::vector<FormGlobalId>,
+                 base::optional_ref<const PasswordSuggestionRequest>>)
 T&& WithNewVersion(T&& x) {
   return std::forward<T>(x);
 }
@@ -382,13 +397,13 @@ AutofillManager& ContentAutofillDriver::GetAutofillManager() {
 
 std::optional<LocalFrameToken> ContentAutofillDriver::Resolve(
     FrameToken query) {
-  if (absl::holds_alternative<LocalFrameToken>(query)) {
-    return absl::get<LocalFrameToken>(query);
+  if (std::holds_alternative<LocalFrameToken>(query)) {
+    return std::get<LocalFrameToken>(query);
   }
-  DCHECK(absl::holds_alternative<RemoteFrameToken>(query));
+  DCHECK(std::holds_alternative<RemoteFrameToken>(query));
   content::RenderProcessHost* rph = render_frame_host_->GetProcess();
   blink::RemoteFrameToken blink_remote_token(
-      absl::get<RemoteFrameToken>(query).value());
+      std::get<RemoteFrameToken>(query).value());
   content::RenderFrameHost* remote_rfh =
       content::RenderFrameHost::FromPlaceholderToken(rph->GetDeprecatedID(),
                                                      blink_remote_token);
@@ -399,14 +414,8 @@ std::optional<LocalFrameToken> ContentAutofillDriver::Resolve(
 }
 
 ukm::SourceId ContentAutofillDriver::GetPageUkmSourceId() const {
-  if (render_frame_host_->IsInLifecycleState(
-          content::RenderFrameHost::LifecycleState::kPrerendering)) {
-    // TODO(crbug.com/380129810): When `return ukm::kInvalidSourceId` is
-    // removed, FormInteractionsUkmLogger::CanLog() doesn't need to check the
-    // `ukm::SourceId` anymore.
-    NOTREACHED(base::NotFatalUntil::M134);
-    return ukm::kInvalidSourceId;
-  }
+  CHECK(!render_frame_host_->IsInLifecycleState(
+          content::RenderFrameHost::LifecycleState::kPrerendering));
   return render_frame_host_->GetPageUkmSourceId();
 }
 
@@ -480,17 +489,17 @@ void ContentAutofillDriver::ExtractForm(FormGlobalId form_id,
       form_id, WithNewVersion(std::move(final_handler)));
 }
 
+void ContentAutofillDriver::ExposeDomNodeIDs() {
+  GetAutofillAgent()->ExposeDomNodeIDs();
+}
+
 void ContentAutofillDriver::SendTypePredictionsToRenderer(
-    base::span<const raw_ptr<FormStructure, VectorExperimental>> forms) {
-  if (!base::FeatureList::IsEnabled(
-          features::test::kAutofillShowTypePredictions)) {
-    return;
-  }
-  std::vector<FormDataPredictions> type_predictions =
-      FormStructure::GetFieldTypePredictions(forms);
+    const FormStructure& form) {
+  CHECK(base::FeatureList::IsEnabled(
+      features::test::kAutofillShowTypePredictions));
   RouteToAgent(router(), &AutofillDriverRouter::SendTypePredictionsToRenderer,
                &mojom::AutofillAgent::FieldTypePredictionsAvailable,
-               type_predictions);
+               form.GetFieldTypePredictions());
 }
 
 void ContentAutofillDriver::RendererShouldAcceptDataListSuggestion(
@@ -573,10 +582,11 @@ void ContentAutofillDriver::AskForValuesToFill(
     const FormData& form,
     FieldRendererId field_id,
     const gfx::Rect& caret_bounds,
-    AutofillSuggestionTriggerSource trigger_source) {
+    AutofillSuggestionTriggerSource trigger_source,
+    const std::optional<PasswordSuggestionRequest>& password_request) {
   RouteToManager(*this, router(), &AutofillDriverRouter::AskForValuesToFill,
                  &AutofillManager::OnAskForValuesToFill, form, field_id,
-                 caret_bounds, trigger_source);
+                 caret_bounds, trigger_source, password_request);
 }
 
 void ContentAutofillDriver::HidePopup() {
@@ -621,12 +631,11 @@ void ContentAutofillDriver::SelectFieldOptionsDidChange(const FormData& form) {
 void ContentAutofillDriver::JavaScriptChangedAutofilledValue(
     const FormData& form,
     FieldRendererId field_id,
-    const std::u16string& old_value,
-    bool formatting_only) {
+    const std::u16string& old_value) {
   RouteToManager(*this, router(),
                  &AutofillDriverRouter::JavaScriptChangedAutofilledValue,
                  &AutofillManager::OnJavaScriptChangedAutofilledValue, form,
-                 field_id, old_value, formatting_only);
+                 field_id, old_value);
 }
 
 const mojo::AssociatedRemote<mojom::AutofillAgent>&

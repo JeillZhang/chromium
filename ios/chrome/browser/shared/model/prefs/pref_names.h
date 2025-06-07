@@ -91,6 +91,15 @@ inline constexpr char kDetectAddressesEnabled[] =
 inline constexpr char kDownloadAutoDeletionEnabled[] =
     "ios.download.auto_deletion_enabled";
 
+// The pref tracks whether Auto-deletion's IPH has been shown to the user.
+inline constexpr char kDownloadAutoDeletionIPHShown[] =
+    "ios.download.auto_deletion_iph_shown";
+
+// A list of dictionaries that represent the files scheduled for automatic
+// deletion.
+inline constexpr char kDownloadAutoDeletionScheduledFiles[] =
+    "ios.auto_deletion.scheduled_files";
+
 // Number of times the First Follow UI has been shown.
 inline constexpr char kFirstFollowUIShownCount[] =
     "follow.first_follow_ui_modal_count";
@@ -104,6 +113,11 @@ inline constexpr char kFirstFollowUpdateUIShownCount[] =
 // to send notifications to the user. This is stored in Profile prefs.
 inline constexpr char kFeaturePushNotificationPermissions[] =
     "push_notifications.feature_permissions";
+
+// A boolean indicating if the user has ever switched accounts via an account
+// menu triggered from a web flow.
+inline constexpr char kHasSwitchedAccountsViaWebFlow[] =
+    "ios.signin.has_switched_accounts_via_web_flow";
 
 // Prefs for persisting HttpServerProperties.
 inline constexpr char kHttpServerProperties[] = "net.http_server_properties";
@@ -193,6 +207,15 @@ inline constexpr char kIosBringAndroidTabsPromptDisplayed[] =
 inline constexpr char kIosCredentialProviderPromoLastActionTaken[] =
     "ios.credential_provider_promo_last_action_taken";
 
+// The timestamp of the last time the CPE promo was displayed.
+inline constexpr char kIosCredentialProviderPromoDisplayTime[] =
+    "ios.credential_provider_promo_display_time";
+
+// The timestamp of the last time the user had a successful login with an
+// existing saved password.
+inline constexpr char kIosSuccessfulLoginWithExistingPassword[] =
+    "ios.successful_login_with_existing_password";
+
 // Boolean that is true when the CredentialProviderPromoEnabled policy is
 // enabled.
 inline constexpr char kIosCredentialProviderPromoPolicyEnabled[] =
@@ -253,6 +276,12 @@ inline constexpr char
     kIosMagicStackSegmentationParcelTrackingImpressionsSinceFreshness[] =
         "ios.magic_stack_segmentation.parcel_tracking_freshness";
 
+// Integer representing the number of impressions of the ShopCard module
+// since a freshness signal.
+inline constexpr char
+    kIosMagicStackSegmentationShopCardImpressionsSinceFreshness[] =
+        "ios.magic_stack_segmentation.shop_card_freshness";
+
 // Integer representing the number of impressions of Shortcuts since a freshness
 // signal.
 inline constexpr char
@@ -269,24 +298,9 @@ inline constexpr char
     kIosMagicStackSegmentationTabResumptionImpressionsSinceFreshness[] =
         "ios.magic_stack_segmentation.tab_resumption_freshness";
 
-// Boolean to represent if the parcel tracking opt-in prompt has met its display
-// limit for the user. Was previously kIosParcelTrackingOptInPromptDisplayed.
-inline constexpr char kIosParcelTrackingOptInPromptDisplayLimitMet[] =
-    "ios.parcel_tracking.opt_in_prompt_displayed";
-
-// Integer that maps to IOSParcelTrackingOptInStatus, the enum type of the
-// user's preference for automatically tracking parcels.
-inline constexpr char kIosParcelTrackingOptInStatus[] =
-    "ios.parcel_tracking.opt_in_status";
-
-// Boolean to represent if the user has swiped down on the parcel trackinf
-// opt-in prompt.
-inline constexpr char kIosParcelTrackingOptInPromptSwipedDown[] =
-    "ios.parcel_tracking.opt_in_prompt_swiped_down";
-
-// Boolean to represent if Parcel Tracking is enabled for enterprise users.
-inline constexpr char kIosParcelTrackingPolicyEnabled[] =
-    "ios.parcel_tracking.policy_enabled";
+// Whether to show Google links to GoogleMaps in a native view.
+inline constexpr char kIosMiniMapShowNativeMap[] =
+    "ios.mini_map.show_native_map";
 
 // The number of consecutive times the user dismissed the password bottom sheet.
 // This gets reset to 0 whenever the user selects a password from the bottom
@@ -522,6 +536,10 @@ inline constexpr char kLensCameraAssistedSearchPolicyAllowed[] =
 // Date of the last time the user opened the Lens UI.
 inline constexpr char kLensLastOpened[] = "ios.lens.last_opened";
 
+// Date when the Lens Overlay was last presented.
+inline constexpr char kLensOverlayLastPresented[] =
+    "ios.lens_overlay.last_presented";
+
 // Number of times the NTP Lens button "new" IPH badge has been shown.
 // This is set to INT_MAX when the user taps the button.
 inline constexpr char kNTPLensEntryPointNewBadgeShownCount[] =
@@ -616,10 +634,6 @@ inline constexpr char kNewTabPageLocationOverride[] =
 // A boolean specifying whether HTTPS-Only Mode is enabled.
 inline constexpr char kHttpsOnlyModeEnabled[] = "ios.https_only_mode_enabled";
 
-// A boolean specifying whether Mixed Content Autoupgrading is enabled.
-inline constexpr char kMixedContentAutoupgradeEnabled[] =
-    "ios.mixed_content_autoupgrade_enabled";
-
 // An int counting the remaining number of times the autofill branding icon
 // should show inside form input accessories.
 inline constexpr char kAutofillBrandingIconAnimationRemainingCount[] =
@@ -688,6 +702,11 @@ inline constexpr char kHomeCustomizationMagicStackParcelTrackingEnabled[] =
     "ios.home_customization.magic_stack.parcel_tracking.enabled";
 inline constexpr char kHomeCustomizationMagicStackTipsEnabled[] =
     "ios.home_customization.magic_stack.tips.enabled";
+inline constexpr char
+    kHomeCustomizationMagicStackShopCardPriceTrackingEnabled[] =
+        "ios.home_customization.magic_stack.shop_card_price_tracking.enabled";
+inline constexpr char kHomeCustomizationMagicStackShopCardReviewsEnabled[] =
+    "ios.home_customization.magic_stack.shop_card_price_reviews.enabled";
 
 // List preference that stores the positions in the Magic Stack where the Safety
 // Check module with the notifications opt-in button is shown.
@@ -733,6 +752,32 @@ inline constexpr char kYoutubeIncognitoHasBeenShown[] =
 
 // A dictionary to store reminders that the user has set.
 inline constexpr char kReminderNotifications[] = "ios.notifications.reminders";
+
+// A bool checking that keys used to add multi-profile support to widgets are
+// set.
+inline constexpr char kMigrateWidgetsPrefs[] =
+    "ios.widgets.update_to_support_mim";
+
+// A boolean specifying whether provisional notifications are allowed by policy.
+inline constexpr char kProvisionalNotificationsAllowedByPolicy[] =
+    "ios.notifications.provisional.allowed_by_policy";
+
+// Timestamp tracking when the sync error infobar was dismissed the last time
+// (either explicitly swiped by the user or through the dismissal timeout).
+inline constexpr char kIosSyncInfobarErrorLastDismissedTimestamp[] =
+    "ios.sync_infobar_error.last_dismissed_timestamp";
+
+// A boolean specifying whether the bwg consent form has been accepted.
+inline constexpr char kIOSBwgConsent[] = "ios.bwg.consent";
+
+// A boolean specifying whether the BWG Promo was shown manually.
+inline constexpr char kIOSBWGManualPromo[] = "ios.bwg.manual_promo";
+
+// A time object storing the first browser startup with a managed primary
+// identity in the personal profile after multi-profile becomes supported. Used
+// to trigger forced migration after some grace period.
+inline constexpr char kWaitingForMultiProfileForcedMigrationTimestamp[] =
+    "ios.waiting_for_multi_profile_forced_migration_timestamp";
 
 }  // namespace prefs
 

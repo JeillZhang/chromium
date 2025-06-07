@@ -556,6 +556,9 @@ targets.binaries.generated_script(
     label = "//chrome/test:chrome_sizes",
     merge = targets.merge(
         script = "//tools/perf/process_perf_results.py",
+        args = [
+            "--upload-skia-json",
+        ],
     ),
 )
 
@@ -712,6 +715,13 @@ targets.binaries.windowed_test_launcher(
     label = "//components:components_unittests",
 )
 
+targets.binaries.script(
+    name = "component_storage_test",
+    label = "//build/fuchsia/test:component_storage_test",
+    script = "//build/fuchsia/test/component_storage_test.py",
+    skip_usage_check = True,
+)
+
 targets.binaries.windowed_test_launcher(
     name = "compositor_unittests",
     label = "//ui/compositor:compositor_unittests",
@@ -770,6 +780,9 @@ targets.binaries.generated_script(
     skip_usage_check = True,
     merge = targets.merge(
         script = "//tools/perf/process_perf_results.py",
+        args = [
+            "--upload-skia-json",
+        ],
     ),
     resultdb = targets.resultdb(
         enable = True,
@@ -832,6 +845,22 @@ targets.binaries.console_test_launcher(
     label = "//components/cronet/android:cronet_unittests_android",
     # All references have been moved to starlark
     skip_usage_check = True,
+)
+
+targets.binaries.generated_script(
+    name = "crossbench_smoketests",
+    label = "//chrome/test:crossbench_smoketests",
+    skip_usage_check = True,
+    args = [
+        "../../third_party/crossbench/cb.py",
+        "--benchmarks=speedometer_3.0",
+        "--isolated-script-test-output=${ISOLATED_OUTDIR}",
+        "--repeat=1",
+        "--iterations=2",
+        "--fast",
+        "--fileserver",
+        "--luci-chromium",
+    ],
 )
 
 targets.binaries.console_test_launcher(
@@ -902,6 +931,9 @@ targets.binaries.generated_script(
     ],
     merge = targets.merge(
         script = "//tools/perf/process_perf_results.py",
+        args = [
+            "--upload-skia-json",
+        ],
     ),
 )
 
@@ -998,6 +1030,12 @@ targets.binaries.console_test_launcher(
 )
 
 targets.binaries.console_test_launcher(
+    name = "video_encode_accelerator_tests",
+    label = "//media/gpu/test:video_encode_accelerator_tests",
+    skip_usage_check = True,
+)
+
+targets.binaries.console_test_launcher(
     name = "filesystem_service_unittests",
     label = "//components/services/filesystem:filesystem_service_unittests",
 )
@@ -1029,6 +1067,9 @@ targets.binaries.generated_script(
     skip_usage_check = True,
     merge = targets.merge(
         script = "//tools/perf/process_perf_results.py",
+        args = [
+            "--upload-skia-json",
+        ],
     ),
 )
 
@@ -1745,6 +1786,13 @@ targets.binaries.script(
     ],
 )
 
+targets.binaries.generated_script(
+    name = "webui_resources_tools_python_unittests",
+    label = "//ui/webui/resources/tools:webui_resources_tools_python_unittests",
+    # All references are in starlark.
+    skip_usage_check = True,
+)
+
 targets.binaries.console_test_launcher(
     name = "power_sampler_unittests",
     label = "//tools/mac/power:power_sampler_unittests",
@@ -1791,6 +1839,9 @@ targets.binaries.generated_script(
     skip_usage_check = True,
     merge = targets.merge(
         script = "//tools/perf/process_perf_results.py",
+        args = [
+            "--upload-skia-json",
+        ],
     ),
     resultdb = targets.resultdb(
         enable = True,
@@ -2291,6 +2342,9 @@ targets.binaries.script(
     ],
     merge = targets.merge(
         script = "//tools/perf/process_perf_results.py",
+        args = [
+            "--upload-skia-json",
+        ],
     ),
 )
 

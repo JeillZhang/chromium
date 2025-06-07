@@ -22,6 +22,7 @@
 #import "ios/chrome/browser/menu/ui_bundled/action_factory.h"
 #import "ios/chrome/browser/recent_tabs/ui_bundled/recent_tabs_table_view_controller.h"
 #import "ios/chrome/browser/recent_tabs/ui_bundled/recent_tabs_table_view_controller_ui_delegate.h"
+#import "ios/chrome/browser/shared/model/web_state_list/tab_utils.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/tab_grid_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
@@ -56,7 +57,6 @@
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/toolbars/tab_grid_top_toolbar.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/legacy_grid_transition_layout.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/tab_grid_transition_layout.h"
-#import "ios/chrome/browser/tabs/model/inactive_tabs/features.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -303,6 +303,10 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
       offset = 1.0 - offset;
     }
     self.topToolbar.pageControl.sliderPosition = offset;
+    [self.topToolbar setBackgroundContentOffset:scrollView.contentOffset
+                                       animated:NO];
+    [self.bottomToolbar setBackgroundContentOffset:scrollView.contentOffset
+                                          animated:NO];
 
     TabGridPage page = GetPageFromScrollView(scrollView);
     if (page != self.currentPage) {
@@ -377,11 +381,7 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
       stringID = IDS_IOS_TAB_GRID_INCOGNITO_TABS_TITLE;
       break;
     case TabGridPageRegularTabs:
-      if (IsTabGroupInGridEnabled()) {
         stringID = IDS_IOS_TAB_GRID_REGULAR_TABS_WITH_GROUPS_TITLE;
-      } else {
-        stringID = IDS_IOS_TAB_GRID_REGULAR_TABS_TITLE;
-      }
       break;
     case TabGridPageRemoteTabs:
       stringID = IDS_IOS_TAB_GRID_REMOTE_TABS_TITLE;
@@ -791,6 +791,8 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   // Otherwise don't.
   if (!self.viewVisible || !animated) {
     [self.scrollView setContentOffset:targetOffset animated:NO];
+    [self.topToolbar setBackgroundContentOffset:targetOffset animated:NO];
+    [self.bottomToolbar setBackgroundContentOffset:targetOffset animated:NO];
     self.currentPage = targetPage;
     // Important updates (e.g., button configurations, incognito visibility) are
     // made at the end of scrolling animations after `self.currentPage` is set.
@@ -803,6 +805,8 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
     if (scrolled) {
       self.scrollViewAnimatingContentOffset = YES;
       [self.scrollView setContentOffset:targetOffset animated:YES];
+      [self.topToolbar setBackgroundContentOffset:targetOffset animated:YES];
+      [self.bottomToolbar setBackgroundContentOffset:targetOffset animated:YES];
       // `self.currentPage` is set in scrollViewDidEndScrollingAnimation:
     } else {
       self.currentPage = targetPage;
@@ -859,6 +863,7 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   UIScrollView* scrollView = [[UIScrollView alloc] init];
   scrollView.translatesAutoresizingMaskIntoConstraints = NO;
   scrollView.pagingEnabled = YES;
+  scrollView.showsHorizontalScrollIndicator = NO;
   scrollView.delegate = self;
   // Ensures that scroll view does not add additional margins based on safe
   // areas.
@@ -1148,6 +1153,11 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   }
 }
 
+// Closes the current active tab.
+- (void)closeTabForKeyboardCommand {
+  [self.delegate closeCurrentTab];
+}
+
 // Broadcasts whether incognito tabs are showing.
 - (void)broadcastIncognitoContentVisibility {
   // It is programmer error to broadcast incognito content visibility when the
@@ -1288,6 +1298,22 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   return [self isPageEnabled:destinationPage] &&
          self.currentPage != TabGridPageRemoteTabs &&
          self.currentPage != TabGridPageTabGroups;
+}
+
+// Returns YES if a close tab action that targets the active page can be
+// performed.
+- (BOOL)canPerformCloseTab {
+  switch (self.activePage) {
+    case TabGridPageIncognitoTabs:
+      return !self.incognitoTabsViewController.isGridEmpty;
+    case TabGridPageRegularTabs:
+      return !self.regularTabsViewController.isGridEmpty ||
+             (self.pinnedTabsViewController &&
+              !self.pinnedTabsViewController.isCollectionEmpty);
+    case TabGridPageTabGroups:
+    case TabGridPageRemoteTabs:
+      return NO;
+  }
 }
 
 // Returns transition layout for the provided `page`.
@@ -1574,9 +1600,10 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   // Record how long it took to select an item.
   [self reportTabSelectionTime];
 
-  [self.regularGridHandler selectItemWithID:itemID
-                                     pinned:YES
-                     isFirstActionOnTabGrid:[self status]];
+  [self.regularGridHandler
+            selectItemWithID:itemID
+                 pinnedState:WebStateSearchCriteria::PinnedState::kPinned
+      isFirstActionOnTabGrid:[self status]];
 
   self.activePage = self.currentPage;
   [self tabGridDidPerformAction:TabGridActionType::kInPageAction];
@@ -1676,7 +1703,7 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   BOOL alreadySelected = [tabsDelegate isItemWithIDSelected:itemID];
 
   [tabsDelegate selectItemWithID:itemID
-                          pinned:NO
+                     pinnedState:WebStateSearchCriteria::PinnedState::kAny
           isFirstActionOnTabGrid:[self status]];
 
   if (!alreadySelected) {
@@ -1812,7 +1839,6 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 
 - (void)didTapInactiveTabsButtonInGridViewController:
     (BaseGridViewController*)gridViewController {
-  CHECK(IsInactiveTabsEnabled());
   if (self.currentPage != TabGridPageRegularTabs) {
     return;
   }
@@ -1868,6 +1894,8 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
   // scroll width.
   contentOffset.x = offsetWidth * offset;
   self.scrollView.contentOffset = contentOffset;
+  [self.topToolbar setBackgroundContentOffset:contentOffset animated:NO];
+  [self.bottomToolbar setBackgroundContentOffset:contentOffset animated:NO];
 }
 
 - (void)pageControlChangedPageByDrag:(id)sender {
@@ -1986,6 +2014,9 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 }
 
 - (BOOL)canPerformAction:(SEL)action withSender:(id)sender {
+  if (sel_isEqual(action, @selector(keyCommand_closeTab))) {
+    return [self canPerformCloseTab];
+  }
   if (sel_isEqual(action, @selector(keyCommand_openNewTab))) {
     return [self canPerformOpenNewTabActionForDestinationPage:self.currentPage];
   }
@@ -2028,6 +2059,14 @@ NSUInteger GetPageIndexFromPage(TabGridPage page) {
 - (void)keyCommand_openNewTab {
   base::RecordAction(base::UserMetricsAction("MobileKeyCommandOpenNewTab"));
   [self openNewTabInCurrentPageForKeyboardCommand];
+}
+
+- (void)keyCommand_closeTab {
+  RecordAction(base::UserMetricsAction("MobileKeyCommandCloseTab"));
+  __weak TabGridViewController* weakSelf = self;
+  [self.handler dismissModalDialogsWithCompletion:^{
+    [weakSelf closeTabForKeyboardCommand];
+  }];
 }
 
 - (void)keyCommand_openNewRegularTab {

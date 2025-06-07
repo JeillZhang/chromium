@@ -13,6 +13,7 @@
 #include "third_party/blink/renderer/core/frame/csp/csp_violation_report_body.h"
 #include "third_party/blink/renderer/core/frame/deprecation/deprecation_report_body.h"
 #include "third_party/blink/renderer/core/frame/document_policy_violation_report_body.h"
+#include "third_party/blink/renderer/core/frame/integrity_violation_report_body.h"
 #include "third_party/blink/renderer/core/frame/intervention_report_body.h"
 #include "third_party/blink/renderer/core/frame/permissions_policy_violation_report_body.h"
 #include "third_party/blink/renderer/core/frame/report.h"
@@ -167,7 +168,7 @@ void ReportingContext::NotifyInternal(Report* report) {
   if (!report_buffer_.Contains(report->type())) {
     report_buffer_.insert(
         report->type(),
-        MakeGarbageCollected<HeapLinkedHashSet<Member<Report>>>());
+        MakeGarbageCollected<GCedHeapLinkedHashSet<Member<Report>>>());
   }
   report_buffer_.find(report->type())->value->insert(report);
 
@@ -188,6 +189,7 @@ void ReportingContext::SendToReportingAPI(Report* report,
         type == ReportType::kDeprecation ||
         type == ReportType::kPermissionsPolicyViolation ||
         type == ReportType::kPotentialPermissionsPolicyViolation ||
+        type == ReportType::kIntegrityViolation ||
         type == ReportType::kIntervention ||
         type == ReportType::kDocumentPolicyViolation)) {
     return;
@@ -224,6 +226,12 @@ void ReportingContext::SendToReportingAPI(Report* report,
         url, body->id(), body->AnticipatedRemoval(),
         body->message().IsNull() ? g_empty_string : body->message(),
         body->sourceFile(), line_number, column_number);
+  } else if (type == ReportType::kIntegrityViolation) {
+    const IntegrityViolationReportBody* body =
+        static_cast<IntegrityViolationReportBody*>(report->body());
+    GetReportingService()->QueueIntegrityViolationReport(
+        url, endpoint, body->documentURL(), body->blockedURL(),
+        body->destination(), body->reportOnly());
   } else if (type == ReportType::kPermissionsPolicyViolation) {
     // Send the permissions policy violation report.
     const PermissionsPolicyViolationReportBody* body =

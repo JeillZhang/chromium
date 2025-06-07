@@ -146,6 +146,8 @@ TEST(Generated, EditionDefaults2023InternalFeatures) {
                 utf8_validation: VERIFY
                 message_encoding: LENGTH_PREFIXED
                 json_format: ALLOW
+                enforce_naming_style: STYLE_LEGACY
+                default_symbol_visibility: EXPORT_ALL
                 [pb.cpp] {
                   legacy_closed_enum: false
                   string_type: STRING

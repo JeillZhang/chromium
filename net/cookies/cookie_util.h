@@ -13,8 +13,6 @@
 #include "base/time/time.h"
 #include "base/types/optional_ref.h"
 #include "net/base/net_export.h"
-#include "net/cookies/canonical_cookie.h"
-#include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_setting_override.h"
@@ -28,11 +26,18 @@ class GURL;
 
 namespace net {
 
-class IsolationInfo;
-class SchemefulSite;
+class CanonicalCookie;
 class CookieAccessDelegate;
 class CookieInclusionStatus;
+class IsolationInfo;
 class ParsedCookie;
+class SchemefulSite;
+
+struct CookieAccessResult;
+struct CookieWithAccessResult;
+
+using CookieList = std::vector<CanonicalCookie>;
+using CookieAccessResultList = std::vector<CookieWithAccessResult>;
 
 namespace cookie_util {
 
@@ -83,7 +88,7 @@ enum class StorageAccessStatus {
 // LINT.IfChange(StorageAccessStatusOutcome)
 enum class StorageAccessStatusOutcome {
   // The feature is disabled.
-  kOmittedFeatureDisabled = 0,
+  // kOmittedFeatureDisabled = 0, // Deprecated (feature is always enabled).
   // The request is same-site.
   kOmittedSameSite = 1,
   // The storage access status is `none`.
@@ -126,7 +131,7 @@ enum class SecFetchStorageAccessOutcome {
 enum class ActivateStorageAccessLoadOutcome {
   // Applies when the `Activate-Storage-Access` header behavior is not enabled
   // under the existing feature flags or content settings.
-  kFailureHeaderDisabled = 0,
+  // kFailureHeaderDisabled = 0, // Deprecated (feature is always enabled).
   // Applies when a response includes the `Activate-Storage-Access: load`
   // header, but its corresponding request either has an omitted storage access
   // status, or has a storage access status of `none`.
@@ -147,7 +152,7 @@ enum class ActivateStorageAccessLoadOutcome {
 enum class ActivateStorageAccessRetryOutcome {
   // Applies when the `Activate-Storage-Access` header behavior is not enabled
   // under the existing feature flags or content settings.
-  kFailureHeaderDisabled = 0,
+  // kFailureHeaderDisabled = 0, // Deprecated (feature is always enabled).
   // Applies when a response includes a well-formed
   // `Activate-Storage-Access: retry; ..." header, but the corresponding
   // request's `Sec-Fetch-Storage-Access` header is not `inactive`.
@@ -267,11 +272,11 @@ bool IsCookiePrefixValid(CookiePrefix prefix,
 // As above. `secure`, `domain`, and `path` are the raw attribute values (i.e.
 // as taken from a ParsedCookie), NOT in normalized form as represented in
 // CookieBase.
-bool IsCookiePrefixValid(CookiePrefix prefix,
-                         const GURL& url,
-                         bool secure,
-                         const std::string& domain,
-                         const std::string& path);
+NET_EXPORT_PRIVATE bool IsCookiePrefixValid(CookiePrefix prefix,
+                                            const GURL& url,
+                                            bool secure,
+                                            const std::string& domain,
+                                            const std::string& path);
 
 // Returns true iff the cookie is a partitioned cookie with a nonce or that
 // does not violate the semantics of the Partitioned attribute:
@@ -406,9 +411,6 @@ NET_EXPORT bool IsOriginBoundCookiesPartiallyEnabled();
 
 NET_EXPORT bool IsTimeLimitedInsecureCookiesEnabled();
 
-// Returns whether the respective feature is enabled.
-NET_EXPORT bool IsSchemefulSameSiteEnabled();
-
 // Computes the First-Party Sets metadata and cache match information.
 // `isolation_info` must be fully populated.
 //
@@ -461,15 +463,14 @@ NET_EXPORT void DCheckIncludedAndExcludedCookieLists(
 // --test-third-party-cookie-phaseout.
 NET_EXPORT bool IsForceThirdPartyCookieBlockingEnabled();
 
-NET_EXPORT bool PartitionedCookiesDisabledByCommandLine();
-
 // Indicates whether the first hop in a request should have the
 // kStorageAccessGrantEligible override.
 [[nodiscard]] NET_EXPORT bool ShouldAddInitialStorageAccessApiOverride(
     const GURL& url,
     StorageAccessApiStatus api_status,
     base::optional_ref<const url::Origin> request_initiator,
-    bool emit_metrics);
+    bool emit_metrics,
+    bool credentials_mode_include);
 
 }  // namespace cookie_util
 

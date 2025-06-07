@@ -53,7 +53,7 @@ struct PlaybackSpeed {
   const double playback_rate;
 };
 
-const auto kPlaybackSpeeds = std::to_array<PlaybackSpeed>({
+constexpr auto kPlaybackSpeeds = std::to_array<PlaybackSpeed>({
     {IDS_MEDIA_OVERFLOW_MENU_PLAYBACK_SPEED_0_25X_TITLE, 0.25},
     {IDS_MEDIA_OVERFLOW_MENU_PLAYBACK_SPEED_0_5X_TITLE, 0.5},
     {IDS_MEDIA_OVERFLOW_MENU_PLAYBACK_SPEED_0_75X_TITLE, 0.75},
@@ -224,7 +224,7 @@ Element* MediaControlPlaybackSpeedListElement::CreatePlaybackSpeedHeaderItem() {
 
 void MediaControlPlaybackSpeedListElement::RefreshPlaybackSpeedListMenu() {
   EventDispatchForbiddenScope::AllowUserAgentEvents allow_events;
-  RemoveChildren(kOmitSubtreeModifiedEvent);
+  RemoveChildren();
 
   ParserAppendChild(CreatePlaybackSpeedHeaderItem());
 
@@ -254,9 +254,7 @@ void MediaControlPlaybackSpeedListElement::CenterCheckedItem() {
     return;
   ScrollIntoViewOptions* options = ScrollIntoViewOptions::Create();
   options->setBlock("center");
-  auto* arg =
-      MakeGarbageCollected<V8UnionBooleanOrScrollIntoViewOptions>(options);
-  checked_item_->scrollIntoView(arg);
+  checked_item_->scrollIntoViewWithOptions(options);
   checked_item_->Focus(FocusParams(FocusTrigger::kUserGesture));
 }
 

@@ -129,6 +129,12 @@ public class AppMenuTest {
 
     @After
     public void tearDown() {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    if (mAppMenuHandler.isAppMenuShowing()) {
+                        mAppMenuHandler.getAppMenu().dismiss();
+                    }
+                });
         NightModeTestUtils.tearDownNightModeForBlankUiTestActivity();
     }
 
@@ -347,15 +353,15 @@ public class AppMenuTest {
         showMenuAndAssert();
         AppMenu spiedMenu = Mockito.spy(mAppMenuHandler.getAppMenu());
 
-        View dummyView = new View(sActivity);
+        View testView = new View(sActivity);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     spiedMenu.onItemLongClick(
                             mAppMenuHandler.getAppMenu().getMenuItemPropertyModel(R.id.icon_one),
-                            dummyView);
+                            testView);
                 });
 
-        Mockito.verify(spiedMenu, Mockito.times(1)).showToastForItem("Icon One", dummyView);
+        Mockito.verify(spiedMenu, Mockito.times(1)).showToastForItem("Icon One", testView);
     }
 
     @Test
@@ -365,15 +371,15 @@ public class AppMenuTest {
         showMenuAndAssert();
         AppMenu spiedMenu = Mockito.spy(mAppMenuHandler.getAppMenu());
 
-        View dummyView = new View(sActivity);
+        View testView = new View(sActivity);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     spiedMenu.onItemLongClick(
                             mAppMenuHandler.getAppMenu().getMenuItemPropertyModel(R.id.icon_two),
-                            dummyView);
+                            testView);
                 });
 
-        Mockito.verify(spiedMenu, Mockito.times(1)).showToastForItem("2", dummyView);
+        Mockito.verify(spiedMenu, Mockito.times(1)).showToastForItem("2", testView);
     }
 
     @Test
@@ -383,12 +389,12 @@ public class AppMenuTest {
         showMenuAndAssert();
         AppMenu spiedMenu = Mockito.spy(mAppMenuHandler.getAppMenu());
 
-        View dummyView = new View(sActivity);
+        View testView = new View(sActivity);
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     spiedMenu.onItemLongClick(
                             mAppMenuHandler.getAppMenu().getMenuItemPropertyModel(R.id.icon_three),
-                            dummyView);
+                            testView);
                 });
 
         Mockito.verify(spiedMenu, Mockito.times(0))
@@ -737,7 +743,7 @@ public class AppMenuTest {
         KeyEvent down = new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MENU);
         Assert.assertFalse(
                 "#onKeyEvent should return false when app menu hidden",
-                appMenu.onKey(null, KeyEvent.KEYCODE_MENU, null));
+                appMenu.onKey(null, KeyEvent.KEYCODE_MENU, down));
     }
 
     @Test
@@ -961,8 +967,8 @@ public class AppMenuTest {
     public void testCalculateHeightForItems_enoughSpace() throws Exception {
         showMenuAndAssert();
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
+        List<Integer> menuItemIds = new ArrayList<>();
+        List<Integer> heightList = new ArrayList<>();
         createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
@@ -983,8 +989,8 @@ public class AppMenuTest {
     public void testCalculateHeightForItems_notEnoughSpaceForOneItem() throws Exception {
         showMenuAndAssert();
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
+        List<Integer> menuItemIds = new ArrayList<>();
+        List<Integer> heightList = new ArrayList<>();
         createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
@@ -1006,8 +1012,8 @@ public class AppMenuTest {
     public void testCalculateHeightForItems_notEnoughSpaceForTwoItem() throws Exception {
         showMenuAndAssert();
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
+        List<Integer> menuItemIds = new ArrayList<>();
+        List<Integer> heightList = new ArrayList<>();
         createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
@@ -1031,8 +1037,8 @@ public class AppMenuTest {
     public void testCalculateHeightForItems_notEnoughSpaceForThreeItem() throws Exception {
         showMenuAndAssert();
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
+        List<Integer> menuItemIds = new ArrayList<>();
+        List<Integer> heightList = new ArrayList<>();
         createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
@@ -1057,8 +1063,8 @@ public class AppMenuTest {
     public void testCalculateHeightForItems_notEnoughSpaceForDivider() throws Exception {
         showMenuAndAssert();
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
+        List<Integer> menuItemIds = new ArrayList<>();
+        List<Integer> heightList = new ArrayList<>();
         createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
@@ -1083,8 +1089,8 @@ public class AppMenuTest {
     public void testCalculateHeightForItems_showPartialDivider() throws Exception {
         showMenuAndAssert();
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
+        List<Integer> menuItemIds = new ArrayList<>();
+        List<Integer> heightList = new ArrayList<>();
         createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
@@ -1110,8 +1116,8 @@ public class AppMenuTest {
             throws Exception {
         showMenuAndAssert();
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
+        List<Integer> menuItemIds = new ArrayList<>();
+        List<Integer> heightList = new ArrayList<>();
         createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
@@ -1138,8 +1144,8 @@ public class AppMenuTest {
     public void testCalculateHeightForItems_minimalHight() throws Exception {
         showMenuAndAssert();
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
+        List<Integer> menuItemIds = new ArrayList<>();
+        List<Integer> heightList = new ArrayList<>();
         createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
@@ -1162,8 +1168,8 @@ public class AppMenuTest {
             throws Exception {
         showMenuAndAssert();
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
+        List<Integer> menuItemIds = new ArrayList<>();
+        List<Integer> heightList = new ArrayList<>();
         createMenuItem(menuItemIds, heightList, /* id= */ 0, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 1, /* height= */ 10);
         createMenuItem(menuItemIds, heightList, /* id= */ 2, /* height= */ 10);
@@ -1185,8 +1191,8 @@ public class AppMenuTest {
     public void testCalculateHeightForItems_nagativeSpaceForZeroItems() throws Exception {
         showMenuAndAssert();
 
-        List<Integer> menuItemIds = new ArrayList<Integer>();
-        List<Integer> heightList = new ArrayList<Integer>();
+        List<Integer> menuItemIds = new ArrayList<>();
+        List<Integer> heightList = new ArrayList<>();
 
         int height =
                 mAppMenuHandler
@@ -1263,7 +1269,7 @@ public class AppMenuTest {
     }
 
     private static class TestActivityLifecycleDispatcher implements ActivityLifecycleDispatcher {
-        public CallbackHelper observerRegisteredCallbackHelper = new CallbackHelper();
+        public final CallbackHelper observerRegisteredCallbackHelper = new CallbackHelper();
 
         @Override
         public void register(LifecycleObserver observer) {

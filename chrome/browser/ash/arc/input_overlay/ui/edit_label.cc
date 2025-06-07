@@ -187,7 +187,7 @@ void EditLabel::SetTextLabel(const std::u16string& text) {
   SetText(text);
   UpdateAccessibleName();
 
-  SetBackground(views::CreateThemedRoundedRectBackground(
+  SetBackground(views::CreateRoundedRectBackground(
       text == kUnknownBind && !action_->is_new()
           ? cros_tokens::kCrosSysErrorHighlight
           : cros_tokens::kCrosSysHighlightShape,
@@ -255,17 +255,17 @@ void EditLabel::ChangeFocusToNextLabel() {
 }
 
 void EditLabel::SetToDefault() {
-  SetEnabledTextColorIds(IsInputUnbound() && !action_->is_new()
-                             ? cros_tokens::kCrosSysError
-                             : cros_tokens::kCrosSysOnPrimaryContainer);
+  SetEnabledTextColors(IsInputUnbound() && !action_->is_new()
+                           ? cros_tokens::kCrosSysError
+                           : cros_tokens::kCrosSysOnPrimaryContainer);
   SetBorder(nullptr);
 }
 
 void EditLabel::SetToFocused() {
-  SetEnabledTextColorIds(IsInputUnbound() && !action_->is_new()
-                             ? cros_tokens::kCrosSysError
-                             : cros_tokens::kCrosSysOnSurface);
-  SetBorder(views::CreateThemedRoundedRectBorder(
+  SetEnabledTextColors(IsInputUnbound() && !action_->is_new()
+                           ? cros_tokens::kCrosSysError
+                           : cros_tokens::kCrosSysOnSurface);
+  SetBorder(views::CreateRoundedRectBorder(
       /*thickness=*/2, kCornerRadius, cros_tokens::kCrosSysPrimary));
 }
 

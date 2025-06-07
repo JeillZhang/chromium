@@ -4,11 +4,8 @@
 
 package org.chromium.android_webview.test;
 
-import static androidx.test.espresso.Espresso.onView;
-import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.intent.Intents.intended;
 import static androidx.test.espresso.intent.Intents.intending;
-import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
 import static org.hamcrest.Matchers.equalTo;
 
@@ -19,13 +16,14 @@ import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
 import android.util.Pair;
-import android.view.KeyEvent;
 
+import androidx.activity.ComponentDialog;
 import androidx.test.espresso.intent.Intents;
 import androidx.test.espresso.intent.matcher.IntentMatchers;
 import androidx.test.filters.MediumTest;
 import androidx.test.filters.SmallTest;
 import androidx.test.platform.app.InstrumentationRegistry;
+import androidx.test.uiautomator.UiDevice;
 
 import org.junit.After;
 import org.junit.Assert;
@@ -38,22 +36,26 @@ import org.junit.runners.Parameterized.UseParametersRunnerFactory;
 
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.common.AwFeatures;
+import org.chromium.android_webview.contextmenu.AwContextMenuCoordinator;
 import org.chromium.android_webview.contextmenu.AwContextMenuHeaderCoordinator;
-import org.chromium.android_webview.contextmenu.AwContextMenuItem;
-import org.chromium.android_webview.contextmenu.AwContextMenuItem.Item;
-import org.chromium.android_webview.contextmenu.AwContextMenuItemDelegate;
+import org.chromium.android_webview.contextmenu.AwContextMenuHelper;
 import org.chromium.android_webview.contextmenu.AwContextMenuPopulator;
 import org.chromium.android_webview.test.AwActivityTestRule.TestDependencyFactory;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
-import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.blink_public.common.ContextMenuDataMediaType;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuParams;
-import org.chromium.content_public.browser.test.util.DOMUtils;
-import org.chromium.net.test.util.TestWebServer;
+import org.chromium.components.embedder_support.contextmenu.ContextMenuSwitches;
+import org.chromium.content_public.common.ContentFeatures;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.mojom.MenuSourceType;
+import org.chromium.ui.widget.AnchoredPopupWindow;
 import org.chromium.url.GURL;
 
 import java.util.List;
@@ -64,20 +66,13 @@ import java.util.List;
 @Batch(Batch.PER_CLASS)
 @Features.EnableFeatures({AwFeatures.WEBVIEW_HYPERLINK_CONTEXT_MENU})
 public class ContextMenuTest extends AwParameterizedTest {
-    private static final String FILE = "/main.html";
-    private static final String DATA =
-            "<html><head></head><body>"
-                    + "<a href='test_link.html' id='testLink'>Test Link</a>"
-                    + "</body></html>";
-
     @Rule public AwActivityTestRule mRule;
 
-    private TestWebServer mWebServer;
     private AwTestContainerView mTestContainerView;
-    private TestAwContentsClient mContentsClient;
-    private CallbackHelper mCallbackHelper = new CallbackHelper();
     private AwContents mAwContents;
     private Context mContext;
+    private AwContextMenuHelper mHelper;
+    private AwContextMenuCoordinator mCoordinator;
 
     public ContextMenuTest(AwSettingsMutation param) {
         mRule = new AwActivityTestRule(param.getMutation());
@@ -85,69 +80,91 @@ public class ContextMenuTest extends AwParameterizedTest {
 
     @Before
     public void setUp() throws Exception {
-        mWebServer = TestWebServer.start();
-        mContentsClient = new TestAwContentsClient();
+        TestAwContentsClient mContentsClient = new TestAwContentsClient();
         mTestContainerView =
                 mRule.createAwTestContainerViewOnMainSync(
                         mContentsClient, false, new TestDependencyFactory());
         mAwContents = mTestContainerView.getAwContents();
         mContext = mAwContents.getWebContents().getTopLevelNativeWindow().getContext().get();
+        mHelper = new AwContextMenuHelper(mAwContents.getWebContents());
         AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
     }
 
     @After
     public void tearDown() {
-        if (mWebServer != null) {
-            mWebServer.shutdown();
-        }
-    }
-
-    @Test
-    @SmallTest
-    @Feature({"AndroidWebView"})
-    @SkipMutations(
-        reason = "This test uses DOMUtils.longPressNode() which is known"
-        + " to be flaky under modified scaling factor, see crbug.com/40840940")
-    public void testCopyLinkText() throws Throwable {
-        int item = Item.COPY_LINK_TEXT;
-
-        final String url = mWebServer.setResponse(FILE, DATA, null);
-        loadUrlSync(url);
-        DOMUtils.waitForNonZeroNodeBounds(mAwContents.getWebContents(), "testLink");
-
-        DOMUtils.longPressNode(mAwContents.getWebContents(), "testLink");
-
-        onView(withText(getTitle(mContext, item))).perform(click());
-
-        Assert.assertEquals("Test Link", getClipBoardTextOnUiThread(mContext));
-    }
-
-    @Test
-    @SmallTest
-    @Feature({"AndroidWebView"})
-    @SkipMutations(
-        reason = "This test uses DOMUtils.longPressNode() which is known"
-        + " to be flaky under modified scaling factor, see crbug.com/40840940")
-    public void testCopyLinkURL() throws Throwable {
-        int item = Item.COPY_LINK_ADDRESS;
-
-        final String url = mWebServer.setResponse(FILE, DATA, null);
-        loadUrlSync(url);
-        DOMUtils.waitForNonZeroNodeBounds(mAwContents.getWebContents(), "testLink");
-
-        DOMUtils.longPressNode(mAwContents.getWebContents(), "testLink");
-
-        onView(withText(getTitle(mContext, item))).perform(click());
-
-        assertStringContains("test_link.html", getClipBoardTextOnUiThread(mContext));
+        mHelper = null;
+        mCoordinator = null;
     }
 
     @Test
     @MediumTest
     @Feature({"AndroidWebView"})
-    @SkipMutations(
-        reason = "This test uses DOMUtils.longPressNode() which is known"
-        + " to be flaky under modified scaling factor, see crbug.com/40840940")
+    public void testCopyLinkText() throws Throwable {
+        ContextMenuParams params =
+                createContextMenuParams(ContextMenuDataMediaType.NONE, true, "Test Link", "", "");
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mHelper.showContextMenu(params, mTestContainerView));
+
+        mCoordinator = mHelper.getCoordinatorForTesting();
+        Assert.assertNotNull("Context menu should be created for links", mCoordinator);
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mCoordinator.clickListItemForTesting(R.id.contextmenu_copy_link_text));
+
+        Assert.assertEquals("Test Link", getClipBoardTextOnUiThread(mContext));
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"AndroidWebView"})
+    public void testCopyLinkURL() throws Throwable {
+        ContextMenuParams params =
+                createContextMenuParams(
+                        ContextMenuDataMediaType.NONE,
+                        true,
+                        "Test Link",
+                        "http://www.test_link.html/",
+                        "");
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mHelper.showContextMenu(params, mTestContainerView));
+
+        mCoordinator = mHelper.getCoordinatorForTesting();
+        Assert.assertNotNull("Context menu should be created for links", mCoordinator);
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mCoordinator.clickListItemForTesting(R.id.contextmenu_copy_link_address));
+
+        Assert.assertEquals("http://www.test_link.html/", getClipBoardTextOnUiThread(mContext));
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"AndroidWebView"})
+    public void testCopyLinkURLWithImage() throws Throwable {
+        // In a link with a nested image, copy link should copy the URL of the anchor link and not
+        // the src of the image.
+        ContextMenuParams params =
+                createContextMenuParams(
+                        ContextMenuDataMediaType.IMAGE,
+                        true,
+                        "Test Link Image",
+                        "http://www.test_link.html/",
+                        "http://www.image_source.html/");
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mHelper.showContextMenu(params, mTestContainerView));
+
+        mCoordinator = mHelper.getCoordinatorForTesting();
+        Assert.assertNotNull("Context menu should be created for links with images", mCoordinator);
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mCoordinator.clickListItemForTesting(R.id.contextmenu_copy_link_address));
+
+        Assert.assertEquals("http://www.test_link.html/", getClipBoardTextOnUiThread(mContext));
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"AndroidWebView"})
     public void testOpenInBrowser() throws Throwable {
         try {
             Intents.init();
@@ -156,15 +173,21 @@ public class ContextMenuTest extends AwParameterizedTest {
             intending(IntentMatchers.hasAction(equalTo(Intent.ACTION_VIEW)))
                     .respondWith(new Instrumentation.ActivityResult(Activity.RESULT_OK, null));
 
-            int item = Item.OPEN_IN_BROWSER;
+            ContextMenuParams params =
+                    createContextMenuParams(
+                            ContextMenuDataMediaType.NONE,
+                            true,
+                            "",
+                            "http://www.test_link.html/",
+                            "");
+            ThreadUtils.runOnUiThreadBlocking(
+                    () -> mHelper.showContextMenu(params, mTestContainerView));
 
-            final String url = mWebServer.setResponse(FILE, DATA, null);
-            loadUrlSync(url);
-            DOMUtils.waitForNonZeroNodeBounds(mAwContents.getWebContents(), "testLink");
+            mCoordinator = mHelper.getCoordinatorForTesting();
+            Assert.assertNotNull("Context menu should be created for links", mCoordinator);
 
-            DOMUtils.longPressNode(mAwContents.getWebContents(), "testLink");
-
-            onView(withText(getTitle(mContext, item))).perform(click());
+            ThreadUtils.runOnUiThreadBlocking(
+                    () -> mCoordinator.clickListItemForTesting(R.id.contextmenu_open_link_id));
 
             intended(IntentMatchers.hasAction(equalTo(Intent.ACTION_VIEW)));
         } finally {
@@ -175,56 +198,113 @@ public class ContextMenuTest extends AwParameterizedTest {
     @Test
     @MediumTest
     @Feature({"AndroidWebView"})
-    @SkipMutations(
-        reason = "This test uses DOMUtils.longPressNode() which is known"
-        + " to be flaky under modified scaling factor, see crbug.com/40840940")
-    public void testDismissContextMenuOnBack() throws Throwable {
-        final String url = mWebServer.setResponse(FILE, DATA, null);
-        loadUrlSync(url);
-        DOMUtils.waitForNonZeroNodeBounds(mAwContents.getWebContents(), "testLink");
-
-        DOMUtils.longPressNode(mAwContents.getWebContents(), "testLink");
-
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    return !mRule.getActivity().hasWindowFocus();
-                },
-                "Context menu did not have window focus");
-
-        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK);
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    return mRule.getActivity().hasWindowFocus();
-                },
-                "Activity did not regain focus.");
+    @DisableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    public void testDismissContextMenuOnBack_dialog() throws Throwable {
+        doTestDismissContextMenuOnBack(false);
     }
 
     @Test
     @MediumTest
     @Feature({"AndroidWebView"})
-    @SkipMutations(
-        reason = "This test uses DOMUtils.longPressNode() which is known"
-        + " to be flaky under modified scaling factor, see crbug.com/40840940")
-    public void testDismissContextMenuOnClick() throws Throwable {
-        final String url = mWebServer.setResponse(FILE, DATA, null);
-        loadUrlSync(url);
-        DOMUtils.waitForNonZeroNodeBounds(mAwContents.getWebContents(), "testLink");
+    @EnableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    @CommandLineFlags.Add(ContextMenuSwitches.FORCE_CONTEXT_MENU_POPUP) /* for non-tablet devices */
+    public void testDismissContextMenuOnBack_popup() throws Throwable {
+        doTestDismissContextMenuOnBack(true);
+    }
 
-        DOMUtils.longPressNode(mAwContents.getWebContents(), "testLink");
+    public void doTestDismissContextMenuOnBack(boolean isPopup) throws Exception {
+        ContextMenuParams params =
+                createContextMenuParams(
+                        ContextMenuDataMediaType.NONE, true, "", "http://www.test_link.html/", "");
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mHelper.showContextMenu(params, mTestContainerView));
+
+        mCoordinator = mHelper.getCoordinatorForTesting();
+        Assert.assertNotNull("Context menu should be created for links", mCoordinator);
+
+        AnchoredPopupWindow popupWindow = mCoordinator.getPopupWindowForTesting();
+        ComponentDialog dialog = mCoordinator.getDialogForTesting();
+
+        if (isPopup) {
+            Assert.assertNotNull("Popup menu should be created for links", popupWindow);
+            Assert.assertTrue(popupWindow.isShowing());
+        } else {
+            Assert.assertNotNull("Dialog menu should be created for links", dialog);
+            Assert.assertTrue(dialog.isShowing());
+            CriteriaHelper.pollUiThread(
+                    () -> {
+                        return !mRule.getActivity().hasWindowFocus();
+                    },
+                    "Context menu should have window focus");
+        }
+
+        UiDevice device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        device.pressBack();
+
+        // For the dialog menu, we can rely on window regaining focus since dialogs take over the
+        // whole screen but for not for the dropdown menu since it is a popup.
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    return isPopup
+                            ? mCoordinator.getPopupWindowForTesting() == null
+                            : mRule.getActivity().hasWindowFocus();
+                },
+                "Activity should have regained focus.");
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"AndroidWebView"})
+    @DisableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    public void testDismissContextMenuOnClick_dialog() throws Throwable {
+        doTestDismissContextMenuOnClick(false);
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"AndroidWebView"})
+    @EnableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    @CommandLineFlags.Add(ContextMenuSwitches.FORCE_CONTEXT_MENU_POPUP)
+    public void testDismissContextMenuOnClick_popup() throws Throwable {
+        doTestDismissContextMenuOnClick(true);
+    }
+
+    private void doTestDismissContextMenuOnClick(boolean isPopup) throws Exception {
+        ContextMenuParams params =
+                createContextMenuParams(
+                        ContextMenuDataMediaType.NONE, true, "", "http://www.test_link.html/", "");
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mHelper.showContextMenu(params, mTestContainerView));
+
+        mCoordinator = mHelper.getCoordinatorForTesting();
+        Assert.assertNotNull("Context menu should be created for links", mCoordinator);
+
+        AnchoredPopupWindow popupWindow = mCoordinator.getPopupWindowForTesting();
+        ComponentDialog dialog = mCoordinator.getDialogForTesting();
+
+        if (isPopup) {
+            Assert.assertNotNull("Popup menu should be created for links", popupWindow);
+            Assert.assertTrue(popupWindow.isShowing());
+        } else {
+            Assert.assertNotNull("Dialog menu should be created for links", dialog);
+            Assert.assertTrue(dialog.isShowing());
+            CriteriaHelper.pollUiThread(
+                    () -> {
+                        return !mRule.getActivity().hasWindowFocus();
+                    },
+                    "Context menu should have window focus");
+        }
+
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mCoordinator.clickListItemForTesting(R.id.contextmenu_copy_link_text));
 
         CriteriaHelper.pollUiThread(
                 () -> {
-                    return !mRule.getActivity().hasWindowFocus();
+                    return isPopup
+                            ? mCoordinator.getPopupWindowForTesting() == null
+                            : mRule.getActivity().hasWindowFocus();
                 },
-                "Context menu did not have window focus");
-
-        onView(withText(getTitle(mContext, Item.COPY_LINK_ADDRESS))).perform(click());
-
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    return mRule.getActivity().hasWindowFocus();
-                },
-                "Activity did not regain focus.");
+                "Activity should have regained focus.");
     }
 
     @Test
@@ -232,40 +312,25 @@ public class ContextMenuTest extends AwParameterizedTest {
     @Feature({"AndroidWebView"})
     public void testBuildingContextMenuItems() throws Throwable {
         Integer[] expectedItems = {
-            R.id.contextmenu_copy_link_text,
             R.id.contextmenu_copy_link_address,
-            R.id.contextmenu_open_in_browser_id,
+            R.id.contextmenu_copy_link_text,
+            R.id.contextmenu_open_link_id,
         };
 
         ContextMenuParams params =
-                new ContextMenuParams(
-                        0,
-                        0,
-                        new GURL("http://www.example.com/page_url"),
-                        new GURL("http://www.example.com/other_example"),
-                        "BLAH!",
-                        GURL.emptyGURL(),
-                        GURL.emptyGURL(),
-                        "",
-                        null,
-                        false,
-                        0,
-                        0,
-                        MenuSourceType.TOUCH,
-                        false,
-                        /* additionalNavigationParams= */ null);
-
-        AwContextMenuItemDelegate itemDelegate =
-                new AwContextMenuItemDelegate(
-                        mRule.getActivity(), mAwContents.getWebContents(), params);
+                createContextMenuParams(ContextMenuDataMediaType.NONE, true, "BLAH!", "", "");
 
         AwContextMenuPopulator populator =
-                new AwContextMenuPopulator(mContext, itemDelegate, params);
+                new AwContextMenuPopulator(
+                        mContext,
+                        mRule.getActivity(),
+                        mAwContents.getWebContents(),
+                        params,
+                        /* usePopupWindow= */ false);
 
         List<Pair<Integer, ModelList>> contextMenuState = populator.buildContextMenu();
 
         ModelList items = contextMenuState.get(0).second;
-
         Integer[] actualItems = new Integer[items.size()];
 
         for (int i = 0; i < items.size(); i++) {
@@ -282,46 +347,161 @@ public class ContextMenuTest extends AwParameterizedTest {
         String expectedHeaderText = "http://www.testurl.com/first_page";
 
         ContextMenuParams params =
-                new ContextMenuParams(
-                        0,
-                        0,
-                        new GURL("http://www.example.com/page_url"),
-                        GURL.emptyGURL(),
-                        "BLAH!",
-                        new GURL(expectedHeaderText),
-                        GURL.emptyGURL(),
-                        "",
-                        null,
-                        false,
-                        0,
-                        0,
-                        MenuSourceType.TOUCH,
-                        false,
-                        /* additionalNavigationParams= */ null);
+                createContextMenuParams(
+                        ContextMenuDataMediaType.NONE, true, "BLAH!", expectedHeaderText, "");
 
         AwContextMenuHeaderCoordinator headerCoordinator =
-                new AwContextMenuHeaderCoordinator(params);
+                new AwContextMenuHeaderCoordinator(params, mContext);
 
         String actualHeaderTitle = headerCoordinator.getTitle();
 
         Assert.assertEquals(expectedHeaderText, actualHeaderTitle);
     }
 
-    private void loadUrlSync(String url) throws Exception {
-        CallbackHelper done = mContentsClient.getOnPageCommitVisibleHelper();
-        int callCount = done.getCallCount();
-        mRule.loadUrlSync(
-                mTestContainerView.getAwContents(), mContentsClient.getOnPageFinishedHelper(), url);
-        done.waitForCallback(callCount);
+    @Test
+    @MediumTest
+    @Feature({"AndroidWebView"})
+    @DisableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    public void testContextMenuNotDisplayedForImages_dialog() throws Throwable {
+        doTestContextMenuNotDisplayedForImages(false);
     }
 
-    private void assertStringContains(String subString, String superString) {
-        Assert.assertTrue(
-                "String '" + superString + "' does not contain '" + subString + "'",
-                superString.contains(subString));
+    @Test
+    @MediumTest
+    @Feature({"AndroidWebView"})
+    @EnableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    @CommandLineFlags.Add(ContextMenuSwitches.FORCE_CONTEXT_MENU_POPUP)
+    public void testContextMenuNotDisplayedForImages_popup() throws Throwable {
+        doTestContextMenuNotDisplayedForImages(true);
     }
 
-    private String getTitle(Context context, @Item int item) {
-        return AwContextMenuItem.getTitle(context, item).toString();
+    public void doTestContextMenuNotDisplayedForImages(boolean isPopup) throws Throwable {
+        ContextMenuParams params =
+                createContextMenuParams(
+                        ContextMenuDataMediaType.IMAGE,
+                        false,
+                        "",
+                        "",
+                        "http://www.image_source.html/");
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mHelper.showContextMenu(params, mTestContainerView));
+
+        // Check the context menu is not displayed.
+        mCoordinator = mHelper.getCoordinatorForTesting();
+        Assert.assertNull("Context menu should not be created for images", mCoordinator);
+
+        // On an anchor link with a nested image, the menu should be shown since this is
+        // technically a link.
+        ContextMenuParams params2 =
+                createContextMenuParams(
+                        ContextMenuDataMediaType.IMAGE,
+                        true,
+                        "Test Link Image",
+                        "http://www.test_link.html/",
+                        "http://www.image_source.html/");
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mHelper.showContextMenu(params2, mTestContainerView));
+
+        mCoordinator = mHelper.getCoordinatorForTesting();
+        Assert.assertNotNull("Context menu should be created for links with images", mCoordinator);
+
+        if (isPopup) {
+            Assert.assertNotNull(
+                    "Popup menu should be created for links with images",
+                    mCoordinator.getPopupWindowForTesting());
+            Assert.assertTrue(mCoordinator.getPopupWindowForTesting().isShowing());
+        } else {
+            Assert.assertNotNull(
+                    "Dialog menu should be created for links with images",
+                    mCoordinator.getDialogForTesting());
+            Assert.assertTrue(mCoordinator.getDialogForTesting().isShowing());
+        }
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"AndroidWebView"})
+    @DisableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    public void testContextMenuNotDisplayedForVideos_dialog() throws Throwable {
+        doTestContextMenuNotDisplayedForVideos(false);
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"AndroidWebView"})
+    @EnableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    @CommandLineFlags.Add(ContextMenuSwitches.FORCE_CONTEXT_MENU_POPUP)
+    public void testContextMenuNotDisplayedForVideos_popup() throws Throwable {
+        doTestContextMenuNotDisplayedForVideos(true);
+    }
+
+    public void doTestContextMenuNotDisplayedForVideos(boolean isPopup) {
+        ContextMenuParams params =
+                createContextMenuParams(
+                        ContextMenuDataMediaType.VIDEO,
+                        false,
+                        "Test Link Video",
+                        "http://www.test_link.html/",
+                        "http://www.image_source.html/");
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> mHelper.showContextMenu(params, mTestContainerView));
+
+        mCoordinator = mHelper.getCoordinatorForTesting();
+        Assert.assertNull("Context menu should not be created for videos", mCoordinator);
+    }
+
+    @Test
+    @MediumTest
+    @Feature("AndroidWebView")
+    public void doNotShowContextMenuForNonLinkItems() {
+        final ContextMenuParams params =
+                new ContextMenuParams(
+                        /* nativePtr= */ 0,
+                        ContextMenuDataMediaType.NONE,
+                        /* pageUrl= */ GURL.emptyGURL(),
+                        /* linkUrl= */ GURL.emptyGURL(),
+                        /* linkText= */ "Test link text",
+                        /* unfilteredLinkUrl= */ GURL.emptyGURL(),
+                        /* srcUrl= */ GURL.emptyGURL(),
+                        /* titleText= */ "Test title",
+                        /* referrer= */ null,
+                        /* canSaveMedia= */ false,
+                        /* triggeringTouchXDp= */ 0,
+                        /* triggeringTouchYDp= */ 0,
+                        /* sourceType= */ 0,
+                        /* openedFromHighlight= */ false,
+                        /* openedFromInterestTarget= */ false,
+                        /* interestTargetNodeID= */ 0,
+                        /* additionalNavigationParams= */ null);
+
+        AwContextMenuHelper helper = AwContextMenuHelper.create(mAwContents.getWebContents());
+        Assert.assertFalse(helper.showContextMenu(params, mTestContainerView));
+    }
+
+    private ContextMenuParams createContextMenuParams(
+            @ContextMenuDataMediaType int mediaType,
+            Boolean linkUrl,
+            String linkText,
+            String unfilteredLinkUrl,
+            String srcUrl) {
+
+        return new ContextMenuParams(
+                0,
+                mediaType,
+                new GURL("http://www.example.com/page_url"),
+                linkUrl ? new GURL("http://www.example.com/other_example") : GURL.emptyGURL(),
+                linkText,
+                new GURL(unfilteredLinkUrl),
+                new GURL(srcUrl),
+                "",
+                null,
+                false,
+                0,
+                0,
+                MenuSourceType.TOUCH,
+                false,
+                /* openedFromInterestTarget= */ false,
+                /* interestTargetNodeID= */ 0,
+                /* additionalNavigationParams= */ null);
     }
 }

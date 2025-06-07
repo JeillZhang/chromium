@@ -47,6 +47,8 @@
 #include "cc/paint/skia_paint_canvas.h"
 #include "components/custom_handlers/protocol_handler_registry.h"
 #include "components/custom_handlers/simple_protocol_handler_registry_factory.h"
+#include "components/subresource_filter/core/common/test_ruleset_creator.h"
+#include "components/subresource_filter/core/common/test_ruleset_utils.h"
 #include "content/browser/aggregation_service/aggregation_service.h"
 #include "content/browser/attribution_reporting/attribution_manager.h"
 #include "content/browser/in_memory_federated_permission_context.h"
@@ -103,9 +105,7 @@
 #include "services/network/public/mojom/clear_data_filter.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
-#include "storage/browser/database/database_tracker.h"
 #include "storage/browser/file_system/isolated_context.h"
-#include "storage/browser/quota/quota_manager.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/common/page_state/page_state.h"
 #include "third_party/blink/public/common/page_state/page_state_serialization.h"
@@ -754,7 +754,6 @@ void WebTestControlHost::ResetBrowserAfterWebTest() {
   BlockThirdPartyCookies(
       net::cookie_util::IsForceThirdPartyCookieBlockingEnabled());
   SetBluetoothManualChooser(false);
-  SetDatabaseQuota(content::kDefaultDatabaseQuota);
 
   ShellBrowserContext* browser_context =
       ShellContentBrowserClient::Get()->browser_context();
@@ -1450,28 +1449,30 @@ void WebTestControlHost::OnImageDump(const std::string& actual_pixel_hash,
     if (web_test_runtime_flags().dump_drag_image())
       discard_transparency = false;
 
-    gfx::PNGCodec::ColorFormat pixel_format;
-    switch (image.info().colorType()) {
-      case kBGRA_8888_SkColorType:
-        pixel_format = gfx::PNGCodec::FORMAT_BGRA;
-        break;
-      case kRGBA_8888_SkColorType:
-        pixel_format = gfx::PNGCodec::FORMAT_RGBA;
-        break;
-      default:
-        NOTREACHED();
-    }
+    if (!image.drawsNothing()) {
+      gfx::PNGCodec::ColorFormat pixel_format;
+      switch (image.info().colorType()) {
+        case kBGRA_8888_SkColorType:
+          pixel_format = gfx::PNGCodec::FORMAT_BGRA;
+          break;
+        case kRGBA_8888_SkColorType:
+          pixel_format = gfx::PNGCodec::FORMAT_RGBA;
+          break;
+        default:
+          NOTREACHED();
+      }
 
-    std::vector<gfx::PNGCodec::Comment> comments;
-    // Used by
-    // //third_party/blink/tools/blinkpy/common/read_checksum_from_png.py
-    comments.emplace_back("checksum", actual_pixel_hash);
-    std::optional<std::vector<uint8_t>> png = gfx::PNGCodec::Encode(
-        static_cast<const unsigned char*>(image.getPixels()), pixel_format,
-        gfx::Size(image.width(), image.height()),
-        static_cast<int>(image.rowBytes()), discard_transparency, comments);
-    if (png) {
-      printer_->PrintImageBlock(png.value());
+      std::vector<gfx::PNGCodec::Comment> comments;
+      // Used by
+      // //third_party/blink/tools/blinkpy/common/read_checksum_from_png.py
+      comments.emplace_back("checksum", actual_pixel_hash);
+      std::optional<std::vector<uint8_t>> png = gfx::PNGCodec::Encode(
+          static_cast<const unsigned char*>(image.getPixels()), pixel_format,
+          gfx::Size(image.width(), image.height()),
+          static_cast<int>(image.rowBytes()), discard_transparency, comments);
+      if (png) {
+        printer_->PrintImageBlock(png.value());
+      }
     }
   }
   printer_->PrintImageFooter();
@@ -1644,6 +1645,23 @@ void WebTestControlHost::SetFilePathForMockFileDialog(
       std::make_unique<FakeSelectFileDialogFactory>(path));
 }
 
+void WebTestControlHost::CreateSubresourceFilterRulesetFile(
+    const std::vector<std::string>& disallowed_suffixes,
+    CreateSubresourceFilterRulesetFileCallback callback) {
+  std::vector<url_pattern_index::proto::UrlRule> rules;
+  for (const std::string& disallowed_suffix : disallowed_suffixes) {
+    rules.push_back(
+        subresource_filter::testing::CreateSuffixRule(disallowed_suffix));
+  }
+
+  subresource_filter::testing::TestRulesetPair test_ruleset_pair;
+  subresource_filter::testing::TestRulesetCreator ruleset_creator;
+  ruleset_creator.CreateRulesetWithRules(rules, &test_ruleset_pair);
+
+  std::move(callback).Run(subresource_filter::testing::TestRuleset::Open(
+      test_ruleset_pair.indexed));
+}
+
 void WebTestControlHost::FocusDevtoolsSecondaryWindow() {
   CHECK(secondary_window_);
   // We don't go down the normal system path of focusing RenderWidgetHostView
@@ -1669,55 +1687,6 @@ void WebTestControlHost::ClearTrustTokenState(base::OnceClosure callback) {
   storage_partition->GetNetworkContext()->ClearTrustTokenData(
       nullptr,  // A wildcard filter.
       std::move(callback));
-}
-
-void WebTestControlHost::SetDatabaseQuota(int32_t quota) {
-  auto run_on_io_thread = [](scoped_refptr<storage::QuotaManager> quota_manager,
-                             int32_t quota) {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
-    if (quota == kDefaultDatabaseQuota) {
-      // Reset quota to settings with a zero refresh interval to force
-      // QuotaManager to refresh settings immediately.
-      storage::QuotaSettings default_settings;
-      default_settings.refresh_interval = base::TimeDelta();
-      quota_manager->SetQuotaSettings(default_settings);
-    } else {
-      DCHECK_GE(quota, 0);
-      quota_manager->SetQuotaSettings(storage::GetHardCodedSettings(quota));
-    }
-  };
-
-  BrowserContext* browser_context =
-      ShellContentBrowserClient::Get()->browser_context();
-  StoragePartition* storage_partition =
-      browser_context->GetDefaultStoragePartition();
-  scoped_refptr<storage::QuotaManager> quota_manager =
-      base::WrapRefCounted(storage_partition->GetQuotaManager());
-
-  content::GetIOThreadTaskRunner({})->PostTask(
-      FROM_HERE,
-      base::BindOnce(run_on_io_thread, std::move(quota_manager), quota));
-}
-
-void WebTestControlHost::ClearAllDatabases() {
-  auto run_on_database_sequence =
-      [](scoped_refptr<storage::DatabaseTracker> db_tracker) {
-        DCHECK(db_tracker->task_runner()->RunsTasksInCurrentSequence());
-        db_tracker->DeleteDataModifiedSince(base::Time(), base::DoNothing());
-      };
-
-  BrowserContext* browser_context =
-      ShellContentBrowserClient::Get()->browser_context();
-  StoragePartition* storage_partition =
-      browser_context->GetDefaultStoragePartition();
-  scoped_refptr<storage::DatabaseTracker> db_tracker =
-      base::WrapRefCounted(storage_partition->GetDatabaseTracker());
-
-  if (db_tracker) {
-    base::SequencedTaskRunner* task_runner = db_tracker->task_runner();
-    task_runner->PostTask(FROM_HERE, base::BindOnce(run_on_database_sequence,
-                                                    std::move(db_tracker)));
-  }
 }
 
 void WebTestControlHost::SimulateWebNotificationClick(

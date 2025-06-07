@@ -27,7 +27,11 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.refEq;
 
+import static org.chromium.components.browser_ui.site_settings.SingleWebsiteSettings.EXTRA_SITE;
 import static org.chromium.components.content_settings.PrefNames.COOKIE_CONTROLS_MODE;
 import static org.chromium.components.content_settings.PrefNames.IN_CONTEXT_COOKIE_CONTROLS_OPENED;
 import static org.chromium.ui.test.util.ViewUtils.clickOnClickableSpan;
@@ -39,6 +43,7 @@ import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
+import android.os.Bundle;
 import android.text.format.DateUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -52,10 +57,13 @@ import org.hamcrest.Matcher;
 import org.hamcrest.TypeSafeMatcher;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.supplier.ObservableSupplier;
@@ -69,7 +77,9 @@ import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
+import org.chromium.base.test.util.UserActionTester;
 import org.chromium.chrome.browser.FederatedIdentityTestUtils;
 import org.chromium.chrome.browser.app.ChromeActivity;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
@@ -86,15 +96,22 @@ import org.chromium.chrome.browser.notifications.channels.SiteChannelsManager;
 import org.chromium.chrome.browser.offlinepages.OfflinePageUtils;
 import org.chromium.chrome.browser.pdf.PdfUtils.PdfPageType;
 import org.chromium.chrome.browser.preferences.Pref;
+import org.chromium.chrome.browser.privacy_sandbox.FakePrivacySandboxBridge;
+import org.chromium.chrome.browser.privacy_sandbox.PrivacySandboxBridgeJni;
 import org.chromium.chrome.browser.profiles.ProfileManager;
+import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.util.ChromeAccessibilityUtil;
 import org.chromium.chrome.test.ChromeJUnit4RunnerDelegate;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
-import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.components.browser_ui.settings.SettingsNavigation;
 import org.chromium.components.browser_ui.site_settings.ContentSettingException;
-import org.chromium.components.browser_ui.site_settings.SiteSettingsDelegate;
+import org.chromium.components.browser_ui.site_settings.RwsCookieInfo;
+import org.chromium.components.browser_ui.site_settings.SingleWebsiteSettings;
+import org.chromium.components.browser_ui.site_settings.Website;
+import org.chromium.components.browser_ui.site_settings.WebsiteAddress;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni;
 import org.chromium.components.browser_ui.util.date.CalendarUtils;
@@ -104,9 +121,11 @@ import org.chromium.components.content_settings.ContentSettingValues;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.content_settings.CookieControlsEnforcement;
 import org.chromium.components.content_settings.CookieControlsMode;
+import org.chromium.components.content_settings.CookieControlsState;
 import org.chromium.components.location.LocationUtils;
 import org.chromium.components.page_info.PageInfoAdPersonalizationController;
 import org.chromium.components.page_info.PageInfoController;
+import org.chromium.components.page_info.PageInfoCookiesController;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.content_public.browser.ContentFeatureList;
 import org.chromium.content_public.browser.NavigationHandle;
@@ -135,6 +154,7 @@ import java.util.concurrent.TimeoutException;
  * Tests for PageInfoView. Uses pixel tests to ensure the UI handles different configurations
  * correctly.
  */
+// TODO(crbug.com/344672095): Failing when batched, batch this again.
 @RunWith(ParameterizedRunner.class)
 @ParameterAnnotations.UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
 @CommandLineFlags.Add({
@@ -142,7 +162,7 @@ import java.util.concurrent.TimeoutException;
     ChromeSwitches.DISABLE_STARTUP_PROMOS,
     ContentSwitches.HOST_RESOLVER_RULES + "=MAP * 127.0.0.1"
 })
-// TODO(crbug.com/344672095): Failing when batched, batch this again.
+@EnableFeatures({ChromeFeatureList.PRIVACY_SANDBOX_RELATED_WEBSITE_SETS_UI})
 // Disable TrackingProtection3pcd as we use prefs instead of the feature in
 // these tests.
 @DisableFeatures({ChromeFeatureList.TRACKING_PROTECTION_3PCD})
@@ -152,14 +172,14 @@ public class PageInfoViewTest {
 
     private static final int DAYS_UNTIL_EXPIRATION = 33;
 
-    private static String[] sCookieDataTypes = {
+    private static final String[] sCookieDataTypes = {
         "Cookie", "LocalStorage", "ServiceWorker", "CacheStorage", "IndexedDb", "FileSystem"
     };
 
     // June 4, 2021 12:00:00 GMT+00:00
-    private static long sTimestampJune4 = 1622808000000L;
+    private static final long TIMESTAMP_JUNE_4 = 1622808000000L;
     // April 4, 2021 12:00:00 GMT+00:00
-    private static long sTimestampApril4 = 1617537600000L;
+    private static final long TIMESTAMPE_APRIL_4 = 1617537600000L;
 
     /**
      * Parameter provider for testing the different timestamps for the history section's "last
@@ -174,14 +194,14 @@ public class PageInfoViewTest {
 
             List<ParameterSet> parameters = new ArrayList<>();
             // ParameterSet = {timestamp, string}
-            timestamp = CalendarUtils.getStartOfDay(sTimestampJune4).getTime().getTime();
+            timestamp = CalendarUtils.getStartOfDay(TIMESTAMP_JUNE_4).getTime().getTime();
             parameters.add(
                     new ParameterSet()
                             .value(
                                     timestamp,
                                     res.getString(R.string.page_info_history_last_visit_today))
                             .name("Today"));
-            timestamp = sTimestampJune4 - 1 * DateUtils.DAY_IN_MILLIS;
+            timestamp = TIMESTAMP_JUNE_4 - 1 * DateUtils.DAY_IN_MILLIS;
             parameters.add(
                     new ParameterSet()
                             .value(
@@ -189,7 +209,7 @@ public class PageInfoViewTest {
                                     res.getString(R.string.page_info_history_last_visit_yesterday))
                             .name("Yesterday"));
             int offset = random.nextInt(6) + 2;
-            timestamp = sTimestampJune4 - offset * DateUtils.DAY_IN_MILLIS;
+            timestamp = TIMESTAMP_JUNE_4 - offset * DateUtils.DAY_IN_MILLIS;
             parameters.add(
                     new ParameterSet()
                             .value(
@@ -200,23 +220,65 @@ public class PageInfoViewTest {
             parameters.add(
                     new ParameterSet()
                             .value(
-                                    sTimestampApril4,
+                                    TIMESTAMPE_APRIL_4,
                                     res.getString(
                                             R.string.page_info_history_last_visit_date,
                                             StringUtils.dateToHeaderString(
-                                                    new Date(sTimestampApril4))))
+                                                    new Date(TIMESTAMPE_APRIL_4))))
                             .name("ExactDay"));
             return parameters;
         }
     }
 
-    @ClassRule
-    public static final ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    public static class CookieControlsStateParams implements ParameterProvider {
+        @Override
+        public Iterable<ParameterSet> getParameters() {
+            return Arrays.asList(
+                    new ParameterSet()
+                            .value(CookieControlsState.ACTIVE_TP)
+                            .name("ProtectionsActive"),
+                    new ParameterSet()
+                            .value(CookieControlsState.PAUSED_TP)
+                            .name("ProtectionsPaused"));
+        }
+    }
+
+    public static class EnforcementRenderParams implements ParameterProvider {
+        @Override
+        public Iterable<ParameterSet> getParameters() {
+            return Arrays.asList(
+                    new ParameterSet()
+                            .value(
+                                    CookieControlsEnforcement.ENFORCED_BY_POLICY,
+                                    "PageInfo_PrivacySubpage_3pcsAllowed_ByEnterprise",
+                                    R.string
+                                            .page_info_privacy_site_data_3pcs_enterprise_allowed_description_android)
+                            .name("ByEnterprise"),
+                    new ParameterSet()
+                            .value(
+                                    CookieControlsEnforcement.ENFORCED_BY_COOKIE_SETTING,
+                                    "PageInfo_PrivacySubpage_3pcsAllowed_ByUserSetting",
+                                    R.string
+                                            .page_info_privacy_site_data_3pcs_user_allowed_description_android)
+                            .name("ByUserSetting"),
+                    new ParameterSet()
+                            .value(
+                                    CookieControlsEnforcement.NO_ENFORCEMENT,
+                                    "PageInfo_PrivacySubpage_ProtectionsActive",
+                                    R.string.page_info_privacy_site_data_description_android)
+                            .name("ProtectionsActive"));
+        }
+    }
+
+    @Mock private SettingsNavigation mSettingsNavigation;
+
+    private FakePrivacySandboxBridge mFakePrivacySandboxBridge;
+
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Rule
-    public final BlankCTATabInitialStateRule mInitialStateRule =
-            new BlankCTATabInitialStateRule(sActivityTestRule, false);
+    public final AutoResetCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.fastAutoResetCtaActivityRule();
 
     @Rule public EmbeddedTestServerRule mTestServerRule = new EmbeddedTestServerRule();
 
@@ -243,17 +305,12 @@ public class PageInfoViewTest {
 
     private void loadUrlAndOpenPageInfoWithPermission(
             String url, @ContentSettingsType.EnumType int highlightedPermission) {
-        sActivityTestRule.loadUrl(url);
+        mActivityTestRule.loadUrl(url);
         openPageInfo(highlightedPermission);
     }
 
-    private void loadUrlInIncognitoAndOpenPageInfo(String url) {
-        sActivityTestRule.loadUrlInNewTab(/* url= */ url, /* incognito= */ true);
-        openPageInfo(PageInfoController.NO_HIGHLIGHTED_PERMISSION);
-    }
-
     private void openPageInfo(@ContentSettingsType.EnumType int highlightedPermission) {
-        ChromeActivity activity = sActivityTestRule.getActivity();
+        ChromeActivity activity = mActivityTestRule.getActivity();
         Tab tab = activity.getActivityTab();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -279,27 +336,13 @@ public class PageInfoViewTest {
         return view;
     }
 
-    private SiteSettingsDelegate getSiteSettingsDelegate() {
-        PageInfoController controller = PageInfoController.getLastPageInfoController();
-        assertNotNull(controller);
-        return controller.getPageInfoControllerDelegate().getSiteSettingsDelegate();
-    }
-
     private void enableTrackingProtectionFixedExpiration(
             boolean isModeBUiInCookiesController, int days) {
         PageInfoController controller = PageInfoController.getLastPageInfoController();
         assertNotNull(controller);
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.ACT_USER_BYPASS_UX)
-                && (ChromeFeatureList.isEnabled(ChromeFeatureList.IP_PROTECTION_V1)
-                        || ChromeFeatureList.isEnabled(
-                                ChromeFeatureList.FINGERPRINTING_PROTECTION_UX))) {
-            var tpController = controller.getTrackingProtectionLaunchController();
-            tpController.setFixedExceptionExpirationForTesting(true);
-        } else {
-            var tpController = controller.getCookiesController();
-            tpController.setFixedExceptionExpirationForTesting(true);
-            tpController.setDaysUntilExpirationForTesting(days);
-        }
+        var tpController = controller.getCookiesController();
+        tpController.setFixedExceptionExpirationForTesting(true);
+        tpController.setDaysUntilExpirationForTesting(days);
     }
 
     private void enableModeBUiInCookiesController() {
@@ -321,6 +364,45 @@ public class PageInfoViewTest {
         assertNotNull(controller);
         var tpController = controller.getCookiesController();
         tpController.setEnforcementForTesting(CookieControlsEnforcement.ENFORCED_BY_TPCD_GRANT);
+    }
+
+    private RwsCookieInfo getRwsCookieInfo(String url) {
+        Website rwsOwnerWebsite =
+                new Website(
+                        WebsiteAddress.create(
+                                mTestServerRule.getServer().getURLWithHostName(url, "/")),
+                        null);
+        Website rwsMemberWebsite =
+                new Website(
+                        WebsiteAddress.create(
+                                mTestServerRule
+                                        .getServer()
+                                        .getURLWithHostName(("prefix." + url), "/")),
+                        null);
+        RwsCookieInfo rwsInfo =
+                new RwsCookieInfo(
+                        rwsOwnerWebsite.getAddress().getDomainAndRegistry(),
+                        List.of(rwsOwnerWebsite, rwsMemberWebsite));
+        rwsOwnerWebsite.setRwsCookieInfo(rwsInfo);
+        rwsMemberWebsite.setRwsCookieInfo(rwsInfo);
+        return rwsInfo;
+    }
+
+    private PageInfoCookiesController getCookiesController() {
+        PageInfoController controller = PageInfoController.getLastPageInfoController();
+        assertNotNull(controller);
+        return controller.getCookiesController();
+    }
+
+    private void setRwsInfo(String url) {
+        getCookiesController().setRwsInfoForTesting(getRwsCookieInfo(url).getMembers());
+    }
+
+    private void setRwsInfoWithWebsite(Website site) {
+        RwsCookieInfo rwsInfo =
+                new RwsCookieInfo(site.getAddress().getDomainAndRegistry(), List.of(site));
+        site.setRwsCookieInfo(rwsInfo);
+        getCookiesController().setRwsInfoForTesting(rwsInfo.getMembers());
     }
 
     private void setThirdPartyCookieBlocking(@CookieControlsMode int value) {
@@ -349,7 +431,7 @@ public class PageInfoViewTest {
 
     private String runJavascriptAsync(String type) throws TimeoutException {
         return JavaScriptUtils.runJavascriptWithAsyncResult(
-                sActivityTestRule.getWebContents(), type);
+                mActivityTestRule.getWebContents(), type);
     }
 
     private void expectHasCookies(boolean hasData) throws TimeoutException {
@@ -446,8 +528,7 @@ public class PageInfoViewTest {
             @ContentSettingsType.EnumType int type) {
         return ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    List<ContentSettingException> exceptions =
-                            new ArrayList<ContentSettingException>();
+                    List<ContentSettingException> exceptions = new ArrayList<>();
                     WebsitePreferenceBridgeJni.get()
                             .getContentSettingsExceptions(
                                     ProfileManager.getLastUsedRegularProfile(), type, exceptions);
@@ -468,8 +549,8 @@ public class PageInfoViewTest {
     private void addSomeHistoryEntries() {
         StubbedHistoryProvider historyProvider = new StubbedHistoryProvider();
         // Need to always have the same dates for render tests.
-        historyProvider.addItem(StubbedHistoryProvider.createHistoryItem(1, sTimestampApril4));
-        historyProvider.addItem(StubbedHistoryProvider.createHistoryItem(1, sTimestampJune4));
+        historyProvider.addItem(StubbedHistoryProvider.createHistoryItem(1, TIMESTAMPE_APRIL_4));
+        historyProvider.addItem(StubbedHistoryProvider.createHistoryItem(1, TIMESTAMP_JUNE_4));
         HistoryContentManager.setProviderForTests(historyProvider);
         PageInfoHistoryController.setProviderForTests(historyProvider);
     }
@@ -483,6 +564,9 @@ public class PageInfoViewTest {
         // Choose a fixed, "random" port to create stable screenshots.
         mTestServerRule.setServerPort(424242);
         mTestServerRule.setServerUsesHttps(true);
+
+        mFakePrivacySandboxBridge = new FakePrivacySandboxBridge();
+        PrivacySandboxBridgeJni.setInstanceForTesting(mFakePrivacySandboxBridge);
 
         PageInfoAdPersonalizationController.setTopicsForTesting(Arrays.asList("Testing topic"));
     }
@@ -747,11 +831,87 @@ public class PageInfoViewTest {
         onView(withText("Camera")).check(matches(hasSibling(withText("Allowed"))));
     }
 
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    public void showRwsButtonWhenRwsEnabled() throws IOException {
+        String hostName = "example.com";
+        String url = mTestServerRule.getServer().getURLWithHostName(hostName, "/");
+        loadUrlAndOpenPageInfo(url);
+        setRwsInfo(hostName);
+        onView(withId(R.id.page_info_cookies_row)).perform(click());
+        onViewWaiting(allOf(withText(R.string.page_info_rws_v2_button_title), isDisplayed()));
+        mRenderTestRule.render(getPageInfoView(), "PageInfo_CookiesSubpage_RwsEnabled");
+    }
+
+    @Test
+    @MediumTest
+    public void shouldNavigateToSiteSettingsWhenRwsButtonClicked() throws IOException {
+        SettingsNavigationFactory.setInstanceForTesting(mSettingsNavigation);
+        String hostName = "example.com";
+        String url = mTestServerRule.getServer().getURLWithHostName(hostName, "/");
+        Website currentSite = new Website(WebsiteAddress.create(url), null);
+        loadUrlAndOpenPageInfo(url);
+        setRwsInfoWithWebsite(currentSite);
+        onView(withId(R.id.page_info_cookies_row)).perform(click());
+        onViewWaiting(allOf(withText(R.string.page_info_rws_v2_button_title), isDisplayed()));
+        Context context = ApplicationProvider.getApplicationContext();
+        String subtitle =
+                context.getString(R.string.page_info_rws_v2_button_subtitle_android, hostName);
+        onViewWaiting(allOf(withText(subtitle), isDisplayed()));
+        onView(withText(R.string.page_info_rws_v2_button_title)).perform(click());
+        Bundle extras = new Bundle();
+        extras.putSerializable(EXTRA_SITE, currentSite);
+        Mockito.verify(mSettingsNavigation)
+                .startSettings(any(), eq(SingleWebsiteSettings.class), refEq(extras));
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    public void showRwsButtonWhenRwsEnabledAndCurrentSetManaged() throws IOException {
+        mFakePrivacySandboxBridge.setIsRwsManaged(true);
+        String hostName = "example.com";
+        String url = mTestServerRule.getServer().getURLWithHostName(hostName, "/");
+        loadUrlAndOpenPageInfo(url);
+        setRwsInfo(hostName);
+        onView(withId(R.id.page_info_cookies_row)).perform(click());
+        onViewWaiting(allOf(withText(R.string.page_info_rws_v2_button_title), isDisplayed()));
+        mRenderTestRule.render(getPageInfoView(), "PageInfo_CookiesSubpage_RwsEnabledAndManaged");
+    }
+
+    @Test
+    @MediumTest
+    public void shouldNavigateToSiteSettingsWhenRwsManagedAndButtonClicked() throws IOException {
+        mFakePrivacySandboxBridge.setIsRwsManaged(true);
+        SettingsNavigationFactory.setInstanceForTesting(mSettingsNavigation);
+        UserActionTester userActionTester = new UserActionTester();
+        String hostName = "example.com";
+        String url = mTestServerRule.getServer().getURLWithHostName(hostName, "/");
+        Website currentSite = new Website(WebsiteAddress.create(url), null);
+        loadUrlAndOpenPageInfo(url);
+        setRwsInfoWithWebsite(currentSite);
+        onView(withId(R.id.page_info_cookies_row)).perform(click());
+        onViewWaiting(allOf(withText(R.string.page_info_rws_v2_button_title), isDisplayed()));
+        Context context = ApplicationProvider.getApplicationContext();
+        String subtitle =
+                context.getString(R.string.page_info_rws_v2_button_subtitle_android, hostName);
+        onViewWaiting(allOf(withText(subtitle), isDisplayed()));
+        onView(withText(R.string.page_info_rws_v2_button_title)).perform(click());
+        Bundle extras = new Bundle();
+        extras.putSerializable(EXTRA_SITE, currentSite);
+        Mockito.verify(mSettingsNavigation)
+                .startSettings(any(), eq(SingleWebsiteSettings.class), refEq(extras));
+        assertEquals(
+                1,
+                userActionTester.getActionCount("PageInfo.CookiesSubpage.RwsSiteSettingsOpened"));
+        userActionTester.tearDown();
+    }
+
     /** Tests the cookies page of the PageInfo UI with the Cookie Controls UI enabled. */
     @Test
     @MediumTest
     @Feature({"RenderTest"})
-    @DisabledTest(message = "https://crbug.com/1510968")
     public void testShowCookiesSubpageUserBypassOn() throws IOException {
         setThirdPartyCookieBlocking(CookieControlsMode.BLOCK_THIRD_PARTY);
         loadUrlAndOpenPageInfo(mTestServerRule.getServer().getURL(sSimpleHtml));
@@ -1168,149 +1328,6 @@ public class PageInfoViewTest {
                 "PageInfo_CookiesSubpageTrackingProtectionGrantDescription_AllowlistedSite");
     }
 
-    private void launchAndCheckTrackingProtectionLaunchUi() {
-        setThirdPartyCookieBlocking(CookieControlsMode.BLOCK_THIRD_PARTY);
-        loadUrlInIncognitoAndOpenPageInfo(mTestServerRule.getServer().getURL(sSimpleHtml));
-        enableTrackingProtectionFixedExpiration(false, 33);
-        onView(withId(R.id.page_info_cookies_row)).perform(click());
-        Context context = ApplicationProvider.getApplicationContext();
-        String description =
-                context.getString(
-                                R.string
-                                        .page_info_tracking_protection_incognito_blocked_cookies_description)
-                        .replaceAll("<link>|</link>", "");
-        onViewWaiting(allOf(withText(description), isDisplayed()));
-    }
-
-    /** Same as the previous one but with IP Protection feature enabled. */
-    @Test
-    @MediumTest
-    @Features.EnableFeatures({
-        ChromeFeatureList.ACT_USER_BYPASS_UX,
-        ChromeFeatureList.IP_PROTECTION_V1,
-        ChromeFeatureList.TRACKING_PROTECTION_CONTENT_SETTING_UB_CONTROL
-    })
-    @Feature({"RenderTest"})
-    public void testShowCookiesSubpageTrackingProtectionLaunchIpp() throws IOException {
-        setBlockAll3pc(false);
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    UserPrefs.get(ProfileManager.getLastUsedRegularProfile())
-                            .setBoolean(Pref.IP_PROTECTION_ENABLED, true);
-                });
-        launchAndCheckTrackingProtectionLaunchUi();
-        // Verify the logic for showing individual ACT features.
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    var delegate = getSiteSettingsDelegate();
-                    assertTrue(delegate.shouldShowTrackingProtectionActFeaturesUi());
-                    assertFalse(delegate.shouldDisplayFingerprintingProtection());
-                    assertTrue(delegate.shouldDisplayIpProtection());
-                });
-        mRenderTestRule.render(getPageInfoView(), "PageInfo_TrackingProtectionLaunchIpp");
-        // Only 3PC and IP protection should be shown.
-        onViewWaiting(
-                allOf(
-                        withText(
-                                R.string
-                                        .page_info_tracking_protection_site_info_button_label_blocked),
-                        isDisplayed()));
-        onViewWaiting(
-                allOf(
-                        withText(R.string.page_info_tracking_protection_ip_protection_on),
-                        isDisplayed()));
-        onView(withText(R.string.page_info_tracking_protection_anti_fingerprinting_on))
-                .check(doesNotExist());
-    }
-
-    /** Same as the previous one but with Fingerprinting Protection feature enabled. */
-    @Test
-    @MediumTest
-    @Features.EnableFeatures({
-        ChromeFeatureList.ACT_USER_BYPASS_UX,
-        ChromeFeatureList.FINGERPRINTING_PROTECTION_UX,
-        ChromeFeatureList.TRACKING_PROTECTION_CONTENT_SETTING_UB_CONTROL
-    })
-    @Features.DisableFeatures(ChromeFeatureList.IP_PROTECTION_V1)
-    @Feature({"RenderTest"})
-    public void testShowCookiesSubpageTrackingProtectionLaunchFpp() throws IOException {
-        setBlockAll3pc(false);
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    UserPrefs.get(ProfileManager.getLastUsedRegularProfile())
-                            .setBoolean(Pref.FINGERPRINTING_PROTECTION_ENABLED, true);
-                });
-        launchAndCheckTrackingProtectionLaunchUi();
-        // Verify the logic for showing individual ACT features.
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    var delegate = getSiteSettingsDelegate();
-                    assertTrue(delegate.shouldShowTrackingProtectionActFeaturesUi());
-                    assertTrue(delegate.shouldDisplayFingerprintingProtection());
-                    assertFalse(delegate.shouldDisplayIpProtection());
-                });
-        mRenderTestRule.render(getPageInfoView(), "PageInfo_TrackingProtectionLaunchFpp");
-        // Only 3PC and Fingerprinting protection should be shown.
-        onViewWaiting(
-                allOf(
-                        withText(
-                                R.string
-                                        .page_info_tracking_protection_site_info_button_label_blocked),
-                        isDisplayed()));
-        onViewWaiting(
-                allOf(
-                        withText(R.string.page_info_tracking_protection_anti_fingerprinting_on),
-                        isDisplayed()));
-        onView(withText(R.string.page_info_tracking_protection_ip_protection_on))
-                .check(doesNotExist());
-    }
-
-    /** Same as the previous one but with both IP and Fingerprinting Protection features enabled. */
-    @Test
-    @MediumTest
-    @Features.EnableFeatures({
-        ChromeFeatureList.ACT_USER_BYPASS_UX,
-        ChromeFeatureList.IP_PROTECTION_V1,
-        ChromeFeatureList.FINGERPRINTING_PROTECTION_UX,
-        ChromeFeatureList.TRACKING_PROTECTION_CONTENT_SETTING_UB_CONTROL
-    })
-    @Feature({"RenderTest"})
-    public void testShowCookiesSubpageTrackingProtectionLaunchFppIpp() throws IOException {
-        setBlockAll3pc(false);
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    UserPrefs.get(ProfileManager.getLastUsedRegularProfile())
-                            .setBoolean(Pref.IP_PROTECTION_ENABLED, true);
-                    UserPrefs.get(ProfileManager.getLastUsedRegularProfile())
-                            .setBoolean(Pref.FINGERPRINTING_PROTECTION_ENABLED, true);
-                });
-        launchAndCheckTrackingProtectionLaunchUi();
-        // Verify the logic for showing individual ACT features.
-        ThreadUtils.runOnUiThreadBlocking(
-                () -> {
-                    var delegate = getSiteSettingsDelegate();
-                    assertTrue(delegate.shouldShowTrackingProtectionActFeaturesUi());
-                    assertTrue(delegate.shouldDisplayFingerprintingProtection());
-                    assertTrue(delegate.shouldDisplayIpProtection());
-                });
-        mRenderTestRule.render(getPageInfoView(), "PageInfo_TrackingProtectionLaunchFppIpp");
-        // All 3 features should be displayed.
-        onViewWaiting(
-                allOf(
-                        withText(
-                                R.string
-                                        .page_info_tracking_protection_site_info_button_label_blocked),
-                        isDisplayed()));
-        onViewWaiting(
-                allOf(
-                        withText(R.string.page_info_tracking_protection_anti_fingerprinting_on),
-                        isDisplayed()));
-        onViewWaiting(
-                allOf(
-                        withText(R.string.page_info_tracking_protection_ip_protection_on),
-                        isDisplayed()));
-    }
-
     /** Tests the cookies page of the PageInfo UI with the Tracking Protection UI enabled. */
     @Test
     @MediumTest
@@ -1338,6 +1355,75 @@ public class PageInfoViewTest {
         onView(withText(containsString("Third-party cookies"))).perform(click());
         mRenderTestRule.render(
                 getPageInfoView(), "PageInfo_TrackingProtectionSubpage_Block_All_Toggle_On");
+    }
+
+    /** Tests the "Privacy and site data" entrypoint title in the PageInfo UI. */
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    @ParameterAnnotations.UseMethodParameter(CookieControlsStateParams.class)
+    public void displaysPageInfoMainView_showsPrivacySiteDataRow_withState(int state)
+            throws IOException {
+        loadUrlAndOpenPageInfo(mTestServerRule.getServer().getURL(sSimpleHtml));
+        // Manually call `onStatusChanged` to correctly set the value of CookieControlsState when
+        // rendering the title.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    getCookiesController().onStatusChanged(state, 0, 0, 0L);
+                });
+
+        onView(withText(R.string.page_info_privacy_site_data_header)).check(matches(isDisplayed()));
+        // The entrypoint title should be the same regardless of CookieControlsState value.
+        mRenderTestRule.render(getPageInfoView(), "PageInfo_MainView_PrivacySiteDataRow");
+    }
+
+    /** Tests the "Privacy and site data" PageInfo UI subpage when protections are active. */
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    @ParameterAnnotations.UseMethodParameter(EnforcementRenderParams.class)
+    public void displaysPrivacySubpage_protectionsActive(
+            int enforcement, String renderId, int expectedDescriptionResId) throws IOException {
+        loadUrlAndOpenPageInfo(mTestServerRule.getServer().getURL(sSimpleHtml));
+        // Manually call `onStatusChanged` to correctly set the value of CookieControlsState and
+        // CookieControlsEnforcement.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    getCookiesController()
+                            .onStatusChanged(CookieControlsState.ACTIVE_TP, enforcement, 0, 0L);
+                });
+        onView(withId(R.id.page_info_cookies_row)).perform(click());
+        Context context = ApplicationProvider.getApplicationContext();
+        String description =
+                context.getString(expectedDescriptionResId).replaceAll("<link>|</link>", "");
+        onView(withText(description)).check(matches(isDisplayed()));
+        onViewWaiting(
+                allOf(
+                        withText(R.string.tracking_protections_bubble_pause_protections_label),
+                        isDisplayed()));
+        int resId = R.string.tracking_protections_bubble_active_protections_description;
+        onViewWaiting(allOf(withText(resId), isDisplayed()));
+        mRenderTestRule.render(getPageInfoView(), renderId);
+    }
+
+    /** Tests the "Privacy and site data" PageInfo UI subpage when protections are paused. */
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    public void displaysPrivacySubpage_protectionsPaused() throws IOException {
+        loadUrlAndOpenPageInfo(mTestServerRule.getServer().getURL(sSimpleHtml));
+        // Manually call `onStatusChanged` to correctly set the value of CookieControlsState.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    getCookiesController().onStatusChanged(CookieControlsState.PAUSED_TP, 0, 0, 0L);
+                });
+        onView(withId(R.id.page_info_cookies_row)).perform(click());
+        Context context = ApplicationProvider.getApplicationContext();
+        int resId = R.string.tracking_protections_bubble_paused_protections_description_android;
+        String description = context.getString(resId).replaceAll("<link>|</link>", "");
+
+        onViewWaiting(allOf(withText(description), isDisplayed()));
+        mRenderTestRule.render(getPageInfoView(), "PageInfo_PrivacySubpage_ProtectionsPaused");
     }
 
     /** Tests the history page of the PageInfo UI. */
@@ -1368,8 +1454,8 @@ public class PageInfoViewTest {
     /** Tests clearing cookies on the cookies page of the PageInfo UI. */
     @Test
     @MediumTest
-    public void testClearCookiesOnSubpage() throws Exception {
-        sActivityTestRule.loadUrl(mTestServerRule.getServer().getURL(sSiteDataHtml));
+    public void clearCookiesOnSubpage() throws Exception {
+        mActivityTestRule.loadUrl(mTestServerRule.getServer().getURL(sSiteDataHtml));
         // Create cookies.
         expectHasCookies(false);
         createCookies();
@@ -1390,9 +1476,9 @@ public class PageInfoViewTest {
     /** Tests clearing cookies on the cookies page of the PageInfo UI with User Bypass enabled. */
     @Test
     @MediumTest
-    public void testClearCookiesOnSubpageUserBypass() throws Exception {
+    public void clearCookiesOnSubpageUserBypass() throws Exception {
         setThirdPartyCookieBlocking(CookieControlsMode.BLOCK_THIRD_PARTY);
-        sActivityTestRule.loadUrl(mTestServerRule.getServer().getURL(sSiteDataHtml));
+        mActivityTestRule.loadUrl(mTestServerRule.getServer().getURL(sSiteDataHtml));
         // Create cookies.
         expectHasCookies(false);
         createCookies();
@@ -1407,8 +1493,11 @@ public class PageInfoViewTest {
         onView(withText(containsString("Third-party cookies"))).perform(click());
         // Clear cookies in page info.
         onView(withText(containsString("stored data"))).perform(click());
-        onViewWaiting(allOf(withText("Delete"), isDisplayed()));
-        onView(withText("Delete")).perform(click());
+        onViewWaiting(
+                allOf(
+                        withText(R.string.page_info_cookies_clear_confirmation_button),
+                        isDisplayed()));
+        onView(withText(R.string.page_info_cookies_clear_confirmation_button)).perform(click());
         // Wait until the UI navigates back and check cookies are deleted.
         onViewWaiting(allOf(withId(R.id.page_info_cookies_row), isDisplayed()));
         expectHasCookies(false);
@@ -1417,10 +1506,10 @@ public class PageInfoViewTest {
     /** Tests clearing cookies on the Tracking Protection page of the PageInfo UI. */
     @Test
     @MediumTest
-    public void testClearCookiesOnSubpageTrackingProtection() throws Exception {
+    public void clearCookiesOnSubpageTrackingProtection() throws Exception {
         enableTrackingProtection();
         setThirdPartyCookieBlocking(CookieControlsMode.BLOCK_THIRD_PARTY);
-        sActivityTestRule.loadUrl(mTestServerRule.getServer().getURL(sSiteDataHtml));
+        mActivityTestRule.loadUrl(mTestServerRule.getServer().getURL(sSiteDataHtml));
         // Create cookies.
         expectHasCookies(false);
         createCookies();
@@ -1435,8 +1524,11 @@ public class PageInfoViewTest {
         onView(withText(containsString("Third-party cookies"))).perform(click());
         // Clear cookies in page info.
         onView(withText(containsString("stored data"))).perform(click());
-        onViewWaiting(allOf(withText("Delete"), isDisplayed()));
-        onView(withText("Delete")).perform(click());
+        onViewWaiting(
+                allOf(
+                        withText(R.string.page_info_cookies_clear_confirmation_button),
+                        isDisplayed()));
+        onView(withText(R.string.page_info_cookies_clear_confirmation_button)).perform(click());
         // Wait until the UI navigates back and check cookies are deleted.
         onViewWaiting(allOf(withId(R.id.page_info_cookies_row), isDisplayed()));
         expectHasCookies(false);
@@ -1459,9 +1551,9 @@ public class PageInfoViewTest {
     /** Tests that the User Bypass has an accessibility live region set up correctly. */
     @Test
     @MediumTest
-    public void testA11yLiveRegionInUserBypass() throws Exception {
+    public void a11yLiveRegionInUserBypass() throws Exception {
         setThirdPartyCookieBlocking(CookieControlsMode.BLOCK_THIRD_PARTY);
-        sActivityTestRule.loadUrl(mTestServerRule.getServer().getURL(sSiteDataHtml));
+        mActivityTestRule.loadUrl(mTestServerRule.getServer().getURL(sSiteDataHtml));
         // Create cookies.
         expectHasCookies(false);
         createCookies();
@@ -1499,7 +1591,7 @@ public class PageInfoViewTest {
     @Test
     @MediumTest
     public void testResetPermissionsOnSubpage() throws Exception {
-        sActivityTestRule.loadUrl(mTestServerRule.getServer().getURL(sSiteDataHtml));
+        mActivityTestRule.loadUrl(mTestServerRule.getServer().getURL(sSiteDataHtml));
         String url = mTestServerRule.getServer().getURL("/");
         // Create permissions.
         expectHasPermissions(url, false);
@@ -1527,7 +1619,7 @@ public class PageInfoViewTest {
     @MediumTest
     public void testClearFederatedIdentityEmbargoOnSubpage() throws Exception {
         String rpUrl = mTestServerRule.getServer().getURL(sSimpleHtml);
-        sActivityTestRule.loadUrl(rpUrl);
+        mActivityTestRule.loadUrl(rpUrl);
 
         assertTrue(
                 getNonWildcardContentSettingExceptions(ContentSettingsType.FEDERATED_IDENTITY_API)
@@ -1542,8 +1634,7 @@ public class PageInfoViewTest {
                             ContentSettingsType.FEDERATED_IDENTITY_API);
             assertEquals(1, exceptions.size());
             assertEquals(GURLUtils.getOrigin(rpUrl), exceptions.get(0).getPrimaryPattern() + "/");
-            assertEquals(
-                    ContentSettingValues.BLOCK, exceptions.get(0).getContentSetting().intValue());
+            assertEquals(ContentSettingValues.BLOCK, exceptions.get(0).getContentSetting());
         }
 
         // Toggle the federated identity permission.
@@ -1557,8 +1648,7 @@ public class PageInfoViewTest {
                             ContentSettingsType.FEDERATED_IDENTITY_API);
             assertEquals(1, exceptions.size());
             assertEquals(GURLUtils.getOrigin(rpUrl), exceptions.get(0).getPrimaryPattern() + "/");
-            assertEquals(
-                    ContentSettingValues.ALLOW, exceptions.get(0).getContentSetting().intValue());
+            assertEquals(ContentSettingValues.ALLOW, exceptions.get(0).getContentSetting());
         }
     }
 
@@ -1568,7 +1658,7 @@ public class PageInfoViewTest {
     public void testPaintPreview() {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    final ChromeActivity activity = sActivityTestRule.getActivity();
+                    final ChromeActivity activity = mActivityTestRule.getActivity();
                     final Tab tab = activity.getActivityTab();
                     ChromePageInfoControllerDelegate pageInfoControllerDelegate =
                             new ChromePageInfoControllerDelegate(
@@ -1586,7 +1676,7 @@ public class PageInfoViewTest {
                                 }
                             };
                     PageInfoController.show(
-                            sActivityTestRule.getActivity(),
+                            mActivityTestRule.getActivity(),
                             tab.getWebContents(),
                             null,
                             PageInfoController.OpenedFromSource.MENU,
@@ -1604,7 +1694,7 @@ public class PageInfoViewTest {
     public void testTransientPdfPage() {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    final ChromeActivity activity = sActivityTestRule.getActivity();
+                    final ChromeActivity activity = mActivityTestRule.getActivity();
                     final Tab tab = activity.getActivityTab();
                     ChromePageInfoControllerDelegate pageInfoControllerDelegate =
                             new ChromePageInfoControllerDelegate(
@@ -1622,7 +1712,7 @@ public class PageInfoViewTest {
                                 }
                             };
                     PageInfoController.show(
-                            sActivityTestRule.getActivity(),
+                            mActivityTestRule.getActivity(),
                             tab.getWebContents(),
                             null,
                             PageInfoController.OpenedFromSource.MENU,
@@ -1640,7 +1730,7 @@ public class PageInfoViewTest {
     public void testInsecureTransientPdfPage() {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    final ChromeActivity activity = sActivityTestRule.getActivity();
+                    final ChromeActivity activity = mActivityTestRule.getActivity();
                     final Tab tab = activity.getActivityTab();
                     ChromePageInfoControllerDelegate pageInfoControllerDelegate =
                             new ChromePageInfoControllerDelegate(
@@ -1658,7 +1748,7 @@ public class PageInfoViewTest {
                                 }
                             };
                     PageInfoController.show(
-                            sActivityTestRule.getActivity(),
+                            mActivityTestRule.getActivity(),
                             tab.getWebContents(),
                             null,
                             PageInfoController.OpenedFromSource.MENU,
@@ -1679,7 +1769,7 @@ public class PageInfoViewTest {
     public void testLocalPdfPage() {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    final ChromeActivity activity = sActivityTestRule.getActivity();
+                    final ChromeActivity activity = mActivityTestRule.getActivity();
                     final Tab tab = activity.getActivityTab();
                     ChromePageInfoControllerDelegate pageInfoControllerDelegate =
                             new ChromePageInfoControllerDelegate(
@@ -1697,7 +1787,7 @@ public class PageInfoViewTest {
                                 }
                             };
                     PageInfoController.show(
-                            sActivityTestRule.getActivity(),
+                            mActivityTestRule.getActivity(),
                             tab.getWebContents(),
                             null,
                             PageInfoController.OpenedFromSource.MENU,
@@ -1792,7 +1882,7 @@ public class PageInfoViewTest {
         PageInfoHistoryController.setProviderForTests(historyProvider);
         PageInfoHistoryController.setClockForTesting(
                 () -> {
-                    return sTimestampJune4;
+                    return TIMESTAMP_JUNE_4;
                 });
 
         loadUrlAndOpenPageInfo(
@@ -1805,7 +1895,7 @@ public class PageInfoViewTest {
     @MediumTest
     public void testHistorySubpageItemClick() throws Exception {
         StubbedHistoryProvider historyProvider = new StubbedHistoryProvider();
-        historyProvider.addItem(StubbedHistoryProvider.createHistoryItem(1, sTimestampJune4));
+        historyProvider.addItem(StubbedHistoryProvider.createHistoryItem(1, TIMESTAMP_JUNE_4));
         HistoryContentManager.setProviderForTests(historyProvider);
         PageInfoHistoryController.setProviderForTests(historyProvider);
         loadUrlAndOpenPageInfo(
@@ -1814,7 +1904,7 @@ public class PageInfoViewTest {
         final CallbackHelper onDidStartNavigationHelper = new CallbackHelper();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    return new WebContentsObserver(sActivityTestRule.getWebContents()) {
+                    return new WebContentsObserver(mActivityTestRule.getWebContents()) {
                         @Override
                         public void didStartNavigationInPrimaryMainFrame(
                                 NavigationHandle navigationHandle) {
@@ -1886,7 +1976,7 @@ public class PageInfoViewTest {
         float cornerRadius =
                 ThreadUtils.runOnUiThreadBlocking(
                         () -> {
-                            ChromeActivity activity = sActivityTestRule.getActivity();
+                            ChromeActivity activity = mActivityTestRule.getActivity();
                             BrowserControlsManager browserControlsManager =
                                     BrowserControlsManagerSupplier.getValueOrNullFrom(
                                             activity.getWindowAndroid());
@@ -1972,12 +2062,12 @@ public class PageInfoViewTest {
 
     @Test
     @MediumTest
-    @Restriction({DeviceFormFactor.TABLET})
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testBottomGravityTablets() {
         ObservableSupplier<ModalDialogManager> modalDialogManagerSupplier =
                 ThreadUtils.runOnUiThreadBlocking(
                         () -> {
-                            ChromeActivity activity = sActivityTestRule.getActivity();
+                            ChromeActivity activity = mActivityTestRule.getActivity();
                             BrowserControlsManager browserControlsManager =
                                     BrowserControlsManagerSupplier.getValueOrNullFrom(
                                             activity.getWindowAndroid());

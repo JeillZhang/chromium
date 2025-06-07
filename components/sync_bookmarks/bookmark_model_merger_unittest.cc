@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/logging.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -20,8 +21,9 @@
 #include "components/bookmarks/browser/bookmark_uuids.h"
 #include "components/bookmarks/test/test_matchers.h"
 #include "components/favicon/core/test/mock_favicon_service.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/sync/base/client_tag_hash.h"
-#include "components/sync/base/features.h"
+#include "components/sync/base/previously_syncing_gaia_id_info_for_metrics.h"
 #include "components/sync/base/unique_position.h"
 #include "components/sync/protocol/entity_metadata.pb.h"
 #include "components/sync_bookmarks/bookmark_model_view.h"
@@ -271,8 +273,9 @@ std::unique_ptr<SyncedBookmarkTracker> Merge(
   std::unique_ptr<SyncedBookmarkTracker> tracker =
       SyncedBookmarkTracker::CreateEmpty(sync_pb::DataTypeState());
   testing::NiceMock<favicon::MockFaviconService> favicon_service;
-  BookmarkModelMerger(std::move(updates), bookmark_model, &favicon_service,
-                      tracker.get())
+  BookmarkModelMerger(
+      std::move(updates), bookmark_model, &favicon_service, tracker.get(),
+      syncer::PreviouslySyncingGaiaIdInfoForMetrics::kUnspecified)
       .Merge();
   return tracker;
 }
@@ -591,7 +594,7 @@ TEST(BookmarkModelMergerTest, ShouldIgnoreManagedNodes) {
 
 TEST(BookmarkModelMergerTest, ShouldIgnoreUnsyncableNodes) {
   base::test::ScopedFeatureList override_features{
-      syncer::kSyncEnableBookmarksInTransportMode};
+      switches::kSyncEnableBookmarksInTransportMode};
   TestBookmarkModelView view(TestBookmarkModelView::ViewType::kAccountNodes);
   view.EnsurePermanentNodesExist();
 
@@ -618,7 +621,7 @@ TEST(BookmarkModelMergerTest, ShouldIgnoreUnsyncableNodes) {
 // been previously turned on and later off.
 TEST(BookmarkModelMergerTest, ShouldIgnoreUnsyncableNodeWithCollidingUuid) {
   base::test::ScopedFeatureList override_features{
-      syncer::kSyncEnableBookmarksInTransportMode};
+      switches::kSyncEnableBookmarksInTransportMode};
   TestBookmarkModelView view(TestBookmarkModelView::ViewType::kAccountNodes);
   view.EnsurePermanentNodesExist();
 
@@ -693,8 +696,9 @@ TEST(BookmarkModelMergerTest, ShouldMergeFaviconsForRemoteNodesOnly) {
   EXPECT_CALL(favicon_service, AddPageNoVisitForBookmark(kUrl2, kTitle2));
   EXPECT_CALL(favicon_service, MergeFavicon(kUrl2, _, _, _, _));
 
-  BookmarkModelMerger(std::move(updates), &bookmark_model, &favicon_service,
-                      tracker.get())
+  BookmarkModelMerger(
+      std::move(updates), &bookmark_model, &favicon_service, tracker.get(),
+      syncer::PreviouslySyncingGaiaIdInfoForMetrics::kUnspecified)
       .Merge();
 }
 
@@ -772,8 +776,9 @@ TEST(BookmarkModelMergerTest,
   std::unique_ptr<SyncedBookmarkTracker> tracker =
       SyncedBookmarkTracker::CreateEmpty(sync_pb::DataTypeState());
   testing::NiceMock<favicon::MockFaviconService> favicon_service;
-  BookmarkModelMerger(std::move(updates), &bookmark_model, &favicon_service,
-                      tracker.get())
+  BookmarkModelMerger(
+      std::move(updates), &bookmark_model, &favicon_service, tracker.get(),
+      syncer::PreviouslySyncingGaiaIdInfoForMetrics::kUnspecified)
       .Merge();
 
   // Both titles should have matched against each other and only node is in the
@@ -812,8 +817,9 @@ TEST(BookmarkModelMergerTest,
   std::unique_ptr<SyncedBookmarkTracker> tracker =
       SyncedBookmarkTracker::CreateEmpty(sync_pb::DataTypeState());
   testing::NiceMock<favicon::MockFaviconService> favicon_service;
-  BookmarkModelMerger(std::move(updates), &bookmark_model, &favicon_service,
-                      tracker.get())
+  BookmarkModelMerger(
+      std::move(updates), &bookmark_model, &favicon_service, tracker.get(),
+      syncer::PreviouslySyncingGaiaIdInfoForMetrics::kUnspecified)
       .Merge();
 
   // Both titles should have matched against each other and only node is in the
@@ -858,8 +864,9 @@ TEST(BookmarkModelMergerTest,
   std::unique_ptr<SyncedBookmarkTracker> tracker =
       SyncedBookmarkTracker::CreateEmpty(sync_pb::DataTypeState());
   testing::NiceMock<favicon::MockFaviconService> favicon_service;
-  BookmarkModelMerger(std::move(updates), &bookmark_model, &favicon_service,
-                      tracker.get())
+  BookmarkModelMerger(
+      std::move(updates), &bookmark_model, &favicon_service, tracker.get(),
+      syncer::PreviouslySyncingGaiaIdInfoForMetrics::kUnspecified)
       .Merge();
 
   // Both titles should have matched against each other and only node is in the
@@ -2175,8 +2182,9 @@ TEST(BookmarkModelMergerTest, ShouldEnsureLimitDepthOfTree) {
   std::unique_ptr<SyncedBookmarkTracker> tracker =
       SyncedBookmarkTracker::CreateEmpty(sync_pb::DataTypeState());
   testing::NiceMock<favicon::MockFaviconService> favicon_service;
-  BookmarkModelMerger(std::move(updates), &bookmark_model, &favicon_service,
-                      tracker.get())
+  BookmarkModelMerger(
+      std::move(updates), &bookmark_model, &favicon_service, tracker.get(),
+      syncer::PreviouslySyncingGaiaIdInfoForMetrics::kUnspecified)
       .Merge();
 
   // Check max depth hasn't been exceeded. Take into account root of the

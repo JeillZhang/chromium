@@ -73,6 +73,8 @@ const char kAnimatedIdentityKeyName[] = "animated_identity_user_data";
 
 constexpr base::TimeDelta kDelayForCrossWindowAnimationReplay =
     base::Seconds(5);
+std::optional<base::TimeDelta>
+    g_delay_for_cross_window_animation_replay_for_testing;
 
 // UserData attached to the user profile, keeping track of the last time the
 // animation was shown to the user.
@@ -386,11 +388,8 @@ void EnableSyncFromMultiAccountPromo(Profile* profile,
   // primary account as primary, and keeps the secondary account.
   bool is_sync_promo =
       access_point ==
-      signin_metrics::AccessPoint::kAvatarBubbleSignInWithSyncPromo;
-  if (switches::IsImprovedSettingsUIOnDesktopEnabled()) {
-    is_sync_promo =
-        is_sync_promo || access_point == signin_metrics::AccessPoint::kSettings;
-  }
+          signin_metrics::AccessPoint::kAvatarBubbleSignInWithSyncPromo ||
+      access_point == signin_metrics::AccessPoint::kSettings;
   TurnSyncOnHelper::SigninAbortedMode signin_aborted_mode =
       account.account_id !=
                   identity_manager
@@ -403,6 +402,10 @@ void EnableSyncFromMultiAccountPromo(Profile* profile,
                                               existing_account_promo_action);
   signin_metrics::RecordSigninUserActionForAccessPoint(access_point);
 
+  bool turn_sync_on_signed_profile =
+      identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSignin) ==
+      account.account_id;
+
   // The Turn On Sync flow might fail before setting an account as primary. If
   // enabling Sync is optional, do not rely on its result to sign the web-only
   // account in the profile.
@@ -414,7 +417,7 @@ void EnableSyncFromMultiAccountPromo(Profile* profile,
 
   GetSigninUiDelegate()->ShowTurnSyncOnUI(
       profile, access_point, existing_account_promo_action, account.account_id,
-      signin_aborted_mode, is_sync_promo);
+      signin_aborted_mode, is_sync_promo, turn_sync_on_signed_profile);
 #else
   DUMP_WILL_BE_NOTREACHED();
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
@@ -551,32 +554,26 @@ std::string GetAllowedDomain(std::string signin_pattern) {
   return domain;
 }
 
-bool ShouldShowAnimatedIdentityOnOpeningWindow(
-    const ProfileAttributesStorage& profile_attributes_storage,
-    Profile* profile) {
-  DCHECK(profile);
-  signin::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfile(profile);
-  DCHECK(identity_manager->AreRefreshTokensLoaded());
-
-  base::TimeTicks animation_last_shown =
-      AvatarButtonUserData::GetAnimatedIdentityLastShown(profile);
+bool ShouldShowAnimatedIdentityOnOpeningWindow(Profile& profile) {
+  const base::TimeTicks animation_last_shown =
+      AvatarButtonUserData::GetAnimatedIdentityLastShown(&profile);
   // When a new window is created, only show the animation if it was never shown
   // for this profile, or if it was shown in another window in the last few
   // seconds (because the user may have missed it).
   if (!animation_last_shown.is_null() &&
       base::TimeTicks::Now() - animation_last_shown >
-          kDelayForCrossWindowAnimationReplay) {
+          g_delay_for_cross_window_animation_replay_for_testing.value_or(
+              kDelayForCrossWindowAnimationReplay)) {
     return false;
   }
+  return true;
+}
 
-  // Show the user identity for users with multiple profiles.
-  if (profile_attributes_storage.GetNumberOfProfiles() > 1) {
-    return true;
-  }
-
-  // Show the user identity for users with multiple signed-in accounts.
-  return identity_manager->GetAccountsWithRefreshTokens().size() > 1;
+base::AutoReset<std::optional<base::TimeDelta>>
+CreateZeroOverrideDelayForCrossWindowAnimationReplayForTesting() {
+  return base::AutoReset<std::optional<base::TimeDelta>>(
+      &g_delay_for_cross_window_animation_replay_for_testing,
+      base::TimeDelta());
 }
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
@@ -606,16 +603,16 @@ void RecordProfileMenuViewShown(Profile* profile) {
   }
 }
 
-void RecordProfileMenuClick(Profile* profile) {
+void RecordProfileMenuClick(const Profile& profile) {
   base::RecordAction(
       base::UserMetricsAction("ProfileMenu_ActionableItemClicked"));
-  if (profile->IsRegularProfile()) {
+  if (profile.IsRegularProfile()) {
     base::RecordAction(
         base::UserMetricsAction("ProfileMenu_ActionableItemClicked_Regular"));
-  } else if (profile->IsGuestSession()) {
+  } else if (profile.IsGuestSession()) {
     base::RecordAction(
         base::UserMetricsAction("ProfileMenu_ActionableItemClicked_Guest"));
-  } else if (profile->IsIncognitoProfile()) {
+  } else if (profile.IsIncognitoProfile()) {
     base::RecordAction(
         base::UserMetricsAction("ProfileMenu_ActionableItemClicked_Incognito"));
   }

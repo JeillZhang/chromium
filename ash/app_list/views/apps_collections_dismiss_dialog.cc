@@ -15,6 +15,7 @@
 #include "ash/style/typography.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
+#include "base/strings/string_util.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -68,7 +69,7 @@ AppsCollectionsDismissDialog::AppsCollectionsDismissDialog(
   SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, kDialogContentInsets));
 
-  SetBackground(views::CreateThemedRoundedRectBackground(
+  SetBackground(views::CreateRoundedRectBackground(
       cros_tokens::kCrosSysBaseElevated, kDialogRoundedCornerRadius));
 
   SetBorder(std::make_unique<views::HighlightBorder>(
@@ -80,7 +81,7 @@ AppsCollectionsDismissDialog::AppsCollectionsDismissDialog(
       AddChildView(std::make_unique<views::Label>(l10n_util::GetStringUTF16(
           IDS_ASH_LAUNCHER_APPS_COLLECTIONS_DISMISS_DIALOG_TITLE)));
   TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosTitle1, *title_);
-  title_->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+  title_->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
   title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   title_->SetAutoColorReadabilityEnabled(false);
   // Needs to paint to layer so it's stacked above `this` view.
@@ -98,7 +99,7 @@ AppsCollectionsDismissDialog::AppsCollectionsDismissDialog(
                     gfx::Insets::TLBR(kMarginBetweenTitleAndBody, 0,
                                       kMarginBetweenBodyAndButtons, 0));
   TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosBody1, *body);
-  body->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+  body->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
   body->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   body->SetMultiLine(true);
   body->SetAllowCharacterBreak(true);

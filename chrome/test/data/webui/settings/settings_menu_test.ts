@@ -83,7 +83,7 @@ suite('SettingsMenu', function() {
   });
 
   test('noExperimental', async function() {
-    loadTimeData.overrideValues({showAdvancedFeaturesMainControl: false});
+    loadTimeData.overrideValues({showAiPage: false});
     resetRouterForTesting();
     createSettingsMenu();
     await flushTasks();
@@ -94,7 +94,7 @@ suite('SettingsMenu', function() {
   });
 
   test('navigateToExperimental', async function() {
-    loadTimeData.overrideValues({showAdvancedFeaturesMainControl: true});
+    loadTimeData.overrideValues({showAiPage: true});
     resetRouterForTesting();
     createSettingsMenu();
     Router.getInstance().navigateTo(routes.AI);
@@ -108,35 +108,6 @@ suite('SettingsMenu', function() {
     assertTrue(!!selector.selected);
     assertEquals('/ai', selector.selected.toString());
   });
-
-  // <if expr="enable_glic">
-  test('noGlic', async function() {
-    loadTimeData.overrideValues({showGlicSettings: false});
-    resetRouterForTesting();
-    createSettingsMenu();
-    await flushTasks();
-
-    const entry = settingsMenu.shadowRoot!.querySelector('a[href=\'/glic\']');
-    assertTrue(!!entry);
-    assertFalse(isVisible(entry));
-  });
-
-  test('navigateToGlic', async function() {
-    loadTimeData.overrideValues({showGlicSettings: true});
-    resetRouterForTesting();
-    createSettingsMenu();
-    Router.getInstance().navigateTo(routes.GLIC);
-    await flushTasks();
-
-    const entry = settingsMenu.shadowRoot!.querySelector('a[href=\'/glic\']');
-    assertTrue(!!entry);
-    assertTrue(isVisible(entry));
-
-    const selector = settingsMenu.$.menu;
-    assertTrue(!!selector.selected);
-    assertEquals('/glic', selector.selected.toString());
-  });
-  // </if>
 
   test('pageVisibility', function() {
     function assertPagesHidden(expectedHidden: boolean) {
@@ -185,8 +156,7 @@ suite('SettingsMenu', function() {
 
   test('aiPageMenuClick', async function() {
     loadTimeData.overrideValues({
-      showAdvancedFeaturesMainControl: true,
-      enableAiSettingsPageRefresh: true,
+      showAiPage: true,
     });
     resetRouterForTesting();
     createSettingsMenu();

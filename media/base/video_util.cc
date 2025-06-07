@@ -38,7 +38,6 @@
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkYUVAPixmaps.h"
 #include "third_party/skia/include/gpu/GpuTypes.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 
 namespace media {
 
@@ -735,7 +734,9 @@ bool ReadbackTexturePlaneToMemorySync(VideoFrame& src_frame,
   // Perform readback passing the appropriate `src_plane` for the mailbox.
   auto mailbox = src_frame.shared_image()->mailbox();
   auto sync_token = src_frame.acquire_sync_token();
-  ri->WaitSyncTokenCHROMIUM(sync_token.GetConstData());
+  std::unique_ptr<gpu::RasterScopedAccess> ri_access =
+      src_frame.shared_image()->BeginRasterAccess(ri, sync_token,
+                                                  /*readonly=*/true);
   bool readback_result =
       ri->ReadbackImagePixels(mailbox, info, dest_stride, src_rect.x(),
                               src_rect.y(), src_plane, dest_pixels);
@@ -744,8 +745,10 @@ bool ReadbackTexturePlaneToMemorySync(VideoFrame& src_frame,
                 ri->GetGraphicsResetStatusKHR() == GL_NO_ERROR &&
                 ri->GetError() == GL_NO_ERROR;
   if (result) {
-    WaitAndReplaceSyncTokenClient client(ri);
+    WaitAndReplaceSyncTokenClient client(ri, std::move(ri_access));
     src_frame.UpdateReleaseSyncToken(&client);
+  } else {
+    gpu::RasterScopedAccess::EndAccess(std::move(ri_access));
   }
 
   return result;

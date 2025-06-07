@@ -22,9 +22,10 @@
 #include "base/metrics/histogram_macros_local.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/timer/elapsed_timer.h"
-#include "crypto/secure_hash.h"
+#include "crypto/hash.h"
 #include "net/base/hash_value.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -90,14 +91,6 @@ bool TruncatePath(const FilePath& filename_to_truncate,
   if (!file_to_truncate.SetLength(0))
     return false;
   return true;
-}
-
-void CalculateSHA256OfKey(const std::string& key,
-                          net::SHA256HashValue* out_hash_value) {
-  std::unique_ptr<crypto::SecureHash> hash(
-      crypto::SecureHash::Create(crypto::SecureHash::SHA256));
-  hash->Update(key.data(), key.size());
-  hash->Finish(out_hash_value, sizeof(*out_hash_value));
 }
 
 SimpleFileTracker::SubFile SubFileForFileIndex(int file_index) {
@@ -243,11 +236,9 @@ int GetSimpleCacheTrailerPrefetchSize(int hint_size) {
 
 SimpleEntryStat::SimpleEntryStat(
     base::Time last_used,
-    base::Time last_modified,
     const std::array<int32_t, kSimpleEntryStreamCount>& data_size,
     const int32_t sparse_data_size)
     : last_used_(last_used),
-      last_modified_(last_modified),
       data_size_(data_size),
       sparse_data_size_(sparse_data_size) {}
 
@@ -615,7 +606,7 @@ void SimpleSynchronousEntry::ReadData(const ReadRequest& in_entry_op,
   DCHECK(!empty_file_omitted_[file_index]);
   std::optional<size_t> bytes_read = file->Read(
       file_offset,
-      out_buf->span().first(base::checked_cast<size_t>(in_entry_op.buf_len)));
+      out_buf->first(base::checked_cast<size_t>(in_entry_op.buf_len)));
   if (bytes_read.value_or(0) > 0) {
     entry_stat->set_last_used(Time::Now());
     if (in_entry_op.request_update_crc) {
@@ -724,8 +715,7 @@ void SimpleSynchronousEntry::WriteData(const WriteRequest& in_entry_op,
   }
   if (buf_len > 0) {
     if (!file->WriteAndCheck(
-            file_offset,
-            in_buf->span().first(base::checked_cast<size_t>(buf_len)))) {
+            file_offset, in_buf->first(base::checked_cast<size_t>(buf_len)))) {
       RecordWriteResult(cache_type_, SYNC_WRITE_RESULT_WRITE_FAILURE);
       DoomInternal(file_operations);
       out_write_result->result = net::ERR_CACHE_WRITE_FAILURE;
@@ -758,7 +748,6 @@ void SimpleSynchronousEntry::WriteData(const WriteRequest& in_entry_op,
   RecordWriteResult(cache_type_, SYNC_WRITE_RESULT_SUCCESS);
   base::Time modification_time = Time::Now();
   out_entry_stat->set_last_used(modification_time);
-  out_entry_stat->set_last_modified(modification_time);
   out_write_result->result = buf_len;
 }
 
@@ -963,7 +952,6 @@ void SimpleSynchronousEntry::WriteSparseData(const SparseRequest& in_entry_op,
 
   base::Time modification_time = Time::Now();
   out_entry_stat->set_last_used(modification_time);
-  out_entry_stat->set_last_modified(modification_time);
   int32_t old_sparse_data_size = out_entry_stat->sparse_data_size();
   out_entry_stat->set_sparse_data_size(old_sparse_data_size + appended_so_far);
   *out_result = written_so_far;
@@ -1097,18 +1085,16 @@ void SimpleSynchronousEntry::Close(
     if (stream_index == 0) {
       // Write stream 0 data.
       int stream_0_offset = entry_stat.GetOffsetInFile(key.size(), 0, 0);
-      if (!file->WriteAndCheck(
-              stream_0_offset,
-              stream_0_data->span().first(
-                  base::checked_cast<size_t>(entry_stat.data_size(0))))) {
+      if (!file->WriteAndCheck(stream_0_offset,
+                               stream_0_data->first(base::checked_cast<size_t>(
+                                   entry_stat.data_size(0))))) {
         RecordCloseResult(cache_type_, CLOSE_RESULT_WRITE_FAILURE);
         DVLOG(1) << "Could not write stream 0 data.";
         DoomInternal(file_operations.get());
       }
-      net::SHA256HashValue hash_value;
-      CalculateSHA256OfKey(key, &hash_value);
+      auto hash_value = crypto::hash::Sha256(key);
       if (!file->WriteAndCheck(stream_0_offset + entry_stat.data_size(0),
-                               base::byte_span_from_ref(hash_value))) {
+                               hash_value)) {
         RecordCloseResult(cache_type_, CLOSE_RESULT_WRITE_FAILURE);
         DVLOG(1) << "Could not write stream 0 data.";
         DoomInternal(file_operations.get());
@@ -1302,7 +1288,6 @@ bool SimpleSynchronousEntry::OpenFiles(BackendFileOperations* file_operations,
       continue;
     }
     out_entry_stat->set_last_used(file_info.last_accessed);
-    out_entry_stat->set_last_modified(file_info.last_modified);
 
     // Two things prevent from knowing the right values for |data_size|:
     // 1) The key might not be known, hence its length might be unknown.
@@ -1343,7 +1328,6 @@ bool SimpleSynchronousEntry::CreateFiles(BackendFileOperations* file_operations,
   have_open_files_ = true;
 
   base::Time creation_time = Time::Now();
-  out_entry_stat->set_last_modified(creation_time);
   out_entry_stat->set_last_used(creation_time);
   for (int i = 0; i < kSimpleEntryNormalFileCount; ++i)
     out_entry_stat->set_data_size(i, 0);
@@ -1713,8 +1697,7 @@ int SimpleSynchronousEntry::ReadAndValidateStream0AndMaybe1(
 
   // If present, check the key SHA256.
   if (has_key_sha256) {
-    net::SHA256HashValue hash_value;
-    CalculateSHA256OfKey(key, &hash_value);
+    auto hash_value = crypto::hash::Sha256(key);
     if (base::byte_span_from_ref(hash_value) !=
         stream_prefetch_data[0].data->span().subspan(
             static_cast<uint32_t>(stream_0_size), sizeof(hash_value))) {
@@ -1726,8 +1709,10 @@ int SimpleSynchronousEntry::ReadAndValidateStream0AndMaybe1(
   }
 
   // Ensure the key is validated before completion.
-  if (!has_key_sha256 && header_and_key_check_needed_[0])
-    CheckHeaderAndKey(file.get(), 0);
+  if (!has_key_sha256 && header_and_key_check_needed_[0] &&
+      !CheckHeaderAndKey(file.get(), 0)) {
+    return net::ERR_FAILED;
+  }
 
   return net::OK;
 }
@@ -1926,7 +1911,7 @@ bool SimpleSynchronousEntry::TruncateSparseFile(base::File* sparse_file) {
 bool SimpleSynchronousEntry::InitializeSparseFile(base::File* sparse_file) {
   SimpleFileHeader header;
   header.initial_magic_number = kSimpleInitialMagicNumber;
-  header.version = kSimpleVersion;
+  header.version = kSimpleSparseEntryVersion;
   const std::string& key = *key_;
   header.key_length = key.size();
   header.key_hash = base::PersistentHash(key);
@@ -1962,8 +1947,7 @@ bool SimpleSynchronousEntry::ScanSparseFile(base::File* sparse_file,
     return false;
   }
 
-  if (header.version < kLastCompatSparseVersion ||
-      header.version > kSimpleVersion) {
+  if (header.version != kSimpleSparseEntryVersion) {
     DLOG(WARNING) << "Sparse file unreadable version.";
     return false;
   }

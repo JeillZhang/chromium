@@ -7,7 +7,6 @@
 
 #include "base/files/file_path.h"
 #include "ui/base/page_transition_types.h"
-#include "url/gurl.h"
 
 namespace supervised_user {
 
@@ -43,6 +42,20 @@ enum class ParentAccessWidgetError {
 };
 // LINT.ThenChange(//tools/metrics/histograms/metadata/families/enums.xml:FamilyLinkUserParentAccessWidgetError)
 
+// Type of error that was encountered during a local web approval flow.
+// Used for metrics. Those values are logged to UMA. Entries should not be
+// renumbered and numeric values should never be reused.
+// LINT.IfChange(LocalWebApprovalErrorType)
+enum class LocalWebApprovalErrorType : int {
+  kFailureToDecodePacpResponse = 0,
+  kFailureToParsePacpResponse = 1,
+  kUnexpectedPacpResponse = 2,
+  kPacpTimeoutExceeded = 3,
+  kPacpEmptyResponse = 4,
+  kMaxValue = kPacpEmptyResponse
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/families/enums.xml:LocalWebApprovalErrorType)
+
 // This enum describes the filter types of Chrome, which is
 // set by Family Link App or at families.google.com/families. These values
 // are logged to UMA. Entries should not be renumbered and numeric values
@@ -61,9 +74,12 @@ enum class WebFilterType {
   // Used for UMA only. There are multiple web filters on the device.
   kMixed = 3,
 
+  // Web filter is neutralized: it behaves as if there were no filtering.
+  kDisabled = 4,
+
   // Used for UMA. Update kMaxValue to the last value. Add future entries
   // above this comment. Sync with enums.xml.
-  kMaxValue = kMixed,
+  kMaxValue = kDisabled,
 };
 
 // Returns the string equivalent of a Web Filter type. This is a user-visible
@@ -190,6 +206,9 @@ extern const char kSupervisedUserTopLevelURLFilteringResultHistogramName[];
 // for use in the navigation throttle context.
 extern const char kSupervisedUserTopLevelURLFilteringResult2HistogramName[];
 
+// Histogram name to log the result of a local url approval request.
+extern const char kLocalWebApprovalResultHistogramName[];
+
 // The URL which the "Managed by your parent" UI links to.
 extern const char kManagedByParentUiMoreInfoUrl[];
 
@@ -214,6 +233,21 @@ extern const char kClassifyUrlThrottleStatusHistogramName[];
 
 // Histogram name to track the final throttle verdict.
 extern const char kClassifyUrlThrottleFinalStatusHistogramName[];
+
+// Histogram name to track the reason for creating a throttle.
+extern const char kClassifyUrlThrottleUseCaseHistogramName[];
+
+// Histogram name to track the duration of successful local web approval flows,
+// in milliseconds.
+extern const char kLocalWebApprovalDurationMillisecondsHistogramName[];
+
+// Histogram name to track the different error types that may occur during the
+// local web approval flow.
+extern const char kLocalWebApprovalErrorTypeHistogramName[];
+
+// Name of the Android's secure setting to observe the content filters.
+extern const char kBrowserContentFiltersSettingName[];
+extern const char kSearchContentFiltersSettingName[];
 }  // namespace supervised_user
 
 #endif  // COMPONENTS_SUPERVISED_USER_CORE_COMMON_SUPERVISED_USER_CONSTANTS_H_

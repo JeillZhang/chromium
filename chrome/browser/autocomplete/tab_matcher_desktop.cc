@@ -86,9 +86,10 @@ bool TabMatcherDesktop::IsTabOpenWithURL(const GURL& url,
 }
 
 std::vector<TabMatcher::TabWrapper> TabMatcherDesktop::GetOpenTabs(
-    const AutocompleteInput* input) const {
+    const AutocompleteInput* input,
+    bool exclude_active_tab) const {
   std::vector<TabMatcher::TabWrapper> open_tabs;
-  for (auto* web_contents : GetOpenWebContents()) {
+  for (auto* web_contents : GetOpenWebContents(exclude_active_tab)) {
     open_tabs.emplace_back(web_contents->GetTitle(),
                            web_contents->GetLastCommittedURL(),
                            web_contents->GetLastActiveTime());
@@ -97,8 +98,8 @@ std::vector<TabMatcher::TabWrapper> TabMatcherDesktop::GetOpenTabs(
   return open_tabs;
 }
 
-std::vector<content::WebContents*> TabMatcherDesktop::GetOpenWebContents()
-    const {
+std::vector<content::WebContents*> TabMatcherDesktop::GetOpenWebContents(
+    bool exclude_active_tab) const {
   Browser* active_browser = BrowserList::GetInstance()->GetLastActive();
   content::WebContents* active_tab = nullptr;
   if (active_browser)
@@ -112,8 +113,9 @@ std::vector<content::WebContents*> TabMatcherDesktop::GetOpenWebContents()
     }
     for (int i = 0; i < browser->tab_strip_model()->count(); ++i) {
       auto* web_contents = browser->tab_strip_model()->GetWebContentsAt(i);
-      if (web_contents != active_tab)
+      if (web_contents != active_tab || !exclude_active_tab) {
         all_tabs.push_back(web_contents);
+      }
     }
   }
   return all_tabs;

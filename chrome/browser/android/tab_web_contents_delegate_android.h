@@ -90,6 +90,8 @@ class TabWebContentsDelegateAndroid
       const blink::mojom::WindowFeatures& window_features,
       bool user_gesture,
       bool* was_blocked) override;
+  void SetContentsBounds(content::WebContents* source,
+                         const gfx::Rect& bounds) override;
   void OnDidBlockNavigation(
       content::WebContents* web_contents,
       const GURL& blocked_url,
@@ -140,6 +142,7 @@ class TabWebContentsDelegateAndroid
   bool IsInstalledWebappDelegateGeolocation() const;
   bool IsModalContextMenu() const;
   bool IsDynamicSafeAreaInsetsEnabled() const;
+  bool OpenInAppOrChromeFromCct(GURL url);
 
  private:
   std::unique_ptr<device::mojom::GeolocationContext>

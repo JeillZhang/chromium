@@ -12,6 +12,7 @@
 #include "base/base_switches.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/process/process_handle.h"
@@ -19,7 +20,8 @@
 #include "base/test/multiprocess_test.h"
 #include "base/threading/platform_thread.h"
 #include "base/win/scoped_handle.h"
-#include "base/win/win_util.h"
+#include "base/win/windows_handle_util.h"
+#include "build/build_config.h"
 #include "components/crash/core/app/fallback_crash_handler_launcher_win.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
@@ -37,7 +39,7 @@ class ExceptionPointers {
  public:
   ExceptionPointers() {
     RtlCaptureContext(&context_);
-    memset(&exception_, 0, sizeof(exception_));
+    UNSAFE_TODO(memset(&exception_, 0, sizeof(exception_)));
     exception_.ExceptionCode = EXCEPTION_ACCESS_VIOLATION;
 
     exception_ptrs_.ExceptionRecord = &exception_;

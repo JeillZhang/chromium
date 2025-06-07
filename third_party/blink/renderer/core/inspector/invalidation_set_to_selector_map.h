@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_INVALIDATION_SET_TO_SELECTOR_MAP_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_INVALIDATION_SET_TO_SELECTOR_MAP_H_
 
+#include "third_party/blink/renderer/core/css/active_style_sheets.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
 #include "third_party/blink/renderer/core/inspector/style_rule_to_style_sheet_contents_map.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
@@ -17,6 +18,7 @@
 namespace blink {
 
 class InvalidationSet;
+class RuleFeatureSet;
 class StyleEngine;
 class StyleRule;
 
@@ -44,7 +46,7 @@ class CORE_EXPORT InvalidationSetToSelectorMap final
     Member<StyleRule> style_rule_;
     unsigned selector_index_;
   };
-  using IndexedSelectorList = HeapHashSet<Member<IndexedSelector>>;
+  using IndexedSelectorList = GCedHeapHashSet<Member<IndexedSelector>>;
 
   enum class SelectorFeatureType {
     kUnknown,
@@ -58,7 +60,14 @@ class CORE_EXPORT InvalidationSetToSelectorMap final
   // Instantiates a new mapping if a diagnostic tracing session with the
   // appropriate configuration has started, or deletes an existing mapping if
   // tracing is no longer enabled.
-  static void StartOrStopTrackingIfNeeded(StyleEngine& style_engine);
+  static void StartOrStopTrackingIfNeeded(const TreeScope& tree_scope,
+                                          const StyleEngine& style_engine);
+
+  // Returns true if a mapping is active and tracking invalidations.
+  // This is primarily intended for tests. Product code generally should not
+  // need to call this; the other static entry points will check this state and
+  // immediately return if tracking is not active.
+  static bool IsTracking();
 
   // Call at the start and end of indexing rules within a StyleSheetContents.
   static void BeginStyleSheetContents(const StyleSheetContents* contents);
@@ -113,12 +122,23 @@ class CORE_EXPORT InvalidationSetToSelectorMap final
       SelectorFeatureType type,
       const AtomicString& value);
 
+  // Given a StyleRule, attempt to look up the containing StyleSheetContents.
+  static const StyleSheetContents* LookupStyleSheetContentsForRule(
+      const StyleRule* style_rule);
+
   InvalidationSetToSelectorMap();
   void Trace(Visitor*) const;
 
  protected:
   friend class InvalidationSetToSelectorMapTest;
   static Persistent<InvalidationSetToSelectorMap>& GetInstanceReference();
+
+  void RevisitActiveStyleSheets(
+      const ActiveStyleSheetVector& active_style_sheets,
+      const StyleEngine& style_engine);
+  void RevisitStylesheetOnce(const StyleEngine* style_engine,
+                             StyleSheetContents* contents,
+                             const RuleFeatureSet* features);
 
  private:
   // The back-map is stored in two levels: first from an invalidation set
@@ -129,12 +149,16 @@ class CORE_EXPORT InvalidationSetToSelectorMap final
   // execution.
   using InvalidationSetEntry = std::pair<SelectorFeatureType, AtomicString>;
   using InvalidationSetEntryMap =
-      HeapHashMap<InvalidationSetEntry, Member<IndexedSelectorList>>;
+      GCedHeapHashMap<InvalidationSetEntry, Member<IndexedSelectorList>>;
   using InvalidationSetMap =
-      HeapHashMap<const InvalidationSet*, Member<InvalidationSetEntryMap>>;
+      GCedHeapHashMap<const InvalidationSet*, Member<InvalidationSetEntryMap>>;
 
   // Holds the back-map described above.
   Member<InvalidationSetMap> invalidation_set_map_;
+
+  // Holds the set of stylesheets that have been revisited for indexing into
+  // the back-map.
+  HeapHashSet<Member<const StyleSheetContents>> revisited_style_sheets_;
 
   // Used during back-map construction.
   // Holds the stylesheet currently being analyzed.

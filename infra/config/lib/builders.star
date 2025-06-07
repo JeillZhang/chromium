@@ -32,7 +32,7 @@ load("./branches.star", "branches")
 load("./builder_config.star", "register_builder_config")
 load("./builder_exemptions.star", "exempted_from_description_builders")
 load("./builder_health_indicators.star", "register_health_spec")
-load("./consoles.star", "consoles", "register_builder_to_console_view")
+load("./consoles.star", "register_builder_to_console_view")
 load("./gn_args.star", "register_gn_args")
 load("./nodes.star", "nodes")
 load("./recipe_experiments.star", "register_recipe_experiments_ref")
@@ -86,9 +86,9 @@ os = struct(
     MAC_12 = os_enum(os_category.MAC, "Mac-12"),
     MAC_13 = os_enum(os_category.MAC, "Mac-13"),
     MAC_14 = os_enum(os_category.MAC, "Mac-14"),
-    MAC_DEFAULT = os_enum(os_category.MAC, "Mac-14"),
+    MAC_DEFAULT = os_enum(os_category.MAC, "Mac-15"),
     MAC_ANY = os_enum(os_category.MAC, "Mac"),
-    MAC_BETA = os_enum(os_category.MAC, "Mac-14|Mac-15"),
+    MAC_BETA = os_enum(os_category.MAC, "Mac-15"),
     WINDOWS_10 = os_enum(os_category.WINDOWS, "Windows-10"),
     # TODO(crbug.com/41492657): remove after slow compile issue resolved.
     WINDOWS_10_1909 = os_enum(os_category.WINDOWS, "Windows-10-18363"),
@@ -119,31 +119,40 @@ siso = struct(
     ),
 )
 
-def _rotation(name):
-    return branches.value(
-        branch_selector = branches.selector.MAIN,
-        value = [name],
+def _rotation(name, console_name, tree_closer_console):
+    if not name:
+        fail("Rotations must be created with a name")
+    return struct(
+        name = name,
+        console_name = console_name,
+        tree_closer_console = tree_closer_console,
     )
 
-def _gardener_rotation_name(rotation):
-    return rotation + " rotation"
+def _main_rotation(name, console_name, tree_closer_console):
+    return branches.value(
+        branch_selector = branches.selector.MAIN,
+        value = _rotation(
+            name = name,
+            console_name = console_name,
+            tree_closer_console = tree_closer_console,
+        ),
+    )
 
 # Gardener rotations that a builder can be added to (only takes effect on trunk)
 # New rotations can be added, but won't automatically show up in SoM without
 # changes to SoM code.
 gardener_rotations = struct(
-    ANDROID = _rotation("android"),
-    ANGLE = _rotation("angle"),
-    CHROMIUM = _rotation("chromium"),
-    CFT = _rotation("cft"),
-    DAWN = _rotation("dawn"),
-    FUCHSIA = _rotation("fuchsia"),
-    CHROMIUM_CLANG = _rotation("chromium.clang"),
-    CHROMIUM_GPU = _rotation("chromium.gpu"),
-    CHROMIUM_PERF = _rotation("chromium.perf"),
-    IOS = _rotation("ios"),
-    CHROMIUMOS = _rotation("chromiumos"),  # This group is not on SoM.
-    LACROS_SKYLAB = _rotation("lacros_skylab"),
+    ANDROID = _main_rotation("android", "android rotation", "android tree closers"),
+    ANGLE = _main_rotation("angle", "angle rotation", None),
+    CHROMIUM = _main_rotation("chromium", "chromium rotation", "chromium tree closers"),
+    CFT = _main_rotation("cft", "cft rotation", None),
+    DAWN = _main_rotation("dawn", "dawn rotation", None),
+    FUCHSIA = _main_rotation("fuchsia", "fuchsia rotation", None),
+    CHROMIUM_CLANG = _main_rotation("chromium.clang", "chromium.clang rotation", None),
+    CHROMIUM_GPU = _main_rotation("chromium.gpu", "chromium.gpu rotation", "chromium.gpu tree closers"),
+    IOS = _main_rotation("ios", "ios rotation", "ios tree closers"),
+    CHROMIUMOS = _main_rotation("chromiumos", "chromiumos rotation", "chromiumos tree closers"),  # This group is not on SoM.
+    CRONET = _main_rotation("cronet", "cronet rotation", None),
 )
 
 # Free disk space in a machine reserved for build tasks.
@@ -164,20 +173,6 @@ _DEFAULT_BUILDERLESS_OS_CATEGORIES = [os_category.LINUX, os_category.WINDOWS]
 # Macs all have SSDs, so it doesn't make sense to use the default behavior of
 # setting ssd:0 dimension
 _EXCLUDE_BUILDERLESS_SSD_OS_CATEGORIES = [os_category.MAC]
-
-# TODO(crbug.com/394945600): Remove this after migrating existing builders and
-# the short name is a required parameter for gardened builders.
-def _default_short_name(name):
-    words = [name]
-    for s in (" ", "-", "_"):
-        parts = [word.replace("(", "").split(s) for word in words]
-        words = []
-        for new_parts in parts:
-            words = args.listify(
-                words,
-                new_parts,
-            )
-    return "".join([part[0].upper() + part[1:3] for part in words])
 
 def _code_coverage_property(
         *,
@@ -393,6 +388,7 @@ defaults = args.defaults(
     siso_output_local_strategy = None,
     siso_limits = None,
     siso_keep_going = None,
+    siso_disable_batch_mode = None,
     health_spec = None,
     builder_config_settings = None,
 
@@ -452,13 +448,12 @@ def builder(
         bootstrap = args.DEFAULT,
         builder_group = args.DEFAULT,
         builder_spec = None,
+        parent = None,
         mirrors = None,
         builder_config_settings = args.DEFAULT,
         pool = args.DEFAULT,
         ssd = args.DEFAULT,
         gardener_rotations = None,
-        gardener_rotation_console_category = None,
-        gardener_rotation_console_short_name = None,
         xcode = args.DEFAULT,
         console_view_entry = None,
         list_view = args.DEFAULT,
@@ -498,6 +493,7 @@ def builder(
         siso_remote_linking = args.DEFAULT,
         siso_limits = args.DEFAULT,
         siso_keep_going = args.DEFAULT,
+        siso_disable_batch_mode = args.DEFAULT,
         skip_profile_upload = args.DEFAULT,
         health_spec = args.DEFAULT,
         shadow_builderless = args.DEFAULT,
@@ -596,6 +592,8 @@ def builder(
             None.
         builder_spec: The spec describing the configuration for the builder.
             Cannot be set if `mirrors` is set.
+        parent: Reference to the parent builder of the builder. Can only be set
+            if `builder_spec` is set.
         mirrors: References to the builders that the builder should mirror.
             Cannot be set if `builder_spec` is set.
         builder_config_settings: Additional builder configuration that used by
@@ -612,12 +610,6 @@ def builder(
         gardener_rotations: A string or list of strings identifying the gardener
             rotations that the builder should be included in. Will be merged
             with the module-level default.
-        gardener_rotation_console_category: A string to use as the category in
-            the gardener rotation console. This value is only used when a
-            gardener_rotations value is present.
-        gardener_rotation_console_short_name: A string to use as the short name
-            in the gardener rotation console. This value is only used when a
-            gardener_rotations value is present.
         xcode: a member of the `xcode` enum indicating the xcode version the
             builder requires. Emits a cache declaration of the form
             ```{
@@ -725,6 +717,7 @@ def builder(
             will be adjusted accordingly.
         siso_limits: a string to override sito limits.
         siso_keep_going: Bool flag whether to pass '-k 0' or not.
+        siso_disable_batch_mode: Bool flag whether to pass `-batch=false` or not.
         health_spec: a health spec instance describing the threshold for when
             the builder should be considered unhealthy.
         shadow_builderless: If set to True, then led builds created for this
@@ -863,18 +856,11 @@ def builder(
         dimensions["pool"] = pool
 
     gardener_rotations = defaults.get_value("gardener_rotations", gardener_rotations, merge = args.MERGE_LIST)
+    gardener_rotation_names = [rotation.name for rotation in gardener_rotations]
     if gardener_rotations:
         # TODO(343503161): Remove gardener_rotations after SoM is updated.
-        properties["sheriff_rotations"] = gardener_rotations
-        properties["gardener_rotations"] = gardener_rotations
-
-    if gardener_rotation_console_category and not gardener_rotations:
-        fail("gardener_rotations must also be set when " +
-             "gardener_rotation_console_category is set")
-
-    if gardener_rotation_console_short_name and not gardener_rotations:
-        fail("gardener_rotations must also be set when " +
-             "gardener_rotation_console_short_name is set")
+        properties["sheriff_rotations"] = gardener_rotation_names
+        properties["gardener_rotations"] = gardener_rotation_names
 
     ssd = defaults.get_value("ssd", ssd)
     if ssd == args.COMPUTE:
@@ -969,6 +955,10 @@ def builder(
         if siso_keep_going:
             siso["keep_going"] = True
 
+        siso_disable_batch_mode = defaults.get_value("siso_disable_batch_mode", siso_disable_batch_mode)
+        if siso_disable_batch_mode:
+            siso["disable_batch_mode"] = True
+
         remote_jobs = defaults.get_value("siso_remote_jobs", siso_remote_jobs)
         if remote_jobs:
             siso["remote_jobs"] = remote_jobs
@@ -1053,7 +1043,10 @@ def builder(
     if notifies != None:
         kwargs["notifies"] = defaults.get_value("notifies", notifies, merge = args.MERGE_LIST)
 
-    triggered_by = defaults.get_value("triggered_by", triggered_by)
+    if parent:
+        triggered_by = [parent]
+    else:
+        triggered_by = defaults.get_value("triggered_by", triggered_by)
     if triggered_by != args.COMPUTE:
         kwargs["triggered_by"] = triggered_by
 
@@ -1121,7 +1114,7 @@ def builder(
     if builder_group != None and bucket not in _BUILDER_GROUP_REUSE_BUCKET_ALLOWLIST:
         _BUILDER_GROUP_ID_NODE.add("{}:{}".format(builder_group, name))
 
-    register_gardener_builder(bucket, name, gardener_rotations)
+    register_gardener_builder(bucket, name, gardener_rotation_names)
 
     register_recipe_experiments_ref(bucket, name, executable)
 
@@ -1138,6 +1131,7 @@ def builder(
         name,
         builder_group,
         builder_spec,
+        parent,
         mirrors,
         builder_config_settings,
         targets,
@@ -1160,19 +1154,6 @@ def builder(
             entries = [console_view_entry]
         else:
             entries = console_view_entry
-        for rotation in gardener_rotations:
-            rotations = [getattr(builders.gardener_rotations, a) for a in dir(builders.gardener_rotations)]
-            if any([r and r[0] == rotation for r in rotations]):
-                console_view = _gardener_rotation_name(rotation)
-                default_short_name = _default_short_name(name)
-                entries = args.listify(
-                    entries,
-                    consoles.console_view_entry(
-                        console_view = _gardener_rotation_name(rotation),
-                        category = gardener_rotation_console_category,
-                        short_name = gardener_rotation_console_short_name or default_short_name,
-                    ),
-                )
         entries_without_console_view = [
             e
             for e in entries
@@ -1235,6 +1216,6 @@ builders = struct(
     defaults = defaults,
     os = os,
     gardener_rotations = gardener_rotations,
-    gardener_rotation_name = _gardener_rotation_name,
+    rotation = _rotation,
     free_space = free_space,
 )

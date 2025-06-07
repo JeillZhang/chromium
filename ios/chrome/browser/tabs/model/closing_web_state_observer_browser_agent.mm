@@ -14,7 +14,6 @@
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
-#import "ios/chrome/browser/snapshots/model/snapshot_tab_helper.h"
 #import "ios/web/public/navigation/navigation_item.h"
 #import "ios/web/public/navigation/navigation_manager.h"
 #import "ios/web/public/session/proto/navigation.pb.h"
@@ -22,11 +21,9 @@
 #import "ios/web/public/web_state.h"
 #import "url/gurl.h"
 
-BROWSER_USER_DATA_KEY_IMPL(ClosingWebStateObserverBrowserAgent)
-
 ClosingWebStateObserverBrowserAgent::ClosingWebStateObserverBrowserAgent(
     Browser* browser)
-    : browser_(browser) {
+    : BrowserUserData(browser) {
   DCHECK(!browser_->GetProfile()->IsOffTheRecord());
   browser_->AddObserver(this);
   browser_->GetWebStateList()->AddObserver(this);
@@ -71,7 +68,6 @@ void ClosingWebStateObserverBrowserAgent::RecordHistoryForWebStateAtIndex(
 void ClosingWebStateObserverBrowserAgent::RecordHistoryFromStorage(
     int index,
     web::proto::WebStateStorage storage) {
-  DCHECK(browser_);
   sessions::RestoreIOSLiveTab live_tab(storage.navigation());
   IOSChromeTabRestoreServiceFactory::GetForProfile(browser_->GetProfile())
       ->CreateHistoricalTab(&live_tab, index);
@@ -86,7 +82,6 @@ void ClosingWebStateObserverBrowserAgent::BrowserDestroyed(Browser* browser) {
 
   browser_->RemoveObserver(this);
   browser_->GetWebStateList()->RemoveObserver(this);
-  browser_ = nullptr;
 }
 
 #pragma mark - WebStateListObserving
@@ -103,9 +98,6 @@ void ClosingWebStateObserverBrowserAgent::WebStateListWillChange(
   if (!detach_change.is_tabs_cleanup()) {
     RecordHistoryForWebStateAtIndex(detached_web_state,
                                     detach_change.detached_from_index());
-  }
-  if (detach_change.is_user_action() || detach_change.is_tabs_cleanup()) {
-    SnapshotTabHelper::FromWebState(detached_web_state)->RemoveSnapshot();
   }
 }
 
@@ -129,10 +121,7 @@ void ClosingWebStateObserverBrowserAgent::WebStateListDidChange(
       // Do nothing when a WebState is moved.
       break;
     case WebStateListChange::Type::kReplace: {
-      const WebStateListChangeReplace& replace_change =
-          change.As<WebStateListChangeReplace>();
-      SnapshotTabHelper::FromWebState(replace_change.replaced_web_state())
-          ->RemoveSnapshot();
+      // Do nothing whan a WebState is replaced.
       break;
     }
     case WebStateListChange::Type::kInsert:

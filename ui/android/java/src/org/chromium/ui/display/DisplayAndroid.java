@@ -66,6 +66,29 @@ public class DisplayAndroid {
          * @param currentMode the current display mode.
          */
         default void onCurrentModeChanged(Display.@Nullable Mode currentMode) {}
+
+        default void onAdaptiveRefreshRateInfoChanged(AdaptiveRefreshRateInfo arrInfo) {}
+    }
+
+    public static final class AdaptiveRefreshRateInfo {
+        public final boolean supportsAdaptiveRefreshRate;
+        public final float suggestedFrameRateHigh;
+
+        public AdaptiveRefreshRateInfo(
+                boolean supportsAdaptiveRefreshRate, float suggestedFrameRateHigh) {
+            this.supportsAdaptiveRefreshRate = supportsAdaptiveRefreshRate;
+            this.suggestedFrameRateHigh = suggestedFrameRateHigh;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (!(obj instanceof AdaptiveRefreshRateInfo)) {
+                return false;
+            }
+            AdaptiveRefreshRateInfo other = (AdaptiveRefreshRateInfo) obj;
+            return supportsAdaptiveRefreshRate == other.supportsAdaptiveRefreshRate
+                    && suggestedFrameRateHigh == other.suggestedFrameRateHigh;
+        }
     }
 
     private static final DisplayAndroidObserver[] EMPTY_OBSERVER_ARRAY =
@@ -92,6 +115,8 @@ public class DisplayAndroid {
     private boolean mIsInternal;
     protected boolean mIsDisplayWideColorGamut;
     protected boolean mIsDisplayServerWideColorGamut;
+    private AdaptiveRefreshRateInfo mAdaptiveRefreshRateInfo =
+            new AdaptiveRefreshRateInfo(false, 0.0f);
 
     protected static DisplayAndroidManager getManager() {
         return DisplayAndroidManager.getInstance();
@@ -117,9 +142,7 @@ public class DisplayAndroid {
         return getManager().getDisplayAndroid(display);
     }
 
-    /**
-     * Returns the display id that does not necessarily match the one defined in Android's Display.
-     */
+    /** Returns the display ID that matches the one defined in Android's Display. */
     public int getDisplayId() {
         return mDisplayId;
     }
@@ -233,10 +256,13 @@ public class DisplayAndroid {
         return mCurrentDisplayMode;
     }
 
+    public AdaptiveRefreshRateInfo getAdaptiveRefreshRateInfo() {
+        return mAdaptiveRefreshRateInfo;
+    }
+
     /**
      * Whether or not the display is HDR capable. If false then getHdrMaxLuminanceRatio will always
-     * return 1.0.
-     * Package private only because no client needs to access this from java.
+     * return 1.0. Package private only because no client needs to access this from java.
      */
     /* package */ boolean getIsHdr() {
         return mIsHdr;
@@ -279,6 +305,11 @@ public class DisplayAndroid {
         mObservers.remove(observer);
     }
 
+    /**
+     * Constructs an instance.
+     *
+     * @param displayId The display ID of Android's Display represented by this object.
+     */
     protected DisplayAndroid(int displayId) {
         mDisplayId = displayId;
         mObservers = new WeakHashMap<>();
@@ -312,7 +343,8 @@ public class DisplayAndroid {
                 /* supportedModes= */ null,
                 /* isHdr= */ null,
                 /* hdrMaxLuminanceRatio= */ null,
-                /* isInternal= */ null);
+                /* isInternal= */ null,
+                /* arrInfo= */ null);
     }
 
     /** Update the display to the provided parameters. Null values leave the parameter unchanged. */
@@ -334,7 +366,8 @@ public class DisplayAndroid {
             @Nullable List<Display.Mode> supportedModes,
             @Nullable Boolean isHdr,
             @Nullable Float hdrMaxLuminanceRatio,
-            @Nullable Boolean isInternal) {
+            @Nullable Boolean isInternal,
+            @Nullable AdaptiveRefreshRateInfo arrInfo) {
         boolean nameChanged = name != null && !name.equals(mName);
         boolean boundsChanged = bounds != null && !bounds.equals(mBounds);
         boolean insetsChanged = insets != null && !insets.equals(mInsets);
@@ -362,6 +395,10 @@ public class DisplayAndroid {
         boolean hdrMaxLuminanceRatioChanged =
                 hdrMaxLuminanceRatio != null && hdrMaxLuminanceRatio != mHdrMaxLuminanceRatio;
         boolean isInternalChanged = isInternal != null && mIsInternal != isInternal;
+        boolean adaptiveRefreshRateInfoChanged =
+                arrInfo != null
+                        && (mAdaptiveRefreshRateInfo == null
+                                || !mAdaptiveRefreshRateInfo.equals(arrInfo));
         boolean changed =
                 nameChanged
                         || boundsChanged
@@ -377,7 +414,8 @@ public class DisplayAndroid {
                         || currentModeChanged
                         || isHdrChanged
                         || hdrMaxLuminanceRatioChanged
-                        || isInternalChanged;
+                        || isInternalChanged
+                        || adaptiveRefreshRateInfoChanged;
         if (!changed) return;
 
         if (nameChanged) mName = name;
@@ -401,6 +439,9 @@ public class DisplayAndroid {
         if (displayModesChanged) mDisplayModes = supportedModes;
         if (currentModeChanged) mCurrentDisplayMode = currentMode;
         if (isInternalChanged) mIsInternal = isInternal;
+        if (adaptiveRefreshRateInfoChanged) {
+            mAdaptiveRefreshRateInfo = arrInfo;
+        }
 
         getManager().updateDisplayOnNativeSide(this);
         if (rotationChanged) {
@@ -431,6 +472,12 @@ public class DisplayAndroid {
             DisplayAndroidObserver[] observers = getObservers();
             for (DisplayAndroidObserver o : observers) {
                 o.onCurrentModeChanged(mCurrentDisplayMode);
+            }
+        }
+        if (adaptiveRefreshRateInfoChanged) {
+            DisplayAndroidObserver[] observers = getObservers();
+            for (DisplayAndroidObserver o : observers) {
+                o.onAdaptiveRefreshRateInfoChanged(mAdaptiveRefreshRateInfo);
             }
         }
     }

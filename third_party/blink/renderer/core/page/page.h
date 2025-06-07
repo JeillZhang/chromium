@@ -31,15 +31,14 @@
 #include "base/types/pass_key.h"
 #include "net/cookies/site_for_cookies.h"
 #include "services/network/public/mojom/attribution.mojom-shared.h"
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/fenced_frame/redacted_fenced_frame_config.h"
 #include "third_party/blink/public/common/metrics/document_update_reason.h"
-#include "third_party/blink/public/common/page/browsing_context_group_info.h"
+#include "third_party/blink/public/common/page/color_provider_color_maps.h"
 #include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/fenced_frame/fenced_frame.mojom-blink.h"
 #include "third_party/blink/public/mojom/frame/color_scheme.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/frame/text_autosizer_page_info.mojom-blink.h"
-#include "third_party/blink/public/mojom/page/page.mojom-blink.h"
+#include "third_party/blink/public/mojom/page/page.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/page/page_visibility_state.mojom-blink.h"
 #include "third_party/blink/public/mojom/partitioned_popins/partitioned_popin_params.mojom-forward.h"
 #include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
@@ -79,7 +78,6 @@ namespace blink {
 class AutoscrollController;
 class BrowserControls;
 class ChromeClient;
-struct ColorProviderColorMaps;
 class ConsoleMessageStorage;
 class ContextMenuController;
 class Document;
@@ -141,14 +139,14 @@ class CORE_EXPORT Page final : public GarbageCollected<Page>,
       ChromeClient& chrome_client,
       Page* opener,
       AgentGroupScheduler& agent_group_scheduler,
-      const BrowsingContextGroupInfo& browsing_context_group_info,
+      const base::UnguessableToken& browsing_context_group_token,
       const ColorProviderColorMaps* color_provider_colors,
       blink::mojom::PartitionedPopinParamsPtr partitioned_popin_params);
 
   Page(base::PassKey<Page>,
        ChromeClient& chrome_client,
        AgentGroupScheduler& agent_group_scheduler,
-       const BrowsingContextGroupInfo& browsing_context_group_info,
+       const base::UnguessableToken& browsing_context_group_token,
        const ColorProviderColorMaps* color_provider_colors,
        blink::mojom::PartitionedPopinParamsPtr partitioned_popin_params,
        bool is_ordinary);
@@ -478,11 +476,7 @@ class CORE_EXPORT Page final : public GarbageCollected<Page>,
     return page_visibility_observer_set_;
   }
 
-  void SetPageLifecycleState(
-      mojom::blink::PageLifecycleStatePtr lifecycle_state) {
-    lifecycle_state_ = std::move(lifecycle_state);
-  }
-
+  void SetPageLifecycleState(mojom::blink::PageLifecycleStatePtr);
   const mojom::blink::PageLifecycleStatePtr& GetPageLifecycleState() {
     return lifecycle_state_;
   }
@@ -529,13 +523,9 @@ class CORE_EXPORT Page final : public GarbageCollected<Page>,
   // lives in.
   const base::UnguessableToken& BrowsingContextGroupToken();
 
-  // Returns the token uniquely identifying the CoopRelatedGroup this page lives
-  // in.
-  const base::UnguessableToken& CoopRelatedGroupToken();
-
   // Update this Page's browsing context group after a navigation has taken
   // place.
-  void UpdateBrowsingContextGroup(const blink::BrowsingContextGroupInfo&);
+  void UpdateBrowsingContextGroup(const base::UnguessableToken&);
 
   // Attribution Reporting API ------------------------------------
   // Sets whether web or OS-level Attribution Reporting is supported
@@ -725,12 +715,8 @@ class CORE_EXPORT Page final : public GarbageCollected<Page>,
   bool is_prerendering_ = false;
   String prerender_metric_suffix_;
 
-  // If true, warms up compositor on a certain loading event if the page is
-  // under prerendering. Only valid when the cc feature `kWarmUpCompositor`
-  // (controls the independent cc internal feature) and blink feature
-  // `kPrerender2WarmUpCompositor` (manages the trigger point of that cc
-  // feature for prerender case) are enabled. Please see crbug.com/41496019 for
-  // more details.
+  // If true, warms up compositor on `WebLocalFrameImpl::DidCommitLoad` if the
+  // page is under prerendering.
   bool should_warm_up_compositor_on_prerender_ = false;
   // If true, prepares the paint tree if the page is under prerendering.
   bool should_prepare_paint_tree_on_prerender_ = false;
@@ -755,7 +741,7 @@ class CORE_EXPORT Page final : public GarbageCollected<Page>,
       v8_compile_hints_consumer_;
 
   // The information determining the browsing context group this page lives in.
-  BrowsingContextGroupInfo browsing_context_group_info_;
+  base::UnguessableToken browsing_context_group_token_;
 
   network::mojom::AttributionSupport attribution_support_ =
       network::mojom::AttributionSupport::kUnset;

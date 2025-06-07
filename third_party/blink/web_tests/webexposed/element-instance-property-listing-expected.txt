@@ -110,9 +110,12 @@ namespace http://www.w3.org/1999/xhtml
     property computedName
     property computedRole
     property computedStyleMap
+    property containerTiming
+    property containerTimingIgnore
     property contains
     property contentEditable
     property currentCSSZoom
+    property customElementRegistry
     property dataset
     property dir
     property dispatchEvent
@@ -142,6 +145,8 @@ namespace http://www.w3.org/1999/xhtml
     property hasAttributes
     property hasChildNodes
     property hasPointerCapture
+    property headingOffset
+    property headingReset
     property hidden
     property hidePopover
     property id
@@ -339,6 +344,7 @@ namespace http://www.w3.org/1999/xhtml
     property showPopover
     property slot
     property spellcheck
+    property startViewTransition
     property style
     property tabIndex
     property tagName
@@ -533,6 +539,7 @@ html element canvas
     property configureHighDynamicRange
     property getContext
     property height
+    property layoutSubtree
     property toBlob
     property toDataURL
     property transferControlToOffscreen
@@ -871,6 +878,13 @@ html element marquee
     property width
 html element menu
     property compact
+html element menubar
+html element menuitem
+    property checked
+    property command
+    property commandForElement
+    property disabled
+html element menulist
 html element meta
     property content
     property httpEquiv
@@ -961,6 +975,8 @@ html element permission
     property invalidReason
     property isValid
     property ondismiss
+    property onpromptaction
+    property onpromptdismiss
     property onresolve
     property onvalidationstatuschange
     property permissionStatus
@@ -1107,6 +1123,7 @@ html element template
     property content
     property parseparts
     property shadowRootClonable
+    property shadowRootCustomElementRegistry
     property shadowRootDelegatesFocus
     property shadowRootMode
     property shadowRootSerializable
@@ -1384,8 +1401,11 @@ namespace http://www.w3.org/2000/svg
     property computedName
     property computedRole
     property computedStyleMap
+    property containerTiming
+    property containerTimingIgnore
     property contains
     property currentCSSZoom
+    property customElementRegistry
     property dataset
     property dispatchEvent
     property elementTiming
@@ -1411,6 +1431,8 @@ namespace http://www.w3.org/2000/svg
     property hasAttributes
     property hasChildNodes
     property hasPointerCapture
+    property headingOffset
+    property headingReset
     property id
     property innerHTML
     property insertAdjacentElement
@@ -1593,6 +1615,7 @@ namespace http://www.w3.org/2000/svg
     property setPointerCapture
     property shadowRoot
     property slot
+    property startViewTransition
     property style
     property tabIndex
     property tagName
@@ -1611,6 +1634,8 @@ svg element a
     property href
     property interestTargetElement
     property nearestViewportElement
+    property rel
+    property relList
     property requiredExtensions
     property systemLanguage
     property target
@@ -2201,6 +2226,7 @@ svg element rect
     property x
     property y
 svg element script
+    property async
     property href
     property type
 svg element set

@@ -5,6 +5,7 @@
 #include <string>
 
 #include "base/functional/callback.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
@@ -12,8 +13,7 @@
 #include "base/time/time.h"
 #include "components/autofill/core/browser/data_manager/payments/test_payments_data_manager.h"
 #include "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
-#include "components/autofill/core/browser/data_model/credit_card_art_image.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/foundations/test_autofill_client.h"
 #include "components/autofill/core/browser/foundations/test_autofill_driver.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
@@ -80,8 +80,8 @@ class VirtualCardEnrollmentManagerTest : public testing::Test {
   }
 
   void SetValidCardArtImageForCard(const CreditCard& card) {
-    payments_data_manager().AddCardArtImage(card.card_art_url(),
-                                            gfx::test::CreateImage(40, 24));
+    payments_data_manager().CacheImage(card.card_art_url(),
+                                       gfx::test::CreateImage(40, 24));
   }
 
   void SetNetworkImageInResourceBundle(ui::MockResourceBundleDelegate* delegate,
@@ -104,7 +104,7 @@ class VirtualCardEnrollmentManagerTest : public testing::Test {
       const TestLegalMessageLine& google_legal_message,
       const TestLegalMessageLine& issuer_legal_message,
       bool make_image_present) {
-    payments_data_manager().ClearCreditCardArtImages();
+    payments_data_manager().ClearCachedImages();
     SetUpCard();
     auto* state = virtual_card_enrollment_manager_
                       ->GetVirtualCardEnrollmentProcessState();
@@ -182,7 +182,7 @@ TEST_F(VirtualCardEnrollmentManagerTest, InitVirtualCardEnroll) {
                    << " virtual_card_enrollment_source="
                    << static_cast<int>(virtual_card_enrollment_source)
                    << ", make_image_present=" << make_image_present);
-      payments_data_manager().ClearCreditCardArtImages();
+      payments_data_manager().ClearCachedImages();
       SetUpCard();
       auto* state = virtual_card_enrollment_manager_
                         ->GetVirtualCardEnrollmentProcessState();
@@ -219,7 +219,7 @@ TEST_F(VirtualCardEnrollmentManagerTest, InitVirtualCardEnroll) {
 
 TEST_F(VirtualCardEnrollmentManagerTest,
        InitVirtualCardEnroll_GetDetailsForEnrollmentResponseReceived) {
-  payments_data_manager().ClearCreditCardArtImages();
+  payments_data_manager().ClearCachedImages();
   SetUpCard();
   auto* state =
       virtual_card_enrollment_manager_->GetVirtualCardEnrollmentProcessState();
@@ -320,13 +320,14 @@ TEST_F(VirtualCardEnrollmentManagerTest, OnDidGetDetailsForEnrollResponse) {
           source;
 
       NiceMock<ui::MockResourceBundleDelegate> delegate;
-      ui::ResourceBundle* orig_resource_bundle = nullptr;
+      std::unique_ptr<ui::ResourceBundle::SharedInstanceSwapperForTesting>
+          resource_bundle_swapper;
 
       gfx::Image network_image;
       if (!make_image_present) {
         network_image = gfx::test::CreateImage(32, 30);
-        orig_resource_bundle =
-            ui::ResourceBundle::SwapSharedInstanceForTesting(nullptr);
+        resource_bundle_swapper = std::make_unique<
+            ui::ResourceBundle::SharedInstanceSwapperForTesting>();
         SetNetworkImageInResourceBundle(
             &delegate,
             state->virtual_card_enrollment_fields.credit_card.network(),
@@ -377,7 +378,6 @@ TEST_F(VirtualCardEnrollmentManagerTest, OnDidGetDetailsForEnrollResponse) {
           ->ResetVirtualCardEnrollmentProcessState();
       if (!make_image_present) {
         ui::ResourceBundle::CleanupSharedInstance();
-        ui::ResourceBundle::SwapSharedInstanceForTesting(orig_resource_bundle);
       }
     }
   }
@@ -909,6 +909,34 @@ TEST_F(VirtualCardEnrollmentManagerTest, Metrics_LatencySinceUpstream) {
   histogram_tester.ExpectTimeBucketCount(
       "Autofill.VirtualCardEnrollBubble.LatencySinceUpstream", base::Minutes(1),
       1);
+}
+
+class DownstreamLatencyMetricsTest
+    : public VirtualCardEnrollmentManagerTest,
+      public ::testing::WithParamInterface<bool> {
+ public:
+  bool card_unmasked_from_cache() const { return GetParam(); }
+};
+
+INSTANTIATE_TEST_SUITE_P(VirtualCardEnrollmentManagerTest,
+                         DownstreamLatencyMetricsTest,
+                         ::testing::Bool());
+
+TEST_P(DownstreamLatencyMetricsTest, LatencySinceDownstream) {
+  base::HistogramTester histogram_tester;
+  CreditCard card = test::GetMaskedServerCard();
+  card.set_virtual_card_enrollment_state(
+      CreditCard::VirtualCardEnrollmentState::kUnenrolledAndEligible);
+  virtual_card_enrollment_manager_->ShouldOfferVirtualCardEnrollment(
+      card, card.instrument_id(), card_unmasked_from_cache());
+  virtual_card_enrollment_manager_->GetVirtualCardEnrollmentProcessState()
+      ->virtual_card_enrollment_fields.virtual_card_enrollment_source =
+      VirtualCardEnrollmentSource::kDownstream;
+  task_environment_.FastForwardBy(base::Minutes(1));
+  virtual_card_enrollment_manager_->ShowVirtualCardEnrollBubble();
+  histogram_tester.ExpectTimeBucketCount(
+      "Autofill.VirtualCardEnrollBubble.LatencySinceDownstream",
+      base::Minutes(1), card_unmasked_from_cache() ? 0 : 1);
 }
 
 }  // namespace autofill

@@ -178,6 +178,8 @@ void SpellChecker::AdvanceToNextMisspelling(bool start_before_selection) {
 
   // topNode defines the whole range we want to operate on
   ContainerNode* top_node = HighestEditableRoot(position);
+  if (!top_node)
+    return;
   // TODO(yosin): |lastOffsetForEditing()| is wrong here if
   // |editingIgnoresContent(highestEditableRoot())| returns true, e.g. <table>
   spelling_search_end = Position::EditingPositionOf(
@@ -676,8 +678,14 @@ std::pair<String, int> SpellChecker::FindFirstMisspelling(const Position& start,
     Position new_paragraph_start =
         StartOfNextParagraph(CreateVisiblePosition(paragraph_end))
             .DeepEquivalent();
-    if (new_paragraph_start.IsNull())
+    // To prevent an infinite loop, break when `new_paragraph_start` is
+    // non-editable.
+    if (new_paragraph_start.IsNull() ||
+        (RuntimeEnabledFeatures::
+             FindFirstMisspellingEndWhenNonEditableEnabled() &&
+         !IsEditablePosition(new_paragraph_start))) {
       break;
+    }
 
     paragraph_range = ExpandToParagraphBoundary(
         EphemeralRange(new_paragraph_start, new_paragraph_start));

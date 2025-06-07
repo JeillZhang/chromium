@@ -18,6 +18,7 @@
 #include "base/test/test_future.h"
 #include "chrome/browser/ash/app_list/search/test/test_ranker_manager.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/drivefs_test_support.h"
 #include "chrome/browser/ash/fileapi/recent_model.h"
 #include "chrome/browser/ash/fileapi/recent_model_factory.h"
@@ -45,6 +46,7 @@
 #include "components/history/core/test/test_history_database.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/user_manager/fake_user_manager.h"
+#include "components/user_manager/test_helper.h"
 #include "content/public/test/test_utils.h"
 #include "google_apis/gaia/gaia_id.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -55,7 +57,7 @@
 #include "ui/base/ime/fake_text_input_client.h"
 #include "ui/display/screen.h"
 #include "ui/display/test/test_screen.h"
-#include "ui/views/accessibility/ax_event_manager.h"
+#include "ui/views/accessibility/ax_update_notifier.h"
 #include "ui/views/test/ax_event_counter.h"
 
 namespace {
@@ -123,8 +125,8 @@ std::unique_ptr<KeyedService> BuildTestDriveIntegrationService(
   fake_drivefs_helper =
       std::make_unique<drive::FakeDriveFsHelper>(profile, mount_path);
   auto service = std::make_unique<drive::DriveIntegrationService>(
-      profile, "drivefs", mount_path,
-      fake_drivefs_helper->CreateFakeDriveFsListenerFactory());
+      TestingBrowserProcess::GetGlobal()->local_state(), profile, "drivefs",
+      mount_path, fake_drivefs_helper->CreateFakeDriveFsListenerFactory());
 
   // Wait until the DriveIntegrationService is initialized.
   while (!service->IsMounted() || !service->GetDriveFsInterface()) {
@@ -192,8 +194,7 @@ class QuickInsertClientImplTest : public BrowserWithTestWindowTest {
 
   TestingProfile* CreateProfile(const std::string& profile_name) override {
     return profile_manager()->CreateTestingProfile(
-        profile_name, GetTestingFactories(), /*is_main_profile=*/false,
-        test_shared_url_loader_factory_);
+        profile_name, GetTestingFactories(), test_shared_url_loader_factory_);
   }
 
   TestingProfile::TestingFactories GetTestingFactories() override {
@@ -226,10 +227,7 @@ class QuickInsertClientImplTest : public BrowserWithTestWindowTest {
     const AccountId account_id = AccountId::FromUserEmailGaiaId(email, gaia_id);
     user_manager()->AddGaiaUser(account_id, user_manager::UserType::kRegular);
     user_manager()->UserLoggedIn(
-        account_id,
-        user_manager::FakeUserManager::GetFakeUsernameHash(account_id),
-        /*browser_restart=*/false,
-        /*is_child=*/false);
+        account_id, user_manager::TestHelper::GetFakeUsernameHash(account_id));
   }
 
   void SwitchActiveUser(const std::string& email) override {
@@ -729,7 +727,7 @@ TEST_F(QuickInsertClientImplEditorTest, AnnounceSendsLiveRegionChanges) {
   base::test::ScopedFeatureList features(chromeos::features::kOrcaDogfood);
   ash::QuickInsertController controller;
   QuickInsertClientImpl client(&controller, user_manager());
-  views::test::AXEventCounter counter(views::AXEventManager::Get());
+  views::test::AXEventCounter counter(views::AXUpdateNotifier::Get());
 
   client.Announce(u"hello");
 

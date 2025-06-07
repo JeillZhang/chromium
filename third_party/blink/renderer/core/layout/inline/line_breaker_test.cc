@@ -19,7 +19,6 @@
 #include "third_party/blink/renderer/core/layout/positioned_float.h"
 #include "third_party/blink/renderer/core/layout/unpositioned_float.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_view.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
@@ -1296,6 +1295,15 @@ TEST_P(CanBreakInsideTest, Data) {
                            /* column_spanner_path */ nullptr, &exclusion_space);
   EXPECT_EQ(line_breaker.CanBreakInside(line_info_list[0]),
             data.can_break_insde);
+}
+
+// crbug.com/398527874
+TEST_F(LineBreakerTest, SplitTrailingBidiCrCrash) {
+  InlineNode node = CreateInlineNode(R"HTML(
+    <div id="container" dir="rtl" style="white-space: pre; font-size: 16px;">&#x0D; </div>
+  )HTML");
+  ComputeMinMaxSizes(node);
+  // Pass if no CHECK failure.
 }
 
 }  // namespace

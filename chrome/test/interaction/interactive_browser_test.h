@@ -35,7 +35,6 @@
 #include "ui/base/interaction/interaction_test_util.h"
 #include "ui/base/interaction/interactive_test_definitions.h"
 #include "ui/base/test/ui_controls.h"
-#include "ui/gfx/geometry/point.h"
 #include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/interaction/interactive_views_test.h"
 #include "ui/views/view.h"
@@ -64,6 +63,14 @@ class InteractiveBrowserTestApi : public views::test::InteractiveViewsTestApi {
 
   using DeepQuery = WebContentsInteractionTestUtil::DeepQuery;
   using StateChange = WebContentsInteractionTestUtil::StateChange;
+
+  // Since we enforce a 1:1 correspondence between ElementIdentifiers and
+  // WebContents defaulting to ContextMode::kAny prevents accidentally missing
+  // the correct context, which is a common mistake that causes tests to
+  // mysteriously time out looking in the wrong place.
+  static constexpr ui::InteractionSequence::ContextMode
+      kDefaultWebContentsContextMode =
+          ui::InteractionSequence::ContextMode::kAny;
 
   // Shorthand to convert a tracked element into a instrumented WebContents.
   // The element should be a TrackedElementWebContents.
@@ -220,7 +227,15 @@ class InteractiveBrowserTestApi : public views::test::InteractiveViewsTestApi {
   // Raises the surface containing `webcontents_id` and focuses the WebContents
   // as if a user had interacted directly with it. This is useful if you want
   // the WebContents to e.g. respond to accelerators.
-  [[nodiscard]] StepBuilder FocusWebContents(
+  //
+  // Note that this is shorthand for:
+  //  - WaitForWebContentsPainted(webcontents_id)
+  //  - ActivateSurface(webcontents_id)
+  //  - FocusElement(webcontents_id)
+  //
+  // The last is there to prevent any input from being swallowed before it is
+  // sent to the contents.
+  [[nodiscard]] MultiStep FocusWebContents(
       ui::ElementIdentifier webcontents_id);
 
   // Waits for the given `state_change` in `webcontents_id`. The sequence will
@@ -450,11 +465,26 @@ class InteractiveBrowserTestApi : public views::test::InteractiveViewsTestApi {
   // does not e.g. trigger navigation when clicking a link, so in all these
   // cases, vanilla click events are sent, which should be handled normally for
   // backwards-compatibility reasons.
+  //
+  // Note that if your WebUI will close in response to this action, you should
+  // set `execute_mode` to `kFireAndForget` to avoid failure to receive
+  // confirmation.
   [[nodiscard]] StepBuilder ClickElement(
       ui::ElementIdentifier web_contents,
       const DeepQuery& where,
       ui_controls::MouseButton button = ui_controls::LEFT,
-      ui_controls::AcceleratorState modifiers = ui_controls::kNoAccelerator);
+      ui_controls::AcceleratorState modifiers = ui_controls::kNoAccelerator,
+      ExecuteJsMode execute_mode = ExecuteJsMode::kWaitForCompletion);
+
+  // Convenience version of `ClickElement()` (see above) for
+  // default-left-clicking when you need to specify the execution mode.
+  [[nodiscard]] inline StepBuilder ClickElement(
+      ui::ElementIdentifier web_contents,
+      const DeepQuery& where,
+      ExecuteJsMode execute_mode) {
+    return ClickElement(web_contents, where, ui_controls::LEFT,
+                        ui_controls::kNoAccelerator, execute_mode);
+  }
 
  protected:
   explicit InteractiveBrowserTestApi(
@@ -478,6 +508,11 @@ class InteractiveBrowserTestApi : public views::test::InteractiveViewsTestApi {
 
   // Possibly waits for `element_id` to be painted if it is a WebContents.
   [[nodiscard]] MultiStep MaybeWaitForPaint(ElementSpecifier element);
+
+  // Waits for the user to dismiss `element` if in interactive mode
+  // (command-line flag `--test-launcher-interactive`).
+  [[nodiscard]] static StepBuilder MaybeWaitForUserToDismiss(
+      ElementSpecifier element);
 
   Browser* GetBrowserFor(ui::ElementContext current_context,
                          BrowserSpecifier spec);
@@ -566,6 +601,7 @@ ui::InteractionSequence::StepBuilder InteractiveBrowserTestApi::CheckJsResult(
             return ui::test::internal::MatchAndExplain("CheckJsResult()", m,
                                                        result);
           })
+          .SetContext(kDefaultWebContentsContextMode)
           .SetDescription(base::StringPrintf("CheckJsResult(\"\n%s\n\")",
                                              function.c_str())));
 }
@@ -606,6 +642,7 @@ ui::InteractionSequence::StepBuilder InteractiveBrowserTestApi::CheckJsResultAt(
             return ui::test::internal::MatchAndExplain("CheckJsResultAt()", m,
                                                        result);
           })
+          .SetContext(kDefaultWebContentsContextMode)
           .SetDescription(base::StringPrintf(
               "CheckJsResultAt( %s, \"\n%s\n\")",
               internal::InteractiveBrowserTestPrivate::DeepQueryToString(where)
@@ -646,8 +683,12 @@ InteractiveBrowserTestApi::WaitForJsResultCommon(
       },
       std::move(expected), context);
 
-  return Steps(WaitForStateChange(webcontents_id, change),
-               Do([context]() mutable { context.Clear(); }));
+  return Steps(
+      WaitForStateChange(webcontents_id, change),
+      Do([context]() mutable { context.Clear(); })
+          // Preserve the context of the previous step so that
+          // `InSameContext()` on subsequent steps remains valid.
+          .SetContext(ui::InteractionSequence::ContextMode::kFromPreviousStep));
 }
 
 template <typename M>

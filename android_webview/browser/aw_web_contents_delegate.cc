@@ -201,6 +201,11 @@ WebContents* AwWebContentsDelegate::AddNewContents(
   return nullptr;
 }
 
+void AwWebContentsDelegate::SetContentsBounds(content::WebContents* source,
+                                              const gfx::Rect& bounds) {
+  // Do nothing.
+}
+
 void AwWebContentsDelegate::NavigationStateChanged(
     content::WebContents* source,
     content::InvalidateTypes changed_flags) {
@@ -386,13 +391,24 @@ bool AwWebContentsDelegate::ShouldAllowPartialParamMismatchOfPrerender2(
 
   // `ui::PAGE_TRANSITION_FROM_API` bit distinguishes that the activation
   // navigation is triggered by `WebView.loadUrl()`.
-  bool ret =
-      navigation_handle.GetPageTransition() & ui::PAGE_TRANSITION_FROM_API;
-  if (ret) {
-    CHECK(!navigation_handle.GetInitiatorFrameToken().has_value());
-    CHECK(!navigation_handle.GetInitiatorOrigin().has_value());
+  return navigation_handle.GetPageTransition() & ui::PAGE_TRANSITION_FROM_API;
+}
+
+bool AwWebContentsDelegate::isModalContextMenu() const {
+  JNIEnv* env = AttachCurrentThread();
+
+  ScopedJavaLocalRef<jobject> java_delegate = GetJavaDelegate(env);
+  if (java_delegate.is_null()) {
+    return true;
   }
-  return ret;
+
+  // Feature is behind a flag which is disabled by default.
+  // TODO(crbug/408234669): remove this check once flag is no longer needed.
+  if (!base::FeatureList::IsEnabled(features::kWebViewHyperlinkContextMenu)) {
+    return false;
+  }
+
+  return !Java_AwWebContentsDelegate_isPopupSupported(env, java_delegate);
 }
 
 scoped_refptr<content::FileSelectListener>

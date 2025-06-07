@@ -23,6 +23,7 @@ import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.NativeInitObserver;
 import org.chromium.chrome.browser.ntp.NewTabPage;
+import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.settings.MainSettings;
 import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
@@ -30,16 +31,15 @@ import org.chromium.chrome.browser.signin.SigninAndHistorySyncActivityLauncherIm
 import org.chromium.chrome.browser.signin.services.DisplayableProfileData;
 import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
 import org.chromium.chrome.browser.signin.services.ProfileDataCache;
-import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.sync.settings.SyncSettingsUtils;
 import org.chromium.chrome.browser.sync.settings.SyncSettingsUtils.SyncError;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.toolbar.ButtonData;
-import org.chromium.chrome.browser.toolbar.ButtonData.ButtonSpec;
-import org.chromium.chrome.browser.toolbar.ButtonDataImpl;
-import org.chromium.chrome.browser.toolbar.ButtonDataProvider;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonData;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonData.ButtonSpec;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonDataImpl;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonDataProvider;
 import org.chromium.chrome.browser.ui.signin.BottomSheetSigninAndHistorySyncConfig;
 import org.chromium.chrome.browser.ui.signin.BottomSheetSigninAndHistorySyncConfig.NoAccountSigninMode;
 import org.chromium.chrome.browser.ui.signin.BottomSheetSigninAndHistorySyncConfig.WithAccountSigninMode;
@@ -57,6 +57,7 @@ import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.signin.identitymanager.PrimaryAccountChangeEvent;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.components.sync.SyncService;
+import org.chromium.components.user_prefs.UserPrefs;
 
 /**
  * Handles displaying IdentityDisc on toolbar depending on several conditions (user sign-in state,
@@ -84,8 +85,8 @@ public class IdentityDiscController
     // ProfileDataCache facilitates retrieving profile picture.
     private ProfileDataCache mProfileDataCache;
 
-    private ButtonDataImpl mButtonData;
-    private ObserverList<ButtonDataObserver> mObservers = new ObserverList<>();
+    private final ButtonDataImpl mButtonData;
+    private final ObserverList<ButtonDataObserver> mObservers = new ObserverList<>();
     private boolean mNativeIsInitialized;
 
     private boolean mIsTabNtp;
@@ -120,8 +121,7 @@ public class IdentityDiscController
                                 R.string.iph_identity_disc_accessibility_text),
                         /* isEnabled= */ true,
                         AdaptiveToolbarButtonVariant.UNKNOWN,
-                        /* tooltipTextResId= */ Resources.ID_NULL,
-                        /* showHoverhighlight= */ true);
+                        /* tooltipTextResId= */ Resources.ID_NULL);
     }
 
     /** Registers itself to observe sign-in and sync status events. */
@@ -191,7 +191,7 @@ public class IdentityDiscController
                 AdaptiveToolbarButtonVariant.UNKNOWN,
                 buttonSpec.getActionChipLabelResId(),
                 buttonSpec.getHoverTooltipTextId(),
-                buttonSpec.getShouldShowHoverHighlight());
+                /* hasErrorBadge= */ mIdentityError != SyncError.NO_ERROR);
     }
 
     /**
@@ -299,6 +299,15 @@ public class IdentityDiscController
     /** {@link SyncService.SyncStateChangedListener} implementation. */
     @Override
     public void syncStateChanged() {
+        maybeUpdateIdentityErrorAndBadge();
+    }
+
+    @VisibleForTesting
+    public @SyncError int getIdentityError() {
+        return mIdentityError;
+    }
+
+    private void maybeUpdateIdentityErrorAndBadge() {
         if (mProfile == null) {
             return;
         }
@@ -319,7 +328,7 @@ public class IdentityDiscController
                     mIdentityError == SyncError.NO_ERROR
                             ? null
                             : ProfileDataCache.createToolbarIdentityDiscBadgeConfig(
-                                    mContext, R.drawable.ic_error_badge_14dp));
+                                    mContext, R.drawable.ic_error_badge_16dp));
         }
     }
 
@@ -373,6 +382,7 @@ public class IdentityDiscController
             mSyncService = SyncServiceFactory.getForProfile(profile);
             if (mSyncService != null) {
                 mSyncService.addSyncStateChangedListener(this);
+                maybeUpdateIdentityErrorAndBadge();
             }
 
             notifyObservers(true);
@@ -388,13 +398,19 @@ public class IdentityDiscController
         String userName = profileData.getFullName();
         if (profileData.hasDisplayableEmailAddress()) {
             return mContext.getString(
-                    R.string.accessibility_toolbar_btn_identity_disc_with_name_and_email,
+                    mIdentityError == SyncError.NO_ERROR
+                            ? R.string.accessibility_toolbar_btn_identity_disc_with_name_and_email
+                            : R.string
+                                    .accessibility_toolbar_btn_identity_disc_error_with_name_and_email,
                     userName,
                     email);
         }
 
         return mContext.getString(
-                R.string.accessibility_toolbar_btn_identity_disc_with_name, userName);
+                mIdentityError == SyncError.NO_ERROR
+                        ? R.string.accessibility_toolbar_btn_identity_disc_with_name
+                        : R.string.accessibility_toolbar_btn_identity_disc_error_with_name,
+                userName);
     }
 
     private boolean isProfileInitialized() {
@@ -409,9 +425,8 @@ public class IdentityDiscController
         recordIdentityDiscUsed();
 
         Profile originalProfile = mProfileSupplier.get().getOriginalProfile();
-        SigninManager signinManager =
-                IdentityServicesProvider.get().getSigninManager(originalProfile);
-        if (getSignedInAccountInfo() == null && !signinManager.isSigninDisabledByPolicy()) {
+        if (getSignedInAccountInfo() == null
+                && UserPrefs.get(originalProfile).getBoolean(Pref.SIGNIN_ALLOWED)) {
             AccountPickerBottomSheetStrings bottomSheetStrings =
                     new AccountPickerBottomSheetStrings.Builder(
                                     R.string.signin_account_picker_bottom_sheet_title)

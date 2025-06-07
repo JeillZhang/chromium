@@ -57,7 +57,11 @@
   ChromeBroadcaster* broadcaster =
       FullscreenController::FromBrowser(self.browser)->broadcaster();
 
-  _mediator = [[PanelContentMediator alloc] initWithBroadcaster:broadcaster];
+  ToolbarsSize* toolbarsSize =
+      FullscreenController::FromBrowser(self.browser)->GetToolbarsSize();
+
+  _mediator = [[PanelContentMediator alloc] initWithBroadcaster:broadcaster
+                                                   toolbarsSize:toolbarsSize];
   _mediator.consumer = _viewController;
 
   _modulators = [[NSMutableArray alloc] init];
@@ -120,6 +124,10 @@
           initWithBaseViewController:_viewController
                              browser:self.browser
                    itemConfiguration:configuration];
+    case ContextualPanelItemType::ReaderModeItem:
+      // Reader mode is not using the contextual panel. Instead it only uses the
+      // contextual panel entry point which does not require a modulator.
+      return nil;
   }
 }
 

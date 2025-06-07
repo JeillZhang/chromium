@@ -8,7 +8,6 @@
  * settings.
  */
 
-import '../icons.html.js';
 import '../settings_shared.css.js';
 import '//resources/ash/common/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/ash/common/cr_elements/cr_icon_button/cr_icon_button.js';
@@ -56,7 +55,6 @@ const VOLUME_ICON_OFF_LEVEL = 0;
 // TODO(b/271871947): Match volume icon logic to QS revamp sliders.
 // Matches level calculated in unified_volume_view.cc.
 const VOLUME_ICON_LOUD_LEVEL = 34;
-const SETTINGS_20PX_ICON_PREFIX = 'settings20:';
 
 export class SettingsAudioElement extends SettingsAudioElementBase {
   static get is() {
@@ -118,17 +116,6 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
         value: false,
       },
 
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kChargingSounds,
-          Setting.kLowBatterySound,
-        ]),
-      },
-
       showAllowAGC: {
         type: Boolean,
         value: loadTimeData.getBoolean('enableForceRespectUiGainsToggle'),
@@ -154,6 +141,12 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
       },
     };
   }
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kChargingSounds,
+    Setting.kLowBatterySound,
+  ]);
 
   protected isAllowAGCEnabled: boolean;
   protected showAllowAGC: boolean;
@@ -331,7 +324,7 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
 
   /** Handles updating the mic icon depending on the input mute state. */
   protected getInputIcon_(): string {
-    return this.isInputMuted_ ? 'settings:mic-off' : 'cr:mic';
+    return this.isInputMuted_ ? 'os-settings:mic-off' : 'cr:mic';
   }
 
   /**
@@ -340,18 +333,18 @@ export class SettingsAudioElement extends SettingsAudioElementBase {
    */
   protected getOutputIcon_(): string {
     if (this.isOutputMuted_) {
-      return SETTINGS_20PX_ICON_PREFIX + 'volume-up-off';
+      return 'os-settings:volume-up-off';
     }
 
     if (this.outputVolume_ === VOLUME_ICON_OFF_LEVEL) {
-      return SETTINGS_20PX_ICON_PREFIX + 'volume-zero';
+      return 'os-settings:volume-zero';
     }
 
     if (this.outputVolume_ < VOLUME_ICON_LOUD_LEVEL) {
-      return SETTINGS_20PX_ICON_PREFIX + 'volume-down';
+      return 'os-settings:volume-down';
     }
 
-    return SETTINGS_20PX_ICON_PREFIX + 'volume-up';
+    return 'os-settings:volume-up';
   }
 
   /**

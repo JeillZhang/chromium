@@ -11,12 +11,14 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <string_view>
+#include <variant>
 #include <vector>
 
 #include "base/numerics/safe_conversions.h"
+#include "content/browser/private_aggregation/private_aggregation_budgeter.h"
 #include "content/common/content_export.h"
 #include "third_party/abseil-cpp/absl/numeric/int128.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/mojom/aggregation_service/aggregatable_report.mojom.h"
 #include "third_party/blink/public/mojom/private_aggregation/private_aggregation_host.mojom.h"
 
@@ -57,23 +59,9 @@ class CONTENT_EXPORT PrivateAggregationPendingContributions {
 
   class Wrapper;
 
-  // For a single contribution, whether the budgeter approved its budget usage
-  // (including provisionally) or denied it.
-  enum BudgeterResult {
-    kApproved,
-    kDenied,
-  };
-
-  // Note that if the limit has been reached and there is no space for this
-  // report, the entire report will be dropped with a fatal error.
-  enum PendingReportLimitResult {
-    // Indicates the limit has not been reached.
-    kNotAtLimit,
-
-    // Indicates the limit has been reached with this report, i.e. the report
-    // can still be processed.
-    kAtLimit
-  };
+  using BudgeterResult = PrivateAggregationBudgeter::ResultForContribution;
+  using PendingReportLimitResult =
+      PrivateAggregationBudgeter::PendingReportLimitResult;
 
   // Indicates the reason for the PrivateAggregationHost mojo pipe closing.
   // TODO(crbug.com/381788013): Consider moving this enum to
@@ -97,8 +85,22 @@ class CONTENT_EXPORT PrivateAggregationPendingContributions {
     kDontSendReport,
   };
 
-  explicit PrivateAggregationPendingContributions(
-      base::StrictNumeric<size_t> max_num_contributions);
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  //
+  // LINT.IfChange(TruncationResult)
+  enum class TruncationResult {
+    kNoTruncation = 0,
+    kTruncationDueToUnconditionalContributions = 1,
+    kTruncationNotDueToUnconditionalContributions = 2,
+    kMaxValue = kTruncationNotDueToUnconditionalContributions,
+  };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/privacy/enums.xml:PrivacySandboxPrivateAggregationTruncationResult)
+
+  // The elements of `histogram_suffixes` must outlive this object.
+  PrivateAggregationPendingContributions(
+      base::StrictNumeric<size_t> max_num_contributions,
+      std::vector<std::string_view> histogram_suffixes);
 
   PrivateAggregationPendingContributions(
       PrivateAggregationPendingContributions&& other);
@@ -112,9 +114,18 @@ class CONTENT_EXPORT PrivateAggregationPendingContributions {
     return unconditional_contributions_;
   }
 
+  bool are_contributions_finalized() const {
+    return are_contributions_finalized_;
+  }
+
   // Returns false if this object has any unconditional or conditional
   // contributions.
   bool IsEmpty() const;
+
+  const std::map<
+      blink::mojom::PrivateAggregationErrorEvent,
+      std::vector<blink::mojom::AggregatableReportHistogramContribution>>&
+  GetConditionalContributionsForTesting() const;
 
   // Tracks contributions not conditional on any error event (i.e. passed via
   // `ContributeToHistogram()`). Drops contributions with value 0.
@@ -184,6 +195,14 @@ class CONTENT_EXPORT PrivateAggregationPendingContributions {
       NullReportBehavior null_report_behavior);
   void ApplyFinalBudgeterResults(std::vector<BudgeterResult> results);
 
+  void RecordNumberOfContributionMergeKeysHistogram(
+      size_t num_merge_keys_sent_or_truncated) const;
+  void RecordNumberOfFinalUnmergedContributionsHistogram(
+      size_t num_final_unmerged_contributions) const;
+  void RecordTruncationHistogram(
+      size_t num_truncations_due_to_unconditional_contributions,
+      size_t total_truncations) const;
+
   bool are_contributions_finalized_ = false;
 
   // Contributions passed to `ContributeToHistogram()` for the associated mojo
@@ -210,6 +229,8 @@ class CONTENT_EXPORT PrivateAggregationPendingContributions {
       final_unmerged_contributions_;
 
   size_t max_contributions_;
+
+  std::vector<std::string_view> histogram_suffixes_;
 };
 
 // This is a simple union class that holds contributions in the appropriate
@@ -252,7 +273,7 @@ class CONTENT_EXPORT PrivateAggregationPendingContributions::Wrapper {
   GetContributionsVector();
 
  private:
-  absl::variant<
+  std::variant<
       PrivateAggregationPendingContributions,
       std::vector<blink::mojom::AggregatableReportHistogramContribution>>
       contributions_;

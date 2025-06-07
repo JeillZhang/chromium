@@ -16,12 +16,10 @@
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client.h"
-#include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
 #include "components/download/public/common/download_danger_type.h"
 #include "components/enterprise/buildflags/buildflags.h"
+#include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/policy/core/common/cloud/cloud_policy_client.h"
-#include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/safe_browsing/core/common/proto/realtimeapi.pb.h"
 
 #if BUILDFLAG(ENTERPRISE_DATA_CONTROLS)
@@ -74,15 +72,13 @@ class SafeBrowsingPrivateEventRouter : public KeyedService {
   static const char kKeyIsFederated[];
   static const char kKeyFederatedOrigin[];
   static const char kKeyLoginUserName[];
-  static const char kKeyPasswordBreachIdentities[];
-  static const char kKeyPasswordBreachIdentitiesUrl[];
-  static const char kKeyPasswordBreachIdentitiesUsername[];
   static const char kKeyUserJustification[];
   static const char kKeyUrlCategory[];
   static const char kKeyAction[];
   static const char kKeyTabUrl[];
   static constexpr char kKeyContentTransferMethod[] = "contentTransferMethod";
   static constexpr char kKeyHasWatermarking[] = "hasWatermarking";
+  static constexpr char kKeyWebAppSignedInAccount[] = "webAppSignedInAccount";
   static const char kKeyUnscannedReason[];
 
   // String constants for the "trigger" event field.  This corresponds to
@@ -236,22 +232,6 @@ class SafeBrowsingPrivateEventRouter : public KeyedService {
       const std::string& scan_id,
       const int64_t content_size);
 
-  void OnLoginEvent(const GURL& url,
-                    bool is_federated,
-                    const url::SchemeHostPort& federated_origin,
-                    const std::u16string& username);
-
-  void OnPasswordBreach(
-      const std::string& trigger,
-      const std::vector<std::pair<GURL, std::u16string>>& identities);
-
-  // Notifies listeners that the user saw an enterprise policy related
-  // interstitial.
-  void OnUrlFilteringInterstitial(
-      const GURL& url,
-      const std::string& threat_type,
-      const safe_browsing::RTLookupResponse& response);
-
 #if BUILDFLAG(ENTERPRISE_DATA_CONTROLS)
   // Helper function to report sensitive data event that were caused by
   // triggering a Data Controls rule. This is similar to
@@ -315,11 +295,6 @@ class SafeBrowsingPrivateEventRouter : public KeyedService {
   raw_ptr<EventRouter> event_router_ = nullptr;
   raw_ptr<enterprise_connectors::RealtimeReportingClient> reporting_client_ =
       nullptr;
-
-  // The private clients are used on platforms where we cannot just get a
-  // client and we create our own (used through the above client pointers).
-  std::unique_ptr<policy::CloudPolicyClient> browser_private_client_;
-  std::unique_ptr<policy::CloudPolicyClient> profile_private_client_;
 
   // When a request is rejected for a given DM token, wait 24 hours before
   // trying again for this specific DM Token.

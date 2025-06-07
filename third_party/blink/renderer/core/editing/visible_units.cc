@@ -185,19 +185,39 @@ static PositionType CanonicalPosition(const PositionType& position) {
     return next.IsNotNull() ? next : prev;
 
   Node* const next_node = next.AnchorNode();
+  Node* next_editing_root = RootEditableElementOf(next);
   Node* const prev_node = prev.AnchorNode();
+  Node* prev_editing_root = RootEditableElementOf(prev);
   const bool prev_is_in_same_editable_element =
-      prev_node && RootEditableElementOf(prev) == editing_root;
+      prev_node && prev_editing_root == editing_root;
   const bool next_is_in_same_editable_element =
-      next_node && RootEditableElementOf(next) == editing_root;
+      next_node && next_editing_root == editing_root;
   if (prev_is_in_same_editable_element && !next_is_in_same_editable_element)
     return prev;
 
   if (next_is_in_same_editable_element && !prev_is_in_same_editable_element)
     return next;
 
-  if (!next_is_in_same_editable_element && !prev_is_in_same_editable_element)
+  if (!next_is_in_same_editable_element && !prev_is_in_same_editable_element) {
+    // `prev/next_editing_root` is a child node of `editing_root`.
+    if (editing_root) {
+      if (editing_root->contains(next_editing_root)) {
+        return next;
+      } else if (editing_root->contains(prev_editing_root)) {
+        return prev;
+      }
+      // If `prev/next_editing_root` is not in the same block as `editing_root`,
+      // but the `position` is editable and visually equivalent position,
+      // directly return the `position`.
+      // See https://issues.chromium.org/issues/40890187 for more details.
+      if (RuntimeEnabledFeatures::
+              UsePositionIfIsVisuallyEquivalentCandidateEnabled() &&
+          IsVisuallyEquivalentCandidate(position)) {
+        return position;
+      }
+    }
     return PositionType();
+  }
 
   // The new position should be in the same block flow element. Favor that.
   const bool next_is_same_original_block = InSameBlock(node, next_node);
@@ -228,15 +248,8 @@ AdjustBackwardPositionToAvoidCrossingEditingBoundariesTemplate(
 
   // Return empty position if |pos| is not somewhere inside the editable
   // region containing this position
-  if (RuntimeEnabledFeatures::
-          CheckIfHighestRootContainsPositionAnchorNodeEnabled()) {
-    if (highest_root && !highest_root->contains(pos.AnchorNode())) {
-      return PositionWithAffinityTemplate<Strategy>();
-    }
-  } else {
-    if (highest_root && !pos.AnchorNode()->IsDescendantOf(highest_root)) {
-      return PositionWithAffinityTemplate<Strategy>();
-    }
+  if (highest_root && !highest_root->contains(pos.AnchorNode())) {
+    return PositionWithAffinityTemplate<Strategy>();
   }
 
   // Return |pos| itself if the two are from the very same editable region, or
@@ -286,23 +299,17 @@ AdjustForwardPositionToAvoidCrossingEditingBoundariesTemplate(
   ContainerNode* highest_root = HighestEditableRoot(anchor);
 
   if (highest_root && !pos.AnchorNode()->IsDescendantOf(highest_root)) {
-    if (RuntimeEnabledFeatures::EditableBoundaryAdjustmentEnabled()) {
-      // Return last position in node if |pos| is not somewhere inside the
-      // editable region containing this position
-      const Node* last_editable = anchor.ComputeContainerNode();
-      if (last_editable->IsTextNode()) {
-        PositionTemplate<Strategy> last_position =
-            PositionTemplate<Strategy>::LastPositionInNode(*last_editable);
-        if (anchor != last_position) {
-          return PositionWithAffinityTemplate<Strategy>(last_position);
-        }
+    // Return last position in node if |pos| is not somewhere inside the
+    // editable region containing this position
+    const Node* last_editable = anchor.ComputeContainerNode();
+    if (last_editable->IsTextNode()) {
+      PositionTemplate<Strategy> last_position =
+          PositionTemplate<Strategy>::LastPositionInNode(*last_editable);
+      if (anchor != last_position) {
+        return PositionWithAffinityTemplate<Strategy>(last_position);
       }
-      return PositionWithAffinityTemplate<Strategy>();
-    } else {
-      // Return empty position if |pos| is not somewhere inside the editable
-      // region containing this position
-      return PositionWithAffinityTemplate<Strategy>();
     }
+    return PositionWithAffinityTemplate<Strategy>();
   }
 
   // Return |pos| itself if the two are from the very same editable region, or
@@ -1429,7 +1436,7 @@ PositionInFlatTree SkipWhitespace(const PositionInFlatTree& position) {
 }
 
 template <typename Strategy>
-static Vector<gfx::QuadF> ComputeTextBounds(
+Vector<gfx::QuadF> ComputeTextBounds(
     const EphemeralRangeTemplate<Strategy>& range) {
   const PositionTemplate<Strategy>& start_position = range.StartPosition();
   const PositionTemplate<Strategy>& end_position = range.EndPosition();

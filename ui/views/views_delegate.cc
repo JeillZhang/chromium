@@ -13,7 +13,7 @@
 #include "ui/views/widget/native_widget_private.h"
 
 #if defined(USE_AURA)
-#include "ui/views/accessibility/tree/views_ax_manager.h"
+#include "ui/views/accessibility/tree/browser_views_ax_manager.h"
 #include "ui/views/touchui/touch_selection_menu_runner_views.h"
 #endif
 
@@ -36,10 +36,6 @@ ViewsDelegate::ViewsDelegate() {
   // will not get the replacement.
   touch_selection_menu_runner_ =
       std::make_unique<TouchSelectionMenuRunnerViews>();
-
-  if (::features::IsAccessibilityTreeForViewsEnabled()) {
-    ViewsAXManager::GetInstance()->InitIfNeeded();
-  }
 #endif
 }
 
@@ -120,6 +116,15 @@ void ViewsDelegate::OnBeforeWidgetInit(
 
 bool ViewsDelegate::WindowManagerProvidesTitleBar(bool maximized) {
   return false;
+}
+
+void ViewsDelegate::InitializeViewsAXManager() {
+#if BUILDFLAG(ENABLE_DESKTOP_AURA)
+  if (::features::IsAccessibilityTreeForViewsEnabled() &&
+      !browser_views_ax_manager_handle_) {
+    browser_views_ax_manager_handle_ = views::BrowserViewsAXManager::Create();
+  }
+#endif
 }
 
 #if BUILDFLAG(IS_MAC)

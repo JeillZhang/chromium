@@ -9,7 +9,6 @@
 
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/uuid.h"
@@ -423,7 +422,7 @@ MediaDevices::MediaDevices(Navigator& navigator)
     : ActiveScriptWrappable<MediaDevices>({}),
       Supplement<Navigator>(navigator),
       ExecutionContextLifecycleObserver(navigator.DomWindow()),
-      stopped_(false),
+      is_execution_context_active_(!!navigator.DomWindow()),
       dispatcher_host_(navigator.GetExecutionContext()),
       receiver_(this, navigator.DomWindow()) {}
 
@@ -477,9 +476,11 @@ ScriptPromise<MediaStream> MediaDevices::getUserMedia(
 
   // This timeout of base::Seconds(8) is an initial value and based on the data
   // in Media.MediaDevices.GetUserMedia.Latency, it should be iterated upon.
+  // Records the `Media.MediaDevices.GetUserMedia.Result2` histogram.
   auto* resolver = MakeGarbageCollected<
       ScriptPromiseResolverWithTracker<UserMediaRequestResult, MediaStream>>(
       script_state, "Media.MediaDevices.GetUserMedia", base::Seconds(8));
+  resolver->SetResultSuffix("Result2");
   const auto promise = resolver->Promise();
 
   DCHECK(options);  // Guaranteed by the default value in the IDL.
@@ -608,9 +609,11 @@ ScriptPromise<IDLSequence<MediaStream>> MediaDevices::getAllScreensMedia(
   // This timeout of base::Seconds(6) is an initial value and based on the data
   // in Media.MediaDevices.GetAllScreensMedia.Latency, it should be iterated
   // upon.
+  // Records the `Media.MediaDevices.GetAllScreensMedia.Result2` histogram.
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolverWithTracker<
       UserMediaRequestResult, IDLSequence<MediaStream>>>(
       script_state, "Media.MediaDevices.GetAllScreensMedia", base::Seconds(6));
+  resolver->SetResultSuffix("Result2");
   auto promise = resolver->Promise();
 
   ExecutionContext* const context = GetExecutionContext();
@@ -641,14 +644,7 @@ ScriptPromise<IDLSequence<MediaStream>> MediaDevices::getAllScreensMedia(
     return promise;
   }
 
-  // This API is available either in isolated contexts or, temporarily, on web
-  // pages with strict CSP and trusted types. In isolated contexts, an explicit
-  // check for strict CSP is not required as it enforces a restriction
-  // equivalent to strict CSP (i.e. `script-src self` in combination with
-  // packaging). Since we limit the exposure of the feature through the
-  // [InjectionMitigated] IDL attribute, we can get away with a DCHECK here to
-  // validate that restriction.
-  DCHECK(context->IsIsolatedContext() || context->IsInjectionMitigatedContext());
+  CHECK(context->IsIsolatedContext());
 
   MediaStreamConstraints* constraints = MediaStreamConstraints::Create();
   constraints->setVideo(
@@ -668,11 +664,12 @@ ScriptPromise<MediaStream> MediaDevices::getDisplayMedia(
       std::make_unique<ScopedMediaStreamTracer>("MediaDevices.GetDisplayMedia");
 
   // Using timeout of base::Seconds(12) based on the
-  // Media.MediaDevices.GetDisplayMedia.Latency values. With the earlier value
-  // of base::Seconds(6), we got about 25% of results counted as kTimeout.
+  // Media.MediaDevices.GetDisplayMedia.Latency values.
+  // Records the `Media.MediaDevices.GetDisplayMedia.Result2` histogram.
   auto* resolver = MakeGarbageCollected<
       ScriptPromiseResolverWithTracker<UserMediaRequestResult, MediaStream>>(
       script_state, "Media.MediaDevices.GetDisplayMedia", base::Seconds(12));
+  resolver->SetResultSuffix("Result2");
   auto promise = resolver->Promise();
 
   if (!window) {
@@ -1117,12 +1114,13 @@ bool MediaDevices::HasPendingActivity() const {
 
 void MediaDevices::ContextDestroyed() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (stopped_) {
+  if (!is_execution_context_active_) {
     return;
   }
 
-  stopped_ = true;
+  is_execution_context_active_ = false;
   enumerate_device_requests_.clear();
+  StopObserving();
 }
 
 void MediaDevices::OnDevicesChanged(
@@ -1130,22 +1128,29 @@ void MediaDevices::OnDevicesChanged(
     const Vector<WebMediaDeviceInfo>& device_infos) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(GetExecutionContext());
+  CHECK(is_execution_context_active_);
   if (std::ranges::equal(current_device_infos_[static_cast<wtf_size_t>(type)],
                          device_infos, EqualDeviceForDeviceChange)) {
     return;
   }
 
   current_device_infos_[static_cast<wtf_size_t>(type)] = device_infos;
-  if (RuntimeEnabledFeatures::OnDeviceChangeEnabled()) {
-    if (media::MediaPermission* media_permission =
-            blink::Platform::Current()->GetWebRTCMediaPermission(
-                WebLocalFrame::FromFrameToken(
-                    DomWindow()->GetLocalFrameToken()))) {
-      media_permission->HasPermission(
-          ToMediaPermissionType(type),
-          WTF::BindOnce(&MediaDevices::MaybeFireDeviceChangeEvent,
-                        WrapWeakPersistent(this)));
-    }
+  if (DomWindow()
+          ->GetFrame()
+          ->GetSettings()
+          ->GetIgnorePermissionForDeviceChangedEvent()) {
+    MaybeFireDeviceChangeEvent(/*has_permission=*/true);
+    return;
+  }
+
+  if (media::MediaPermission* media_permission =
+          blink::Platform::Current()->GetWebRTCMediaPermission(
+              WebLocalFrame::FromFrameToken(
+                  DomWindow()->GetLocalFrameToken()))) {
+    media_permission->HasPermission(
+        ToMediaPermissionType(type),
+        WTF::BindOnce(&MediaDevices::MaybeFireDeviceChangeEvent,
+                      WrapWeakPersistent(this)));
   }
 }
 
@@ -1157,6 +1162,10 @@ void MediaDevices::MaybeFireDeviceChangeEvent(bool has_permission) {
 
 void MediaDevices::ScheduleDispatchEvent(Event* event) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (!is_execution_context_active_) {
+    return;
+  }
+
   scheduled_events_.push_back(event);
   if (dispatch_scheduled_events_task_handle_.IsActive()) {
     return;
@@ -1172,7 +1181,7 @@ void MediaDevices::ScheduleDispatchEvent(Event* event) {
 
 void MediaDevices::DispatchScheduledEvents() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (stopped_) {
+  if (!is_execution_context_active_) {
     return;
   }
   HeapVector<Member<Event>> events;
@@ -1185,7 +1194,8 @@ void MediaDevices::DispatchScheduledEvents() {
 
 void MediaDevices::StartObserving() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (receiver_.is_bound() || stopped_ || starting_observation_) {
+  if (receiver_.is_bound() || !is_execution_context_active_ ||
+      starting_observation_) {
     return;
   }
 
@@ -1213,7 +1223,7 @@ void MediaDevices::FinalizeStartObserving(
         audio_input_capabilities) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   starting_observation_ = false;
-  if (receiver_.is_bound() || stopped_) {
+  if (receiver_.is_bound() || !is_execution_context_active_) {
     return;
   }
 
@@ -1494,7 +1504,7 @@ void MediaDevices::ResolveCropTargetPromise(Element* element,
   CHECK(element);  // Persistent.
 
   const auto it = crop_target_resolvers_.find(element);
-  CHECK_NE(it, crop_target_resolvers_.end(), base::NotFatalUntil::M130);
+  CHECK_NE(it, crop_target_resolvers_.end());
   ScriptPromiseResolver<CropTarget>* const resolver = it->value;
   crop_target_resolvers_.erase(it);
 
@@ -1518,7 +1528,7 @@ void MediaDevices::ResolveRestrictionTargetPromise(Element* element,
   CHECK(element);  // Persistent.
 
   const auto it = restriction_target_resolvers_.find(element);
-  CHECK_NE(it, restriction_target_resolvers_.end(), base::NotFatalUntil::M130);
+  CHECK_NE(it, restriction_target_resolvers_.end());
   ScriptPromiseResolver<RestrictionTarget>* const resolver = it->value;
   restriction_target_resolvers_.erase(it);
 

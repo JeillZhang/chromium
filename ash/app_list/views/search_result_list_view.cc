@@ -92,7 +92,7 @@ SearchResultListView::SearchResultListView(
   title_label_->SetAutoColorReadabilityEnabled(false);
   TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosBody2,
                                         *title_label_);
-  title_label_->SetEnabledColorId(cros_tokens::kCrosSysOnSurfaceVariant);
+  title_label_->SetEnabledColor(cros_tokens::kCrosSysOnSurfaceVariant);
 
   title_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   title_label_->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(
@@ -102,7 +102,7 @@ SearchResultListView::SearchResultListView(
   title_label_->SetPaintToLayer();
   title_label_->layer()->SetFillsBoundsOpaquely(false);
 
-  results_container_->AddChildView(title_label_.get());
+  results_container_->AddChildViewRaw(title_label_.get());
 
   size_t result_count =
       ash::SharedAppListConfig::instance()
@@ -118,7 +118,7 @@ SearchResultListView::SearchResultListView(
     results_container_->AddChildView(search_result_views_.back());
     AddObservedResultView(search_result_views_.back());
   }
-  AddChildView(results_container_.get());
+  AddChildViewRaw(results_container_.get());
 }
 
 SearchResultListView::~SearchResultListView() = default;

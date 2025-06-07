@@ -35,22 +35,29 @@ suite('ChromeUrlsAppTest', function() {
   }
 
   function assertWebUiItems(webuiItems: NodeListOf<HTMLElement>) {
-    assertEquals(2, webuiItems.length);
+    assertEquals(3, webuiItems.length);
 
     // Enabled URLs should be linked.
-    const link = webuiItems[0]!.querySelector('a');
+    // Special case for chrome://chrome-urls, see crbug.com/411626175
+    const chromeUrlsLink = webuiItems[0]!.querySelector('a');
+    assertTrue(!!chromeUrlsLink);
+    const location = window.location.href;
+    assertEquals(`${location}#`, chromeUrlsLink.href);
+    assertEquals('chrome://chrome-urls', chromeUrlsLink.textContent);
+
+    const link = webuiItems[1]!.querySelector('a');
     assertTrue(!!link);
     assertEquals('chrome://settings/', link.href);
     assertEquals('chrome://settings', link.textContent);
 
     // Disabled URLs are not linked, but still display the address.
-    const noLink = webuiItems[1]!.querySelector('a');
+    const noLink = webuiItems[2]!.querySelector('a');
     assertFalse(!!noLink);
-    assertEquals('chrome://bookmarks', webuiItems[1]!.textContent);
+    assertEquals('chrome://bookmarks', webuiItems[2]!.textContent);
   }
 
   function assertHeadings(internalsSection: boolean) {
-    const headings = app.shadowRoot!.querySelectorAll('h2');
+    const headings = app.shadowRoot.querySelectorAll('h2');
     const expectedLength = internalsSection ? 3 : 2;
     assertEquals(expectedLength, headings.length);
     assertEquals('List of Chrome URLs', headings[0]!.textContent);
@@ -63,12 +70,13 @@ suite('ChromeUrlsAppTest', function() {
 
   test('Fetches and displays URL list', async () => {
     const webuiUrls: WebuiUrlInfo[] = [
+      {url: {url: 'chrome://chrome-urls/'}, enabled: true, internal: false},
       {url: {url: 'chrome://settings/'}, enabled: true, internal: false},
       {url: {url: 'chrome://bookmarks/'}, enabled: false, internal: false},
     ];
     await finishSetup(webuiUrls);
 
-    const lists = app.shadowRoot!.querySelectorAll('ul');
+    const lists = app.shadowRoot.querySelectorAll('ul');
     assertEquals(2, lists.length);
     const webuiItems = lists[0]!.querySelectorAll('li');
     assertWebUiItems(webuiItems);
@@ -87,13 +95,14 @@ suite('ChromeUrlsAppTest', function() {
 
   test('Correctly displays internal URLs when disabled', async () => {
     const webuiUrls: WebuiUrlInfo[] = [
+      {url: {url: 'chrome://chrome-urls/'}, enabled: true, internal: false},
       {url: {url: 'chrome://settings/'}, enabled: true, internal: false},
       {url: {url: 'chrome://bookmarks/'}, enabled: false, internal: false},
       {url: {url: 'chrome://webui-gallery/'}, enabled: true, internal: true},
     ];
     await finishSetup(webuiUrls);
 
-    const lists = app.shadowRoot!.querySelectorAll('ul');
+    const lists = app.shadowRoot.querySelectorAll('ul');
     assertEquals(3, lists.length);
     const webuiItems = lists[0]!.querySelectorAll('li');
     assertWebUiItems(webuiItems);
@@ -103,7 +112,7 @@ suite('ChromeUrlsAppTest', function() {
     assertEquals('chrome://webui-gallery', internalItems[0]!.textContent);
     assertFalse(!!internalItems[0]!.querySelector('a'));
 
-    const message = app.shadowRoot!.querySelector('#debug-pages-description');
+    const message = app.shadowRoot.querySelector('#debug-pages-description');
     assertTrue(!!message);
     const status = message.querySelector('span.bold');
     assertTrue(!!status);
@@ -114,13 +123,14 @@ suite('ChromeUrlsAppTest', function() {
 
   test('Correctly displays internal URLs when enabled', async () => {
     const webuiUrls: WebuiUrlInfo[] = [
+      {url: {url: 'chrome://chrome-urls/'}, enabled: true, internal: false},
       {url: {url: 'chrome://settings/'}, enabled: true, internal: false},
       {url: {url: 'chrome://bookmarks/'}, enabled: false, internal: false},
       {url: {url: 'chrome://webui-gallery/'}, enabled: true, internal: true},
     ];
     await finishSetup(webuiUrls, /*internalDebuggingUisEnabled=*/ true);
 
-    const lists = app.shadowRoot!.querySelectorAll('ul');
+    const lists = app.shadowRoot.querySelectorAll('ul');
     assertEquals(3, lists.length);
     const webuiItems = lists[0]!.querySelectorAll('li');
     assertWebUiItems(webuiItems);
@@ -132,7 +142,7 @@ suite('ChromeUrlsAppTest', function() {
     assertEquals('chrome://webui-gallery/', link.href);
     assertEquals('chrome://webui-gallery', link.textContent);
 
-    const message = app.shadowRoot!.querySelector('#debug-pages-description');
+    const message = app.shadowRoot.querySelector('#debug-pages-description');
     assertTrue(!!message);
     const status = message.querySelector('span.bold');
     assertTrue(!!status);
@@ -149,7 +159,7 @@ suite('ChromeUrlsAppTest', function() {
     ];
     await finishSetup(webuiUrls);
 
-    const lists = app.shadowRoot!.querySelectorAll('ul');
+    const lists = app.shadowRoot.querySelectorAll('ul');
     assertEquals(3, lists.length);
 
     // No links since debug pages are disabled.
@@ -159,12 +169,12 @@ suite('ChromeUrlsAppTest', function() {
     assertFalse(!!internalItems[0]!.querySelector('a'));
 
     // Message is set to 'disabled' and button is to enable the pages.
-    const message = app.shadowRoot!.querySelector('#debug-pages-description');
+    const message = app.shadowRoot.querySelector('#debug-pages-description');
     assertTrue(!!message);
     const status = message.querySelector('span.bold');
     assertTrue(!!status);
     assertEquals('disabled', status.textContent);
-    const button = app.shadowRoot!.querySelector('cr-button');
+    const button = app.shadowRoot.querySelector('cr-button');
     assertTrue(!!button);
     assertEquals('Enable internal debugging pages', button.textContent!.trim());
 
@@ -225,7 +235,7 @@ suite('ChromeUrlsAppTest', function() {
     await finishSetup(webuiUrls);
 
     const header =
-        app.shadowRoot!.querySelector<HTMLElement>('#internal-debugging-pages');
+        app.shadowRoot.querySelector<HTMLElement>('#internal-debugging-pages');
     assertTrue(!!header);
     // Header should be in the viewport.
     assertGT(

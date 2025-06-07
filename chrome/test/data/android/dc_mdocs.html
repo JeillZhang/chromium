@@ -23,7 +23,7 @@
         }]
       }
     });
-   const token = mdoc.data;
+   const token = mdoc.data.token;
    document.getElementById("log").textContent += `${token}`;
   }
 
@@ -51,15 +51,17 @@
   async function create() {
     const response = await navigator.credentials.create({
       digital: {
+        requests: [{
           protocol: "openid4vci",
           data: {
             creation_definition: {
               id: "mDL-request-demo",
             }
           }
+        }]
       }
     });
-   const token = response.data;
+   const token = response.data.token;
    document.getElementById("log").textContent += `${token}`;
   }
 

@@ -28,10 +28,8 @@
 #include "media/base/media_util.h"
 #include "media/base/test_helpers.h"
 #include "media/base/video_frame.h"
-#include "media/video/fake_gpu_memory_buffer.h"
 #include "media/video/mock_gpu_memory_buffer_video_frame_pool.h"
 #include "media/video/mock_gpu_video_accelerator_factories.h"
-#include "third_party/blink/public/common/media/display_type.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/blink/public/platform/web_fullscreen_video_status.h"
 #include "third_party/blink/public/platform/web_media_player.h"
@@ -583,7 +581,7 @@ class WebMediaPlayerMSTest
       const WebString& remote_device_friendly_name) override {}
   void MediaRemotingStopped(int error_code) override {}
   void ResumePlayback() override {}
-  void PausePlayback(PauseReason) override {}
+  void PausePlayback(WebMediaPlayer::PauseReason) override {}
   void DidPlayerStartPlaying() override {}
   void DidPlayerPaused(bool) override {}
   void DidPlayerMutedStatusChange(bool muted) override {}
@@ -639,7 +637,7 @@ class WebMediaPlayerMSTest
   MOCK_METHOD1(DoNetworkStateChanged, void(WebMediaPlayer::NetworkState));
   MOCK_METHOD1(DoReadyStateChanged, void(WebMediaPlayer::ReadyState));
   MOCK_METHOD1(CheckSizeChanged, void(gfx::Size));
-  MOCK_CONST_METHOD0(GetDisplayType, DisplayType());
+  MOCK_CONST_METHOD0(GetDisplayType, WebMediaPlayer::DisplayType());
   MOCK_CONST_METHOD0(CouldPlayIfEnoughData, bool());
   MOCK_METHOD0(OnRequestVideoFrameCallback, void());
   MOCK_METHOD0(GetElementId, int());
@@ -976,7 +974,8 @@ TEST_P(WebMediaPlayerMSTest, PictureInPictureStateChangeNotCalled) {
   if (enable_surface_layer_for_video_) {
     EXPECT_CALL(*submitter_ptr_, StartRendering());
     EXPECT_CALL(*this, GetDisplayType())
-        .WillRepeatedly(Return(DisplayType::kPictureInPicture));
+        .WillRepeatedly(
+            Return(WebMediaPlayer::DisplayType::kVideoPictureInPicture));
 
   } else {
     EXPECT_CALL(*this, DoSetCcLayer(true));
@@ -1093,7 +1092,7 @@ TEST_P(WebMediaPlayerMSTest, PlayThenPause) {
   else
     EXPECT_CALL(*this, DoStopRendering());
 
-  player_->Pause();
+  player_->Pause(WebMediaPlayer::PauseReason::kPauseCalled);
   auto prev_frame = compositor_->GetCurrentFrame();
   message_loop_controller_.RunAndWaitForStatus(media::PIPELINE_OK);
   auto after_frame = compositor_->GetCurrentFrame();
@@ -1141,7 +1140,7 @@ TEST_P(WebMediaPlayerMSTest, PlayThenPauseThenPlay) {
   else
     EXPECT_CALL(*this, DoStopRendering());
 
-  player_->Pause();
+  player_->Pause(WebMediaPlayer::PauseReason::kPauseCalled);
   auto prev_frame = compositor_->GetCurrentFrame();
   message_loop_controller_.RunAndWaitForStatus(media::PIPELINE_OK);
   auto after_frame = compositor_->GetCurrentFrame();
@@ -1504,7 +1503,7 @@ TEST_P(WebMediaPlayerMSTest, HiddenPlayerTests) {
   EXPECT_FALSE(player_->Paused());
 
   // A user generated pause() should clear the automatic resumption.
-  player_->Pause();
+  player_->Pause(WebMediaPlayer::PauseReason::kPauseCalled);
   delegate_.set_page_hidden(false);
   player_->OnPageShown();
   EXPECT_TRUE(player_->Paused());
@@ -1803,6 +1802,61 @@ TEST_P(WebMediaPlayerMSTest, VolumeMultiplierAdjustsOutputVolume) {
   // account.
   EXPECT_CALL(*audio_renderer, SetVolume(0.5));
   player_->SetVolumeMultiplier(1.0);
+  testing::Mock::VerifyAndClearExpectations(audio_renderer.get());
+}
+
+TEST_P(WebMediaPlayerMSTest, EnabledStateChangedForWebRtcAudio) {
+  InitializeWebMediaPlayerMS();
+  is_audio_element_ = true;
+  auto audio_renderer = base::MakeRefCounted<MockMediaStreamAudioRenderer>();
+  render_factory_->set_audio_renderer(audio_renderer);
+
+  player_->Load(WebMediaPlayer::kLoadTypeURL, WebMediaPlayerSource(),
+                WebMediaPlayer::kCorsModeUnspecified,
+                /*is_cache_disabled=*/false);
+
+  message_loop_controller_.RunAndWaitForStatus(media::PIPELINE_OK);
+
+  // Setting the volume multiplier should adjust the volume sent to the audio
+  // renderer.
+  EXPECT_CALL(*audio_renderer, SetVolume(0.4));
+  player_->SetVolume(0.4);
+  testing::Mock::VerifyAndClearExpectations(audio_renderer.get());
+
+  // disabled make volume 0.
+  EXPECT_CALL(*audio_renderer, SetVolume(0.0));
+  player_->EnabledStateChangedForWebRtcAudio(false);
+  testing::Mock::VerifyAndClearExpectations(audio_renderer.get());
+
+  // re-enable should restore volume.
+  EXPECT_CALL(*audio_renderer, SetVolume(0.4));
+  player_->EnabledStateChangedForWebRtcAudio(true);
+  testing::Mock::VerifyAndClearExpectations(audio_renderer.get());
+
+  // set multiplier should adjust volume.
+  EXPECT_CALL(*audio_renderer, SetVolume(0.32));
+  player_->SetVolumeMultiplier(0.8);
+  testing::Mock::VerifyAndClearExpectations(audio_renderer.get());
+
+  // calling enabled again does not change volume.
+  EXPECT_CALL(*audio_renderer, SetVolume(_)).Times(0);
+  player_->EnabledStateChangedForWebRtcAudio(true);
+  testing::Mock::VerifyAndClearExpectations(audio_renderer.get());
+
+  // disabled make volume 0.
+  EXPECT_CALL(*audio_renderer, SetVolume(0.0));
+  player_->EnabledStateChangedForWebRtcAudio(false);
+  testing::Mock::VerifyAndClearExpectations(audio_renderer.get());
+
+  // SetVolume during disabled state should not affect the renderer, but
+  // change the volume internally.
+  EXPECT_CALL(*audio_renderer, SetVolume(_)).Times(0);
+  player_->SetVolume(0.5);
+  testing::Mock::VerifyAndClearExpectations(audio_renderer.get());
+
+  // re-enable should restore volume that was set while disabled.
+  EXPECT_CALL(*audio_renderer, SetVolume(0.4));
+  player_->EnabledStateChangedForWebRtcAudio(true);
   testing::Mock::VerifyAndClearExpectations(audio_renderer.get());
 }
 

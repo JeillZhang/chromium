@@ -11,7 +11,6 @@
 
 #include "build/build_config.h"
 #include "gpu/gpu_export.h"
-#include "media/media_buildflags.h"
 #include "ui/gfx/buffer_types.h"
 
 #if BUILDFLAG(IS_OZONE)
@@ -69,6 +68,26 @@ enum class GrContextType : uint32_t {
 };
 
 GPU_EXPORT std::string GrContextTypeToString(GrContextType type);
+
+// Used to represent the Skia backend that the GPU process has initialized.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class SkiaBackendType {
+  kUnknown = 0,
+  kNone = 1,
+  kGaneshGL = 2,
+  kGaneshVulkan = 3,
+  kGraphiteDawnVulkan = 4,
+  kGraphiteDawnMetal = 5,
+  kGraphiteDawnD3D11 = 6,
+  kGraphiteDawnD3D12 = 7,
+  kGraphiteMetal = 8,
+  // It's not clear what granularity of kGraphiteDawnGL* backend dawn will
+  // provided yet so those values are to be added later.
+  kMaxValue = kGraphiteMetal
+};
+
+GPU_EXPORT std::string SkiaBackendTypeToString(SkiaBackendType type);
 
 enum class DawnBackendValidationLevel : uint32_t {
   kDisabled = 0,
@@ -161,9 +180,6 @@ struct GPU_EXPORT GpuPreferences {
   // Enforce GL minimums.
   bool enforce_gl_minimums = false;
 
-  // Sets the total amount of memory that may be allocated for GPU resources.
-  uint32_t force_gpu_mem_available_bytes = 0u;
-
   // Sets the maximum discardable cache size limit for GPU resources.
   uint32_t force_gpu_mem_discardable_limit_bytes = 0u;
 
@@ -189,6 +205,10 @@ struct GPU_EXPORT GpuPreferences {
 
   // Enables the use of SurfaceControl for overlays on Android.
   bool enable_android_surface_control = false;
+
+  // An additional Graphite Precompilation control that only enables
+  // precompilation when not testing.
+  bool perform_graphite_precompilation = false;
 
   // ===================================
   // Settings from //ui/gl/gl_switches.h

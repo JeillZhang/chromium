@@ -149,12 +149,25 @@ class MockPrefHashStore : public PrefHashStore {
 
   // PrefHashStore implementation.
   std::unique_ptr<PrefHashStoreTransaction> BeginTransaction(
-      HashStoreContents* storage) override;
+      HashStoreContents* storage,
+      const os_crypt_async::Encryptor* encryptor_ptr) override;
   std::string ComputeMac(const std::string& path,
                          const base::Value* new_value) override;
   base::Value::Dict ComputeSplitMacs(
       const std::string& path,
       const base::Value::Dict* split_values) override;
+  std::string ComputeEncryptedHash(
+      const std::string& path,
+      const base::Value* value,
+      const os_crypt_async::Encryptor* encryptor_ptr) override;
+  std::string ComputeEncryptedHash(
+      const std::string& path,
+      const base::Value::Dict* dict,
+      const os_crypt_async::Encryptor* encryptor_ptr) override;
+  base::Value::Dict ComputeSplitEncryptedHashes(
+      const std::string& path,
+      const base::Value::Dict* split_values,
+      const os_crypt_async::Encryptor* encryptor_ptr) override;
 
  private:
   // A MockPrefHashStoreTransaction is handed to the caller on
@@ -192,6 +205,31 @@ class MockPrefHashStore : public PrefHashStore {
     void ClearHash(const std::string& path) override;
     bool IsSuperMACValid() const override;
     bool StampSuperMac() override;
+    void StoreEncryptedHash(const std::string& path,
+                            const base::Value* value) override {
+      // Record this like a normal store operation in this simple mock.
+      // Pass the base value pointer directly.
+      outer_->RecordStoreHash(path, value, PrefTrackingStrategy::ATOMIC);
+      // Note: This doesn't store under the derived key, which might affect
+      // tests checking internal state directly, but suffices for making the
+      // class non-abstract and allowing PrefHashFilter calls.
+    }
+    void StoreSplitEncryptedHash(const std::string& path,
+                                 const base::Value::Dict* value) override {
+      // Record this like a normal store operation in this simple mock.
+      // Pass the base value pointer directly.
+      outer_->RecordStoreHash(path, value, PrefTrackingStrategy::SPLIT);
+    }
+    std::optional<std::string> GetEncryptedHash(
+        const std::string& path) const override {
+      return std::nullopt;
+    }
+    std::optional<std::string> GetMac(const std::string& path) const override {
+      return std::nullopt;
+    }
+    bool HasEncryptedHash(const std::string& path) const override {
+      return false;
+    }
 
    private:
     raw_ptr<MockPrefHashStore> outer_;
@@ -243,8 +281,11 @@ void MockPrefHashStore::SetInvalidKeysResult(
 }
 
 std::unique_ptr<PrefHashStoreTransaction> MockPrefHashStore::BeginTransaction(
-    HashStoreContents* storage) {
+    HashStoreContents* storage,
+    const os_crypt_async::Encryptor* encryptor_ptr) {
   EXPECT_FALSE(transaction_active_);
+  transaction_active_ = true;
+  // Pass this mock store instance to the nested transaction mock
   return std::unique_ptr<PrefHashStoreTransaction>(
       new MockPrefHashStoreTransaction(this));
 }
@@ -265,6 +306,37 @@ base::Value::Dict MockPrefHashStore::ComputeSplitMacs(
                   base::Value("split mac for: " + path + "/" + item.first));
   }
   return macs_dict;
+}
+
+std::string MockPrefHashStore::ComputeEncryptedHash(
+    const std::string& path,
+    const base::Value* value,
+    const os_crypt_async::Encryptor* encryptor_ptr) {
+  // Return a dummy value, actual calculation not needed for filter test
+  return "encrypted atomic hash for: " + path;
+}
+
+std::string MockPrefHashStore::ComputeEncryptedHash(
+    const std::string& path,
+    const base::Value::Dict* dict,
+    const os_crypt_async::Encryptor* encryptor_ptr) {
+  return "encrypted atomic hash for dict: " + path;
+}
+
+base::Value::Dict MockPrefHashStore::ComputeSplitEncryptedHashes(
+    const std::string& path,
+    const base::Value::Dict* split_values,
+    const os_crypt_async::Encryptor* encryptor_ptr) {
+  base::Value::Dict hashes_dict;
+  if (!split_values) {
+    return hashes_dict;
+  }
+  for (const auto item : *split_values) {
+    hashes_dict.Set(
+        item.first,
+        base::Value("encrypted split hash for: " + path + "/" + item.first));
+  }
+  return hashes_dict;
 }
 
 ValueState MockPrefHashStore::RecordCheckValue(const std::string& path,
@@ -1123,64 +1195,6 @@ TEST_P(PrefHashFilterTest, EmptyCleared) {
   ASSERT_EQ(PrefTrackingStrategy::SPLIT, stored_split_value.second);
 }
 
-TEST_P(PrefHashFilterTest, InitialValueUnchangedLegacyId) {
-  base::Value* string_value =
-      pref_store_contents_.Set(kAtomicPref, "string value");
-
-  base::Value* value =
-      pref_store_contents_.Set(kSplitPref, base::Value::Dict());
-  ASSERT_TRUE(value->is_dict());
-
-  base::Value::Dict& dict_value = value->GetDict();
-  dict_value.Set("a", "foo");
-  dict_value.Set("b", 1234);
-
-  ASSERT_TRUE(pref_store_contents_.contains(kAtomicPref));
-  ASSERT_TRUE(pref_store_contents_.contains(kSplitPref));
-
-  mock_pref_hash_store_->SetCheckResult(kAtomicPref, ValueState::SECURE_LEGACY);
-  mock_pref_hash_store_->SetCheckResult(kSplitPref, ValueState::SECURE_LEGACY);
-  DoFilterOnLoad(false);
-  ASSERT_EQ(std::size(kTestTrackedPrefs),
-            mock_pref_hash_store_->checked_paths_count());
-  ASSERT_EQ(1u, mock_pref_hash_store_->transactions_performed());
-
-  // Delegate saw all prefs, two of which had the expected value_state.
-  ASSERT_EQ(std::size(kTestTrackedPrefs),
-            mock_validation_delegate_record_->recorded_validations_count());
-  ASSERT_EQ(2u, mock_validation_delegate_record_->CountValidationsOfState(
-                    ValueState::SECURE_LEGACY));
-  ASSERT_EQ(std::size(kTestTrackedPrefs) - 2u,
-            mock_validation_delegate_record_->CountValidationsOfState(
-                ValueState::UNCHANGED));
-
-  // Ensure that both the atomic and split hashes were restored.
-  ASSERT_EQ(2u, mock_pref_hash_store_->stored_paths_count());
-
-  // In all cases, the values should have remained intact and the hashes should
-  // have been updated to match them.
-
-  MockPrefHashStore::ValuePtrStrategyPair stored_atomic_value =
-      mock_pref_hash_store_->stored_value(kAtomicPref);
-  ASSERT_EQ(PrefTrackingStrategy::ATOMIC, stored_atomic_value.second);
-  const base::Value* atomic_value_in_store =
-      pref_store_contents_.Find(kAtomicPref);
-  ASSERT_TRUE(atomic_value_in_store);
-  ASSERT_EQ(string_value, atomic_value_in_store);
-  ASSERT_EQ(string_value, stored_atomic_value.first);
-
-  MockPrefHashStore::ValuePtrStrategyPair stored_split_value =
-      mock_pref_hash_store_->stored_value(kSplitPref);
-  ASSERT_EQ(PrefTrackingStrategy::SPLIT, stored_split_value.second);
-  const base::Value* split_value_in_store =
-      pref_store_contents_.Find(kSplitPref);
-  ASSERT_TRUE(split_value_in_store);
-  ASSERT_EQ(value, split_value_in_store);
-  ASSERT_EQ(value, stored_split_value.first);
-
-  VerifyRecordedReset(false);
-}
-
 TEST_P(PrefHashFilterTest, DontResetReportOnly) {
   base::Value* int_value1 = pref_store_contents_.Set(kAtomicPref, 1);
   base::Value* int_value2 = pref_store_contents_.Set(kAtomicPref2, 2);
@@ -1378,7 +1392,7 @@ TEST_P(PrefHashFilterTest, CleanupDeprecatedTrackedDictionary) {
   pref_store_contents_.SetByDottedPath(kDeprecatedTrackedDictionaryEntry, 1234);
   {
     std::unique_ptr<PrefHashStoreTransaction> transaction(
-        mock_pref_hash_store_->BeginTransaction(nullptr));
+        mock_pref_hash_store_->PrefHashStore::BeginTransaction(nullptr));
     transaction->StoreHash(kDeprecatedTrackedDictionaryEntry, &pref_value);
   }
 

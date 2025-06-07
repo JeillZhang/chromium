@@ -5,7 +5,7 @@
 
 #include "base/test/metrics/histogram_tester.h"
 #include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics_test_base.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics_utils.h"
@@ -63,10 +63,10 @@ class CategoryResolvedKeyMetricsTest : public AutofillMetricsBaseTest,
         profile.guid()));
     autofill_manager().OnAskForValuesToFillTest(
         form, form.fields().front().global_id());
-    autofill_manager().FillOrPreviewProfileForm(
-        mojom::ActionPersistence::kFill, form,
-        form.fields().front().global_id(), profile,
-        AutofillTriggerSource::kPopup);
+    autofill_manager().FillOrPreviewForm(mojom::ActionPersistence::kFill, form,
+                                         form.fields().front().global_id(),
+                                         &profile,
+                                         AutofillTriggerSource::kPopup);
   }
 
  protected:
@@ -92,6 +92,10 @@ TEST_F(CategoryResolvedKeyMetricsTest, NoAutofill) {
       "Autofill.Leipzig.FillingCorrectness.AccountChrome", 0);
   histogram_tester_.ExpectTotalCount(
       "Autofill.Leipzig.FillingCorrectness.AccountNonChrome", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountHome", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountWork", 0);
   histogram_tester_.ExpectTotalCount(
       "Autofill.Leipzig.FillingCorrectness.Mixed", 0);
 }
@@ -135,6 +139,10 @@ TEST_P(CategoryResolvedKeyMetricsEditTest, kLocalOrSyncable) {
   histogram_tester_.ExpectTotalCount(
       "Autofill.Leipzig.FillingCorrectness.AccountNonChrome", 0);
   histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountHome", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountWork", 0);
+  histogram_tester_.ExpectTotalCount(
       "Autofill.Leipzig.FillingCorrectness.Mixed", 0);
 }
 
@@ -163,6 +171,10 @@ TEST_P(CategoryResolvedKeyMetricsEditTest, kAccountChrome) {
   histogram_tester_.ExpectTotalCount(
       "Autofill.Leipzig.FillingCorrectness.AccountNonChrome", 0);
   histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountHome", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountWork", 0);
+  histogram_tester_.ExpectTotalCount(
       "Autofill.Leipzig.FillingCorrectness.Mixed", 0);
 }
 
@@ -190,6 +202,72 @@ TEST_P(CategoryResolvedKeyMetricsEditTest, kAccountNonChrome) {
   histogram_tester_.ExpectUniqueSample(
       "Autofill.Leipzig.FillingCorrectness.AccountNonChrome",
       !ShouldEditField(), 1);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountHome", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountWork", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.Mixed", 0);
+}
+
+TEST_P(CategoryResolvedKeyMetricsEditTest, kAccountHome) {
+  FormData form = CreateAndSeeForm();
+  FillFormWithProfile(
+      form,
+      CreateProfileOfCategory(AutofillProfileRecordTypeCategory::kAccountHome));
+  if (ShouldEditField()) {
+    SimulateUserChangedField(form, form.fields().front());
+  }
+  SubmitForm(form);
+
+  ResetDriverToCommitMetrics();
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.Leipzig.FillingReadinessCategory",
+      CategoryResolvedKeyMetricBucket::kAccountHome, 1);
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.Leipzig.FillingAssistanceCategory",
+      CategoryResolvedKeyMetricBucket::kAccountHome, 1);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.Legacy", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountChrome", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountNonChrome", 0);
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.Leipzig.FillingCorrectness.AccountHome", !ShouldEditField(), 1);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountWork", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.Mixed", 0);
+}
+
+TEST_P(CategoryResolvedKeyMetricsEditTest, kAccountWork) {
+  FormData form = CreateAndSeeForm();
+  FillFormWithProfile(
+      form,
+      CreateProfileOfCategory(AutofillProfileRecordTypeCategory::kAccountWork));
+  if (ShouldEditField()) {
+    SimulateUserChangedField(form, form.fields().front());
+  }
+  SubmitForm(form);
+
+  ResetDriverToCommitMetrics();
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.Leipzig.FillingReadinessCategory",
+      CategoryResolvedKeyMetricBucket::kAccountWork, 1);
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.Leipzig.FillingAssistanceCategory",
+      CategoryResolvedKeyMetricBucket::kAccountWork, 1);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.Legacy", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountChrome", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountNonChrome", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountHome", 0);
+  histogram_tester_.ExpectUniqueSample(
+      "Autofill.Leipzig.FillingCorrectness.AccountWork", !ShouldEditField(), 1);
   histogram_tester_.ExpectTotalCount(
       "Autofill.Leipzig.FillingCorrectness.Mixed", 0);
 }
@@ -231,6 +309,10 @@ TEST_P(CategoryResolvedKeyMetricsEditTest, Mixed) {
       "Autofill.Leipzig.FillingCorrectness.AccountChrome", 0);
   histogram_tester_.ExpectTotalCount(
       "Autofill.Leipzig.FillingCorrectness.AccountNonChrome", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountHome", 0);
+  histogram_tester_.ExpectTotalCount(
+      "Autofill.Leipzig.FillingCorrectness.AccountWork", 0);
   histogram_tester_.ExpectUniqueSample(
       "Autofill.Leipzig.FillingCorrectness.Mixed", !ShouldEditField(), 1);
 }
@@ -273,15 +355,16 @@ TEST_F(AutofillAddressOnTypingMetricsTest, EmitMetrics) {
 
   // Simulate that the autofill manager has seen this form on page load.
   SeeForm(form);
-  static constexpr DenseSet<SuggestionType> kShownSuggestionTypes = {
-      SuggestionType::kAddressEntryOnTyping, SuggestionType::kSeparator,
-      SuggestionType::kManageAddress};
+  std::vector<Suggestion> shown_suggestions = {
+      Suggestion(SuggestionType::kAddressEntryOnTyping),
+      Suggestion(SuggestionType::kSeparator),
+      Suggestion(SuggestionType::kManageAddress)};
 
   // See, accept and do not correct the first suggestion.
   autofill_client().SetAutofillSuggestions(BuildAutofillOnTypingSuggestions(
       {NAME_FULL}, /*profile_guid=*/profile.guid()));
-  autofill_manager().DidShowSuggestions(kShownSuggestionTypes, form,
-                                        form.fields()[0].global_id());
+  autofill_manager().DidShowSuggestions(shown_suggestions, form,
+                                        form.fields()[0].global_id(), {});
   const std::u16string filled_value = u"Jon snow";
   autofill_manager().OnDidFillAddressOnTypingSuggestion(
       form.fields()[0].global_id(), filled_value, NAME_FULL, profile.guid());
@@ -294,14 +377,14 @@ TEST_F(AutofillAddressOnTypingMetricsTest, EmitMetrics) {
   // Only see second suggestion.
   autofill_client().SetAutofillSuggestions(
       BuildAutofillOnTypingSuggestions({NAME_FIRST}, profile.guid()));
-  autofill_manager().DidShowSuggestions(kShownSuggestionTypes, form,
-                                        form.fields()[1].global_id());
+  autofill_manager().DidShowSuggestions(shown_suggestions, form,
+                                        form.fields()[1].global_id(), {});
 
   // See, accept and edit the third suggestion.
   autofill_client().SetAutofillSuggestions(
       BuildAutofillOnTypingSuggestions({NAME_FULL}, profile.guid()));
-  autofill_manager().DidShowSuggestions(kShownSuggestionTypes, form,
-                                        form.fields()[2].global_id());
+  autofill_manager().DidShowSuggestions(shown_suggestions, form,
+                                        form.fields()[2].global_id(), {});
   autofill_manager().OnDidFillAddressOnTypingSuggestion(
       form.fields()[2].global_id(), filled_value, NAME_FULL, profile.guid());
   form_fields = form.ExtractFields();

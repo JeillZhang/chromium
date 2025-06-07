@@ -24,6 +24,7 @@ ci.defaults.set(
     os = os.LINUX_DEFAULT,
     gardener_rotations = gardener_rotations.CHROMIUM,
     tree_closing = True,
+    tree_closing_notifiers = ci.DEFAULT_TREE_CLOSING_NOTIFIERS,
     execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
     health_spec = health_spec.modified_default({
         "Unhealthy": struct(
@@ -32,6 +33,7 @@ ci.defaults.set(
             ),
         ),
     }),
+    reclient_enabled = False,
     service_account = ci.DEFAULT_SERVICE_ACCOUNT,
     shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
     siso_enabled = True,
@@ -276,7 +278,7 @@ ci.thin_tester(
     branch_selector = branches.selector.CROS_LTS_BRANCHES,
     description_html = "This is a tester builder for Ash chrome." +
                        " This builder only run gtest.",
-    triggered_by = ["ci/chromeos-amd64-generic-rel"],
+    parent = "ci/chromeos-amd64-generic-rel",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -329,7 +331,7 @@ ci.thin_tester(
                        " This builder only run tast tests. If you see" +
                        " test failures, please contact ChromeOS gardeners" +
                        " for help.",
-    triggered_by = ["ci/chromeos-amd64-generic-rel"],
+    parent = "ci/chromeos-amd64-generic-rel",
     builder_spec = builder_config.builder_spec(
         execution_mode = builder_config.execution_mode.TEST,
         gclient_config = builder_config.gclient_config(
@@ -818,6 +820,7 @@ ci.builder(
             "linux_chromeos_rel_cq",
             "linux_chromeos_isolated_scripts",
             "chromeos_annotation_scripts",
+            "gtests_once",
         ],
         additional_compile_targets = [
             "all",

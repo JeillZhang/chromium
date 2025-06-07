@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "absl/base/attributes.h"
+#include "absl/base/optimization.h"
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
 #include "absl/strings/cord.h"
@@ -143,30 +144,6 @@ bool WireFormat::SkipMessage(io::CodedInputStream* input,
 
     if (!SkipField(input, tag, unknown_fields)) return false;
   }
-}
-
-bool WireFormat::ReadPackedEnumPreserveUnknowns(io::CodedInputStream* input,
-                                                uint32_t field_number,
-                                                bool (*is_valid)(int),
-                                                UnknownFieldSet* unknown_fields,
-                                                RepeatedField<int>* values) {
-  uint32_t length;
-  if (!input->ReadVarint32(&length)) return false;
-  io::CodedInputStream::Limit limit = input->PushLimit(length);
-  while (input->BytesUntilLimit() > 0) {
-    int value;
-    if (!WireFormatLite::ReadPrimitive<int, WireFormatLite::TYPE_ENUM>(
-            input, &value)) {
-      return false;
-    }
-    if (is_valid == nullptr || is_valid(value)) {
-      values->Add(value);
-    } else {
-      unknown_fields->AddVarint(field_number, value);
-    }
-  }
-  input->PopLimit(limit);
-  return true;
 }
 
 uint8_t* WireFormat::InternalSerializeUnknownFieldsToArray(
@@ -734,7 +711,7 @@ struct WireFormat::MessageSetParser {
     while (!ctx->Done(&ptr)) {
       uint32_t tag;
       ptr = ReadTag(ptr, &tag);
-      if (PROTOBUF_PREDICT_FALSE(ptr == nullptr)) return nullptr;
+      if (ABSL_PREDICT_FALSE(ptr == nullptr)) return nullptr;
       if (tag == 0 || (tag & 7) == WireFormatLite::WIRETYPE_END_GROUP) {
         ctx->SetLastTag(tag);
         break;
@@ -758,7 +735,7 @@ struct WireFormat::MessageSetParser {
         ptr = WireFormat::_InternalParseAndMergeField(msg, ptr, ctx, tag,
                                                       reflection, field);
       }
-      if (PROTOBUF_PREDICT_FALSE(ptr == nullptr)) return nullptr;
+      if (ABSL_PREDICT_FALSE(ptr == nullptr)) return nullptr;
     }
     return ptr;
   }
@@ -819,7 +796,7 @@ const char* WireFormat::_InternalParse(Message* msg, const char* ptr,
   while (!ctx->Done(&ptr)) {
     uint32_t tag;
     ptr = ReadTag(ptr, &tag);
-    if (PROTOBUF_PREDICT_FALSE(ptr == nullptr)) return nullptr;
+    if (ABSL_PREDICT_FALSE(ptr == nullptr)) return nullptr;
     if (tag == 0 || (tag & 7) == WireFormatLite::WIRETYPE_END_GROUP) {
       ctx->SetLastTag(tag);
       break;
@@ -840,7 +817,7 @@ const char* WireFormat::_InternalParse(Message* msg, const char* ptr,
     }
 
     ptr = _InternalParseAndMergeField(msg, ptr, ctx, tag, reflection, field);
-    if (PROTOBUF_PREDICT_FALSE(ptr == nullptr)) return nullptr;
+    if (ABSL_PREDICT_FALSE(ptr == nullptr)) return nullptr;
   }
   return ptr;
 }

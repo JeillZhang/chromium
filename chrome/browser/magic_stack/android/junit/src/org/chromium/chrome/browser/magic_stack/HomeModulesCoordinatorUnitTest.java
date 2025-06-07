@@ -55,7 +55,6 @@ import org.chromium.base.Callback;
 import org.chromium.base.FeatureOverrides;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType;
@@ -271,7 +270,8 @@ public class HomeModulesCoordinatorUnitTest {
                         ModuleType.DEFAULT_BROWSER_PROMO,
                         ModuleType.TAB_GROUP_PROMO,
                         ModuleType.TAB_GROUP_SYNC_PROMO,
-                        ModuleType.QUICK_DELETE_PROMO);
+                        ModuleType.QUICK_DELETE_PROMO,
+                        ModuleType.HISTORY_SYNC_PROMO);
         when(mHomeModulesConfigManager.getEnabledModuleSet())
                 .thenReturn(new HashSet<>(expectedModuleListBeforeHidingModule));
         mCoordinator = createCoordinator(/* skipInitProfile= */ false);
@@ -337,9 +337,6 @@ public class HomeModulesCoordinatorUnitTest {
 
     @Test
     @SmallTest
-    @DisableFeatures({
-        ChromeFeatureList.TAB_RESUMPTION_MODULE_ANDROID,
-    })
     public void testRecordMagicStackScroll_Scrolled() {
         mCoordinator = createCoordinator(/* skipInitProfile= */ true);
         mCoordinator.setMediatorForTesting(mMediator);
@@ -357,9 +354,6 @@ public class HomeModulesCoordinatorUnitTest {
 
     @Test
     @SmallTest
-    @DisableFeatures({
-        ChromeFeatureList.TAB_RESUMPTION_MODULE_ANDROID,
-    })
     public void testRecordMagicStackScroll_NotScrolled() {
         when(mModuleDelegateHost.isHomeSurface()).thenReturn(true);
         mCoordinator = createCoordinator(/* skipInitProfile= */ true);
@@ -375,9 +369,6 @@ public class HomeModulesCoordinatorUnitTest {
 
     @Test
     @SmallTest
-    @DisableFeatures({
-        ChromeFeatureList.TAB_RESUMPTION_MODULE_ANDROID,
-    })
     public void testOnModuleChangedCallback() {
         when(mModuleDelegateHost.isHomeSurface()).thenReturn(true);
         mCoordinator = createCoordinator(/* skipInitProfile= */ true);
@@ -479,9 +470,10 @@ public class HomeModulesCoordinatorUnitTest {
         verify(mHomeModulesRankingHelperJniMock)
                 .getClassificationResult(
                         any(), any(), any(), mClassificationResultCaptor.capture());
-        String[] orderedLabels = {"SingleTab", "TabResumption"};
+        String[] orderedLabels = {"SingleTab", "PriceChange"};
         ClassificationResult result =
-                new ClassificationResult(PredictionStatus.SUCCEEDED, orderedLabels);
+                new ClassificationResult(
+                        PredictionStatus.SUCCEEDED, orderedLabels, /* requestId= */ 0);
         mClassificationResultCaptor.getValue().onResult(result);
     }
 }

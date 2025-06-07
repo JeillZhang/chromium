@@ -22,6 +22,7 @@
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/native_widget_types.h"
 
 namespace {
 
@@ -147,7 +148,7 @@ void SupervisedUserExtensionsDelegateImpl::
       &::OnParentPermissionDialogComplete, std::move(done_callback_));
 
   gfx::NativeWindow parent_window =
-      contents ? contents->GetTopLevelNativeWindow() : nullptr;
+      contents ? contents->GetTopLevelNativeWindow() : gfx::NativeWindow();
   parent_permission_dialog_ =
       ParentPermissionDialog::CreateParentPermissionDialogForExtension(
           Profile::FromBrowserContext(context_), parent_window, icon,
@@ -199,27 +200,10 @@ void SupervisedUserExtensionsDelegateImpl::RequestExtensionApproval(
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   CHECK(contents.value());
   content::WebContents* web_contents = contents.value().get();
-  if (supervised_user::
-          IsSupervisedUserSkipParentApprovalToInstallExtensionsEnabled()) {
-    // On the new mode always invoke the parent permission dialog.
-    ShowParentPermissionDialogForExtension(extension, web_contents, icon,
-                                           extension_approval_entry_point);
-    return;
-  }
-  // On the old mode (to be deprecated) invoke the "Blocked extensions" screen
-  // if the parent had picked this settings.
-  // Let parent approval dialog handle the case of not being able to install
-  // extensions.
-  auto* profile = Profile::FromBrowserContext(context_);
-  if (!profile->GetPrefs()->GetBoolean(
-          prefs::kSupervisedUserExtensionsMayRequestPermissions)) {
-    ShowInstallBlockedByParentDialogForExtension(
-        extension, web_contents,
-        ExtensionInstalledBlockedByParentDialogAction::kEnable);
-    return;
-  }
+  // Always invoke the parent permission dialog.
   ShowParentPermissionDialogForExtension(extension, web_contents, icon,
                                          extension_approval_entry_point);
+  return;
 #elif BUILDFLAG(IS_CHROMEOS)
   // ParentAccessDialog handles the blocked use case for ChromeOS.
   extension_approvals_manager_ =

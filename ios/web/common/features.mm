@@ -42,17 +42,6 @@ BASE_FEATURE(kEnableMeasurements,
              "EnableMeasurementsExperience",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-const char kOneTapForMapsConsentModeParamTitle[] =
-    "OneTapForMapsConsentModeParam";
-const char kOneTapForMapsConsentModeDefaultParam[] = "default";
-const char kOneTapForMapsConsentModeForcedParam[] = "forced";
-const char kOneTapForMapsConsentModeDisabledParam[] = "disabled";
-const char kOneTapForMapsConsentModeIPHParam[] = "iph";
-const char kOneTapForMapsConsentModeIPHForcedParam[] = "iphforced";
-BASE_FEATURE(kOneTapForMaps,
-             "EnableOneTapForMaps",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kScrollViewProxyScrollEnabledWorkaround,
              "ScrollViewProxyScrollEnabledWorkaround",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -86,10 +75,6 @@ BASE_FEATURE(kForceSynthesizedRestoreSession,
 BASE_FEATURE(kDetectDestroyedNavigationContexts,
              "DetectDestroyedNavigationContexts",
              base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kEnableNewParcelTrackingNumberDetection,
-             "EnableNewParcelTrackingNumberDetection",
-             base::FEATURE_DISABLED_BY_DEFAULT);
 
 bool IsWebInspectorSupportEnabled() {
   if (@available(iOS 16.4, *)) {

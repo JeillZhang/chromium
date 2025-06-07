@@ -12,11 +12,11 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "base/check_op.h"
 #include "base/containers/contains.h"
-#include "base/functional/overloaded.h"
 #include "base/strings/string_util.h"
 #include "components/js_injection/common/interfaces.mojom-forward.h"
 #include "components/js_injection/renderer/js_communication.h"
@@ -25,7 +25,7 @@
 #include "gin/data_object_builder.h"
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/common/messaging/message_port_channel.h"
 #include "third_party/blink/public/common/messaging/string_message_codec.h"
@@ -154,8 +154,8 @@ void JsBinding::OnPostMessage(blink::WebMessagePayload message) {
   v8::TryCatch try_catch(isolate);
   try_catch.SetVerbose(true);
 
-  v8::Local<v8::Value> v8_message = absl::visit(
-      base::Overloaded{
+  v8::Local<v8::Value> v8_message = std::visit(
+      absl::Overload{
           [isolate](std::u16string& string_value) -> v8::Local<v8::Value> {
             return gin::ConvertToV8(isolate, std::move(string_value));
           },

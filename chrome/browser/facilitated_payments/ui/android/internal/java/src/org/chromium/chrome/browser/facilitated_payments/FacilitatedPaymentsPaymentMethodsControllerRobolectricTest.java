@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.facilitated_payments;
 import static androidx.test.espresso.matcher.ViewMatchers.assertThat;
 
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
@@ -24,7 +25,6 @@ import static org.mockito.Mockito.verify;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.AdditionalInfoProperties.SHOW_PAYMENT_METHOD_SETTINGS_CALLBACK;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.BANK_NAME;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.BankAccountProperties.ON_BANK_ACCOUNT_CLICK_ACTION;
-import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.DISMISS_HANDLER;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.ErrorScreenProperties.PRIMARY_BUTTON_CALLBACK;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.EwalletProperties.EWALLET_NAME;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.EwalletProperties.ON_EWALLET_CLICK_ACTION;
@@ -38,10 +38,14 @@ import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymen
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.ItemType.EWALLET;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.ItemType.FOOTER;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.ItemType.HEADER;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.PixAccountLinkingPromptProperties.ACCEPT_BUTTON_CALLBACK;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.PixAccountLinkingPromptProperties.DECLINE_BUTTON_CALLBACK;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SCREEN;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SCREEN_VIEW_MODEL;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SURVIVES_NAVIGATION;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.ERROR_SCREEN;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.FOP_SELECTOR;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.PIX_ACCOUNT_LINKING_PROMPT;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.PROGRESS_SCREEN;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.UNINITIALIZED;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.UI_EVENT_LISTENER;
@@ -65,8 +69,11 @@ import org.robolectric.Robolectric;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.HistogramWatcher;
+import org.chromium.chrome.browser.autofill.AutofillImageFetcher;
+import org.chromium.chrome.browser.autofill.AutofillImageFetcherFactory;
 import org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.FooterProperties;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.components.autofill.payments.AccountType;
 import org.chromium.components.autofill.payments.BankAccount;
 import org.chromium.components.autofill.payments.Ewallet;
@@ -74,7 +81,6 @@ import org.chromium.components.autofill.payments.PaymentInstrument;
 import org.chromium.components.autofill.payments.PaymentRail;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
-import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.StateChangeReason;
 import org.chromium.components.facilitated_payments.core.ui_utils.FopSelectorAction;
 import org.chromium.components.facilitated_payments.core.ui_utils.UiEvent;
 import org.chromium.components.payments.ui.InputProtector;
@@ -170,18 +176,19 @@ public class FacilitatedPaymentsPaymentMethodsControllerRobolectricTest {
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.LENIENT);
 
-    private FacilitatedPaymentsPaymentMethodsCoordinator mCoordinator;
-    private PropertyModel mFacilitatedPaymentsPaymentMethodsModel;
-    private FakeClock mClock = new FakeClock();
-    Context mContext;
-
     @Mock private BottomSheetController mBottomSheetController;
     @Mock private FacilitatedPaymentsPaymentMethodsComponent.Delegate mDelegateMock;
+    @Mock private AutofillImageFetcher mAutofillImageFetcher;
     @Mock private Profile mProfile;
 
+    private final Context mContext;
+    private final FacilitatedPaymentsPaymentMethodsCoordinator mCoordinator;
+    private final FakeClock mClock = new FakeClock();
+    private PropertyModel mFacilitatedPaymentsPaymentMethodsModel;
+
     public FacilitatedPaymentsPaymentMethodsControllerRobolectricTest() {
-        mCoordinator = new FacilitatedPaymentsPaymentMethodsCoordinator();
         mContext = Robolectric.buildActivity(Activity.class).get();
+        mCoordinator = new FacilitatedPaymentsPaymentMethodsCoordinator();
     }
 
     @Before
@@ -190,6 +197,8 @@ public class FacilitatedPaymentsPaymentMethodsControllerRobolectricTest {
                         mBottomSheetController.requestShowContent(
                                 any(BottomSheetContent.class), anyBoolean()))
                 .thenReturn(true);
+        ProfileManager.setLastUsedProfileForTesting(mProfile);
+        AutofillImageFetcherFactory.setInstanceForTesting(mAutofillImageFetcher);
         mCoordinator.initialize(mContext, mBottomSheetController, mDelegateMock, mProfile);
         mFacilitatedPaymentsPaymentMethodsModel = mCoordinator.getModelForTesting();
         mCoordinator
@@ -202,8 +211,8 @@ public class FacilitatedPaymentsPaymentMethodsControllerRobolectricTest {
         assertThat(mFacilitatedPaymentsPaymentMethodsModel.get(VISIBLE_STATE), is(HIDDEN));
         assertThat(mFacilitatedPaymentsPaymentMethodsModel.get(SCREEN), is(UNINITIALIZED));
         assertNull(mFacilitatedPaymentsPaymentMethodsModel.get(SCREEN_VIEW_MODEL));
-        assertNotNull(mFacilitatedPaymentsPaymentMethodsModel.get(DISMISS_HANDLER));
         assertNotNull(mFacilitatedPaymentsPaymentMethodsModel.get(UI_EVENT_LISTENER));
+        assertThat(mFacilitatedPaymentsPaymentMethodsModel.get(SURVIVES_NAVIGATION), is(false));
     }
 
     @Test
@@ -219,6 +228,7 @@ public class FacilitatedPaymentsPaymentMethodsControllerRobolectricTest {
                 mFacilitatedPaymentsPaymentMethodsModel
                         .get(SCREEN_VIEW_MODEL)
                         .containsKey(SCREEN_ITEMS));
+        assertThat(mFacilitatedPaymentsPaymentMethodsModel.get(SURVIVES_NAVIGATION), is(false));
     }
 
     @Test
@@ -234,6 +244,7 @@ public class FacilitatedPaymentsPaymentMethodsControllerRobolectricTest {
                 mFacilitatedPaymentsPaymentMethodsModel
                         .get(SCREEN_VIEW_MODEL)
                         .containsKey(SCREEN_ITEMS));
+        assertThat(mFacilitatedPaymentsPaymentMethodsModel.get(SURVIVES_NAVIGATION), is(false));
     }
 
     @Test
@@ -375,15 +386,6 @@ public class FacilitatedPaymentsPaymentMethodsControllerRobolectricTest {
 
             verify(mDelegateMock).onUiEvent(uiEvent);
         }
-    }
-
-    @Test
-    public void testOnDismissedIsCalled() {
-        mFacilitatedPaymentsPaymentMethodsModel
-                .get(DISMISS_HANDLER)
-                .onResult(StateChangeReason.SWIPE);
-
-        verify(mDelegateMock).onDismissed();
     }
 
     @Test
@@ -835,6 +837,7 @@ public class FacilitatedPaymentsPaymentMethodsControllerRobolectricTest {
                         .get(SCREEN_VIEW_MODEL)
                         .getAllProperties()
                         .size());
+        assertThat(mFacilitatedPaymentsPaymentMethodsModel.get(SURVIVES_NAVIGATION), is(false));
     }
 
     @Test
@@ -853,6 +856,7 @@ public class FacilitatedPaymentsPaymentMethodsControllerRobolectricTest {
                                 .getAllProperties();
         assertThat(propertyKeys, hasSize(1));
         assertThat(propertyKeys, contains(PRIMARY_BUTTON_CALLBACK));
+        assertThat(mFacilitatedPaymentsPaymentMethodsModel.get(SURVIVES_NAVIGATION), is(false));
     }
 
     @Test
@@ -868,6 +872,54 @@ public class FacilitatedPaymentsPaymentMethodsControllerRobolectricTest {
         // Verify that the bottom sheet model reflects dismissed state.
         assertThat(mFacilitatedPaymentsPaymentMethodsModel.get(SCREEN), is(UNINITIALIZED));
         assertThat(mFacilitatedPaymentsPaymentMethodsModel.get(VISIBLE_STATE), is(HIDDEN));
+    }
+
+    @Test
+    public void testCreatesModelForPixAccountLinkingPrompt() {
+        mCoordinator.showPixAccountLinkingPrompt();
+
+        // Verify that the bottom sheet model is updated to show the PIX account linking screen.
+        assertThat(mFacilitatedPaymentsPaymentMethodsModel.get(VISIBLE_STATE), is(SHOWN));
+        assertThat(
+                mFacilitatedPaymentsPaymentMethodsModel.get(SCREEN),
+                is(PIX_ACCOUNT_LINKING_PROMPT));
+        assertNotNull(mFacilitatedPaymentsPaymentMethodsModel.get(SCREEN_VIEW_MODEL));
+        // Verify screen view properties.
+        List<PropertyKey> propertyKeys =
+                (List<PropertyKey>)
+                        mFacilitatedPaymentsPaymentMethodsModel
+                                .get(SCREEN_VIEW_MODEL)
+                                .getAllProperties();
+        assertThat(propertyKeys, hasSize(2));
+        assertThat(
+                propertyKeys, containsInAnyOrder(ACCEPT_BUTTON_CALLBACK, DECLINE_BUTTON_CALLBACK));
+        assertThat(mFacilitatedPaymentsPaymentMethodsModel.get(SURVIVES_NAVIGATION), is(true));
+    }
+
+    @Test
+    public void testAcceptingPixAccountLinkingPromptInformsDelegate() {
+        mCoordinator.showPixAccountLinkingPrompt();
+
+        // Simulate clicking the accept button.
+        mFacilitatedPaymentsPaymentMethodsModel
+                .get(SCREEN_VIEW_MODEL)
+                .get(ACCEPT_BUTTON_CALLBACK)
+                .onClick(null);
+
+        verify(mDelegateMock).onPixAccountLinkingPromptAccepted();
+    }
+
+    @Test
+    public void testDecliningPixAccountLinkingPromptInformsDelegate() {
+        mCoordinator.showPixAccountLinkingPrompt();
+
+        // Simulate clicking the accept button.
+        mFacilitatedPaymentsPaymentMethodsModel
+                .get(SCREEN_VIEW_MODEL)
+                .get(DECLINE_BUTTON_CALLBACK)
+                .onClick(null);
+
+        verify(mDelegateMock).onPixAccountLinkingPromptDeclined();
     }
 
     @Test

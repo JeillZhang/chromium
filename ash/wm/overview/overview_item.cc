@@ -30,7 +30,6 @@
 #include "ash/wm/overview/overview_window_drag_controller.h"
 #include "ash/wm/overview/scoped_overview_animation_settings.h"
 #include "ash/wm/overview/scoped_overview_hide_windows.h"
-#include "ash/wm/raster_scale/raster_scale_controller.h"
 #include "ash/wm/snap_group/snap_group_controller.h"
 #include "ash/wm/splitview/layout_divider_controller.h"
 #include "ash/wm/splitview/split_view_constants.h"
@@ -383,12 +382,6 @@ OverviewItem* OverviewItem::GetLeafItemForWindow(aura::Window* window) {
 
 void OverviewItem::SetBounds(const gfx::RectF& target_bounds,
                              OverviewAnimationType animation_type) {
-  // Pause raster scale updates during SetBounds. For example, if we perform an
-  // item spawned animation, we set the initial transform but immediately start
-  // an animation, so we don't want to trigger a raster scale update for the
-  // initial transform.
-  ScopedPauseRasterScaleUpdates scoped_pause;
-
   if (in_bounds_update_ || transform_window_.is_restoring() ||
       !OverviewController::Get()->InOverviewSession()) {
     return;
@@ -762,6 +755,7 @@ void OverviewItem::StartDrag() {
 
 void OverviewItem::OnOverviewItemDragStarted() {
   GetOrCreateOverviewItemView().SetCloseButtonVisible(false);
+  transform_window_.OnDragStarted();
 }
 
 void OverviewItem::OnOverviewItemDragEnded(bool snap) {
@@ -772,6 +766,8 @@ void OverviewItem::OnOverviewItemDragEnded(bool snap) {
   } else {
     GetOrCreateOverviewItemView().SetCloseButtonVisible(true);
   }
+
+  transform_window_.OnDragEnded();
 }
 
 void OverviewItem::OnOverviewItemContinuousScroll(
@@ -779,7 +775,7 @@ void OverviewItem::OnOverviewItemContinuousScroll(
     float scroll_ratio) {
   auto* window = GetWindow();
 
-  // TODO(sammiequon): This should use
+  // TODO: This should use
   // `ScopedOverviewTransformWindow::IsMinimizedOrTucked()` since tucked
   // windows behave like minimized windows in overview, even if continuous
   // scroll and tucked windows will not be supported together.
@@ -977,6 +973,9 @@ void OverviewItem::OnWindowParentChanged(aura::Window* window,
   }
 
   if (root_window_ != window->GetRootWindow()) {
+    // Restore Window to reset the transform and the clip before adding new
+    // OverviewItem.
+    RestoreWindow(/*reset_transform=*/true, /*animate=*/false);
     overview_session_->AddItemInMruOrder(
         window, /*reposition=*/false, /*animate=*/true,
         /*restack=*/true, /*use_spawn_animation=*/true);
@@ -1306,7 +1305,7 @@ void OverviewItem::SetItemBounds(const gfx::RectF& target_bounds,
     clip_rect = gfx::Rect(window->bounds().size());
     // We add 1 to the `top_inset`, because in some cases, the header is not
     // clipped fully due to what seems to be a rounding error.
-    // TODO(afakhry|sammiequon): Investigate a proper fix for this.
+    // TODO: Investigate a proper fix for this.
     const int top_inset = GetTopInset();
     if (top_inset > 0 && !clip_rect.IsEmpty()) {
       clip_rect.Inset(gfx::Insets::TLBR(top_inset + 1, 0, 0, 0));

@@ -24,6 +24,7 @@ class FakeCanvasResourceHost : public CanvasResourceHost {
   explicit FakeCanvasResourceHost(gfx::Size size) : CanvasResourceHost(size) {}
   ~FakeCanvasResourceHost() override = default;
   void NotifyGpuContextLost() override {}
+  bool IsContextLost() const override { return false; }
   void SetNeedsCompositingUpdate() override {}
   void InitializeForRecording(cc::PaintCanvas*) const override {}
   void UpdateMemoryUsage() override {}
@@ -34,35 +35,26 @@ class FakeCanvasResourceHost : public CanvasResourceHost {
     is_hibernating_ = is_hibernating;
   }
   size_t GetMemoryUsage() const override { return 0; }
-  CanvasResourceProvider* GetOrCreateCanvasResourceProvider(
-      RasterModeHint hint) override {
-    return GetOrCreateCanvasResourceProviderImpl(hint);
-  }
-  CanvasResourceProvider* GetOrCreateCanvasResourceProviderImpl(
-      RasterModeHint hint) override {
+  CanvasResourceProvider* GetOrCreateCanvasResourceProviderForCanvas2D()
+      override {
     if (ResourceProvider())
       return ResourceProvider();
     constexpr auto kShouldInitialize =
         CanvasResourceProvider::ShouldInitialize::kCallClear;
     std::unique_ptr<CanvasResourceProvider> provider;
-    if (hint == RasterModeHint::kPreferGPU ||
-        RuntimeEnabledFeatures::Canvas2dImageChromiumEnabled()) {
-      constexpr gpu::SharedImageUsageSet kSharedImageUsageFlags =
-          gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
-          gpu::SHARED_IMAGE_USAGE_SCANOUT;
-      provider = CanvasResourceProvider::CreateSharedImageProvider(
-          Size(), GetN32FormatForCanvas(), kPremul_SkAlphaType,
-          gfx::ColorSpace::CreateSRGB(), kShouldInitialize,
-          SharedGpuContext::ContextProviderWrapper(),
-          hint == RasterModeHint::kPreferGPU ? RasterMode::kGPU
-                                             : RasterMode::kCPU,
-          kSharedImageUsageFlags, this);
-    }
+    constexpr gpu::SharedImageUsageSet kSharedImageUsageFlags =
+        gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
+    provider = CanvasResourceProvider::CreateSharedImageProvider(
+        Size(), GetN32FormatForCanvas(), kPremul_SkAlphaType,
+        gfx::ColorSpace::CreateSRGB(), kShouldInitialize,
+        SharedGpuContext::ContextProviderWrapper(), RasterMode::kGPU,
+        kSharedImageUsageFlags, this);
     if (!provider) {
-      provider = CanvasResourceProvider::CreateSharedBitmapProvider(
-          Size(), GetN32FormatForCanvas(), kPremul_SkAlphaType,
-          gfx::ColorSpace::CreateSRGB(), kShouldInitialize,
-          SharedGpuContext::SharedImageInterfaceProvider(), this);
+      provider = CanvasResourceProvider::
+          CreateSharedImageProviderForSoftwareCompositor(
+              Size(), GetN32FormatForCanvas(), kPremul_SkAlphaType,
+              gfx::ColorSpace::CreateSRGB(), kShouldInitialize,
+              SharedGpuContext::SharedImageInterfaceProvider(), this);
     }
     if (!provider) {
       provider = CanvasResourceProvider::CreateBitmapProvider(

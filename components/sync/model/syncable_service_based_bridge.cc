@@ -14,6 +14,7 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/memory_usage_estimator.h"
 #include "base/trace_event/trace_event.h"
@@ -320,15 +321,22 @@ SyncableServiceBasedBridge::GetAllDataForDebugging() {
 }
 
 std::string SyncableServiceBasedBridge::GetClientTag(
-    const EntityData& entity_data) {
+    const EntityData& entity_data) const {
   // Not supported as per SupportsGetClientTag().
   NOTREACHED();
 }
 
 std::string SyncableServiceBasedBridge::GetStorageKey(
-    const EntityData& entity_data) {
+    const EntityData& entity_data) const {
   // Not supported as per SupportsGetStorageKey().
   NOTREACHED();
+}
+
+bool SyncableServiceBasedBridge::IsEntityDataValid(
+    const EntityData& entity_data) const {
+  // Implementation is trivial as this bridge is meant to cache locally a copy
+  // of the server-side data in proto format as-is.
+  return true;
 }
 
 bool SyncableServiceBasedBridge::SupportsGetClientTag() const {
@@ -485,7 +493,17 @@ void SyncableServiceBasedBridge::OnSyncableServiceReady(
           /*min=*/base::Milliseconds(1),
           /*max=*/base::Seconds(60), /*buckets=*/50);
     }
+  } else {
+    // If the metadata was empty or invalid, then the metadata should have been
+    // cleared by the processor. Consequently, the syncable service should also
+    // be informed to clear any stale data.
+    syncable_service_->StayStoppedAndMaybeClearData(type_);
   }
+  base::UmaHistogramBoolean(
+      base::StrCat(
+          {"Sync.SyncableService.MaybeClearDataIfMetadataEmptyOrInvalid.",
+           DataTypeToHistogramSuffix(type_)}),
+      !change_processor()->IsTrackingMetadata());
 }
 
 std::optional<ModelError> SyncableServiceBasedBridge::StartSyncableService() {

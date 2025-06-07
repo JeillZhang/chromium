@@ -85,13 +85,6 @@ enum class LensEntrypoint;
 - (void)lensController:(id<ChromeLensViewFinderController>)lensController
     didSelectImageWithMetadata:(id<LensImageMetadata>)imageMetadata;
 
-// Deprecated. Use `lensController:didSelectImageWithMetadata:`
-// Called when the user picked or captured an image.
-- (void)lensController:(id<ChromeLensViewFinderController>)lensController
-             didSelectImage:(UIImage*)image
-    serializedViewportState:(NSString*)viewportState
-              isCameraImage:(BOOL)isCameraImage;
-
 @end
 
 // A controller that can facilitate communication with the downstream LVF
@@ -111,8 +104,14 @@ enum class LensEntrypoint;
 // torn down to restore.
 - (void)buildCaptureInfrastructureForTranslate;
 
+// Deprecated. Use `tearDownCaptureInfrastructureWithPlaceholder:`
 // Tears down the live camera preview and destroys the UI.
 - (void)tearDownCaptureInfrastructure;
+
+// Tears down the live camera preview and destroys the capture UI.
+// This method is invoked with a boolean indicating whether a placeholder UI
+// should be displayed after tearing down the capture infrastructure.
+- (void)tearDownCaptureInfrastructureWithPlaceholder:(BOOL)showPlaceholder;
 
 @end
 

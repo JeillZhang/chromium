@@ -4,6 +4,8 @@
 
 #import "ios/chrome/browser/omnibox/model/omnibox_autocomplete_controller.h"
 
+#import "base/functional/callback.h"
+#import "base/run_loop.h"
 #import "base/test/task_environment.h"
 #import "base/time/time.h"
 #import "components/omnibox/browser/autocomplete_classifier.h"
@@ -13,12 +15,13 @@
 #import "components/omnibox/browser/autocomplete_result.h"
 #import "components/omnibox/browser/fake_autocomplete_provider_client.h"
 #import "components/omnibox/browser/omnibox_client.h"
-#import "components/omnibox/browser/omnibox_controller.h"
-#import "components/omnibox/browser/omnibox_edit_model.h"
 #import "components/omnibox/browser/test_omnibox_client.h"
 #import "components/open_from_clipboard/fake_clipboard_recent_content.h"
 #import "components/prefs/testing_pref_service.h"
-#import "ios/chrome/browser/omnibox/model/omnibox_popup_controller.h"
+#import "ios/chrome/browser/omnibox/model/omnibox_autocomplete_controller_delegate.h"
+#import "ios/chrome/browser/omnibox/model/omnibox_controller_ios.h"
+#import "ios/chrome/browser/omnibox/model/omnibox_edit_model_ios.h"
+#import "ios/chrome/browser/omnibox/model/omnibox_text_model.h"
 #import "ios/chrome/browser/shared/model/prefs/browser_prefs.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/test/testing_application_context.h"
@@ -29,6 +32,9 @@
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/gtest_support.h"
+#import "ui/gfx/image/image.h"
+#import "ui/gfx/image/image_skia.h"
+#import "ui/gfx/image/image_unittest_util.h"
 
 using testing::AtMost;
 
@@ -67,10 +73,12 @@ class MockAutocompleteController : public AutocompleteController {
 };
 
 /// A mock class for OmniboxEditModel.
-class MockOmniboxEditModel : public OmniboxEditModel {
+class MockOmniboxEditModel : public OmniboxEditModelIOS {
  public:
-  MockOmniboxEditModel(OmniboxController* controller)
-      : OmniboxEditModel(controller, nullptr),
+  MockOmniboxEditModel(OmniboxControllerIOS* controller,
+                       OmniboxViewIOS* view,
+                       OmniboxTextModel* text_model)
+      : OmniboxEditModelIOS(controller, view, text_model),
         last_opened_selection(OmniboxPopupSelection(UINT_MAX)) {}
   MockOmniboxEditModel(const MockOmniboxEditModel&) = delete;
   MockOmniboxEditModel& operator=(const MockOmniboxEditModel&) = delete;
@@ -80,9 +88,14 @@ class MockOmniboxEditModel : public OmniboxEditModel {
                      base::TimeTicks timestamp,
                      WindowOpenDisposition disposition) override {
     last_opened_selection = selection;
+    if (open_selection_closure) {
+      open_selection_closure.Run();
+      open_selection_closure.Reset();
+    }
   }
 
   OmniboxPopupSelection last_opened_selection;
+  base::RepeatingClosure open_selection_closure;
 };
 
 }  // namespace
@@ -98,26 +111,27 @@ class OmniboxAutocompleteControllerTest : public PlatformTest {
     RegisterLocalStatePrefs(local_state_->registry());
     TestingApplicationContext::GetGlobal()->SetLocalState(local_state_.get());
 
-    auto omnibox_client = std::make_unique<TestOmniboxClient>();
-    omnibox_controller_ = std::make_unique<OmniboxController>(
-        /*view=*/nullptr, std::move(omnibox_client));
+    omnibox_client_ = std::make_unique<TestOmniboxClient>();
+    omnibox_controller_ =
+        std::make_unique<OmniboxControllerIOS>(omnibox_client_.get());
 
     auto autocomplete = std::make_unique<MockAutocompleteController>();
     autocomplete_controller_ = autocomplete.get();
     omnibox_controller_->SetAutocompleteControllerForTesting(
         std::move(autocomplete));
 
-    auto edit_model =
-        std::make_unique<MockOmniboxEditModel>(omnibox_controller_.get());
-    omnibox_edit_model_ = edit_model.get();
-    omnibox_controller_->SetEditModelForTesting(std::move(edit_model));
+    omnibox_text_model_ = std::make_unique<OmniboxTextModel>();
+
+    omnibox_edit_model_ = std::make_unique<MockOmniboxEditModel>(
+        omnibox_controller_.get(), nullptr, omnibox_text_model_.get());
+
+    controller_delegate_ =
+        OCMProtocolMock(@protocol(OmniboxAutocompleteControllerDelegate));
 
     controller_ = [[OmniboxAutocompleteController alloc]
         initWithOmniboxController:omnibox_controller_.get()
-                   omniboxViewIOS:nullptr];
-
-    popup_ = [OCMockObject mockForClass:OmniboxPopupController.class];
-    controller_.omniboxPopupController = popup_;
+                 omniboxEditModel:omnibox_edit_model_.get()];
+    controller_.delegate = controller_delegate_;
   }
 
   ~OmniboxAutocompleteControllerTest() override {
@@ -126,7 +140,9 @@ class OmniboxAutocompleteControllerTest : public PlatformTest {
     autocomplete_controller_ = nullptr;
     omnibox_edit_model_ = nullptr;
     omnibox_controller_ = nullptr;
-    popup_ = nil;
+    omnibox_client_ = nullptr;
+    omnibox_text_model_ = nullptr;
+    controller_delegate_ = nil;
     TestingApplicationContext::GetGlobal()->SetLocalState(nullptr);
     local_state_.reset();
   }
@@ -152,10 +168,12 @@ class OmniboxAutocompleteControllerTest : public PlatformTest {
 
   OmniboxAutocompleteController* controller_;
   raw_ptr<MockAutocompleteController> autocomplete_controller_;
-  raw_ptr<MockOmniboxEditModel> omnibox_edit_model_;
+  std::unique_ptr<MockOmniboxEditModel> omnibox_edit_model_;
+  std::unique_ptr<TestOmniboxClient> omnibox_client_;
   raw_ptr<FakeClipboardRecentContent> clipboard_;
-  std::unique_ptr<OmniboxController> omnibox_controller_;
-  id popup_;
+  std::unique_ptr<OmniboxControllerIOS> omnibox_controller_;
+  std::unique_ptr<OmniboxTextModel> omnibox_text_model_;
+  id controller_delegate_;
 };
 
 // Custom matcher for AutocompleteMatch
@@ -178,12 +196,13 @@ TEST_F(OmniboxAutocompleteControllerTest, AddFakeMatches) {
 #pragma mark - Request suggestion
 
 // Tests requesting result when there are none still calls
-// updateWithSortedResults.
+// the delegate to update the suggestions groups.
 TEST_F(OmniboxAutocompleteControllerTest, RequestResultEmpty) {
-  OCMExpect(
-      [popup_ updateWithSortedResults:autocomplete_controller_->result()]);
-  [controller_ requestResultsWithVisibleSuggestionCount:0];
-  EXPECT_OCMOCK_VERIFY(popup_);
+  OCMExpect([controller_delegate_ omniboxAutocompleteController:[OCMArg any]
+                                     didUpdateSuggestionsGroups:[OCMArg any]]);
+  [controller_ requestSuggestionsWithVisibleSuggestionCount:0];
+
+  EXPECT_OCMOCK_VERIFY(controller_delegate_);
 }
 
 // Tests requesting result with all of them visible.
@@ -195,13 +214,13 @@ TEST_F(OmniboxAutocompleteControllerTest, RequestResultsAllVisible) {
               GroupSuggestionsBySearchVsURL(
                   1, autocomplete_controller_->result().size()));
 
-  OCMExpect(
-      [popup_ updateWithSortedResults:autocomplete_controller_->result()]);
+  OCMExpect([controller_delegate_ omniboxAutocompleteController:[OCMArg any]
+                                     didUpdateSuggestionsGroups:[OCMArg any]]);
 
   // Request results with everything visible.
-  [controller_ requestResultsWithVisibleSuggestionCount:0];
+  [controller_ requestSuggestionsWithVisibleSuggestionCount:0];
 
-  EXPECT_OCMOCK_VERIFY(popup_);
+  EXPECT_OCMOCK_VERIFY(controller_delegate_);
 }
 
 // Tests requesting result with more suggestions visible than available.
@@ -213,13 +232,13 @@ TEST_F(OmniboxAutocompleteControllerTest, RequestResultVisibleOverflow) {
               GroupSuggestionsBySearchVsURL(
                   1, autocomplete_controller_->result().size()));
 
-  OCMExpect(
-      [popup_ updateWithSortedResults:autocomplete_controller_->result()]);
+  OCMExpect([controller_delegate_ omniboxAutocompleteController:[OCMArg any]
+                                     didUpdateSuggestionsGroups:[OCMArg any]]);
 
   // Request results with more visible than available.
-  [controller_ requestResultsWithVisibleSuggestionCount:100];
+  [controller_ requestSuggestionsWithVisibleSuggestionCount:100];
 
-  EXPECT_OCMOCK_VERIFY(popup_);
+  EXPECT_OCMOCK_VERIFY(controller_delegate_);
 }
 
 // Tests requesting result with part of them visible.
@@ -238,13 +257,13 @@ TEST_F(OmniboxAutocompleteControllerTest, RequestResultPartVisible) {
   EXPECT_CALL(*autocomplete_controller_,
               GroupSuggestionsBySearchVsURL(visible_count, result_size));
 
-  OCMExpect(
-      [popup_ updateWithSortedResults:autocomplete_controller_->result()]);
+  OCMExpect([controller_delegate_ omniboxAutocompleteController:[OCMArg any]
+                                     didUpdateSuggestionsGroups:[OCMArg any]]);
 
   // Request results with everything visible.
-  [controller_ requestResultsWithVisibleSuggestionCount:visible_count];
+  [controller_ requestSuggestionsWithVisibleSuggestionCount:visible_count];
 
-  EXPECT_OCMOCK_VERIFY(popup_);
+  EXPECT_OCMOCK_VERIFY(controller_delegate_);
 }
 
 #pragma mark - Logging
@@ -308,4 +327,59 @@ TEST_F(OmniboxAutocompleteControllerTest, OpenClipboardURLMatch) {
 
   // Expect the clipboard content to be loaded.
   EXPECT_EQ(LastOpenedMatch().destination_url, pasteboard_url);
+}
+
+// Tests opening a clipboard Text match.
+TEST_F(OmniboxAutocompleteControllerTest, OpenClipboardTextMatch) {
+  // Create an empty clipboard match in autocompleteController.
+  AutocompleteMatch clipboard_match = CreateAutocompleteMatch(
+      "Clipboard text match", AutocompleteMatchType::CLIPBOARD_TEXT, false,
+      false, 100, std::nullopt);
+  clipboard_match.destination_url = GURL();
+  autocomplete_controller_->SetAutocompleteMatches({clipboard_match});
+
+  // Set the clipboard content.
+  std::u16string pasteboard_text = u"search terms";
+  clipboard_->SetClipboardText(pasteboard_text, base::TimeDelta::Min());
+
+  // Open the clipboard match.
+  [controller_ selectMatchForOpening:clipboard_match
+                               inRow:0
+                              openIn:WindowOpenDisposition::CURRENT_TAB];
+
+  // Expect the clipboard content to be loaded.
+  EXPECT_EQ(LastOpenedMatch().fill_into_edit, pasteboard_text);
+}
+
+// Tests opening a clipboard Image match.
+TEST_F(OmniboxAutocompleteControllerTest, OpenClipboardImageMatch) {
+  // Create an empty clipboard match in autocompleteController.
+  AutocompleteMatch clipboard_match = CreateAutocompleteMatch(
+      "Clipboard image match", AutocompleteMatchType::CLIPBOARD_IMAGE, false,
+      false, 100, std::nullopt);
+  clipboard_match.destination_url = GURL();
+  autocomplete_controller_->SetAutocompleteMatches({clipboard_match});
+
+  // Set the clipboard content.
+  gfx::Image pasteboard_image =
+      gfx::test::CreateImage(/*width=*/10, /*height=*/10);
+  clipboard_->SetClipboardImage(pasteboard_image, base::TimeDelta::Min());
+
+  // Setup the OpenSelection waiter.
+  base::RunLoop open_selection_waiter;
+  omnibox_edit_model_->open_selection_closure =
+      open_selection_waiter.QuitClosure();
+
+  // Open the clipboard match.
+  [controller_ selectMatchForOpening:clipboard_match
+                               inRow:0
+                              openIn:WindowOpenDisposition::CURRENT_TAB];
+
+  // Wait for the image match.
+  open_selection_waiter.Run();
+
+  // Expect the clipboard content to be loaded.
+  EXPECT_EQ(LastOpenedMatch().type, AutocompleteMatchType::CLIPBOARD_IMAGE);
+  EXPECT_FALSE(LastOpenedMatch().post_content->first.empty());
+  EXPECT_FALSE(LastOpenedMatch().post_content->second.empty());
 }

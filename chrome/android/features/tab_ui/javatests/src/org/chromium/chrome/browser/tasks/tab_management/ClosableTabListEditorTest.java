@@ -22,7 +22,6 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.Callback;
-import org.chromium.base.SysUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.util.Batch;
@@ -32,6 +31,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab_ui.RecyclerViewPosition;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.tasks.tab_management.TabListEditorCoordinator.CreationMode;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -98,7 +98,7 @@ public class ClosableTabListEditorTest {
                                     currentTabGroupModelFilterSupplier,
                                     sActivityTestRule.getActivity().getTabContentManager(),
                                     mSetRecyclerViewPosition,
-                                    getMode(),
+                                    TabListCoordinator.TabListMode.GRID,
                                     /* displayGroups= */ true,
                                     mSnackbarManager,
                                     /* bottomSheetController= */ null,
@@ -106,7 +106,8 @@ public class ClosableTabListEditorTest {
                                     /* gridCardOnClickListenerProvider= */ null,
                                     mModalDialogManager,
                                     /* desktopWindowStateManager= */ null,
-                                    mEdgeToEdgeSupplier);
+                                    mEdgeToEdgeSupplier,
+                                    CreationMode.FULL_SCREEN);
 
                     mTabListEditorController = mTabListEditorCoordinator.getController();
                     mTabListEditorLayout =
@@ -141,12 +142,6 @@ public class ClosableTabListEditorTest {
                 () -> {
                     mSnackbarManager.dismissAllSnackbars();
                 });
-    }
-
-    private @TabListCoordinator.TabListMode int getMode() {
-        return SysUtils.isLowEndDevice()
-                ? TabListCoordinator.TabListMode.LIST
-                : TabListCoordinator.TabListMode.GRID;
     }
 
     private void prepareBlankTab(int num, boolean isIncognito) {
@@ -195,7 +190,8 @@ public class ClosableTabListEditorTest {
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    mTabListEditorController.show(tabs, /* recyclerViewPosition= */ null);
+                    mTabListEditorController.show(
+                            tabs, new ArrayList<>(), /* recyclerViewPosition= */ null);
                     mTabListEditorController.setToolbarTitle("testing");
                 });
 
@@ -210,7 +206,8 @@ public class ClosableTabListEditorTest {
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    mTabListEditorController.show(tabs, /* recyclerViewPosition= */ null);
+                    mTabListEditorController.show(
+                            tabs, new ArrayList<>(), /* recyclerViewPosition= */ null);
                     mTabListEditorController.setNavigationProvider(mNavigationProvider);
                     mTabListEditorController.handleBackPress();
                 });
@@ -233,7 +230,8 @@ public class ClosableTabListEditorTest {
     private void showTabListEditor(List<Tab> tabs) {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    mTabListEditorController.show(tabs, /* recyclerViewPosition= */ null);
+                    mTabListEditorController.show(
+                            tabs, new ArrayList<>(), /* recyclerViewPosition= */ null);
                 });
     }
 }

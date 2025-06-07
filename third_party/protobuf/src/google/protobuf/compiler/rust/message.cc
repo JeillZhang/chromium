@@ -7,11 +7,8 @@
 
 #include "google/protobuf/compiler/rust/message.h"
 
-#include <string>
-
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/compiler/cpp/helpers.h"
 #include "google/protobuf/compiler/cpp/names.h"
@@ -114,7 +111,7 @@ void MessageMutClear(Context& ctx, const Descriptor& msg) {
   }
 }
 
-void MessageClearAndParse(Context& ctx, const Descriptor& msg) {
+void MessageMutClearAndParse(Context& ctx, const Descriptor& msg) {
   switch (ctx.opts().kernel) {
     case Kernel::kCpp:
       ctx.Emit({},
@@ -135,7 +132,7 @@ void MessageClearAndParse(Context& ctx, const Descriptor& msg) {
     case Kernel::kUpb:
       ctx.Emit(
           R"rs(
-        let mut msg = Self::new();
+        $pb$::Clear::clear(self);
 
         // SAFETY:
         // - `data.as_ptr()` is valid to read for `data.len()`
@@ -144,19 +141,13 @@ void MessageClearAndParse(Context& ctx, const Descriptor& msg) {
         let status = unsafe {
           $pbr$::wire::decode(
               data,
-              msg.raw_msg(),
+              self.raw_msg(),
               <Self as $pbr$::AssociatedMiniTable>::mini_table(),
-              msg.arena())
+              self.arena())
         };
         match status {
-          Ok(_) => {
-            //~ This swap causes the old self.inner.arena to be moved into `msg`
-            //~ which we immediately drop, which will release any previous
-            //~ message that was held here.
-            $std$::mem::swap(self, &mut msg);
-            Ok(())
-          }
-          Err(_) => Err($pb$::ParseError)
+          Ok(_) => Ok(()),
+          Err(_) => Err($pb$::ParseError),
         }
       )rs");
       return;
@@ -193,32 +184,13 @@ void MessageDebug(Context& ctx, const Descriptor& msg) {
 
 void CppMessageExterns(Context& ctx, const Descriptor& msg) {
   ABSL_CHECK(ctx.is_cpp());
+
   ctx.Emit(
       {{"new_thunk", ThunkName(ctx, msg, "new")},
-       {"default_instance_thunk", ThunkName(ctx, msg, "default_instance")},
-       {"repeated_new_thunk", ThunkName(ctx, msg, "repeated_new")},
-       {"repeated_free_thunk", ThunkName(ctx, msg, "repeated_free")},
-       {"repeated_len_thunk", ThunkName(ctx, msg, "repeated_len")},
-       {"repeated_get_thunk", ThunkName(ctx, msg, "repeated_get")},
-       {"repeated_get_mut_thunk", ThunkName(ctx, msg, "repeated_get_mut")},
-       {"repeated_add_thunk", ThunkName(ctx, msg, "repeated_add")},
-       {"repeated_clear_thunk", ThunkName(ctx, msg, "repeated_clear")},
-       {"repeated_copy_from_thunk", ThunkName(ctx, msg, "repeated_copy_from")},
-       {"repeated_reserve_thunk", ThunkName(ctx, msg, "repeated_reserve")},
-       {"map_size_info_thunk", ThunkName(ctx, msg, "size_info")}},
+       {"default_instance_thunk", ThunkName(ctx, msg, "default_instance")}},
       R"rs(
       fn $new_thunk$() -> $pbr$::RawMessage;
       fn $default_instance_thunk$() -> $pbr$::RawMessage;
-      fn $repeated_new_thunk$() -> $pbr$::RawRepeatedField;
-      fn $repeated_free_thunk$(raw: $pbr$::RawRepeatedField);
-      fn $repeated_len_thunk$(raw: $pbr$::RawRepeatedField) -> usize;
-      fn $repeated_add_thunk$(raw: $pbr$::RawRepeatedField) -> $pbr$::RawMessage;
-      fn $repeated_get_thunk$(raw: $pbr$::RawRepeatedField, index: usize) -> $pbr$::RawMessage;
-      fn $repeated_get_mut_thunk$(raw: $pbr$::RawRepeatedField, index: usize) -> $pbr$::RawMessage;
-      fn $repeated_clear_thunk$(raw: $pbr$::RawRepeatedField);
-      fn $repeated_copy_from_thunk$(dst: $pbr$::RawRepeatedField, src: $pbr$::RawRepeatedField);
-      fn $repeated_reserve_thunk$(raw: $pbr$::RawRepeatedField, additional: usize);
-      fn $map_size_info_thunk$(i: $pbr$::MapNodeSizeInfoIndex) -> $pbr$::MapNodeSizeInfo;
     )rs");
 }
 
@@ -323,11 +295,25 @@ void UpbGeneratedMessageTraitImpls(Context& ctx, const Descriptor& msg) {
   }
 }
 
-void MessageMutMergeFrom(Context& ctx, const Descriptor& msg) {
+void MessageMutTakeCopyMergeFrom(Context& ctx, const Descriptor& msg) {
   switch (ctx.opts().kernel) {
     case Kernel::kCpp:
-      ctx.Emit({},
-               R"rs(
+      ctx.Emit(R"rs(
+          impl $pb$::TakeFrom for $Msg$Mut<'_> {
+            fn take_from(&mut self, mut src: impl $pb$::AsMut<MutProxied = $Msg$>) {
+              //~ TODO: b/393559271 - Optimize this copy out.
+              let mut src = src.as_mut();
+              $pb$::CopyFrom::copy_from(self, $pb$::AsView::as_view(&src));
+              $pb$::Clear::clear(&mut src);
+            }
+          }
+
+          impl $pb$::CopyFrom for $Msg$Mut<'_> {
+            fn copy_from(&mut self, src: impl $pb$::AsView<Proxied = $Msg$>) {
+              unsafe { $pbr$::proto2_rust_Message_copy_from(self.raw_msg(), src.as_view().raw_msg()) };
+            }
+          }
+
           impl $pb$::MergeFrom for $Msg$Mut<'_> {
             fn merge_from(&mut self, src: impl $pb$::AsView<Proxied = $Msg$>) {
               // SAFETY: self and src are both valid `$Msg$`s.
@@ -341,6 +327,31 @@ void MessageMutMergeFrom(Context& ctx, const Descriptor& msg) {
     case Kernel::kUpb:
       ctx.Emit(
           R"rs(
+          impl $pb$::TakeFrom for $Msg$Mut<'_> {
+            fn take_from(&mut self, mut src: impl $pb$::AsMut<MutProxied = $Msg$>) {
+              let mut src = src.as_mut();
+              //~ TODO: b/393559271 - Optimize this copy out.
+              $pb$::CopyFrom::copy_from(self, $pb$::AsView::as_view(&src));
+              $pb$::Clear::clear(&mut src);
+            }
+          }
+
+          impl $pb$::CopyFrom for $Msg$Mut<'_> {
+            fn copy_from(&mut self, src: impl $pb$::AsView<Proxied = $Msg$>) {
+              // SAFETY: self and src are both valid `$Msg$`s associated with
+              // `Self::mini_table()`.
+              unsafe {
+                assert!(
+                  $pbr$::upb_Message_DeepCopy(
+                    self.raw_msg(),
+                    src.as_view().raw_msg(),
+                    <Self as $pbr$::AssociatedMiniTable>::mini_table(),
+                    self.arena().raw())
+                );
+              }
+            }
+          }
+
           impl $pb$::MergeFrom for $Msg$Mut<'_> {
             fn merge_from(&mut self, src: impl $pb$::AsView<Proxied = $Msg$>) {
               // SAFETY: self and src are both valid `$Msg$`s.
@@ -367,18 +378,6 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
       ctx.Emit(
           {
               {"Msg", RsSafeName(msg.name())},
-              {"repeated_len_thunk", ThunkName(ctx, msg, "repeated_len")},
-              {"repeated_get_thunk", ThunkName(ctx, msg, "repeated_get")},
-              {"repeated_get_mut_thunk",
-               ThunkName(ctx, msg, "repeated_get_mut")},
-              {"repeated_add_thunk", ThunkName(ctx, msg, "repeated_add")},
-              {"repeated_new_thunk", ThunkName(ctx, msg, "repeated_new")},
-              {"repeated_free_thunk", ThunkName(ctx, msg, "repeated_free")},
-              {"repeated_clear_thunk", ThunkName(ctx, msg, "repeated_clear")},
-              {"repeated_copy_from_thunk",
-               ThunkName(ctx, msg, "repeated_copy_from")},
-              {"repeated_reserve_thunk",
-               ThunkName(ctx, msg, "repeated_reserve")},
           },
           R"rs(
         unsafe impl $pb$::ProxiedInRepeated for $Msg$ {
@@ -387,8 +386,7 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
             // - The thunk returns an unaliased and valid `RepeatedPtrField*`
             unsafe {
               $pb$::Repeated::from_inner($pbi$::Private,
-                $pbr$::InnerRepeated::from_raw($repeated_new_thunk$()
-                )
+                $pbr$::InnerRepeated::from_raw($pbr$::proto2_rust_RepeatedField_Message_new())
               )
             }
           }
@@ -396,12 +394,12 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
           unsafe fn repeated_free(_private: $pbi$::Private, f: &mut $pb$::Repeated<Self>) {
             // SAFETY
             // - `f.raw()` is a valid `RepeatedPtrField*`.
-            unsafe { $repeated_free_thunk$(f.as_view().as_raw($pbi$::Private)) }
+            unsafe { $pbr$::proto2_rust_RepeatedField_Message_free(f.as_view().as_raw($pbi$::Private)) }
           }
 
           fn repeated_len(f: $pb$::View<$pb$::Repeated<Self>>) -> usize {
             // SAFETY: `f.as_raw()` is a valid `RepeatedPtrField*`.
-            unsafe { $repeated_len_thunk$(f.as_raw($pbi$::Private)) }
+            unsafe { $pbr$::proto2_rust_RepeatedField_Message_size(f.as_raw($pbi$::Private)) }
           }
 
           unsafe fn repeated_set_unchecked(
@@ -415,7 +413,7 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
             // - `v.raw_msg()` is a valid `const Message&`.
             unsafe {
               $pbr$::proto2_rust_Message_copy_from(
-                $repeated_get_mut_thunk$(f.as_raw($pbi$::Private), i),
+                $pbr$::proto2_rust_RepeatedField_Message_get_mut(f.as_raw($pbi$::Private), i),
                 v.into_proxied($pbi$::Private).raw_msg(),
               );
             }
@@ -428,13 +426,25 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
             // SAFETY:
             // - `f.as_raw()` is a valid `const RepeatedPtrField&`.
             // - `i < len(f)` is promised by caller.
-            let msg = unsafe { $repeated_get_thunk$(f.as_raw($pbi$::Private), i) };
+            let msg = unsafe { $pbr$::proto2_rust_RepeatedField_Message_get(f.as_raw($pbi$::Private), i) };
             $pb$::View::<Self>::new($pbi$::Private, msg)
           }
+
+          unsafe fn repeated_get_mut_unchecked(
+            mut f: $pb$::Mut<$pb$::Repeated<Self>>,
+            i: usize,
+          ) -> $pb$::Mut<Self> {
+            // SAFETY:
+            // - `f.as_raw()` is a valid `RepeatedPtrField*`.
+            // - `i < len(f)` is promised by caller.
+            let msg = unsafe { $pbr$::proto2_rust_RepeatedField_Message_get_mut(f.as_raw($pbi$::Private), i) };
+            $pb$::Mut::<Self> { inner: $pbr$::MutatorMessageRef::from_raw_msg(&msg) }
+          }
+
           fn repeated_clear(mut f: $pb$::Mut<$pb$::Repeated<Self>>) {
             // SAFETY:
             // - `f.as_raw()` is a valid `RepeatedPtrField*`.
-            unsafe { $repeated_clear_thunk$(f.as_raw($pbi$::Private)) };
+            unsafe { $pbr$::proto2_rust_RepeatedField_Message_clear(f.as_raw($pbi$::Private)) };
           }
 
           fn repeated_push(mut f: $pb$::Mut<$pb$::Repeated<Self>>, v: impl $pb$::IntoProxied<Self>) {
@@ -442,7 +452,8 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
             // - `f.as_raw()` is a valid `RepeatedPtrField*`.
             // - `v.raw_msg()` is a valid `const Message&`.
             unsafe {
-              let new_elem = $repeated_add_thunk$(f.as_raw($pbi$::Private));
+              let prototype = <$Msg$View as $std$::default::Default>::default().raw_msg();
+              let new_elem = $pbr$::proto2_rust_RepeatedField_Message_add(f.as_raw($pbi$::Private), prototype);
               $pbr$::proto2_rust_Message_copy_from(new_elem, v.into_proxied($pbi$::Private).raw_msg());
             }
           }
@@ -455,7 +466,7 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
             // - `dest.as_raw()` is a valid `RepeatedPtrField*`.
             // - `src.as_raw()` is a valid `const RepeatedPtrField&`.
             unsafe {
-              $repeated_copy_from_thunk$(dest.as_raw($pbi$::Private), src.as_raw($pbi$::Private));
+              $pbr$::proto2_rust_RepeatedField_Message_copy_from(dest.as_raw($pbi$::Private), src.as_raw($pbi$::Private));
             }
           }
 
@@ -465,7 +476,7 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
           ) {
             // SAFETY:
             // - `f.as_raw()` is a valid `RepeatedPtrField*`.
-            unsafe { $repeated_reserve_thunk$(f.as_raw($pbi$::Private), additional) }
+            unsafe { $pbr$::proto2_rust_RepeatedField_Message_reserve(f.as_raw($pbi$::Private), additional) }
           }
         }
       )rs");
@@ -526,6 +537,18 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
             $pb$::View::<Self>::new($pbi$::Private, msg_ptr)
           }
 
+          unsafe fn repeated_get_mut_unchecked(
+            mut f: $pb$::Mut<$pb$::Repeated<Self>>,
+            i: usize,
+          ) -> $pb$::Mut<Self> {
+            // SAFETY:
+            // - `f.as_raw()` is a valid `upb_Array*`.
+            // - `f` is a an array of message-valued elements.
+            // - `i < len(f)` is promised by the caller.
+            let msg_ptr = unsafe { $pbr$::upb_Array_GetMutable(f.as_raw($pbi$::Private), i) };
+            unsafe {$pb$::Mut::<Self> { inner: $pbr$::MutatorMessageRef::from_raw_parts(msg_ptr, f.arena($pbi$::Private)) } }
+          }
+
           fn repeated_clear(mut f: $pb$::Mut<$pb$::Repeated<Self>>) {
             // SAFETY:
             // - `f.as_raw()` is a valid `upb_Array*`.
@@ -575,126 +598,35 @@ void MessageProxiedInRepeated(Context& ctx, const Descriptor& msg) {
   ABSL_LOG(FATAL) << "unreachable";
 }
 
-void MessageProxiedInMapValue(Context& ctx, const Descriptor& msg) {
+void TypeConversions(Context& ctx, const Descriptor& msg) {
   switch (ctx.opts().kernel) {
     case Kernel::kCpp:
-      for (const auto& t : kMapKeyTypes) {
-        ctx.Emit(
-            {{"map_size_info_thunk", ThunkName(ctx, msg, "size_info")},
-             {"map_insert",
-              absl::StrCat("proto2_rust_map_insert_", t.thunk_ident)},
-             {"map_remove",
-              absl::StrCat("proto2_rust_map_remove_", t.thunk_ident)},
-             {"map_get", absl::StrCat("proto2_rust_map_get_", t.thunk_ident)},
-             {"map_iter_get",
-              absl::StrCat("proto2_rust_map_iter_get_", t.thunk_ident)},
-             {"key_expr", t.rs_to_ffi_key_expr},
-             {"key_is_string",
-              t.thunk_ident == "ProtoString" ? "true" : "false"},
-             io::Printer::Sub("ffi_key_t", [&] { ctx.Emit(t.rs_ffi_key_t); })
-                 .WithSuffix(""),
-             io::Printer::Sub("key_t", [&] { ctx.Emit(t.rs_key_t); })
-                 .WithSuffix(""),
-             io::Printer::Sub("from_ffi_key_expr",
-                              [&] { ctx.Emit(t.rs_from_ffi_key_expr); })
-                 .WithSuffix("")},
-            R"rs(
-            impl $pb$::ProxiedInMapValue<$key_t$> for $Msg$ {
-                fn map_new(_private: $pbi$::Private) -> $pb$::Map<$key_t$, Self> {
-                    unsafe {
-                        $pb$::Map::from_inner(
-                            $pbi$::Private,
-                            $pbr$::InnerMap::new($pbr$::proto2_rust_map_new())
-                        )
+      ctx.Emit(
+          R"rs(
+          impl $pbr$::CppMapTypeConversions for $Msg$ {
+              fn get_prototype() -> $pbr$::MapValue {
+                  $pbr$::MapValue::make_message(<$Msg$View as $std$::default::Default>::default().raw_msg())
+              }
+
+              fn to_map_value(self) -> $pbr$::MapValue {
+                  $pbr$::MapValue::make_message(std::mem::ManuallyDrop::new(self).raw_msg())
+              }
+
+              unsafe fn from_map_value<'b>(value: $pbr$::MapValue) -> $Msg$View<'b> {
+                  debug_assert_eq!(value.tag, $pbr$::MapValueTag::Message);
+                  unsafe { $Msg$View::new($pbi$::Private, value.val.m) }
+              }
+
+              unsafe fn mut_from_map_value<'b>(value: $pbr$::MapValue) -> $Msg$Mut<'b> {
+                  debug_assert_eq!(value.tag, $pbr$::MapValueTag::Message);
+                  unsafe {
+                    $Msg$Mut {
+                      inner: $pbr$::MutatorMessageRef::from_raw_msg(&value.val.m)
                     }
-                }
-
-                unsafe fn map_free(_private: $pbi$::Private, map: &mut $pb$::Map<$key_t$, Self>) {
-                    use $pbr$::MapNodeSizeInfoIndexForType;
-                    unsafe { $pbr$::proto2_rust_map_free(map.as_raw($pbi$::Private), $key_is_string$, $map_size_info_thunk$($key_t$::SIZE_INFO_INDEX)); }
-                }
-
-                fn map_clear(mut map: $pb$::MapMut<$key_t$, Self>) {
-                    use $pbr$::MapNodeSizeInfoIndexForType;
-                    unsafe { $pbr$::proto2_rust_map_clear(map.as_raw($pbi$::Private), $key_is_string$, $map_size_info_thunk$($key_t$::SIZE_INFO_INDEX)); }
-                }
-
-                fn map_len(map: $pb$::MapView<$key_t$, Self>) -> usize {
-                    unsafe { $pbr$::proto2_rust_map_size(map.as_raw($pbi$::Private)) }
-                }
-
-                fn map_insert(mut map: $pb$::MapMut<$key_t$, Self>, key: $pb$::View<'_, $key_t$>, value: impl $pb$::IntoProxied<Self>) -> bool {
-                    use $pbr$::MapNodeSizeInfoIndexForType;
-                    unsafe {
-                        $pbr$::$map_insert$(
-                            map.as_raw($pbi$::Private),
-                            $map_size_info_thunk$($key_t$::SIZE_INFO_INDEX),
-                            $key_expr$,
-                            value.into_proxied($pbi$::Private).raw_msg())
-                    }
-                }
-
-                fn map_get<'a>(map: $pb$::MapView<'a, $key_t$, Self>, key: $pb$::View<'_, $key_t$>) -> $Option$<$pb$::View<'a, Self>> {
-                    use $pbr$::MapNodeSizeInfoIndexForType;
-                    let key = $key_expr$;
-                    let mut value = $std$::mem::MaybeUninit::uninit();
-                    let found = unsafe {
-                        $pbr$::$map_get$(
-                            map.as_raw($pbi$::Private),
-                            $map_size_info_thunk$($key_t$::SIZE_INFO_INDEX),
-                            key,
-                            value.as_mut_ptr())
-                    };
-                    if !found {
-                        return None;
-                    }
-                    Some($Msg$View::new($pbi$::Private, unsafe { value.assume_init() }))
-                }
-
-                fn map_remove(mut map: $pb$::MapMut<$key_t$, Self>, key: $pb$::View<'_, $key_t$>) -> bool {
-                    use $pbr$::MapNodeSizeInfoIndexForType;
-                    unsafe {
-                        $pbr$::$map_remove$(
-                            map.as_raw($pbi$::Private),
-                            $map_size_info_thunk$($key_t$::SIZE_INFO_INDEX),
-                            $key_expr$)
-                    }
-                }
-
-                fn map_iter(map: $pb$::MapView<$key_t$, Self>) -> $pb$::MapIter<$key_t$, Self> {
-                    // SAFETY:
-                    // - The backing map for `map.as_raw` is valid for at least '_.
-                    // - A View that is live for '_ guarantees the backing map is unmodified for '_.
-                    // - The `iter` function produces an iterator that is valid for the key
-                    //   and value types, and live for at least '_.
-                    unsafe {
-                        $pb$::MapIter::from_raw(
-                            $pbi$::Private,
-                            $pbr$::proto2_rust_map_iter(map.as_raw($pbi$::Private))
-                        )
-                    }
-                }
-
-                fn map_iter_next<'a>(iter: &mut $pb$::MapIter<'a, $key_t$, Self>) -> $Option$<($pb$::View<'a, $key_t$>, $pb$::View<'a, Self>)> {
-                    use $pbr$::MapNodeSizeInfoIndexForType;
-                    // SAFETY:
-                    // - The `MapIter` API forbids the backing map from being mutated for 'a,
-                    //   and guarantees that it's the correct key and value types.
-                    // - The thunk is safe to call as long as the iterator isn't at the end.
-                    // - The thunk always writes to key and value fields and does not read.
-                    // - The thunk does not increment the iterator.
-                    unsafe {
-                        iter.as_raw_mut($pbi$::Private).next_unchecked::<$key_t$, Self, _, _>(
-                            |iter, key, value| { $pbr$::$map_iter_get$(
-                                iter, $map_size_info_thunk$($key_t$::SIZE_INFO_INDEX), key, value) },
-                            |ffi_key| $from_ffi_key_expr$,
-                            |raw_msg| $Msg$View::new($pbi$::Private, raw_msg)
-                        )
-                    }
-                }
-            }
-      )rs");
-      }
+                  }
+              }
+          }
+          )rs");
       return;
     case Kernel::kUpb:
       ctx.Emit(
@@ -716,7 +648,7 @@ void MessageProxiedInMapValue(Context& ctx, const Descriptor& msg) {
                   raw_parent_arena: $pbr$::RawArena,
                   mut val: Self) -> $pbr$::upb_MessageValue {
                   // SAFETY: The arena memory is not freed due to `ManuallyDrop`.
-                  let parent_arena = core::mem::ManuallyDrop::new(
+                  let parent_arena = $std$::mem::ManuallyDrop::new(
                       unsafe { $pbr$::Arena::from_raw(raw_parent_arena) });
 
                   parent_arena.fuse(val.as_mutator_message_ref($pbi$::Private).arena());
@@ -729,6 +661,15 @@ void MessageProxiedInMapValue(Context& ctx, const Descriptor& msg) {
                         $pbi$::Private,
                         unsafe { msg.msg_val }
                             .expect("expected present message value in map"))
+                }
+
+                unsafe fn from_message_mut<'msg>(msg: *mut $pbr$::upb_Message, arena: &'msg $pbr$::Arena)
+                    -> $Msg$Mut<'msg> {
+                    $Msg$Mut {
+                      inner: unsafe {
+                        $pbr$::MutatorMessageRef::from_raw_parts(std::ptr::NonNull::new(msg).expect("expected present message value in map"), arena)
+                      }
+                    }
                 }
             }
             )rs");
@@ -753,119 +694,124 @@ void GenerateRs(Context& ctx, const Descriptor& msg) {
     return;
   }
   ctx.Emit(
-      {{"Msg", RsSafeName(msg.name())},
-       {"Msg::new", [&] { MessageNew(ctx, msg); }},
-       {"Msg::serialize", [&] { MessageSerialize(ctx, msg); }},
-       {"MsgMut::clear", [&] { MessageMutClear(ctx, msg); }},
-       {"Msg::clear_and_parse", [&] { MessageClearAndParse(ctx, msg); }},
-       {"Msg::drop", [&] { MessageDrop(ctx, msg); }},
-       {"Msg::debug", [&] { MessageDebug(ctx, msg); }},
-       {"MsgMut::merge_from", [&] { MessageMutMergeFrom(ctx, msg); }},
-       {"default_instance_impl",
-        [&] { GenerateDefaultInstanceImpl(ctx, msg); }},
-       {"accessor_fns",
-        [&] {
-          for (int i = 0; i < msg.field_count(); ++i) {
-            GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::OWNED);
-          }
-          for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-            GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
-                                   AccessorCase::OWNED);
-          }
-        }},
-       {"nested_in_msg",
-        [&] {
-          // If we have no nested types, enums, or oneofs, bail out without
-          // emitting an empty mod some_msg.
-          if (msg.nested_type_count() == 0 && msg.enum_type_count() == 0 &&
-              msg.real_oneof_decl_count() == 0) {
-            return;
-          }
-          ctx.Emit({{"mod_name", RsSafeName(CamelToSnakeCase(msg.name()))},
-                    {"nested_msgs",
-                     [&] {
-                       for (int i = 0; i < msg.nested_type_count(); ++i) {
-                         GenerateRs(ctx, *msg.nested_type(i));
-                       }
-                     }},
-                    {"nested_enums",
-                     [&] {
-                       for (int i = 0; i < msg.enum_type_count(); ++i) {
-                         GenerateEnumDefinition(ctx, *msg.enum_type(i));
-                       }
-                     }},
-                    {"oneofs",
-                     [&] {
-                       for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-                         GenerateOneofDefinition(ctx, *msg.real_oneof_decl(i));
-                       }
-                     }}},
-                   R"rs(
-                 pub mod $mod_name$ {
+      {
+          {"Msg", RsSafeName(msg.name())},
+          {"Msg::new", [&] { MessageNew(ctx, msg); }},
+          {"Msg::serialize", [&] { MessageSerialize(ctx, msg); }},
+          {"MsgMut::clear", [&] { MessageMutClear(ctx, msg); }},
+          {"MsgMut::clear_and_parse",
+           [&] { MessageMutClearAndParse(ctx, msg); }},
+          {"Msg::drop", [&] { MessageDrop(ctx, msg); }},
+          {"Msg::debug", [&] { MessageDebug(ctx, msg); }},
+          {"MsgMut::take_copy_merge_from",
+           [&] { MessageMutTakeCopyMergeFrom(ctx, msg); }},
+          {"default_instance_impl",
+           [&] { GenerateDefaultInstanceImpl(ctx, msg); }},
+          {"accessor_fns",
+           [&] {
+             for (int i = 0; i < msg.field_count(); ++i) {
+               GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::OWNED);
+             }
+             for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+               GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
+                                      AccessorCase::OWNED);
+             }
+           }},
+          {"nested_in_msg",
+           [&] {
+             // If we have no nested types, enums, or oneofs, bail out without
+             // emitting an empty mod some_msg.
+             if (msg.nested_type_count() == 0 && msg.enum_type_count() == 0 &&
+                 msg.real_oneof_decl_count() == 0) {
+               return;
+             }
+             ctx.PushModule(RsSafeName(CamelToSnakeCase(msg.name())));
+             ctx.Emit(
+                 {{"nested_msgs",
+                   [&] {
+                     for (int i = 0; i < msg.nested_type_count(); ++i) {
+                       GenerateRs(ctx, *msg.nested_type(i));
+                     }
+                   }},
+                  {"nested_enums",
+                   [&] {
+                     for (int i = 0; i < msg.enum_type_count(); ++i) {
+                       GenerateEnumDefinition(ctx, *msg.enum_type(i));
+                     }
+                   }},
+                  {"oneofs",
+                   [&] {
+                     for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+                       GenerateOneofDefinition(ctx, *msg.real_oneof_decl(i));
+                     }
+                   }}},
+                 R"rs(
                    $nested_msgs$
                    $nested_enums$
 
                    $oneofs$
-                 }  // mod $mod_name$
                 )rs");
-        }},
-       {"raw_arena_getter_for_message",
-        [&] {
-          if (ctx.is_upb()) {
-            ctx.Emit({}, R"rs(
+             ctx.PopModule();
+           }},
+          {"raw_arena_getter_for_message",
+           [&] {
+             if (ctx.is_upb()) {
+               ctx.Emit({}, R"rs(
                   fn arena(&self) -> &$pbr$::Arena {
                     &self.inner.arena
                   }
                   )rs");
-          }
-        }},
-       {"raw_arena_getter_for_msgmut",
-        [&] {
-          if (ctx.is_upb()) {
-            ctx.Emit({}, R"rs(
+             }
+           }},
+          {"raw_arena_getter_for_msgmut",
+           [&] {
+             if (ctx.is_upb()) {
+               ctx.Emit({}, R"rs(
                   fn arena(&self) -> &$pbr$::Arena {
                     self.inner.arena()
                   }
                   )rs");
-          }
-        }},
-       {"accessor_fns_for_views",
-        [&] {
-          for (int i = 0; i < msg.field_count(); ++i) {
-            GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::VIEW);
-          }
-          for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-            GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
-                                   AccessorCase::VIEW);
-          }
-        }},
-       {"accessor_fns_for_muts",
-        [&] {
-          for (int i = 0; i < msg.field_count(); ++i) {
-            GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::MUT);
-          }
-          for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-            GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
-                                   AccessorCase::MUT);
-          }
-        }},
-       {"into_proxied_impl", [&] { IntoProxiedForMessage(ctx, msg); }},
-       {"upb_generated_message_trait_impls",
-        [&] { UpbGeneratedMessageTraitImpls(ctx, msg); }},
-       {"repeated_impl", [&] { MessageProxiedInRepeated(ctx, msg); }},
-       {"map_value_impl", [&] { MessageProxiedInMapValue(ctx, msg); }},
-       {"unwrap_upb",
-        [&] {
-          if (ctx.is_upb()) {
-            ctx.Emit(".unwrap_or_else(||$pbr$::ScratchSpace::zeroed_block())");
-          }
-        }},
-       {"upb_arena",
-        [&] {
-          if (ctx.is_upb()) {
-            ctx.Emit(", inner.msg_ref().arena().raw()");
-          }
-        }}},
+             }
+           }},
+          {"accessor_fns_for_views",
+           [&] {
+             for (int i = 0; i < msg.field_count(); ++i) {
+               GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::VIEW);
+             }
+             for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+               GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
+                                      AccessorCase::VIEW);
+             }
+           }},
+          {"accessor_fns_for_muts",
+           [&] {
+             for (int i = 0; i < msg.field_count(); ++i) {
+               GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::MUT);
+             }
+             for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+               GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
+                                      AccessorCase::MUT);
+             }
+           }},
+          {"into_proxied_impl", [&] { IntoProxiedForMessage(ctx, msg); }},
+          {"upb_generated_message_trait_impls",
+           [&] { UpbGeneratedMessageTraitImpls(ctx, msg); }},
+          {"repeated_impl", [&] { MessageProxiedInRepeated(ctx, msg); }},
+          {"type_conversions_impl", [&] { TypeConversions(ctx, msg); }},
+          {"unwrap_upb",
+           [&] {
+             if (ctx.is_upb()) {
+               ctx.Emit(
+                   ".unwrap_or_else(||$pbr$::ScratchSpace::zeroed_block())");
+             }
+           }},
+          {"upb_arena",
+           [&] {
+             if (ctx.is_upb()) {
+               ctx.Emit(", inner.msg_ref().arena().raw()");
+             }
+           }},
+      },
       R"rs(
         #[allow(non_camel_case_types)]
         pub struct $Msg$ {
@@ -892,6 +838,20 @@ void GenerateRs(Context& ctx, const Descriptor& msg) {
           }
         }
 
+        impl $pb$::TakeFrom for $Msg$ {
+          fn take_from(&mut self, src: impl $pb$::AsMut<MutProxied = Self>) {
+            let mut m = self.as_mut();
+            $pb$::TakeFrom::take_from(&mut m, src)
+          }
+        }
+
+        impl $pb$::CopyFrom for $Msg$ {
+          fn copy_from(&mut self, src: impl $pb$::AsView<Proxied = Self>) {
+            let mut m = self.as_mut();
+            $pb$::CopyFrom::copy_from(&mut m, src)
+          }
+        }
+
         impl $pb$::MergeFrom for $Msg$ {
           fn merge_from<'src>(&mut self, src: impl $pb$::AsView<Proxied = Self>) {
             let mut m = self.as_mut();
@@ -907,13 +867,15 @@ void GenerateRs(Context& ctx, const Descriptor& msg) {
 
         impl $pb$::Clear for $Msg$ {
           fn clear(&mut self) {
-            self.as_mut().clear()
+            let mut m = self.as_mut();
+            $pb$::Clear::clear(&mut m)
           }
         }
 
         impl $pb$::ClearAndParse for $Msg$ {
           fn clear_and_parse(&mut self, data: &[u8]) -> $Result$<(), $pb$::ParseError> {
-            $Msg::clear_and_parse$
+            let mut m = self.as_mut();
+            $pb$::ClearAndParse::clear_and_parse(&mut m, data)
           }
         }
 
@@ -1016,7 +978,7 @@ void GenerateRs(Context& ctx, const Descriptor& msg) {
         $into_proxied_impl$
 
         $repeated_impl$
-        $map_value_impl$
+        $type_conversions_impl$
 
         #[allow(dead_code)]
         #[allow(non_camel_case_types)]
@@ -1048,7 +1010,13 @@ void GenerateRs(Context& ctx, const Descriptor& msg) {
           }
         }
 
-        $MsgMut::merge_from$
+        impl $pb$::ClearAndParse for $Msg$Mut<'_> {
+          fn clear_and_parse(&mut self, data: &[u8]) -> $Result$<(), $pb$::ParseError> {
+            $MsgMut::clear_and_parse$
+          }
+        }
+
+        $MsgMut::take_copy_merge_from$
 
         #[allow(dead_code)]
         impl<'msg> $Msg$Mut<'msg> {
@@ -1230,7 +1198,9 @@ void GenerateRs(Context& ctx, const Descriptor& msg) {
 
   ctx.printer().PrintRaw("\n");
   if (ctx.is_cpp()) {
-    ctx.Emit({{"Msg", RsSafeName(msg.name())}}, R"rs(
+
+    ctx.Emit({{"Msg", RsSafeName(msg.name())}},
+             R"rs(
       impl<'a> $Msg$Mut<'a> {
         pub unsafe fn __unstable_wrap_cpp_grant_permission_to_break(
             msg: &'a mut *mut $std$::ffi::c_void) -> Self {
@@ -1382,115 +1352,39 @@ void GenerateThunksCc(Context& ctx, const Descriptor& msg) {
     return;
   }
 
+  // Approaches to put the extern "C" in any R"cc()cc" badly confuse either
+  // clang-format or VSCode highlighting. Emit this as a vanilla raw string to
+  // avoid any issues.
+  ctx.Emit(R"(extern "C" {
+  )");
+
   ctx.Emit(
-      {{"abi", "\"C\""},  // Workaround for syntax highlight bug in VSCode.
-       {"Msg", RsSafeName(msg.name())},
-       {"QualifiedMsg", cpp::QualifiedClassName(&msg)},
+      {{"QualifiedMsg", cpp::QualifiedClassName(&msg)},
        {"new_thunk", ThunkName(ctx, msg, "new")},
-       {"default_instance_thunk", ThunkName(ctx, msg, "default_instance")},
-       {"repeated_new_thunk", ThunkName(ctx, msg, "repeated_new")},
-       {"repeated_free_thunk", ThunkName(ctx, msg, "repeated_free")},
-       {"repeated_len_thunk", ThunkName(ctx, msg, "repeated_len")},
-       {"repeated_get_thunk", ThunkName(ctx, msg, "repeated_get")},
-       {"repeated_get_mut_thunk", ThunkName(ctx, msg, "repeated_get_mut")},
-       {"repeated_add_thunk", ThunkName(ctx, msg, "repeated_add")},
-       {"repeated_clear_thunk", ThunkName(ctx, msg, "repeated_clear")},
-       {"repeated_copy_from_thunk", ThunkName(ctx, msg, "repeated_copy_from")},
-       {"repeated_reserve_thunk", ThunkName(ctx, msg, "repeated_reserve")},
-       {"map_size_info_thunk", ThunkName(ctx, msg, "size_info")},
-       {"nested_msg_thunks",
-        [&] {
-          for (int i = 0; i < msg.nested_type_count(); ++i) {
-            GenerateThunksCc(ctx, *msg.nested_type(i));
-          }
-        }},
-       {"accessor_thunks",
-        [&] {
-          for (int i = 0; i < msg.field_count(); ++i) {
-            GenerateAccessorThunkCc(ctx, *msg.field(i));
-          }
-        }},
-       {"oneof_thunks",
-        [&] {
-          for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-            GenerateOneofThunkCc(ctx, *msg.real_oneof_decl(i));
-          }
-        }}},
+       {"default_instance_thunk", ThunkName(ctx, msg, "default_instance")}},
       R"cc(
-        //~ $abi$ is a workaround for a syntax highlight bug in VSCode.
-        // However, ~ that confuses clang-format (it refuses to keep the
-        // newline after ~ `$abi${`). Disabling clang-format for the block.
-        // clang-format off
-        extern $abi$ {
         void* $new_thunk$() { return new $QualifiedMsg$(); }
 
         const google::protobuf::MessageLite* $default_instance_thunk$() {
           return &$QualifiedMsg$::default_instance();
         }
-
-        void* $repeated_new_thunk$() {
-          return new google::protobuf::RepeatedPtrField<$QualifiedMsg$>();
-        }
-
-        void $repeated_free_thunk$(void* ptr) {
-          delete static_cast<google::protobuf::RepeatedPtrField<$QualifiedMsg$>*>(ptr);
-        }
-
-        size_t $repeated_len_thunk$(google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field) {
-          return field->size();
-        }
-        const $QualifiedMsg$* $repeated_get_thunk$(
-          google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field,
-          size_t index) {
-          return &field->Get(index);
-        }
-        $QualifiedMsg$* $repeated_get_mut_thunk$(
-          google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field,
-          size_t index) {
-          return field->Mutable(index);
-        }
-        $QualifiedMsg$* $repeated_add_thunk$(google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field) {
-          return field->Add();
-        }
-        void $repeated_clear_thunk$(google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field) {
-          field->Clear();
-        }
-        void $repeated_copy_from_thunk$(
-          google::protobuf::RepeatedPtrField<$QualifiedMsg$>& dst,
-          const google::protobuf::RepeatedPtrField<$QualifiedMsg$>& src) {
-          dst = src;
-        }
-        void $repeated_reserve_thunk$(
-          google::protobuf::RepeatedPtrField<$QualifiedMsg$>* field,
-          size_t additional) {
-          field->Reserve(field->size() + additional);
-        }
-        google::protobuf::internal::MapNodeSizeInfoT $map_size_info_thunk$(int32_t i) {
-          static constexpr google::protobuf::internal::MapNodeSizeInfoT size_infos[] = {)cc"
-      // LINT.IfChange(size_info_mapping)
-      R"cc(
-        google::protobuf::internal::RustMapHelper::SizeInfo<int32_t, $QualifiedMsg$>(),
-            google::protobuf::internal::RustMapHelper::SizeInfo<int64_t,
-                                                      $QualifiedMsg$>(),
-            google::protobuf::internal::RustMapHelper::SizeInfo<bool, $QualifiedMsg$>(),
-            google::protobuf::internal::RustMapHelper::SizeInfo<std::string,
-                                                      $QualifiedMsg$>()
-      )cc"
-      // LINT.ThenChange(//depot/google3/third_party/protobuf/rust/cpp.rs:size_info_mapping)
-      R"cc(
-        }
-        ;
-        return size_infos[i];
-        }
-
-        $accessor_thunks$
-
-            $oneof_thunks$
-        }  // extern $abi$
-        // clang-format on
-
-        $nested_msg_thunks$
       )cc");
+
+  for (int i = 0; i < msg.field_count(); ++i) {
+    GenerateAccessorThunkCc(ctx, *msg.field(i));
+  }
+
+  for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+    GenerateOneofThunkCc(ctx, *msg.real_oneof_decl(i));
+  }
+
+  ctx.Emit(R"(}  //extern "C"
+  )");
+
+  // Recursively generate the thunks for any nested messages.
+  for (int i = 0; i < msg.nested_type_count(); ++i) {
+    GenerateThunksCc(ctx, *msg.nested_type(i));
+  }
 }
 
 }  // namespace rust

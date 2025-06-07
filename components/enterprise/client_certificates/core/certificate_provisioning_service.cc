@@ -19,7 +19,6 @@
 #include "components/enterprise/client_certificates/core/context_delegate.h"
 #include "components/enterprise/client_certificates/core/key_upload_client.h"
 #include "components/enterprise/client_certificates/core/metrics_util.h"
-#include "components/enterprise/client_certificates/core/prefs.h"
 #include "components/enterprise/client_certificates/core/private_key.h"
 #include "components/enterprise/client_certificates/core/store_error.h"
 #include "components/policy/core/common/policy_logger.h"
@@ -57,7 +56,7 @@ class CertificateProvisioningServiceImpl
     : public CertificateProvisioningService {
  public:
   CertificateProvisioningServiceImpl(
-      PrefService* profile_prefs,
+      PrefService* pref_service,
       CertificateStore* certificate_store,
       std::unique_ptr<ContextDelegate> context_delegate,
       std::unique_ptr<KeyUploadClient> upload_client);
@@ -89,8 +88,6 @@ class CertificateProvisioningServiceImpl
       HttpCodeOrClientError upload_code,
       scoped_refptr<net::X509Certificate> certificate);
 
-  void OnKeyUploadResponse(HttpCodeOrClientError upload_code);
-
   void OnCertificateCommitted(scoped_refptr<PrivateKey> private_key,
                               scoped_refptr<net::X509Certificate> certificate,
                               std::optional<StoreError> commit_error);
@@ -109,8 +106,16 @@ class CertificateProvisioningServiceImpl
     return context_delegate_->GetTemporaryIdentityName();
   }
 
+  const std::string policy_pref() const {
+    return context_delegate_->GetPolicyPref();
+  }
+
+  const std::string logging_context() const {
+    return context_delegate_->GetLoggingContext();
+  }
+
   PrefChangeRegistrar pref_observer_;
-  raw_ptr<PrefService> profile_prefs_;
+  raw_ptr<PrefService> pref_service_;
   raw_ptr<CertificateStore> certificate_store_;
   std::unique_ptr<ContextDelegate> context_delegate_;
   std::unique_ptr<KeyUploadClient> upload_client_;
@@ -129,32 +134,32 @@ class CertificateProvisioningServiceImpl
 // static
 std::unique_ptr<CertificateProvisioningService>
 CertificateProvisioningService::Create(
-    PrefService* profile_prefs,
+    PrefService* pref_service,
     CertificateStore* certificate_store,
     std::unique_ptr<ContextDelegate> context_delegate,
     std::unique_ptr<KeyUploadClient> upload_client) {
   return std::make_unique<CertificateProvisioningServiceImpl>(
-      profile_prefs, certificate_store, std::move(context_delegate),
+      pref_service, certificate_store, std::move(context_delegate),
       std::move(upload_client));
 }
 
 CertificateProvisioningServiceImpl::CertificateProvisioningServiceImpl(
-    PrefService* profile_prefs,
+    PrefService* pref_service,
     CertificateStore* certificate_store,
     std::unique_ptr<ContextDelegate> context_delegate,
     std::unique_ptr<KeyUploadClient> upload_client)
-    : profile_prefs_(profile_prefs),
+    : pref_service_(pref_service),
       certificate_store_(certificate_store),
       context_delegate_(std::move(context_delegate)),
       upload_client_(std::move(upload_client)) {
-  CHECK(profile_prefs_);
+  CHECK(pref_service_);
   CHECK(certificate_store_);
   CHECK(context_delegate_);
   CHECK(upload_client_);
 
-  pref_observer_.Init(profile_prefs_);
+  pref_observer_.Init(pref_service_);
   pref_observer_.Add(
-      prefs::kProvisionManagedClientCertificateForUserPrefs,
+      policy_pref(),
       base::BindRepeating(&CertificateProvisioningServiceImpl::OnPolicyUpdated,
                           weak_factory_.GetWeakPtr()));
 
@@ -197,10 +202,8 @@ CertificateProvisioningServiceImpl::GetCurrentStatus() const {
 }
 
 bool CertificateProvisioningServiceImpl::IsPolicyEnabled() const {
-  return profile_prefs_->IsManagedPreference(
-             prefs::kProvisionManagedClientCertificateForUserPrefs) &&
-         profile_prefs_->GetInteger(
-             prefs::kProvisionManagedClientCertificateForUserPrefs) == 1;
+  return pref_service_->IsManagedPreference(policy_pref()) &&
+         pref_service_->GetInteger(policy_pref()) == 1;
 }
 
 bool CertificateProvisioningServiceImpl::IsProvisioning() const {
@@ -227,18 +230,30 @@ void CertificateProvisioningServiceImpl::OnPermanentIdentityLoaded(
     LOG_POLICY(ERROR, DEVICE_TRUST)
         << "Permanent identity loading failed: "
         << StoreErrorToString(expected_permanent_identity.error());
-    OnProvisioningError(ProvisioningError::kIdentityLoadingFailed,
-                        expected_permanent_identity.error());
-    return;
+
+    // Loading the private key can fail if, somehow, the private key was lost.
+    // This can happen in some backup and restore scenarios. If that happens,
+    // simply treat the failure as if no permanent identity existed in the
+    // first place.
+    if (expected_permanent_identity.error() != StoreError::kLoadKeyFailed) {
+      OnProvisioningError(ProvisioningError::kIdentityLoadingFailed,
+                          expected_permanent_identity.error());
+      return;
+    }
+
+    LOG_POLICY(INFO, DEVICE_TRUST)
+        << "Failed to load the serialized private key, provisioning a new "
+           "identity as fallback...";
   }
 
   // Setting as certificate creation by default, more specific scenarios will
   // overwrite this value later.
   provisioning_context_->scenario = ProvisioningScenario::kCertificateCreation;
 
-  std::optional<ClientIdentity>& permanent_identity_optional =
-      expected_permanent_identity.value();
-  if (permanent_identity_optional.has_value()) {
+  if (expected_permanent_identity.has_value() &&
+      expected_permanent_identity->has_value()) {
+    std::optional<ClientIdentity>& permanent_identity_optional =
+        expected_permanent_identity.value();
     if (permanent_identity_optional->is_valid()) {
       // Already have a full identity, so cache it.
       cached_identity_ = permanent_identity_optional.value();
@@ -246,15 +261,9 @@ void CertificateProvisioningServiceImpl::OnPermanentIdentityLoaded(
       // If the certificate has expired (or is close to), then update it before
       // responding to pending callbacks.
       if (!IsCertExpiringSoon(*permanent_identity_optional->certificate)) {
-        // No need to block on key syncs, the scenario can therefore be
-        // automatically completed.
-        provisioning_context_->scenario = ProvisioningScenario::kPublicKeySync;
+        provisioning_context_->scenario =
+            ProvisioningScenario::kExistingIdentity;
         OnFinishedProvisioning(/*success=*/true);
-        upload_client_->SyncKey(
-            cached_identity_->private_key,
-            base::BindOnce(
-                &CertificateProvisioningServiceImpl::OnKeyUploadResponse,
-                weak_factory_.GetWeakPtr()));
         return;
       }
 
@@ -358,7 +367,7 @@ void CertificateProvisioningServiceImpl::OnPrivateKeyCreated(
   scoped_refptr<PrivateKey> private_key =
       std::move(expected_private_key.value());
   if (private_key) {
-    LogPrivateKeyCreationSource(private_key->GetSource());
+    LogPrivateKeyCreationSource(logging_context(), private_key->GetSource());
   }
 
   LOG_POLICY(INFO, DEVICE_TRUST) << "Fetching a certificate from the server...";
@@ -376,7 +385,7 @@ void CertificateProvisioningServiceImpl::OnCertificateCreatedResponse(
     HttpCodeOrClientError upload_code,
     scoped_refptr<net::X509Certificate> certificate) {
   last_upload_code_ = upload_code;
-  LogCertificateCreationResponse(upload_code, !!certificate);
+  LogCertificateCreationResponse(logging_context(), upload_code, !!certificate);
 
   if (!certificate) {
     if (last_upload_code_->has_value()) {
@@ -428,12 +437,6 @@ void CertificateProvisioningServiceImpl::OnCertificateCreatedResponse(
   }
 }
 
-void CertificateProvisioningServiceImpl::OnKeyUploadResponse(
-    HttpCodeOrClientError upload_code) {
-  last_upload_code_ = upload_code;
-  LogKeySyncResponse(upload_code);
-}
-
 void CertificateProvisioningServiceImpl::OnCertificateCommitted(
     scoped_refptr<PrivateKey> private_key,
     scoped_refptr<net::X509Certificate> certificate,
@@ -461,12 +464,14 @@ void CertificateProvisioningServiceImpl::OnCertificateCommitted(
 void CertificateProvisioningServiceImpl::OnProvisioningError(
     ProvisioningError provisioning_error,
     std::optional<StoreError> store_error) {
-  LogProvisioningError(provisioning_error, std::move(store_error));
+  LogProvisioningError(logging_context(), provisioning_error,
+                       std::move(store_error));
   OnFinishedProvisioning(/*success=*/false);
 }
 
 void CertificateProvisioningServiceImpl::OnFinishedProvisioning(bool success) {
-  LogProvisioningContext(provisioning_context_.value(), success);
+  LogProvisioningContext(logging_context(), provisioning_context_.value(),
+                         success);
   provisioning_context_.reset();
 
   std::optional<ClientIdentity> identity =

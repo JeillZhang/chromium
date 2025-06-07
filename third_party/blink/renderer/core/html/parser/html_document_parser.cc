@@ -553,8 +553,8 @@ void HTMLDocumentParser::PrepareToStopParsing() {
   if (script_runner_)
     GetDocument()->SetReadyState(Document::kInteractive);
 
-  // Setting the ready state above can fire mutation event and detach us from
-  // underneath. In that case, just bail out.
+  // Setting the ready state above can fire synchronous events and detach us
+  // from underneath. In that case, just bail out.
   if (IsDetached())
     return;
 
@@ -1012,7 +1012,7 @@ void HTMLDocumentParser::Append(const String& input_source) {
   if (GetDocument()->IsPrefetchOnly()) {
     if (preload_scanner_) {
       preload_scanner_->AppendToEnd(source);
-      // TODO(Richard.Townsend@arm.com): add test coverage of this branch.
+      // TODO(ritownsend@google.com): add test coverage of this branch.
       // The crash in crbug.com/1166786 indicates that text documents are being
       // speculatively prefetched.
       ScanAndPreload(preload_scanner_.get());
@@ -1270,6 +1270,47 @@ void HTMLDocumentParser::NotifyScriptLoaded() {
   script_runner_->ExecuteScriptsWaitingForLoad();
   if (!IsPaused())
     ResumeParsingAfterPause();
+}
+
+void HTMLDocumentParser::NotifyParserPauseByUserTiming() {
+  CHECK(base::FeatureList::IsEnabled(features::kHTMLParserYieldByUserTiming));
+  if (!is_waiting_for_user_timing_) {
+    time_waiting_for_user_timing_ = base::TimeTicks::Now();
+  }
+  is_waiting_for_user_timing_ = true;
+  if (metrics_reporter_) {
+    metrics_reporter_->CountYieldByUserTiming();
+  }
+}
+
+void HTMLDocumentParser::NotifyParserResumeByUserTiming() {
+  CHECK(base::FeatureList::IsEnabled(features::kHTMLParserYieldByUserTiming));
+  DCHECK(script_runner_);
+  DCHECK(!IsExecutingScript());
+
+  if (!is_waiting_for_user_timing_) {
+    return;
+  }
+  is_waiting_for_user_timing_ = false;
+
+  // TODO(crbug.com/416543903): Need refactoring the common resume logic with
+  // `NotifyScriptLoaded()`.
+  if (IsStopped()) {
+    return;
+  }
+
+  if (IsStopping()) {
+    AttemptToRunDeferredScriptsAndEnd();
+    return;
+  }
+
+  script_runner_->ExecuteScriptsWaitingForLoad();
+  if (!IsPaused()) {
+    ResumeParsingAfterPause();
+    base::UmaHistogramTimes(
+        "Blink.HTMLParsing.YieldedTimeByUserTiming",
+        base::TimeTicks::Now() - time_waiting_for_user_timing_);
+  }
 }
 
 // static
@@ -1566,14 +1607,14 @@ void HTMLDocumentParser::ProcessPreloadData(
 }
 
 void HTMLDocumentParser::MaybeFetchQueuedPreloads() {
+  if (!AllowPreloading()) {
+    return;
+  }
+
   TRACE_EVENT_WITH_FLOW0("blink,devtools.timeline",
                          "HTMLDocumentParser::MaybeFetchQueuedPreloads",
                          TRACE_ID_LOCAL(this),
                          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT);
-
-  if (!AllowPreloading()) {
-    return;
-  }
 
   base::ElapsedTimer timer;
   preloader_->TakeAndPreload(queued_preloads_);

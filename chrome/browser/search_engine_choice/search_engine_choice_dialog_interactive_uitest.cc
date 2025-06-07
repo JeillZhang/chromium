@@ -13,9 +13,11 @@
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "components/country_codes/country_codes.h"
+#include "components/regional_capabilities/regional_capabilities_switches.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
 #include "components/search_engines/search_engines_switches.h"
 #include "components/search_engines/template_url_service.h"
@@ -120,7 +122,7 @@ IN_PROC_BROWSER_TEST_F(SearchEngineChoiceDialogInteractiveUiTest,
   int first_search_engine_id =
       search_engine_choice_service->GetSearchEngines().at(0)->prepopulate_id();
 
-  RunTestSequence(InAnyContext(Steps(
+  RunTestSequence(InAnyContext(
       WaitForShow(kSearchEngineChoiceDialogId),
       InstrumentNonTabWebView(kWebContentsId, kSearchEngineChoiceDialogId),
       Do([&] {
@@ -142,7 +144,7 @@ IN_PROC_BROWSER_TEST_F(SearchEngineChoiceDialogInteractiveUiTest,
       PressJsButton(kWebContentsId, kRadioButton),
       WaitForButtonEnabled(kWebContentsId, kActionButton),
       PressJsButton(kWebContentsId, kActionButton),
-      WaitForHide(kSearchEngineChoiceDialogId))));
+      WaitForHide(kSearchEngineChoiceDialogId)));
 
   HistogramTester().ExpectBucketCount(
       search_engines::kSearchEngineChoiceScreenEventsHistogram,

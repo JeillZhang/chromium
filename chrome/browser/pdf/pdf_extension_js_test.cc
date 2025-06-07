@@ -17,7 +17,6 @@
 #include "base/threading/thread_restrictions.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/pdf/pdf_extension_test_base.h"
 #include "chrome/browser/pdf/pdf_extension_test_util.h"
@@ -295,11 +294,11 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionJSTest, PostMessageProxy) {
   RunTestsInJsModule("post_message_proxy_test.js", "test.pdf");
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 IN_PROC_BROWSER_TEST_P(PDFExtensionJSTest, Printing) {
   RunTestsInJsModule("printing_icon_test.js", "test.pdf");
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(ENABLE_INK)
 // TODO(crbug.com/41434927): Test times out under sanitizers.
@@ -519,7 +518,7 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionServiceWorkerJSTest, Interception) {
 }
 
 #if BUILDFLAG(ENABLE_PDF_INK2)
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 // Test behavior when Ink2 and annotation mode are disabled for the PDF viewer.
 // Don't run this test on Ash, as annotation mode is always enabled there.
 class PDFExtensionJSNoInk2Test : public PDFExtensionJSTest {
@@ -534,7 +533,7 @@ class PDFExtensionJSNoInk2Test : public PDFExtensionJSTest {
 IN_PROC_BROWSER_TEST_P(PDFExtensionJSNoInk2Test, Ink2Disabled) {
   RunTestsInJsModule("ink2_disabled_test.js", "test.pdf");
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 class PDFExtensionJSInk2Test : public PDFExtensionJSTest {
  protected:
@@ -557,6 +556,14 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2Save) {
   RunTestsInJsModule("ink2_save_test.js", "test.pdf");
 }
 
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2Manager) {
+  RunTestsInJsModule("ink2_manager_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2AnnotationBrushMixin) {
+  RunTestsInJsModule("ink2_annotation_brush_mixin_test.js", "test.pdf");
+}
+
 IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2BottomToolbar) {
   // The window must be smaller than 960px to show the bottom toolbar.
   GetActiveWebContents()->Resize({0, 0, 959, 100});
@@ -573,6 +580,10 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2SidePanel) {
   RunTestsInJsModule("ink2_side_panel_test.js", "test.pdf");
 }
 
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, SelectableIconButton) {
+  RunTestsInJsModule("selectable_icon_button_test.js", "test.pdf");
+}
+
 IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2BrushSelector) {
   RunTestsInJsModule("ink2_brush_selector_test.js", "test.pdf");
 }
@@ -587,6 +598,46 @@ IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2SizeSelector) {
 
 IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2ViewerToolbar) {
   RunTestsInJsModule("ink2_viewer_toolbar_test.js", "test.pdf");
+}
+
+class PDFExtensionJSInk2TextTest : public PDFExtensionJSTest {
+ protected:
+  std::vector<base::test::FeatureRefAndParams> GetEnabledFeatures()
+      const override {
+    auto enabled = PDFExtensionJSTest::GetEnabledFeatures();
+    enabled.push_back(
+        {chrome_pdf::features::kPdfInk2,
+         {{chrome_pdf::features::kPdfInk2TextAnnotations.name, "true"}}});
+    return enabled;
+  }
+};
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2TextTest, Ink2AnnotationTextMixin) {
+  RunTestsInJsModule("ink2_annotation_text_mixin_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2TextTest, Ink2TextBottomToolbar) {
+  // The window must be smaller than 960px to show the bottom toolbar.
+  GetActiveWebContents()->Resize({0, 0, 959, 100});
+  RunTestsInJsModule("ink2_text_bottom_toolbar_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2Test, Ink2TextAlignmentSelector) {
+  RunTestsInJsModule("ink2_text_alignment_selector_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2TextTest, Ink2TextBoxTest) {
+  RunTestsInJsModule("ink2_text_box_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2TextTest, Ink2TextSidePanel) {
+  // The window must be at least 960px to show the text side panel.
+  GetActiveWebContents()->Resize({0, 0, 960, 100});
+  RunTestsInJsModule("ink2_text_side_panel_test.js", "test.pdf");
+}
+
+IN_PROC_BROWSER_TEST_P(PDFExtensionJSInk2TextTest, Ink2TextStylesSelector) {
+  RunTestsInJsModule("ink2_text_styles_selector_test.js", "test.pdf");
 }
 
 class PDFExtensionJSInk2BeforeUnloadTest : public PDFExtensionJSTestBase {
@@ -620,7 +671,8 @@ INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionPacificTimeZoneJSTest);
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionContentSettingJSTest);
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionWebUICodeCacheJSTest);
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionServiceWorkerJSTest);
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionJSNoInk2Test);
 #endif
 INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionJSInk2Test);
+INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(PDFExtensionJSInk2TextTest);

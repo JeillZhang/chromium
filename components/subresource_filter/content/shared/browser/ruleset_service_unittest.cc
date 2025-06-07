@@ -274,9 +274,7 @@ class SubresourceFilteringRulesetServiceTest : public ::testing::Test {
                                       background_task_runner_));
   }
 
-  void ClearRulesetService() {
-    service_.reset();
-  }
+  void ClearRulesetService() { service_.reset(); }
 
   // Creates a new file with the given license |contents| at a unique temporary
   // path, which is returned in |path|.
@@ -336,8 +334,7 @@ class SubresourceFilteringRulesetServiceTest : public ::testing::Test {
     EXPECT_CALL(resource_bundle_delegate, GetPathForLocalePack(_, _))
         .WillRepeatedly(Return(base::FilePath()));
 
-    ui::ResourceBundle* orig_resource_bundle =
-        ui::ResourceBundle::SwapSharedInstanceForTesting(nullptr);
+    ui::ResourceBundle::SharedInstanceSwapperForTesting resource_bundle_swapper;
     ui::ResourceBundle::InitSharedInstanceWithLocale(
         "en-US", &resource_bundle_delegate,
         ui::ResourceBundle::DO_NOT_LOAD_COMMON_RESOURCES);
@@ -351,7 +348,6 @@ class SubresourceFilteringRulesetServiceTest : public ::testing::Test {
     RunBlockingUntilIdle();
 
     ui::ResourceBundle::CleanupSharedInstance();
-    ui::ResourceBundle::SwapSharedInstanceForTesting(orig_resource_bundle);
   }
 
   // Mark the initialization complete and run task queues until all are empty.
@@ -421,8 +417,9 @@ class SubresourceFilteringRulesetServiceTest : public ::testing::Test {
   }
 
   void RunBackgroundPendingTasksNTimes(size_t n) {
-    while (n--)
+    while (n--) {
       background_task_runner_->RunPendingTasks();
+    }
   }
 
   void AssertValidRulesetFileWithContents(
@@ -499,10 +496,10 @@ class SubresourceFilteringRulesetServiceDeathTest
 
  protected:
   void SetUpTempDir() override {
-    if (environment_->HasVar(kInheritedTempDirKey)) {
-      std::string value;
-      ASSERT_TRUE(environment_->GetVar(kInheritedTempDirKey, &value));
-      inherited_temp_dir_ = base::FilePath::FromUTF8Unsafe(value);
+    std::optional<std::string> value =
+        environment_->GetVar(kInheritedTempDirKey);
+    if (value.has_value()) {
+      inherited_temp_dir_ = base::FilePath::FromUTF8Unsafe(value.value());
     } else {
       SubresourceFilteringRulesetServiceTest::SetUpTempDir();
       environment_->SetVar(kInheritedTempDirKey,
@@ -512,27 +509,25 @@ class SubresourceFilteringRulesetServiceDeathTest
 
   void TearDown() override {
     SubresourceFilteringRulesetServiceTest::TearDown();
-    if (inherited_temp_dir_.empty())
+    if (inherited_temp_dir_.empty()) {
       environment_->UnSetVar(kInheritedTempDirKey);
+    }
   }
 
   base::FilePath effective_temp_dir() const override {
-    if (!inherited_temp_dir_.empty())
+    if (!inherited_temp_dir_.empty()) {
       return inherited_temp_dir_;
+    }
     return SubresourceFilteringRulesetServiceTest::effective_temp_dir();
   }
 
  private:
-  static const char kInheritedTempDirKey[];
+  static constexpr char kInheritedTempDirKey[] =
+      "SUBRESOURCE_FILTERING_RULESET_SERVICE_DEATH_TEST_TEMP_DIR";
 
   std::unique_ptr<base::Environment> environment_;
   base::FilePath inherited_temp_dir_;
 };
-
-// static
-const char SubresourceFilteringRulesetServiceDeathTest::kInheritedTempDirKey[] =
-    "SUBRESOURCE_FILTERING_RULESET_SERVICE_DEATH_TEST_TEMP_DIR";
-
 
 TEST_F(SubresourceFilteringRulesetServiceTest, PathsAreSane) {
   IndexedRulesetVersion indexed_version(

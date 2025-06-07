@@ -6,6 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/feature_list.h"
+#include "base/logging.h"
 #include "build/build_config.h"
 #include "gpu/config/gpu_switches.h"
 #include "ui/gl/gl_features.h"
@@ -33,7 +34,7 @@ namespace features {
 namespace {
 
 #if BUILDFLAG(IS_ANDROID)
-bool IsDeviceBlocked(const char* field, const std::string& block_list) {
+bool IsDeviceBlocked(const std::string& field, const std::string& block_list) {
   auto disable_patterns = base::SplitString(
       block_list, "|", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
   for (const auto& disable_pattern : disable_patterns) {
@@ -138,13 +139,13 @@ const base::FeatureParam<std::string>
 // drivers to pick most optimal layout.
 BASE_FEATURE(kUseHardwareBufferUsageFlagsFromVulkan,
              "UseHardwareBufferUsageFlagsFromVulkan",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Same as above (and depends on it) and allows using extra usage even if we use
 // USAGE_COMPOSER_OVERLAY.
 BASE_FEATURE(kAllowHardwareBufferUsageFlagsFromVulkanForScanout,
              "AllowHardwareBufferUsageFlagsFromVulkanForScanout",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 #endif
 
@@ -161,13 +162,6 @@ BASE_FEATURE(kDefaultEnableGpuRasterization,
              base::FEATURE_DISABLED_BY_DEFAULT
 #endif
 );
-
-#if !BUILDFLAG(IS_ANDROID)
-// Enables the use of out of process rasterization for canvas.
-BASE_FEATURE(kCanvasOopRasterization,
-             "CanvasOopRasterization",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-#endif
 
 // Enables the use of MSAA in skia on Ice Lake and later intel architectures.
 BASE_FEATURE(kEnableMSAAOnNewIntelGPUs,
@@ -235,7 +229,7 @@ BASE_FEATURE(kEnableDrDc,
 
 // Enable WebGPU on gpu service side only. This is used with origin trial and
 // enabled by default on supported platforms.
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS) || \
+#if BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS) || \
     BUILDFLAG(IS_ANDROID)
 #define WEBGPU_ENABLED base::FEATURE_ENABLED_BY_DEFAULT
 #else
@@ -245,6 +239,16 @@ BASE_FEATURE(kWebGPUService, "WebGPUService", WEBGPU_ENABLED);
 BASE_FEATURE(kWebGPUBlobCache, "WebGPUBlobCache", WEBGPU_ENABLED);
 #undef WEBGPU_ENABLED
 
+// List of Dawn toggles for WebGPU, delimited by ,
+// The FeatureParam may be overridden via Finch config, or via the command line
+// For example:
+//   --enable-field-trial-config \
+//   --force-fieldtrial-params=WebGPU.Enabled:DisabledToggles/toggle1%2Ctoggle2
+// Note that the comma should be URL-encoded.
+const base::FeatureParam<std::string> kWebGPUDisabledToggles{
+    &kWebGPUService, "DisabledToggles", ""};
+const base::FeatureParam<std::string> kWebGPUEnabledToggles{
+    &kWebGPUService, "EnabledToggles", ""};
 // List of WebGPU feature names, delimited by ,
 // The FeatureParam may be overridden via Finch config, or via the command line
 // For example:
@@ -264,11 +268,7 @@ const base::FeatureParam<std::string> kWGSLUnsafeFeatures{
 
 BASE_FEATURE(kWebGPUUseTintIR,
              "WebGPUUseTintIR",
-#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
              base::FEATURE_ENABLED_BY_DEFAULT
-#else
-             base::FEATURE_DISABLED_BY_DEFAULT
-#endif
 );
 
 BASE_FEATURE(kWebGPUUseVulkanMemoryModel,
@@ -333,17 +333,6 @@ const base::FeatureParam<std::string> kDrDcBlockListByAndroidBuildFP{
     &kEnableDrDc, "BlockListByAndroidBuildFP", ""};
 #endif  // BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(IS_OZONE)
-// On Ozone, compute SharedImage scanout support based on overlays being
-// supported rather than native pixmaps being supported.
-// TODO(crbug.com/330865436): It turns out that `supports_overlays` is
-// currently set only in the browser process; we need to ensure that it is set
-// in the GPU process before we can re-enable this feature.
-BASE_FEATURE(kSharedImageSupportScanoutOnOzoneOnlyIfOverlaysSupported,
-             "SharedImageSupportScanoutOnOzoneOnlyIfOverlaysSupported",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-#endif
-
 // Enable Skia Graphite. This will use the Dawn backend by default, but can be
 // overridden with command line flags for testing on non-official developer
 // builds. See --skia-graphite-backend flag in gpu_switches.h.
@@ -351,7 +340,7 @@ BASE_FEATURE(kSharedImageSupportScanoutOnOzoneOnlyIfOverlaysSupported,
 // --enable-skia-graphite & --disable-skia-graphite.
 BASE_FEATURE(kSkiaGraphite,
              "SkiaGraphite",
-#if BUILDFLAG(IS_MAC) && defined(ARCH_CPU_ARM64)
+#if ((BUILDFLAG(IS_MAC) && defined(ARCH_CPU_ARM64)) || BUILDFLAG(IS_IOS))
              base::FEATURE_ENABLED_BY_DEFAULT
 #else
              base::FEATURE_DISABLED_BY_DEFAULT
@@ -387,40 +376,24 @@ const base::FeatureParam<bool> kSkiaGraphiteDawnBackendValidation{
     &kSkiaGraphite, "dawn_backend_validation", false};
 
 // Whether Dawn backend debug labels are enabled for Skia Graphite.
-// Only enable backend labels by default on Windows or DCHECK builds on other
-// platforms since it can have non-trivial performance overhead e.g. with Metal.
+// Only enable backend labels by default on DCHECK builds since it
+// can have non-trivial performance overhead e.g. with Metal.
 const base::FeatureParam<bool> kSkiaGraphiteDawnBackendDebugLabels{
-    &kSkiaGraphite, "dawn_backend_debug_labels",
-    BUILDFLAG(IS_WIN) || DCHECK_IS_ON()};
+    &kSkiaGraphite, "dawn_backend_debug_labels", DCHECK_IS_ON()};
 
 #if BUILDFLAG(IS_WIN)
+// Whether the we should DumpWithoutCrashing when D3D related errors are detected.
+const base::FeatureParam<bool> kSkiaGraphiteDawnDumpWCOnD3DError{
+    &kSkiaGraphite, "dawn_dumpwc_d3d_errors", true};
+
+// Whether the Dawn D3D11 flush should be delayed until the end of the frame.
+const base::FeatureParam<bool> kSkiaGraphiteDawnD3D11DelayFlush{
+    &kSkiaGraphite, "dawn_d3d11_delay_flush", true};
+
 BASE_FEATURE(kSkiaGraphiteDawnUseD3D12,
              "SkiaGraphiteDawnUseD3D12",
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
-
-// If enabled, SharedImages created for the impacted clients have SCANOUT usage
-// added only if SharedImageCapabilities indicates that there is support. Serve
-// as killswitches for these rollouts. Live in //gpu as backings that are
-// rolling out restrictions on supporting SCANOUT usage must check the value of
-// these base::Features.
-// TODO(crbug.com/330865436): Remove post-safe rollout.
-BASE_FEATURE(kExoBufferAddScanoutUsageOnlyIfSupportedBySharedImage,
-             "ExoBufferAddScanoutUsageOnlyIfSupportedBySharedImage",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-BASE_FEATURE(
-    kCameraVideoFrameHandlerAddScanoutUsageOnlyIfSupportedBySharedImage,
-    "CameraVideoFrameHandlerAddScanoutUsageOnlyIfSupportedBySharedImage",
-    base::FEATURE_ENABLED_BY_DEFAULT);
-BASE_FEATURE(kFastInkHostAddScanoutUsageOnlyIfSupportedBySharedImage,
-             "FastInkHostAddScanoutUsageOnlyIfSupportedBySharedImage",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-BASE_FEATURE(kRoundedDisplayAddScanoutUsageOnlyIfSupportedBySharedImage,
-             "RoundedDisplayAddScanoutUsageOnlyIfSupportedBySharedImage",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-BASE_FEATURE(kViewTreeHostAddScanoutUsageOnlyIfSupportedBySharedImage,
-             "ViewTreeHostAddScanoutUsageOnlyIfSupportedBySharedImage",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Enable persistent storage of VkPipelineCache data.
 BASE_FEATURE(kEnableVkPipelineCache,
@@ -699,6 +672,9 @@ bool IsSkiaGraphiteSupportedByDevice(const base::CommandLine* command_line) {
   // Graphite on ChromeOS uses the Dawn Vulkan backend. Only enable Graphite if
   // device would already be using Ganesh/Vulkan.
   return IsUsingVulkan();
+#elif BUILDFLAG(IS_WIN) && defined(ARCH_CPU_ARM64)
+  // Graphite on Windows ARM requires further research.
+  return false;
 #elif BUILDFLAG(IS_WIN)
   return true;
 #else
@@ -763,14 +739,6 @@ bool EnablePurgeGpuImageDecodeCache() {
 }
 bool EnablePruneOldTransferCacheEntries() {
   return base::FeatureList::IsEnabled(kPruneOldTransferCacheEntries);
-}
-
-bool IsCanvasOopRasterizationEnabled() {
-#if BUILDFLAG(IS_ANDROID)
-  return true;
-#else
-  return base::FeatureList::IsEnabled(kCanvasOopRasterization);
-#endif
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -893,6 +861,31 @@ bool IsSyncPointGraphValidationEnabled() {
 
 BASE_FEATURE(kANGLEPerContextBlobCache,
              "ANGLEPerContextBlobCache",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+#if BUILDFLAG(IS_APPLE)
+BASE_FEATURE(kIOSurfaceMultiThreading,
+             "IOSurfaceMultiThreading",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif
+
+// Support thread safety for graphite::context by sharing the same
+// graphite::context as well as its wrapper class GraphiteSharedContext between
+// GpuMain and CompositorGpuThread. Note: When this feature is disabled,
+// each thread creates its own graphite::context and the context wrapper.
+//
+// Feature incomplete. DO NOT ENABLE!
+BASE_FEATURE(kGraphiteContextIsThreadSafe,
+             "GraphiteContextIsThreadSafe",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool IsGraphiteContextThreadSafe() {
+  return base::FeatureList::IsEnabled(features::kGraphiteContextIsThreadSafe) &&
+         features::IsDrDcEnabled();
+}
+
+BASE_FEATURE(kWebGPUCompatibilityMode,
+             "WebGPUCompatibilityMode",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace features

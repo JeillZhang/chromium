@@ -10,9 +10,11 @@
 #include "base/files/file_path.h"
 #include "base/i18n/time_formatting.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/escape.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/new_tab_page/microsoft_auth/microsoft_auth_service_factory.h"
+#include "chrome/browser/new_tab_page/modules/microsoft_modules_helper.h"
 #include "chrome/browser/new_tab_page/modules/v2/calendar/calendar_data.mojom.h"
 #include "chrome/browser/new_tab_page/modules/v2/calendar/calendar_fake_data_helper.h"
 #include "chrome/common/pref_names.h"
@@ -26,10 +28,6 @@
 #include "services/network/public/mojom/url_response_head.mojom.h"
 
 namespace {
-
-const char kBaseIconUrl[] =
-    "https://res.cdn.office.net/files/fabric-cdn-prod_20240925.001/assets/"
-    "item-types/16/";
 
 const char kBaseAttachmentResourceUrl[] =
     "https://outlook.office.com/mail/deeplink/attachment/";
@@ -149,33 +147,6 @@ constexpr net::NetworkTrafficAnnotationTag attachment_traffic_annotation =
 
 constexpr int kMaxResponseSize = 1024 * 1024;
 
-std::string GetFileExtension(std::string mime_type) {
-  base::FilePath::StringType extension;
-  net::GetPreferredExtensionForMimeType(mime_type, &extension);
-  std::string result;
-
-#if BUILDFLAG(IS_WIN)
-  // `extension` will be of std::wstring type on Windows which needs to be
-  // handled differently than std::string. See base/files/file_path.h for more
-  // info.
-  result = base::WideToUTF8(extension);
-#else
-  result = extension;
-#endif
-
-  return result;
-}
-
-GURL GetIconUrl(std::string extension) {
-  return GURL(kBaseIconUrl + extension + ".png");
-}
-
-// The file names in the response are formatted as "name.extension" we
-// only want the file name so we remove the extension.
-std::string GetFileName(std::string full_name, std::string extension) {
-  return full_name.substr(0, full_name.size() - extension.size() - 1);
-}
-
 // Returns the URL for retrieving calendar events.
 GURL GetRequestUrl() {
   std::string start_date_time = TimeFormatAsIso8601(base::Time::Now());
@@ -249,8 +220,10 @@ void OutlookCalendarPageHandler::GetEvents(GetEventsCallback callback) {
       ntp_features::kNtpOutlookCalendarModule,
       ntp_features::kNtpOutlookCalendarModuleDataParam);
   if (!fake_data_param.empty()) {
+    bool has_attachments_enabled = fake_data_param == "fake-attachments";
     std::move(callback).Run(calendar::calendar_fake_data_helper::GetFakeEvents(
-        calendar::calendar_fake_data_helper::CalendarType::OUTLOOK_CALENDAR));
+        calendar::calendar_fake_data_helper::CalendarType::OUTLOOK_CALENDAR,
+        has_attachments_enabled));
   } else {
     MakeRequest(std::move(callback));
   }
@@ -317,6 +290,7 @@ void OutlookCalendarPageHandler::OnJsonReceived(
                              base::Time::Now() + base::Seconds(wait_time));
     } else if (response_info->headers->response_code() ==
                net::HTTP_UNAUTHORIZED) {
+      request_result = OutlookCalendarRequestResult::kAuthError;
       microsoft_auth_service_->SetAuthStateError();
     }
   }
@@ -453,7 +427,8 @@ void OutlookCalendarPageHandler::OnJsonParsed(
         return;
       }
 
-      std::string file_extension = GetFileExtension(*content_type);
+      std::string file_extension =
+          microsoft_modules_helper::GetFileExtension(*content_type);
       // Skip creating an attachment if an extension cannot be found. This is
       // being done because the `title` and `icon_url` are dependent on a
       // correct extension.
@@ -461,10 +436,20 @@ void OutlookCalendarPageHandler::OnJsonParsed(
         continue;
       }
 
-      created_attachment->title = GetFileName(*name, file_extension);
-      created_attachment->icon_url = GetIconUrl(file_extension);
-      std::string attachment_url =
-          kBaseAttachmentResourceUrl + *event_id + "/" + *id;
+      created_attachment->title =
+          microsoft_modules_helper::GetFileName(*name, file_extension);
+      GURL icon_url = microsoft_modules_helper::GetFileIconUrl(*content_type);
+      if (!icon_url.is_valid()) {
+        continue;
+      }
+      created_attachment->icon_url = icon_url;
+
+      std::string event_id_escaped =
+          base::EscapeUrlEncodedData(*event_id, true);
+      std::string attachment_id_escaped = base::EscapeUrlEncodedData(*id, true);
+      std::string url_path = event_id_escaped + "/" + attachment_id_escaped;
+      GURL attachment_url = GURL(kBaseAttachmentResourceUrl).Resolve(url_path);
+
       // Set `resource_url` prematurely because the request to check whether the
       // attachment page exists is handled asynchronously. This way the request
       // can finish before possibly incorrectly resetting the URLs. The urls
@@ -472,9 +457,9 @@ void OutlookCalendarPageHandler::OnJsonParsed(
       // unsuccessful and it is not yet time to make another request.
       if (!ntp_features::kNtpOutlookCalendarModuleDisableAttachmentsParam
                .Get()) {
-        created_attachment->resource_url = GURL(attachment_url);
+        created_attachment->resource_url = attachment_url;
       }
-      last_attachment_resource_url = attachment_url;
+      last_attachment_resource_url = attachment_url.spec();
       created_event->attachments.push_back(std::move(created_attachment));
     }
 

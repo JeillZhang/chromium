@@ -33,8 +33,6 @@
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/common/importer/imported_bookmark_entry.h"
-#include "chrome/common/importer/importer_data_types.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/utility/importer/bookmark_html_reader.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -42,9 +40,12 @@
 #include "components/favicon/core/favicon_service.h"
 #include "components/favicon_base/favicon_usage_data.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/strings/grit/components_strings.h"
-#include "components/sync/base/features.h"
+#include "components/user_data_importer/common/imported_bookmark_entry.h"
+#include "components/user_data_importer/common/importer_data_types.h"
 #include "content/public/test/browser_task_environment.h"
+#include "skia/rusty_png_feature.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -166,7 +167,8 @@ class BookmarkHTMLWriterTest : public testing::Test {
 
   // Converts an ImportedBookmarkEntry to a string suitable for assertion
   // testing.
-  std::u16string BookmarkEntryToString(const ImportedBookmarkEntry& entry) {
+  std::u16string BookmarkEntryToString(
+      const user_data_importer::ImportedBookmarkEntry& entry) {
     std::u16string result;
     result.append(u"on_toolbar=");
     if (entry.in_toolbar) {
@@ -201,7 +203,7 @@ class BookmarkHTMLWriterTest : public testing::Test {
                                         std::u16string_view f1,
                                         std::u16string_view f2,
                                         std::u16string_view f3) {
-    ImportedBookmarkEntry entry;
+    user_data_importer::ImportedBookmarkEntry entry;
     entry.in_toolbar = on_toolbar;
     entry.url = url;
     if (!f1.empty()) {
@@ -218,14 +220,15 @@ class BookmarkHTMLWriterTest : public testing::Test {
     return BookmarkEntryToString(entry);
   }
 
-  void AssertBookmarkEntryEquals(const ImportedBookmarkEntry& entry,
-                                 bool on_toolbar,
-                                 const GURL& url,
-                                 std::u16string_view title,
-                                 base::Time creation_time,
-                                 std::u16string_view f1,
-                                 std::u16string_view f2,
-                                 std::u16string_view f3) {
+  void AssertBookmarkEntryEquals(
+      const user_data_importer::ImportedBookmarkEntry& entry,
+      bool on_toolbar,
+      const GURL& url,
+      std::u16string_view title,
+      base::Time creation_time,
+      std::u16string_view f1,
+      std::u16string_view f2,
+      std::u16string_view f3) {
     EXPECT_EQ(BookmarkValuesToString(on_toolbar, url, title, creation_time, f1,
                                      f2, f3),
               BookmarkEntryToString(entry));
@@ -267,7 +270,7 @@ TEST_F(BookmarkHTMLWriterTest, CheckOutputWhenNoBookmarksWithAccount) {
   // Permanent account folders exist, but there are no local or account
   // bookmarks.
   base::test::ScopedFeatureList scoped_feature_list{
-      syncer::kSyncEnableBookmarksInTransportMode};
+      switches::kSyncEnableBookmarksInTransportMode};
   model()->CreateAccountPermanentFolders();
 
   // Export.
@@ -293,13 +296,16 @@ TEST_F(BookmarkHTMLWriterTest, CheckOutputWhenBookmarksInLocalBookmarkBar) {
   ASSERT_EQ(WriteBookmarksAndWait(), bookmark_html_writer::Result::kSuccess);
 
   // Check against the golden file.
+  const char* kGoldenFilename =
+      skia::IsRustyPngEnabled() ? "bookmarks_in_bookmarks_bar.html"
+                                : "bookmarks_in_bookmarks_bar_with_libpng.html";
   EXPECT_TRUE(base::TextContentsEqual(
-      path_, test_data_path_.AppendASCII("bookmarks_in_bookmarks_bar.html")));
+      path_, test_data_path_.AppendASCII(kGoldenFilename)));
 }
 
 TEST_F(BookmarkHTMLWriterTest, CheckOutputWhenBookmarksInAccountBookmarkBar) {
   base::test::ScopedFeatureList scoped_feature_list{
-      syncer::kSyncEnableBookmarksInTransportMode};
+      switches::kSyncEnableBookmarksInTransportMode};
   model()->CreateAccountPermanentFolders();
 
   // Populate the BookmarkModel. This creates the following bookmark structure:
@@ -316,8 +322,11 @@ TEST_F(BookmarkHTMLWriterTest, CheckOutputWhenBookmarksInAccountBookmarkBar) {
   ASSERT_EQ(WriteBookmarksAndWait(), bookmark_html_writer::Result::kSuccess);
 
   // Check against the golden file.
+  const char* kGoldenFilename =
+      skia::IsRustyPngEnabled() ? "bookmarks_in_bookmarks_bar.html"
+                                : "bookmarks_in_bookmarks_bar_with_libpng.html";
   EXPECT_TRUE(base::TextContentsEqual(
-      path_, test_data_path_.AppendASCII("bookmarks_in_bookmarks_bar.html")));
+      path_, test_data_path_.AppendASCII(kGoldenFilename)));
 }
 
 TEST_F(BookmarkHTMLWriterTest, CheckOutputWhenBookmarksInLocalOther) {
@@ -335,13 +344,16 @@ TEST_F(BookmarkHTMLWriterTest, CheckOutputWhenBookmarksInLocalOther) {
   ASSERT_EQ(WriteBookmarksAndWait(), bookmark_html_writer::Result::kSuccess);
 
   // Check against the golden file.
+  const char* kGoldenFilename = skia::IsRustyPngEnabled()
+                                    ? "bookmarks_in_other.html"
+                                    : "bookmarks_in_other_with_libpng.html";
   EXPECT_TRUE(base::TextContentsEqual(
-      path_, test_data_path_.AppendASCII("bookmarks_in_other.html")));
+      path_, test_data_path_.AppendASCII(kGoldenFilename)));
 }
 
 TEST_F(BookmarkHTMLWriterTest, CheckOutputWhenBookmarksInAccountOther) {
   base::test::ScopedFeatureList scoped_feature_list{
-      syncer::kSyncEnableBookmarksInTransportMode};
+      switches::kSyncEnableBookmarksInTransportMode};
   model()->CreateAccountPermanentFolders();
 
   // Populate the BookmarkModel. This creates the following bookmark structure:
@@ -358,8 +370,11 @@ TEST_F(BookmarkHTMLWriterTest, CheckOutputWhenBookmarksInAccountOther) {
   ASSERT_EQ(WriteBookmarksAndWait(), bookmark_html_writer::Result::kSuccess);
 
   // Check against the golden file.
+  const char* kGoldenFilename = skia::IsRustyPngEnabled()
+                                    ? "bookmarks_in_other.html"
+                                    : "bookmarks_in_other_with_libpng.html";
   EXPECT_TRUE(base::TextContentsEqual(
-      path_, test_data_path_.AppendASCII("bookmarks_in_other.html")));
+      path_, test_data_path_.AppendASCII(kGoldenFilename)));
 }
 
 // Tests bookmark_html_writer by populating a BookmarkModel, writing it out by
@@ -443,8 +458,8 @@ TEST_F(BookmarkHTMLWriterTest, ExportThenImport) {
                     gfx::Image());
 
   // Read the bookmarks back in.
-  std::vector<ImportedBookmarkEntry> parsed_bookmarks;
-  std::vector<importer::SearchEngineInfo> parsed_search_engines;
+  std::vector<user_data_importer::ImportedBookmarkEntry> parsed_bookmarks;
+  std::vector<user_data_importer::SearchEngineInfo> parsed_search_engines;
   favicon_base::FaviconUsageDataList favicons;
   bookmark_html_reader::ImportBookmarksFile(
       base::RepeatingCallback<bool(void)>(),

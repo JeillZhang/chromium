@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ash/policy/skyvault/drive_upload_observer.h"
 
+#include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/file_manager/delete_io_task.h"
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
 #include "chrome/browser/ash/file_manager/volume_manager.h"
@@ -220,11 +222,13 @@ void DriveUploadObserver::OnIOTaskStatus(
   // Only log in case of final state.
   if (status.state == file_manager::io_task::State::kError) {
     policy::local_user_files::SkyVaultDeleteErrorHistogram(
-        trigger_, policy::local_user_files::CloudProvider::kGoogleDrive, true);
+        trigger_, policy::local_user_files::MigrationDestination::kGoogleDrive,
+        true);
   }
   if (status.state == file_manager::io_task::State::kSuccess) {
     policy::local_user_files::SkyVaultDeleteErrorHistogram(
-        trigger_, policy::local_user_files::CloudProvider::kGoogleDrive, false);
+        trigger_, policy::local_user_files::MigrationDestination::kGoogleDrive,
+        false);
   }
 
   switch (status.state) {

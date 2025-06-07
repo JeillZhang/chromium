@@ -5,18 +5,19 @@
 #include "chrome/browser/ui/webui/devtools/devtools_ui.h"
 
 #include "base/command_line.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/devtools/url_constants.h"
 #include "chrome/browser/ui/webui/devtools/devtools_ui_data_source.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
+#include "components/embedder_support/user_agent_utils.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/common/bindings_policy.h"
-#include "content/public/common/user_agent.h"
 
 // static
 GURL DevToolsUI::GetProxyURL(const std::string& frontend_url) {
@@ -36,9 +37,9 @@ GURL DevToolsUI::GetProxyURL(const std::string& frontend_url) {
 
 // static
 GURL DevToolsUI::GetRemoteBaseURL() {
-  return GURL(base::StringPrintf("%s%s/%s/", kRemoteFrontendBase,
-                                 kRemoteFrontendPath,
-                                 content::GetChromiumGitRevision().c_str()));
+  return GURL(
+      base::StringPrintf("%s%s/%s/", kRemoteFrontendBase, kRemoteFrontendPath,
+                         embedder_support::GetChromiumGitRevision().c_str()));
 }
 
 // static

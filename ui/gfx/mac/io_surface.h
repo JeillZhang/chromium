@@ -5,7 +5,6 @@
 #ifndef UI_GFX_MAC_IO_SURFACE_H_
 #define UI_GFX_MAC_IO_SURFACE_H_
 
-#include <IOKit/IOReturn.h>
 #include <IOSurface/IOSurfaceRef.h>
 #include <mach/mach.h>
 
@@ -101,7 +100,7 @@ uint32_t BufferFormatToIOSurfacePixelFormat(gfx::BufferFormat format,
 
 // Return an IOSurface consuming |io_surface_mach_port|.
 COMPONENT_EXPORT(GFX)
-base::apple::ScopedCFTypeRef<IOSurfaceRef> IOSurfaceMachPortToIOSurface(
+ScopedIOSurface IOSurfaceMachPortToIOSurface(
     ScopedRefCountedIOSurfaceMachPort io_surface_mach_port);
 
 }  // namespace gfx

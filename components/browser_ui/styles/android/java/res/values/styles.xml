@@ -55,6 +55,7 @@ found in the LICENSE file.
     <style name="Base.OverflowMenuThemeOverlay" parent="">
         <item name="android:popupMenuStyle">@android:style/Widget.Material.PopupMenu</item>
         <item name="android:popupBackground">@null</item>
+        <item name="android:listChoiceBackgroundIndicator">@drawable/list_item_ripple</item>
         <item name="android:listDivider">@null</item>
         <item name="android:listPreferredItemHeightSmall">48dp</item>
         <item name="android:textAppearance">@style/TextAppearance.TextLarge.Primary</item>
@@ -226,17 +227,6 @@ found in the LICENSE file.
     </style>
     <style name="TextAppearance.ChipHint" parent="TextAppearance.TextAccentMediumThick">
         <item name="android:textColor">@color/chip_text_color_secondary_list</item>
-    </style>
-
-    <!-- Floating action button styles -->
-    <style name="TextAppearance.FloatingActionButton" parent="TextAppearance.TextAccentMediumThick">
-        <item name="android:textColor">@macro/default_text_color_on_accent2_container</item>
-    </style>
-    <style name="TextAppearance.FloatingActionButton.Incognito" parent="TextAppearance.TextAccentMediumThick">
-        <item name="android:textColor">@color/baseline_secondary_90</item>
-    </style>
-    <style name="TextAppearance.FloatingActionButton.OnPrimaryContainer" parent="TextAppearance.TextAccentMediumThick">
-        <item name="android:textColor">@macro/default_text_color_on_accent1_container</item>
     </style>
 
     <!-- Other text styles -->

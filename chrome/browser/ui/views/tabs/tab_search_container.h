@@ -87,7 +87,9 @@ class TabSearchContainer : public views::View,
     AnimationSessionType session_type() { return session_type_; }
 
     gfx::SlideAnimation* expansion_animation() { return &expansion_animation_; }
-    void ResetAnimationForTesting(double value);
+    void ResetExpansionAnimationForTesting(double value);
+    void ResetOpacityAnimationForTesting(double value);
+    void ResetFlatEdgeAnimationForTesting(double value);
 
     void Hide();
     TabStripNudgeButton* button() { return button_; }
@@ -114,8 +116,7 @@ class TabSearchContainer : public views::View,
     base::OnceCallback<void()> on_animation_ended_;
   };
 
-  // If `anchor_view` is nullptr, use `this` as the `anchor_view` for the bubble
-  // host. TODO(382097906): Pull tabslotcontroller out of tabstrip and pass
+  // TODO(382097906): Pull tabslotcontroller out of tabstrip and pass
   // that instead.
   TabSearchContainer(TabStripController* tab_strip_controller,
                      TabStripModel* tab_strip_model,
@@ -123,7 +124,6 @@ class TabSearchContainer : public views::View,
                      View* locked_expansion_view,
                      BrowserWindowInterface* browser_window_interface,
                      tabs::TabDeclutterController* tab_declutter_controller,
-                     views::View* anchor_view,
                      TabStrip* tab_strip);
   TabSearchContainer(const TabSearchContainer&) = delete;
   TabSearchContainer& operator=(const TabSearchContainer&) = delete;

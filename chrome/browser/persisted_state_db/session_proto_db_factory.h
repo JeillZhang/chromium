@@ -19,6 +19,7 @@
 #if !BUILDFLAG(IS_ANDROID)
 #include "components/commerce/core/proto/cart_db_content.pb.h"
 #include "components/commerce/core/proto/coupon_db_content.pb.h"
+#include "components/commerce/core/proto/discount_infos_db_content.pb.h"  // nogncheck
 #include "components/commerce/core/proto/discounts_db_content.pb.h"  // nogncheck
 #else
 #include "components/commerce/core/proto/merchant_signal_db_content.pb.h"
@@ -31,6 +32,7 @@ const char kMerchantTrustSignalDBFolder[] = "merchant_signal_db";
 const char kCommerceSubscriptionDBFolder[] = "commerce_subscription_db";
 const char kCouponDBFolder[] = "coupon_db";
 const char kDiscountsDBFolder[] = "discounts_db";
+const char kDiscountInfosDBFolder[] = "discount_infos_db";
 const char kParcelTrackingDBFolder[] = "parcel_tracking_db";
 }  // namespace
 
@@ -44,6 +46,8 @@ SessionProtoDBFactory<coupon_db::CouponContentProto>*
 GetCouponSessionProtoDBFactory();
 SessionProtoDBFactory<discounts_db::DiscountsContentProto>*
 GetDiscountsSessionProtoDBFactory();
+SessionProtoDBFactory<discount_infos_db::DiscountInfosContentProto>*
+GetDiscountInfosSessionProtoDBFactory();
 #else
 SessionProtoDBFactory<merchant_signal_db::MerchantSignalContentProto>*
 GetMerchantSignalSessionProtoDBFactory();
@@ -88,8 +92,9 @@ template <typename T>
 SessionProtoDB<T>* SessionProtoDBFactory<T>::GetForProfile(
     content::BrowserContext* context) {
   // Incognito is currently not supported
-  if (context->IsOffTheRecord())
+  if (context->IsOffTheRecord()) {
     return nullptr;
+  }
 
   return static_cast<SessionProtoDB<T>*>(
       GetInstance()->GetServiceForBrowserContext(context, true));
@@ -163,6 +168,13 @@ SessionProtoDBFactory<T>::BuildServiceInstanceForBrowserContext(
         proto_database_provider,
         context->GetPath().AppendASCII(kDiscountsDBFolder),
         leveldb_proto::ProtoDbType::DISCOUNTS_DATABASE,
+        content::GetUIThreadTaskRunner({}));
+  } else if (std::is_base_of<discount_infos_db::DiscountInfosContentProto,
+                             T>::value) {
+    return std::make_unique<SessionProtoDB<T>>(
+        proto_database_provider,
+        context->GetPath().AppendASCII(kDiscountInfosDBFolder),
+        leveldb_proto::ProtoDbType::DISCOUNT_INFOS_DATABASE,
         content::GetUIThreadTaskRunner({}));
 #else
   } else if (std::is_base_of<merchant_signal_db::MerchantSignalContentProto,

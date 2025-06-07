@@ -43,12 +43,16 @@
 #if ((BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)) && \
      BUILDFLAG(ENABLE_EXTENSIONS))
 #include "base/memory/scoped_refptr.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension_builder.h"
 #endif  // ((BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)) &&
         // BUILDFLAG(ENABLE_EXTENSIONS))
+
+#if BUILDFLAG(ENABLE_GLIC)
+#include "chrome/common/chrome_features.h"
+#endif
 
 class BrowserCommandControllerTest : public BrowserWithTestWindowTest {
  public:
@@ -289,7 +293,7 @@ class FullscreenTestBrowserWindow : public TestBrowserWindow,
   // TestBrowserWindow overrides:
   bool ShouldHideUIForFullscreen() const override { return fullscreen_; }
   bool IsFullscreen() const override { return fullscreen_; }
-  void EnterFullscreen(const GURL& url,
+  void EnterFullscreen(const url::Origin& origin,
                        ExclusiveAccessBubbleType type,
                        int64_t display_id) override {
     fullscreen_ = true;
@@ -603,12 +607,11 @@ class CreateShortcutBrowserCommandControllerTest
     extensions::TestExtensionSystem* extension_system =
         static_cast<extensions::TestExtensionSystem*>(
             extensions::ExtensionSystem::Get(browser()->profile()));
-    extensions::ExtensionService* extension_service =
-        extension_system->CreateExtensionService(
-            base::CommandLine::ForCurrentProcess(),
-            /*install_directory=*/base::FilePath(),
-            /*autoupdate_enabled=*/false);
-    extension_service->AddExtension(extension.get());
+    extension_system->CreateExtensionService(
+        base::CommandLine::ForCurrentProcess(),
+        /*install_directory=*/base::FilePath(), /*autoupdate_enabled=*/false);
+    extensions::ExtensionRegistrar::Get(browser()->profile())
+        ->AddExtension(extension);
 
     return extension;
   }
@@ -666,7 +669,7 @@ TEST_F(CreateShortcutBrowserCommandControllerTest,
   const char kResource[] = "resource.html";
   scoped_refptr<const extensions::Extension> extension =
       CreateAndInstallExtension();
-  AddTab(browser(), extension->GetResourceURL(kResource));
+  AddTab(browser(), extension->ResolveExtensionURL(kResource));
   EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_CREATE_SHORTCUT));
 }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)

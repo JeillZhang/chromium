@@ -14,9 +14,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/no_destructor.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/chrome_extension_system_factory.h"
 #include "chrome/browser/extensions/extension_management.h"
-#include "chrome/browser/extensions/permissions/scripting_permissions_modifier.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/keyed_service/content/browser_context_keyed_service_shutdown_notifier_factory.h"
@@ -28,7 +26,9 @@
 #include "extensions/browser/event_router_factory.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system_provider.h"
 #include "extensions/browser/extension_util.h"
+#include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/network_permissions_updater.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/browser/renderer_startup_helper.h"
@@ -51,7 +51,7 @@ namespace extensions {
 
 namespace {
 
-// A helper class to watch profile lifetime.
+// A helper class to watch profile lifetime. See `Subscribe()` call below.
 class PermissionsUpdaterShutdownNotifierFactory
     : public BrowserContextKeyedServiceShutdownNotifierFactory {
  public:
@@ -73,7 +73,8 @@ class PermissionsUpdaterShutdownNotifierFactory
       : BrowserContextKeyedServiceShutdownNotifierFactory(
             "PermissionsUpdaterShutdownFactory") {
     DependsOn(EventRouterFactory::GetInstance());
-    DependsOn(ChromeExtensionSystemFactory::GetInstance());
+    CHECK(ExtensionsBrowserClient::Get());
+    DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
   }
   ~PermissionsUpdaterShutdownNotifierFactory() override = default;
 };

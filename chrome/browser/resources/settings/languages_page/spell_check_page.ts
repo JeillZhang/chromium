@@ -67,14 +67,6 @@ export class SettingsSpellCheckPageElement extends
   static get properties() {
     return {
       /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
-      /**
        * Read-only reference to the languages model provided by the
        * 'settings-languages' instance.
        */
@@ -124,11 +116,14 @@ export class SettingsSpellCheckPageElement extends
   }
   // </if>
 
-  languages?: LanguagesModel;
-  languageHelper: LanguageHelper;
-  private spellCheckLanguages_: Array<LanguageState|SpellCheckLanguageState>;
-  private hideSpellCheckLanguages_: boolean;
-  private focusConfig_: FocusConfig;
+  declare languages?: LanguagesModel;
+  declare languageHelper: LanguageHelper;
+  // <if expr="not is_macosx">
+  declare private spellCheckLanguages_:
+      Array<LanguageState|SpellCheckLanguageState>;
+  // </if>
+  declare private hideSpellCheckLanguages_: boolean;
+  declare private focusConfig_: FocusConfig;
   private languageSettingsMetricsProxy_: LanguageSettingsMetricsProxy =
       LanguageSettingsMetricsProxyImpl.getInstance();
 

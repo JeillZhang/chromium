@@ -4,6 +4,7 @@
 
 #include "base/features.h"
 
+#include "base/files/file_path.h"
 #include "base/task/sequence_manager/sequence_manager_impl.h"
 #include "base/threading/platform_thread.h"
 #include "build/blink_buildflags.h"
@@ -36,24 +37,18 @@ namespace base::features {
 
 // Alphabetical:
 
-// Activate base::FeatureParamWithCache internal cache.
-// TODO(https://crbug.com/340824113): Remove the feature flag below.
+// Controls caching within BASE_FEATURE_PARAM(). This is feature-controlled
+// so that ScopedFeatureList can disable it to turn off caching.
 BASE_FEATURE(kFeatureParamWithCache,
              "FeatureParamWithCache",
              FEATURE_ENABLED_BY_DEFAULT);
 
-// Use the Rust JSON parser. Enabled everywhere.
-BASE_FEATURE(kUseRustJsonParser,
-             "UseRustJsonParser",
+// Whether a fast implementation of FilePath::IsParent is used. This feature
+// exists to ensure that the fast implementation can be disabled quickly if
+// issues are found with it.
+BASE_FEATURE(kFastFilePathIsParent,
+             "FastFilePathIsParent",
              FEATURE_ENABLED_BY_DEFAULT);
-
-// If true, use the Rust JSON parser in-thread; otherwise, it runs in a thread
-// pool.
-BASE_FEATURE_PARAM(bool,
-                   kUseRustJsonParserInCurrentSequence,
-                   &kUseRustJsonParser,
-                   "UseRustJsonParserInCurrentSequence",
-                   true);
 
 // Use non default low memory device threshold.
 // Value should be given via |LowMemoryDeviceThresholdMB|.
@@ -104,6 +99,11 @@ BASE_FEATURE(kPartialLowEndModeOnMidRangeDevices,
 #endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_ANDROID)
+// Enable not perceptible binding without cpu priority boosting.
+BASE_FEATURE(kBackgroundNotPerceptibleBinding,
+             "BackgroundNotPerceptibleBinding",
+             FEATURE_DISABLED_BY_DEFAULT);
+
 // Whether to report frame metrics to the Android.FrameTimeline.* histograms.
 BASE_FEATURE(kCollectAndroidFrameTimelineMetrics,
              "CollectAndroidFrameTimelineMetrics",
@@ -118,6 +118,12 @@ BASE_FEATURE(kPostPowerMonitorBroadcastReceiverInitToBackground,
 BASE_FEATURE(kPostGetMyMemoryStateToBackground,
              "PostGetMyMemoryStateToBackground",
              FEATURE_ENABLED_BY_DEFAULT);
+
+// Use shared service connection to rebind a service binding to update the LRU
+// in the ProcessList of OomAdjuster.
+BASE_FEATURE(kUseSharedRebindServiceConnection,
+             "UseSharedRebindServiceConnection",
+             FEATURE_DISABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_ANDROID)
 
 void Init(EmitThreadControllerProfilerMetadata
@@ -125,6 +131,8 @@ void Init(EmitThreadControllerProfilerMetadata
   sequence_manager::internal::SequenceManagerImpl::InitializeFeatures();
   sequence_manager::internal::ThreadController::InitializeFeatures(
       emit_thread_controller_profiler_metadata);
+
+  FilePath::InitializeFeatures();
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   MessagePumpEpoll::InitializeFeatures();

@@ -19,7 +19,6 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
-#include "base/not_fatal_until.h"
 #include "base/scoped_observation.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/branding_buildflags.h"
@@ -69,7 +68,6 @@
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/common/feature_switch.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -309,13 +307,13 @@ class InMenuButton : public LabelButton {
         gfx::Insets::TLBR(0, kHorizontalPadding, 0, kHorizontalPadding)));
     label()->SetFontList(MenuConfig::instance().font_list);
 
-    SetTextColorId(views::Button::STATE_DISABLED,
-                   ui::kColorMenuItemForegroundDisabled);
-    SetTextColorId(views::Button::STATE_HOVERED,
-                   ui::kColorMenuItemForegroundSelected);
-    SetTextColorId(views::Button::STATE_PRESSED,
-                   ui::kColorMenuItemForegroundSelected);
-    SetTextColorId(views::Button::STATE_NORMAL, ui::kColorMenuItemForeground);
+    SetTextColor(views::Button::STATE_DISABLED,
+                 ui::kColorMenuItemForegroundDisabled);
+    SetTextColor(views::Button::STATE_HOVERED,
+                 ui::kColorMenuItemForegroundSelected);
+    SetTextColor(views::Button::STATE_PRESSED,
+                 ui::kColorMenuItemForegroundSelected);
+    SetTextColor(views::Button::STATE_NORMAL, ui::kColorMenuItemForeground);
 
     GetViewAccessibility().SetRole(ax::mojom::Role::kMenuItem);
   }
@@ -407,7 +405,7 @@ void AddSignedInChipToProfileMenuItem(
               views::Builder<views::Label>()
                   .SetText(GetSigninStatusChipString(profile))
                   .CopyAddressTo(&profile_chip_label)
-                  .SetBackground(views::CreateThemedRoundedRectBackground(
+                  .SetBackground(views::CreateRoundedRectBackground(
                       item->IsSelected()
                           ? ui::kColorAppMenuProfileRowChipHovered
                           : ui::kColorAppMenuProfileRowChipBackground,
@@ -432,7 +430,7 @@ void AddSignedInChipToProfileMenuItem(
       item->AddSelectedChangedCallback(base::BindRepeating(
           [](MenuItemView* menu_item_view, View* child_view,
              int corner_radius) {
-            child_view->SetBackground(views::CreateThemedRoundedRectBackground(
+            child_view->SetBackground(views::CreateRoundedRectBackground(
                 menu_item_view->IsSelected()
                     ? ui::kColorAppMenuProfileRowChipHovered
                     : ui::kColorAppMenuProfileRowChipBackground,
@@ -685,7 +683,7 @@ class AppMenu::ZoomView : public AppMenuView, public views::WidgetObserver {
     zoom_label->SetHorizontalAlignment(gfx::ALIGN_RIGHT);
     zoom_label->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(
         0, kZoomLabelHorizontalPadding, 0, kZoomLabelHorizontalPadding)));
-    zoom_label->SetEnabledColorId(ui::kColorMenuItemForeground);
+    zoom_label->SetEnabledColor(ui::kColorMenuItemForeground);
 
     // Need to set a font list for the zoom label width calculations.
     zoom_label->SetFontList(MenuConfig::instance().font_list);
@@ -1202,8 +1200,7 @@ bool AppMenu::IsCommandEnabled(int command_id) const {
     return true;
   }
 
-  if (features::IsExtensionMenuInRootAppMenu() &&
-      command_id == IDC_EXTENSIONS_SUBMENU) {
+  if (command_id == IDC_EXTENSIONS_SUBMENU) {
     return true;
   }
 
@@ -1265,8 +1262,15 @@ bool AppMenu::GetAccelerator(int command_id,
     return false;
   }
 
-  if (command_id == IDC_CREATE_NEW_TAB_GROUP ||
-      IsTabGroupsCommand(command_id)) {
+  if (command_id == IDC_CREATE_NEW_TAB_GROUP) {
+    if (stg_everything_menu_) {
+      return stg_everything_menu_->GetAccelerator(command_id, accelerator);
+    }
+
+    return false;
+  }
+
+  if (IsTabGroupsCommand(command_id)) {
     return false;
   }
 
@@ -1300,10 +1304,13 @@ void AppMenu::WillShowMenu(MenuItemView* menu) {
     UMA_HISTOGRAM_ENUMERATION("WrenchMenu.MenuAction",
                               MENU_ACTION_SHOW_SAVED_TAB_GROUPS,
                               LIMIT_MENU_ACTION);
-    stg_everything_menu_ =
-        std::make_unique<tab_groups::STGEverythingMenu>(nullptr, browser_);
-    stg_everything_menu_->SetShowSubmenu(true);
-    stg_everything_menu_->PopulateMenu(menu);
+    if (!stg_everything_menu_) {
+      // Only recreate the menu if we have to.
+      stg_everything_menu_ =
+          std::make_unique<tab_groups::STGEverythingMenu>(nullptr, browser_);
+      stg_everything_menu_->SetShowSubmenu(true);
+      stg_everything_menu_->PopulateMenu(menu);
+    }
   } else if (IsTabGroupsCommand(menu->GetCommand())) {
     stg_everything_menu_->PopulateTabGroupSubMenu(menu);
   } else if (menu == bookmark_menu_) {
@@ -1349,8 +1356,12 @@ void AppMenu::OnMenuClosed(views::MenuItemView* menu) {
     }
   }
 
-  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser_);
-  browser_view->toolbar_button_provider()->GetAppMenuButton()->OnMenuClosed();
+  // This can be called if the app menu was open during browser destruction, at
+  // which point BrowserView may be in the process of being torn down.
+  // Null-check BrowserView to guard against such cases.
+  if (auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser_)) {
+    browser_view->toolbar_button_provider()->GetAppMenuButton()->OnMenuClosed();
+  }
 
   if (bookmark_menu_delegate_.get()) {
     BookmarkMergedSurfaceService* service =
@@ -1509,7 +1520,7 @@ void AppMenu::PopulateMenu(MenuItemView* parent, MenuModel* model) {
           item->AddChildView(
               views::Builder<views::Label>()
                   .SetText(upgrade_substring_text)
-                  .SetEnabledColorId(
+                  .SetEnabledColor(
                       ui::kColorAppMenuUpgradeRowSubstringForeground)
                   .SetEnabled(true)
                   .SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(
@@ -1657,7 +1668,7 @@ void AppMenu::CreateBookmarkMenu() {
 
 size_t AppMenu::ModelIndexFromCommandId(int command_id) const {
   auto ix = command_id_to_entry_.find(command_id);
-  CHECK(ix != command_id_to_entry_.end(), base::NotFatalUntil::M130);
+  CHECK(ix != command_id_to_entry_.end());
   return ix->second.second;
 }
 

@@ -165,6 +165,9 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // tree.
   virtual bool IsInFencedFrameTree() const = 0;
 
+  // Returns true if the navigation is taking place in a GuestView main frame.
+  virtual bool IsGuestViewMainFrame() const = 0;
+
   // Returns the type of the frame in which this navigation is taking place.
   virtual FrameType GetNavigatingFrameType() const = 0;
 
@@ -301,6 +304,9 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // The net error code if an error happened prior to commit. Otherwise it will
   // be net::OK.
   virtual net::Error GetNetErrorCode() = 0;
+
+  // The details why `net::Error` was emitted.
+  virtual int GetNetExtendedErrorCode() = 0;
 
   // Returns the RenderFrameHost this navigation is committing in.  The
   // RenderFrameHost returned will be the final host for the navigation. (Use

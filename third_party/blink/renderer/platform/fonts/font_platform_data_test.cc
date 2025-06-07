@@ -38,7 +38,6 @@
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/testing/font_test_base.h"
 #include "third_party/blink/renderer/platform/testing/font_test_helpers.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 using blink::test::CreateTestFont;
@@ -77,8 +76,6 @@ TEST_F(FontPlatformDataTest, AhemSpaceLigatureHasNoSpaceWithoutFontFeatures) {
 }
 
 TEST_F(FontPlatformDataTest, AhemHasAliasing) {
-  RuntimeEnabledFeaturesTestHelpers::ScopedDisableAhemAntialias
-      scoped_feature_list_(true);
   Font* font = CreateTestFont(AtomicString("Ahem"),
                               test::PlatformTestDataPath("Ahem.woff"), 16);
   const FontPlatformData& platform_data = font->PrimaryFont()->PlatformData();

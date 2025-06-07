@@ -34,6 +34,7 @@
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_copier.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -208,12 +209,13 @@ void RemoteFontFaceSource::NotifyFinished(Resource* resource) {
     execution_context->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
         mojom::ConsoleMessageSource::kOther,
         mojom::ConsoleMessageLevel::kWarning,
-        "Failed to decode downloaded font: " + font->Url().ElidedString()));
+        WTF::StrCat({"Failed to decode downloaded font: ",
+                     font->Url().ElidedString()})));
     if (!font->OtsParsingMessage().empty()) {
       execution_context->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
           mojom::ConsoleMessageSource::kOther,
           mojom::ConsoleMessageLevel::kWarning,
-          "OTS parsing error: " + font->OtsParsingMessage()));
+          WTF::StrCat({"OTS parsing error: ", font->OtsParsingMessage()})));
     }
   }
 
@@ -363,6 +365,10 @@ void RemoteFontFaceSource::BeginLoadIfNeeded() {
   if (IsLoaded()) {
     return;
   }
+  // Skip loading if the document is for markup sanitization.
+  if (GetDocument() && GetDocument()->IsForMarkupSanitization()) {
+    return;
+  }
   ExecutionContext* const execution_context =
       font_selector_->GetExecutionContext();
   if (!execution_context) {
@@ -377,16 +383,17 @@ void RemoteFontFaceSource::BeginLoadIfNeeded() {
   CHECK(font);
   if (font->StillNeedsLoad()) {
     TRACE_EVENT("devtools.timeline", "BeginRemoteFontLoad", "id",
-                font->InspectorId(), "display",
+                font->InspectorId(), "url", font->Url(), "display",
                 face_->GetFontFace()->display());
     if (font->IsLowPriorityLoadingAllowedForRemoteFont()) {
       execution_context->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
           mojom::blink::ConsoleMessageSource::kIntervention,
           mojom::blink::ConsoleMessageLevel::kInfo,
-          "Slow network is detected. See "
-          "https://www.chromestatus.com/feature/5636954674692096 for more "
-          "details. Fallback font will be used while loading: " +
-              font->Url().ElidedString()));
+          WTF::StrCat(
+              {"Slow network is detected. See "
+               "https://www.chromestatus.com/feature/5636954674692096 for more "
+               "details. Fallback font will be used while loading: ",
+               font->Url().ElidedString()})));
 
       // Set the loading priority to VeryLow only when all other clients agreed
       // that this font is not required for painting the text.

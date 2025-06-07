@@ -4,8 +4,15 @@
 
 import("//build/util/process_version.gni")
 import("//chrome/enterprise_companion/branding.gni")
+import("//chrome/process_version_rc_template.gni")
 import("//chrome/updater/zip.gni")
 import("//testing/test.gni")
+
+if (is_win) {
+  # ICU is needed for proxy URL canonicalization. Proxies are only supported on
+  # Windows.
+  import("//third_party/icu/config.gni")
+}
 
 process_version("version_header") {
   sources = [ "//chrome/VERSION" ]
@@ -37,7 +44,7 @@ process_version("branding_header") {
     "-e",
     "ENTERPRISE_COMPANION_EVENT_LOGGING_URL=\"$enterprise_companion_event_logging_url\"",
     "-e",
-    "KEYSTONE_NAME=\"$keystone_app_name\"",
+    "KEYSTONE_NAME=\"$enterprise_companion_keystone_app_name\"",
     "-e",
     "MAC_BUNDLE_IDENTIFIER_STRING=\"$mac_enterprise_companion_bundle_identifier\"",
     "-e",
@@ -100,6 +107,7 @@ source_set("base") {
     "//base",
     "//chrome/enterprise_companion/device_management_storage",
     "//chrome/enterprise_companion/proto",
+    "//chrome/enterprise_companion/telemetry_logger",
     "//chrome/enterprise_companion/telemetry_logger/proto",
     "//chrome/updater:public_sources",
     "//chrome/updater/protos:omaha_proto",
@@ -143,7 +151,13 @@ source_set("base") {
       "installer_win.cc",
       "ipc_security_win.cc",
     ]
-    deps += [ "//chrome/installer/util:work_item" ]
+    deps += [
+      "//base:i18n",
+      "//chrome/installer/util:work_item",
+    ]
+    if (icu_use_data_file) {
+      defines = [ "ENTERPRISE_COMPANION_USE_ICU_DATA_FILE" ]
+    }
   }
 }
 
@@ -226,6 +240,7 @@ test("enterprise_companion_tests") {
     "//chrome/enterprise_companion/device_management_storage",
     "//chrome/enterprise_companion/device_management_storage:unit_tests",
     "//chrome/enterprise_companion/proto",
+    "//chrome/enterprise_companion/telemetry_logger",
     "//chrome/enterprise_companion/telemetry_logger/proto",
     "//chrome/updater:constants_test",
     "//chrome/updater/protos:omaha_proto",
@@ -379,6 +394,29 @@ static_library("constants_test") {
   defines = [ "ENTERPRISE_COMPANION_TEST_ONLY" ]
 }
 
+if (is_win) {
+  # `process_version_rc_template` invokes `process_version` with the default
+  # template rc file which is at //chrome/app/chrome_version.rc.version.
+  process_version_rc_template("enterprise_companion_rc") {
+    _product_fullname = "$enterprise_companion_product_full_name"
+    _internal_name = _product_fullname + " ($current_cpu)"
+    if (is_debug) {
+      _internal_name += " (debug)"
+    }
+    extra_args = [
+      "-e",
+      "PRODUCT_FULLNAME=\"$_product_fullname\"",
+      "-e",
+      "INTERNAL_NAME=\"$_internal_name\"",
+      "-e",
+      "ORIGINAL_FILENAME=\"enterprise_companion.exe\"",
+      "-e",
+      "PRODUCT_SHORTNAME=\"$enterprise_companion_product_full_name\"",
+    ]
+    output = "$target_gen_dir/enterprise_companion.exe.rc"
+  }
+}
+
 executable("enterprise_companion") {
   sources = [ "main.cc" ]
   deps = [
@@ -389,6 +427,10 @@ executable("enterprise_companion") {
 
   if (is_win) {
     configs += [ "//build/config/win:windowed" ]
+    deps += [ ":enterprise_companion_rc" ]
+    if (icu_use_data_file) {
+      public_deps = [ "//third_party/icu:icudata" ]
+    }
   }
 }
 
@@ -404,6 +446,9 @@ executable("enterprise_companion_test") {
 
   if (is_win) {
     configs += [ "//build/config/win:windowed" ]
+    if (icu_use_data_file) {
+      public_deps = [ "//third_party/icu:icudata" ]
+    }
   }
 
   defines = [ "ENTERPRISE_COMPANION_TEST_ONLY" ]
@@ -419,6 +464,35 @@ group("all") {
   ]
   if (!is_official_build) {
     deps += [ ":enterprise_companion" ]
+  }
+}
+
+if (is_mac && !is_component_build && enable_dsyms) {
+  action("syms") {
+    script = "//build/redirect_stdout.py"
+    sources = [ "$root_out_dir/$enterprise_companion_product_full_name.app/Contents/MacOS/$enterprise_companion_product_full_name" ]
+    _dump_syms =
+        "//third_party/breakpad:dump_syms($host_system_allocator_toolchain)"
+    public_deps = [
+      "//chrome/enterprise_companion/mac:enterprise_companion_bundle",
+      _dump_syms,
+    ]
+    outputs = [ "$root_out_dir/$enterprise_companion_product_full_name-$chrome_version_full.breakpad" ]
+
+    args = rebase_path(outputs, root_build_dir) + [
+             rebase_path(get_label_info(_dump_syms, "root_out_dir") + "/" +
+                             get_label_info(_dump_syms, "name"),
+                         root_build_dir),
+             "-m",
+             "-d",
+             "-g",
+             rebase_path(
+                 "$root_out_dir/$enterprise_companion_product_full_name.dSYM/Contents/Resources/DWARF/$enterprise_companion_product_full_name",
+                 root_build_dir),
+             rebase_path(
+                 "$root_out_dir/$enterprise_companion_product_full_name.app/Contents/MacOS/$enterprise_companion_product_full_name",
+                 root_build_dir),
+           ]
   }
 }
 
@@ -441,8 +515,18 @@ artifact_zip("enterprise_companion_zip") {
       "//chrome/enterprise_companion/mac:copy_signing",
       "//chrome/enterprise_companion/mac:enterprise_companion_bundle",
     ]
+    if (!is_component_build && enable_dsyms) {
+      # Build symbols but do not include them in the archive. In official
+      # builds, the symbols built alongside the archive will be uploaded to the
+      # crash servers via symupload.
+      deps += [ ":syms" ]
+    }
   } else if (is_win) {
     inputs = [ "$root_build_dir/enterprise_companion.exe" ]
     deps = [ ":enterprise_companion" ]
+
+    if (icu_use_data_file) {
+      inputs += [ "$root_out_dir/icudtl.dat" ]
+    }
   }
 }

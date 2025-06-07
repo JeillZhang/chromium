@@ -38,6 +38,7 @@ compute-pressure
 cross-origin-isolated
 deferred-fetch
 deferred-fetch-minimal
+device-attributes
 digital-credentials-get
 display-capture
 encrypted-media
@@ -54,11 +55,14 @@ idle-detection
 interest-cohort
 join-ad-interest-group
 keyboard-map
+language-detector
 local-fonts
+local-network-access
 magnetometer
 media-playback-while-not-visible
 microphone
 midi
+on-device-speech-recognition
 otp-credentials
 payment
 picture-in-picture
@@ -68,6 +72,8 @@ private-state-token-issuance
 private-state-token-redemption
 publickey-credentials-create
 publickey-credentials-get
+record-ad-auction-events
+rewriter
 run-ad-auction
 screen-wake-lock
 serial
@@ -76,11 +82,14 @@ shared-storage
 shared-storage-select-url
 speaker-selection
 storage-access
+summarizer
 sync-xhr
+translator
 unload
 usb
 vertical-scroll
 web-app-installation
 window-management
+writer
 xr-spatial-tracking
 

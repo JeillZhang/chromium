@@ -195,7 +195,8 @@ CompositorGpuThread::GetSharedContextState() {
 #else
       /*dawn_context_provider=*/nullptr,
 #endif
-      /*peak_memory_monitor=*/weak_ptr_factory_.GetWeakPtr(),
+      /*peak_memory_monitor=*/
+      gpu_channel_manager_->peak_memory_monitor(),
       /*created_on_compositor_gpu_thread=*/true);
 
   auto gles2_feature_info = base::MakeRefCounted<gpu::gles2::FeatureInfo>(
@@ -223,6 +224,16 @@ bool CompositorGpuThread::Initialize() {
   // Setup thread options.
   base::Thread::Options thread_options(base::MessagePumpType::DEFAULT, 0);
   thread_options.thread_type = base::ThreadType::kDisplayCritical;
+
+#if BUILDFLAG(IS_MAC)
+  thread_options.message_pump_type = base::MessagePumpType::NS_RUNLOOP;
+
+  // Note: The WorkBatchSize is different from GpuMain thread set. Revisit the
+  // following code if any regression is found. See GpuMain() and
+  // crbug.com/40668161.
+  // std::unique_ptr<base::SingleThreadTaskExecutor> thread_task_executor;
+  // thread_task_executor->SetWorkBatchSize(2);
+#endif
   StartWithOptions(std::move(thread_options));
 
   // Wait until thread is started and Init() is executed in order to return
@@ -275,15 +286,6 @@ void CompositorGpuThread::CleanUp() {
 
   // WatchDogThread destruction should happen on the CompositorGpuThread.
   watchdog_thread_.reset();
-}
-
-void CompositorGpuThread::OnMemoryAllocatedChange(
-    gpu::CommandBufferId id,
-    uint64_t old_size,
-    uint64_t new_size,
-    gpu::GpuPeakMemoryAllocationSource source) {
-  gpu_channel_manager_->GetOnMemoryAllocatedChangeCallback().Run(
-      id, old_size, new_size, source);
 }
 
 void CompositorGpuThread::OnBackgrounded() {

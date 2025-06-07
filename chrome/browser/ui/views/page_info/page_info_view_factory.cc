@@ -27,12 +27,14 @@
 #include "chrome/browser/ui/views/page_info/page_info_permission_content_view.h"
 #include "chrome/browser/ui/views/page_info/page_info_security_content_view.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/content_settings/core/common/cookie_controls_state.h"
 #include "components/page_info/core/features.h"
 #include "components/page_info/core/proto/about_this_site_metadata.pb.h"
 #include "components/page_info/page_info.h"
 #include "components/permissions/permission_util.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/strings/grit/privacy_sandbox_strings.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/color/color_id.h"
@@ -181,6 +183,17 @@ std::unique_ptr<views::View> PageInfoViewFactory::CreateCookiesPageView() {
 }
 
 std::unique_ptr<views::View>
+PageInfoViewFactory::CreatePrivacyAndSiteDataPageView() {
+  // Reuse `PageInfoCookiesContentView` for the "Privacy and site data" page
+  // as it has a similar UI to "Cookies and site data".
+  return std::make_unique<PageInfoSubpageView>(
+      CreateSubpageHeader(
+          l10n_util::GetStringUTF16(IDS_PAGE_INFO_PRIVACY_SITE_DATA_HEADER),
+          presenter_->GetSubjectNameForDisplay()),
+      std::make_unique<PageInfoCookiesContentView>(presenter_));
+}
+
+std::unique_ptr<views::View>
 PageInfoViewFactory::CreateMerchantTrustPageView() {
   return std::make_unique<PageInfoSubpageView>(
       CreateSubpageHeader(
@@ -197,7 +210,7 @@ std::unique_ptr<views::View> PageInfoViewFactory::CreateSubpageHeader(
                              std::make_unique<views::Label>(
                                  title, views::style::CONTEXT_DIALOG_TITLE,
                                  views::style::STYLE_HEADLINE_4))
-                             .SetEnabledColorId(kColorPageInfoForeground)
+                             .SetEnabledColor(kColorPageInfoForeground)
                              .SetHorizontalAlignment(gfx::ALIGN_LEFT)
                              .SetID(VIEW_ID_PAGE_INFO_SUBPAGE_TITLE));
 
@@ -208,7 +221,7 @@ std::unique_ptr<views::View> PageInfoViewFactory::CreateSubpageHeader(
                 subtitle, views::style::CONTEXT_LABEL,
                 views::style::STYLE_BODY_4,
                 gfx::DirectionalityMode::DIRECTIONALITY_AS_URL))
-            .SetEnabledColorId(kColorPageInfoSubtitleForeground)
+            .SetEnabledColor(kColorPageInfoSubtitleForeground)
             .SetHorizontalAlignment(gfx::ALIGN_LEFT)
             .SetAllowCharacterBreak(true)
             .SetMultiLine(true));
@@ -440,9 +453,13 @@ const ui::ImageModel PageInfoViewFactory::GetPermissionIcon(
                                 : &vector_icons::kTouchpadMouseIcon;
       break;
     case ContentSettingsType::WEB_APP_INSTALLATION:
-      // TODO(crbug.com/333795265): provide dedicated icons.
       icon = show_blocked_badge ? &vector_icons::kInstallDesktopOffIcon
                                 : &vector_icons::kInstallDesktopIcon;
+      break;
+    case ContentSettingsType::LOCAL_NETWORK_ACCESS:
+      // TODO(crbug.com/400455013): Replace with final icons.
+      icon = show_blocked_badge ? &vector_icons::kRouterOffIcon
+                                : &vector_icons::kRouterIcon;
       break;
     default:
       break;

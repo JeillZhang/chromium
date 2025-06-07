@@ -24,6 +24,9 @@
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_driver.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
+#include "components/signin/public/base/consent_level.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/url_formatter/elide_url.h"
 
 namespace password_manager {
 
@@ -95,7 +98,7 @@ void Autofill(PasswordManagerClient* client,
     metrics_util::LogFilledPasswordFromAndroidApp(
         PreferredRealmIsFromAndroid(fill_data));
   }
-  driver->SetPasswordFillData(fill_data);
+  driver->PropagateFillDataOnParsingCompletion(fill_data);
 
   // Matches can be empty when there are only WebAuthn credentials available.
   // In that case there will be no actual fill so the client doesn't need
@@ -108,8 +111,15 @@ void Autofill(PasswordManagerClient* client,
 }
 
 std::string GetPreferredRealm(const PasswordForm& form) {
-  return form.app_display_name.empty() ? form.signon_realm
-                                       : form.app_display_name;
+  if (!form.app_display_name.empty()) {
+    return form.app_display_name;
+  }
+  if (!form.signon_realm.empty()) {
+    return form.signon_realm;
+  }
+  return base::UTF16ToUTF8(url_formatter::FormatOriginForSecurityDisplay(
+      url::Origin::Create(form.url),
+      url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC));
 }
 
 bool IsSameOrigin(const Origin& frame_origin, const GURL& credential_url) {
@@ -142,7 +152,26 @@ LikelyFormFilling SendFillInformationToRenderer(
   }
 
   if (best_matches.empty() && !webauthn_suggestions_available) {
-    driver->InformNoSavedCredentials();
+    bool should_show_popup_without_passwords = false;
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+    if (const auto* identity_manager = client->GetIdentityManager()) {
+      should_show_popup_without_passwords =
+          identity_manager->HasAccountWithRefreshTokenInPersistentErrorState(
+              identity_manager->GetPrimaryAccountId(
+                  signin::ConsentLevel::kSignin));
+    }
+
+#endif
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS)
+    if (!should_show_popup_without_passwords) {
+      client->MaybeShowSavePasswordPrimingPromo(observed_form.url);
+    }
+#endif
+
+    driver->InformNoSavedCredentials(should_show_popup_without_passwords);
     metrics_recorder->RecordFillEvent(
         PasswordFormMetricsRecorder::kManagerFillEventNoCredential);
     return LikelyFormFilling::kNoFilling;
@@ -202,9 +231,7 @@ LikelyFormFilling SendFillInformationToRenderer(
     // If the parser did not find a current password element, don't fill.
     wait_for_username_reason = WaitForUsernameReason::kFormNotGoodForFilling;
   } else if (observed_form.HasUsernameElement() &&
-             observed_form.HasNonEmptyPasswordValue() &&
-             observed_form.server_side_classification_successful &&
-             !observed_form.username_may_use_prefilled_placeholder) {
+             observed_form.HasNonEmptyPasswordValue()) {
     // Password is already filled in and we don't think the username is a
     // placeholder, so don't overwrite.
     wait_for_username_reason = WaitForUsernameReason::kPasswordPrefilled;
@@ -279,8 +306,6 @@ PasswordFormFillData CreatePasswordFormFillData(
     // clicking on each password field so no need in any field identifiers.
     result.username_element_renderer_id =
         form_on_page.username_element_renderer_id;
-    result.username_may_use_prefilled_placeholder =
-        form_on_page.username_may_use_prefilled_placeholder;
 
     result.password_element_renderer_id =
         form_on_page.password_element_renderer_id;

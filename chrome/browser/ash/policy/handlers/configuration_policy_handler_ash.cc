@@ -29,6 +29,9 @@
 #include "chrome/browser/apps/app_service/policy_util.h"
 #include "chrome/browser/ash/accessibility/magnifier_type.h"
 #include "chrome/browser/ui/ash/shelf/chrome_shelf_prefs.h"
+#include "chrome/browser/web_applications/policy/app_service_web_app_policy.h"
+#include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
+#include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/experiences/arc/arc_prefs.h"
 #include "chromeos/components/onc/onc_signature.h"
@@ -153,12 +156,13 @@ base::Value CalculateIdleActionValue(const base::Value* idle_action_value,
 }
 
 bool IsSupportedAppTypePolicyId(std::string_view policy_id) {
-  return apps_util::IsChromeAppPolicyId(policy_id) ||
-         apps_util::IsArcAppPolicyId(policy_id) ||
-         apps_util::IsSystemWebAppPolicyId(policy_id) ||
-         apps_util::IsWebAppPolicyId(policy_id) ||
-         apps_util::IsPreinstalledWebAppPolicyId(policy_id) ||
-         apps_util::IsIsolatedWebAppPolicyId(policy_id);
+  return web_app::WebAppPolicyManager::IsChromeAppPolicyId(policy_id) ||
+         web_app::IsArcAppPolicyId(policy_id) ||
+         web_app::IsSystemWebAppPolicyId(policy_id) ||
+         web_app::WebAppPolicyManager::IsWebAppPolicyId(policy_id) ||
+         web_app::WebAppPolicyManager::IsPreinstalledWebAppPolicyId(
+             policy_id) ||
+         web_app::WebAppPolicyManager::IsIsolatedWebAppPolicyId(policy_id);
 }
 
 }  // namespace
@@ -712,45 +716,6 @@ void ArcLocationServicePolicyHandler::ApplyPolicySettings(
 
   // Legacy handling.
   ArcServicePolicyHandler::ApplyPolicySettings(policies, prefs);
-}
-
-HelpMeWritePolicyHandler::HelpMeWritePolicyHandler()
-    : IntRangePolicyHandlerBase(
-          /*policy_name=*/key::kHelpMeWriteSettings,
-          /*min=*/
-          static_cast<int>(
-              HelpMeWritePolicyValue::kEnabledWithModelImprovement),
-          /*max=*/static_cast<int>(HelpMeWritePolicyValue::kDisabled),
-          /*clamp=*/false) {}
-
-void HelpMeWritePolicyHandler::ApplyPolicySettings(const PolicyMap& policies,
-                                                   PrefValueMap* prefs) {
-  // It is safe to use `GetValueUnsafe()` because type checking is performed
-  // before the value is used.
-  const base::Value* value = policies.GetValueUnsafe(policy_name());
-  int value_in_range;
-
-  if (value && EnsureInRange(value, &value_in_range, nullptr)) {
-    switch (value_in_range) {
-      case static_cast<int>(HelpMeWritePolicyValue::kDisabled):
-        prefs->SetBoolean(ash::prefs::kOrcaEnabled, false);
-        prefs->SetBoolean(ash::prefs::kOrcaFeedbackEnabled, false);
-        break;
-      case static_cast<int>(
-          HelpMeWritePolicyValue::kEnabledWithModelImprovement):
-        prefs->SetBoolean(ash::prefs::kOrcaEnabled, true);
-        prefs->SetBoolean(ash::prefs::kOrcaFeedbackEnabled, true);
-        break;
-      case static_cast<int>(
-          HelpMeWritePolicyValue::kEnabledWithoutModelImprovement):
-        prefs->SetBoolean(ash::prefs::kOrcaEnabled, true);
-        prefs->SetBoolean(ash::prefs::kOrcaFeedbackEnabled, false);
-        break;
-      default:
-        LOG(ERROR) << "Policy value out of range.";
-        break;
-    }
-  }
 }
 
 }  // namespace policy

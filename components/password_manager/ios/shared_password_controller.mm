@@ -16,19 +16,22 @@
 #import "base/apple/foundation_util.h"
 #import "base/check_op.h"
 #import "base/containers/to_vector.h"
+#import "base/debug/crash_logging.h"
 #import "base/feature_list.h"
 #import "base/functional/bind.h"
 #import "base/memory/raw_ptr.h"
+#import "base/metrics/histogram_functions.h"
 #import "base/metrics/histogram_macros.h"
 #import "base/scoped_multi_source_observation.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
+#import "base/types/expected_macros.h"
 #import "base/values.h"
 #import "components/autofill/core/browser/filling/filling_product.h"
 #import "components/autofill/core/browser/form_structure.h"
 #import "components/autofill/core/browser/suggestions/suggestion_type.h"
 #import "components/autofill/core/common/autofill_features.h"
-#include "components/autofill/core/common/field_data_manager.h"
+#import "components/autofill/core/common/field_data_manager.h"
 #import "components/autofill/core/common/form_data.h"
 #import "components/autofill/core/common/password_form_fill_data.h"
 #import "components/autofill/core/common/password_form_generation_data.h"
@@ -53,6 +56,7 @@
 #import "components/password_manager/core/common/password_manager_features.h"
 #import "components/password_manager/ios/account_select_fill_data.h"
 #import "components/password_manager/ios/constants.h"
+#import "components/password_manager/ios/features.h"
 #import "components/password_manager/ios/ios_password_manager_driver_factory.h"
 #import "components/password_manager/ios/password_manager_ios_util.h"
 #import "components/password_manager/ios/password_manager_java_script_feature.h"
@@ -99,6 +103,10 @@ namespace {
 
 // Password is considered not generated when user edits it below 4 characters.
 constexpr int kMinimumLengthForEditedPassword = 4;
+
+// Histogram for recording the status of retrieving FillData.
+constexpr char kFillDataRetrievalStatusHistogram[] =
+    "PasswordManager.iOS.FillDataRetrievalStatus";
 
 class PasswordAutofillAgentDelegateImpl
     : public autofill::PasswordAutofillAgentDelegate {
@@ -549,8 +557,8 @@ NSString* const kPasswordFormSuggestionSuffix = @" ••••••••";
                        }];
 
   if (self.isPasswordGenerated &&
-      ([formQuery.type isEqual:@"input"] ||
-       [formQuery.type isEqual:@"keyup"]) &&
+      ([formQuery.type isEqualToString:@"input"] ||
+       [formQuery.type isEqualToString:@"keyup"]) &&
       formQuery.fieldRendererID == self.passwordGeneratedIdentifier) {
     // On other platforms, when the user clicks on generation field, we show
     // password in clear text. And the user has the possibility to edit it. On
@@ -579,8 +587,8 @@ NSString* const kPasswordFormSuggestionSuffix = @" ••••••••";
     _lastTypedfieldIdentifier = formQuery.fieldRendererID;
     _lastTypedValue = formQuery.typedValue;
 
-    if ([formQuery.type isEqual:@"input"] ||
-        [formQuery.type isEqual:@"keyup"]) {
+    if ([formQuery.type isEqualToString:@"input"] ||
+        [formQuery.type isEqualToString:@"keyup"]) {
       [self.formHelper updateFieldDataOnUserInput:formQuery.fieldRendererID
                                           inFrame:frame
                                        inputValue:formQuery.typedValue];
@@ -719,16 +727,37 @@ NSString* const kPasswordFormSuggestionSuffix = @" ••••••••";
       NSString* username = [suggestion.value
           substringToIndex:suggestion.value.length -
                            kPasswordFormSuggestionSuffix.length];
-      std::unique_ptr<password_manager::FillData> fillData =
-          [self.suggestionHelper passwordFillDataForUsername:username
-                                                  forFrameId:frameId];
+      bool stateless = base::FeatureList::IsEnabled(
+          password_manager::features::kIOSStatelessFillDataFlow);
 
-      if (!fillData) {
-        completion();
-        return;
-      }
+      ASSIGN_OR_RETURN(
+          password_manager::FillDataRetrievalResult fill_data_result,
+          stateless
+              ? [self.suggestionHelper
+                    passwordFillDataForUsername:username
+                        likelyRealPasswordField:
+                            suggestion.metadata.likely_from_real_password_field
+                                 formIdentifier:suggestion.params
+                                                    ->form_renderer_id
+                                fieldIdentifier:suggestion.params
+                                                    ->field_renderer_id
+                                        frameId:suggestion.params->frame_id]
+              : [self.suggestionHelper passwordFillDataForUsername:username
+                                                        forFrameId:frameId],
+          [completion](auto e) {
+            base::UmaHistogramEnumeration(kFillDataRetrievalStatusHistogram, e);
+            SCOPED_CRASH_KEY_NUMBER("Bug6401794", "fill_data_status",
+                                    static_cast<int>(e));
+            DUMP_WILL_BE_NOTREACHED();
+            completion();
+            return;
+          });
 
-      [self.formHelper fillPasswordFormWithFillData:*fillData
+      base::UmaHistogramEnumeration(
+          kFillDataRetrievalStatusHistogram,
+          password_manager::FillDataRetrievalStatus::kSuccess);
+
+      [self.formHelper fillPasswordFormWithFillData:*fill_data_result.value()
                                             inFrame:frame
                                    triggeredOnField:fieldRendererID
                                   completionHandler:^(BOOL success) {
@@ -880,7 +909,7 @@ NSString* const kPasswordFormSuggestionSuffix = @" ••••••••";
           /*log_debug_data*/ true)) {
     return NO;
   }
-  if (![fieldType isEqual:kObfuscatedFieldType]) {
+  if (![fieldType isEqualToString:kObfuscatedFieldType]) {
     return NO;
   }
   const PasswordFormGenerationData* generationData =
@@ -1147,6 +1176,7 @@ NSString* const kPasswordFormSuggestionSuffix = @" ••••••••";
       base::ToVector(form.fields(), &autofill::FormFieldData::global_id);
   switch (source) {
     case AutofillManager::Observer::FieldTypeSource::kAutofillServer:
+    case AutofillManager::Observer::FieldTypeSource::kAutofillAiModel:
       _passwordManager->ProcessAutofillPredictions(
           driver, form,
           manager.GetServerPredictionsForForm(globalFormId, field_ids));

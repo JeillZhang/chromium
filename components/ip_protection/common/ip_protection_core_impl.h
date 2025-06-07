@@ -14,8 +14,10 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "components/content_settings/core/common/host_indexed_content_settings.h"
 #include "components/ip_protection/common/ip_protection_core.h"
 #include "components/ip_protection/common/ip_protection_data_types.h"
+#include "components/ip_protection/common/ip_protection_probabilistic_reveal_token_manager.h"
 #include "net/base/network_change_notifier.h"
 
 namespace net {
@@ -30,6 +32,7 @@ namespace ip_protection {
 class IpProtectionProxyConfigManager;
 class IpProtectionTokenManager;
 class MaskedDomainListManager;
+class ProbabilisticRevealTokenRegistry;
 enum class ProxyLayer;
 
 // The generic implementation of IpProtectionCore. Subclasses provide additional
@@ -45,8 +48,11 @@ class IpProtectionCoreImpl
           ip_protection_proxy_config_manager,
       std::map<ProxyLayer, std::unique_ptr<IpProtectionTokenManager>>
           ip_protection_token_managers,
+      ProbabilisticRevealTokenRegistry* probabilistic_reveal_token_registry,
+      std::unique_ptr<IpProtectionProbabilisticRevealTokenManager>
+          ipp_prt_manager,
       bool is_ip_protection_enabled,
-      bool use_regular_mdl = false);
+      bool ip_protection_incognito);
   ~IpProtectionCoreImpl() override;
 
   // IpProtectionCore implementation.
@@ -63,10 +69,21 @@ class IpProtectionCoreImpl
   std::vector<net::ProxyChain> GetProxyChainList() override;
   void RequestRefreshProxyList() override;
   void GeoObserved(const std::string& geo_id) override;
+  bool HasTrackingProtectionException(
+      const GURL& first_party_url) const override;
+  void SetTrackingProtectionContentSetting(
+      const ContentSettingsForOneType& settings) override;
+  bool ShouldRequestIncludeProbabilisticRevealToken(
+      const GURL& request_url) override;
 
   IpProtectionTokenManager* GetIpProtectionTokenManagerForTesting(
       ProxyLayer proxy_layer);
   IpProtectionProxyConfigManager* GetIpProtectionProxyConfigManagerForTesting();
+
+  bool IsProbabilisticRevealTokenAvailable() override;
+  std::optional<std::string> GetProbabilisticRevealToken(
+      const std::string& top_level,
+      const std::string& third_party) override;
 
   // `NetworkChangeNotifier::NetworkChangeObserver` implementation.
   void OnNetworkChanged(
@@ -93,17 +110,27 @@ class IpProtectionCoreImpl
   std::map<ProxyLayer, std::unique_ptr<IpProtectionTokenManager>>
       ipp_token_managers_;
 
-  bool is_ip_protection_enabled_;
+  // The PRT registry, owned by the NetworkService.
+  raw_ptr<ProbabilisticRevealTokenRegistry>
+      probabilistic_reveal_token_registry_;
+  std::unique_ptr<IpProtectionProbabilisticRevealTokenManager> ipp_prt_manager_;
 
-  MdlType mdl_type_;
+  bool is_ip_protection_enabled_;
 
   // If true, this class will try to connect to IP Protection proxies via QUIC.
   // Once this value becomes false, it stays false until a network change or
   // browser restart.
   bool ipp_over_quic_;
 
-  // Feature flag to safely introduce token caching by geo.
-  const bool enable_token_caching_by_geo_;
+  // Number of requests made with QUIC proxies. This is used to generate metrics
+  // regarding fallback to H2/H1.
+  int quic_requests_ = 0;
+
+  MdlType mdl_type_;
+
+  // List of TRACKING_PROTECTION content setting exceptions.
+  std::vector<content_settings::HostIndexedContentSettings>
+      tp_content_settings_;
 
   base::WeakPtrFactory<IpProtectionCoreImpl> weak_ptr_factory_{this};
 };

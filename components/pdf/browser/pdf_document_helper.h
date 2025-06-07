@@ -39,15 +39,6 @@ class PDFDocumentHelper
       public ui::TouchSelectionMenuClient,
       public content::TouchSelectionControllerClientManager::Observer {
  public:
-  class Observer : public base::CheckedObserver {
-   public:
-    // Invoked when the document load is completed successfully. Will not be
-    // invoked when the PDF is already loaded. Will not be invoked when the load
-    // fails. This is useful to wait for document metadata to be loaded, before
-    // calls to `GetPdfBytes`, `GetPageText` can be made.
-    virtual void OnDocumentLoadComplete() {}
-  };
-
   PDFDocumentHelper(const PDFDocumentHelper&) = delete;
   PDFDocumentHelper& operator=(const PDFDocumentHelper&) = delete;
 
@@ -105,19 +96,25 @@ class PDFDocumentHelper
 #endif
 
   // Returns whether document is loaded, at which point, the other calls to
-  // document metadata such  as `GetPdfBytes`, `GetPageText` can be made.
+  // document metadata such as `GetPdfBytes`, `GetPageText` can return data.
   bool IsDocumentLoadComplete() const { return is_document_load_complete_; }
-
+  // Get PDF bytes, if they do not exceed the size limit. If called before
+  // document is loaded, the callback will be invoked with an empty vector.
   void GetPdfBytes(uint32_t size_limit,
                    pdf::mojom::PdfListener::GetPdfBytesCallback callback);
-
+  // Returns text of the given page. If called before document is loaded, the
+  // callback will be invoked with an empty string.
   void GetPageText(int32_t page_index,
                    pdf::mojom::PdfListener::GetPageTextCallback callback);
   void GetMostVisiblePageIndex(
       pdf::mojom::PdfListener::GetMostVisiblePageIndexCallback callback);
 
-  void AddObserver(Observer* observer);
-  void RemoveObserver(Observer* observer);
+  // Registers `callback` to be run when document load completes successfully.
+  // When the PDF is already loaded, `callback` is invoked immediately. Will not
+  // be invoked when the load fails. This is useful to wait for document
+  // metadata to be loaded, before calls to `GetPdfBytes`, and `GetPageText`
+  // should be made.
+  void RegisterForDocumentLoadComplete(base::OnceClosure callback);
 
  private:
   friend class content::DocumentUserData<PDFDocumentHelper>;
@@ -150,9 +147,13 @@ class PDFDocumentHelper
 
   bool is_document_load_complete_ = false;
 
-  mojo::Remote<mojom::PdfListener> remote_pdf_client_;
+  // Callbacks to invoke when document load is completed.
+  std::vector<base::OnceClosure> document_load_complete_callbacks_;
 
-  base::ObserverList<Observer> observers_;
+#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  bool searchify_started_ = false;
+#endif
+  mojo::Remote<mojom::PdfListener> remote_pdf_client_;
 
   DOCUMENT_USER_DATA_KEY_DECL();
 };

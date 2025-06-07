@@ -21,11 +21,14 @@
 #include "ash/public/cpp/holding_space/holding_space_progress.h"
 #include "ash/public/cpp/holding_space/holding_space_util.h"
 #include "ash/public/cpp/image_util.h"
+#include "ash/session/session_controller_impl.h"
+#include "ash/shell.h"
 #include "base/containers/fixed_flat_set.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -47,6 +50,7 @@
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/file_system_access/chrome_file_system_access_permission_context.h"
 #include "chrome/browser/file_system_access/file_system_access_permission_context_factory.h"
+#include "chrome/browser/global_features.h"
 #include "chrome/browser/nearby_sharing/common/nearby_share_features.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/ui/ash/holding_space/holding_space_keyed_service_factory.h"
@@ -56,6 +60,7 @@
 #include "chrome/browser/ui/ash/holding_space/scoped_test_mount_point.h"
 #include "chrome/browser/ui/webui/print_preview/pdf_printer_handler.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "chromeos/ash/components/disks/disk_mount_manager.h"
 #include "chromeos/ash/components/disks/fake_disk_mount_manager.h"
@@ -65,6 +70,7 @@
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/sync_preferences/pref_service_mock_factory.h"
 #include "components/sync_preferences/pref_service_syncable.h"
+#include "components/user_manager/test_helper.h"
 #include "components/user_manager/user_names.h"
 #include "components/vector_icons/vector_icons.h"
 #include "content/public/test/fake_download_item.h"
@@ -593,6 +599,9 @@ class HoldingSpaceKeyedServiceTest : public BrowserWithTestWindowTest {
             FileSuggestKeyedServiceFactory::GetInstance(),
             base::BindRepeating(
                 &MockFileSuggestKeyedService::BuildMockFileSuggestKeyedService,
+                TestingBrowserProcess::GetGlobal()
+                    ->GetFeatures()
+                    ->application_locale_storage(),
                 temp_dir_.GetPath())}};
   }
 
@@ -633,11 +642,7 @@ class HoldingSpaceKeyedServiceTest : public BrowserWithTestWindowTest {
   void ActivateSecondaryProfile() {
     const std::string kSecondaryProfileName = "secondary_profile";
     const AccountId account_id(AccountId::FromUserEmail(kSecondaryProfileName));
-    GetSessionControllerClient()->SwitchActiveUser(account_id);
-  }
-
-  TestSessionControllerClient* GetSessionControllerClient() {
-    return ash_test_helper()->test_session_controller_client();
+    ash::Shell::Get()->session_controller()->SwitchActiveUser(account_id);
   }
 
   // Resolves an absolute file path in the file manager's file system context,
@@ -778,10 +783,7 @@ class HoldingSpaceKeyedServiceWithExperimentalFeatureForGuestTest
     auto* user = user_manager()->AddGuestUser();
     user_manager()->UserLoggedIn(
         user->GetAccountId(),
-        user_manager::FakeUserManager::GetFakeUsernameHash(
-            user->GetAccountId()),
-        /*browser_restart=*/false,
-        /*is_child=*/false);
+        user_manager::TestHelper::GetFakeUsernameHash(user->GetAccountId()));
   }
 
   TestingProfile* CreateProfile(const std::string& profile_name) override {
@@ -3074,24 +3076,46 @@ TEST_F(HoldingSpaceKeyedServiceNearbySharingTest, AddNearbyShareItem) {
   EXPECT_EQ(u"File 2.png", item_2->GetText());
 }
 
+// Test parameters for tests of Photoshop Web integration. Used to wrap `GURL`
+// so that value-param representation can be overridden. See `PrintToString()`
+// below as well as https://crbug.com/410764102 for additional details.
+struct HoldingSpaceKeyedServicePhotoshopWebIntegrationTestParams {
+  GURL file_picker_binding_context;
+};
+
+// NOTE: Used by `::testing::PrintToStringParamName()`. Per
+// https://crbug.com/410764102, return value must be non-empty.
+std::string PrintToString(
+    const HoldingSpaceKeyedServicePhotoshopWebIntegrationTestParams& params) {
+  const GURL& context = params.file_picker_binding_context;
+  return context.is_empty() ? "(empty)" : context.spec();
+}
+
 // Base class for tests of Photoshop Web integration. Parameterized by the
 // binding context to use for the file picker during testing.
 class HoldingSpaceKeyedServicePhotoshopWebIntegrationTest
     : public HoldingSpaceKeyedServiceTest,
       public ::testing::WithParamInterface<
-          /*file_picker_binding_context=*/GURL> {
+          HoldingSpaceKeyedServicePhotoshopWebIntegrationTestParams> {
  public:
   // The binding context to use for the file picker given test parameterization.
-  const GURL& GetFilePickerBindingContext() const { return GetParam(); }
+  const GURL& GetFilePickerBindingContext() const {
+    return GetParam().file_picker_binding_context;
+  }
 };
 
 INSTANTIATE_TEST_SUITE_P(
     All,
     HoldingSpaceKeyedServicePhotoshopWebIntegrationTest,
     /*file_picker_binding_context=*/
-    ::testing::Values(GURL(),
-                      GURL("https://google.com/"),
-                      GURL("https://photoshop.adobe.com/")));
+    ::testing::Values(
+        HoldingSpaceKeyedServicePhotoshopWebIntegrationTestParams{
+            .file_picker_binding_context = GURL()},
+        HoldingSpaceKeyedServicePhotoshopWebIntegrationTestParams{
+            .file_picker_binding_context = GURL("https://google.com/")},
+        HoldingSpaceKeyedServicePhotoshopWebIntegrationTestParams{
+            .file_picker_binding_context =
+                GURL("https://photoshop.adobe.com/")}));
 
 // Verifies that a Photoshop Web item will be added to the user's Holding Space
 // under expected circumstances.
@@ -3203,7 +3227,7 @@ class HoldingSpaceKeyedServicePrintToPdfIntegrationTest
 
     // Create the PDF printer handler.
     Browser* browser = GetBrowserForPdfPrinterHandler();
-    pdf_printer_handler_ = std::make_unique<printing::PdfPrinterHandler>(
+    pdf_printer_handler_ = std::make_unique<::printing::PdfPrinterHandler>(
         browser->profile(), browser->tab_strip_model()->GetActiveWebContents(),
         /*sticky_settings=*/nullptr);
   }
@@ -3226,7 +3250,7 @@ class HoldingSpaceKeyedServicePrintToPdfIntegrationTest
     return incognito_browser_.get();
   }
 
-  std::unique_ptr<printing::PdfPrinterHandler> pdf_printer_handler_;
+  std::unique_ptr<::printing::PdfPrinterHandler> pdf_printer_handler_;
   std::unique_ptr<Browser> incognito_browser_;
 };
 

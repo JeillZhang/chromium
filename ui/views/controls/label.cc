@@ -29,6 +29,7 @@
 #include "ui/color/color_variant.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/text_elider.h"
@@ -242,43 +243,34 @@ SkColor Label::GetEnabledColor() const {
   return actual_enabled_color_;
 }
 
-void Label::SetEnabledColor(SkColor color) {
-  if (enabled_color_set_ && requested_enabled_color_ == color) {
+void Label::SetEnabledColor(ui::ColorVariant color) {
+  if (requested_enabled_color_ == color) {
     return;
   }
 
-  enabled_color_set_ = true;
   requested_enabled_color_ = color;
-  enabled_color_id_.reset();
-  RecalculateColors();
+  if (GetWidget()) {
+    UpdateColorsFromTheme();
+  } else {
+    RecalculateColors();
+  }
+
   OnPropertyChanged(&requested_enabled_color_, kPropertyEffectsPaint);
 }
 
-std::optional<ui::ColorId> Label::GetEnabledColorId() const {
-  return enabled_color_id_;
-}
-
-void Label::SetEnabledColorId(std::optional<ui::ColorId> enabled_color_id) {
-  if (enabled_color_id_ == enabled_color_id) {
-    return;
-  }
-
-  enabled_color_id_ = enabled_color_id;
-  if (GetWidget()) {
-    UpdateColorsFromTheme();
-    enabled_color_set_ = true;
-  }
-  OnPropertyChanged(&enabled_color_id_, kPropertyEffectsPaint);
+std::optional<ui::ColorVariant> Label::GetRequestedEnabledColor() const {
+  return requested_enabled_color_;
 }
 
 SkColor Label::GetBackgroundColor() const {
-  return resolved_background_color_;
+  return actual_background_color_;
 }
 
 void Label::SetBackgroundColor(ui::ColorVariant color) {
   if (requested_background_color_ == color) {
     return;
   }
+
   requested_background_color_ = color;
   if (GetWidget()) {
     UpdateColorsFromTheme();
@@ -939,9 +931,12 @@ void Label::PaintText(gfx::Canvas* canvas) {
     // This is our approximation of being painted on an opaque region. If any
     // parent has an opaque background we assume that that background covers the
     // text bounds. This is not necessarily true as the background could be
-    // inset from the parent bounds, and get_color() does not imply that all of
+    // inset from the parent bounds, and color() does not imply that all of
     // the background is painted with the same opaque color.
-    if (view->background() && IsOpaque(view->background()->get_color())) {
+    const auto* background = view->background();
+    auto* color_provider = view->GetColorProvider();
+    if (background && color_provider &&
+        IsOpaque(background->color().ResolveToSkColor(color_provider))) {
       break;
     }
 
@@ -1417,6 +1412,11 @@ gfx::Size Label::GetBoundedTextSize(const SizeBounds& available_size) const {
     const int width = w.is_bounded() ? w.value() : 0;
     // SetDisplayRect() has side-effect. The text height will change to respect
     // width.
+    // TODO(crbug.com/400028865): full_text_'s eliding behavior should align
+    // with the label. Currently, it always returns non-elided width,
+    // effectively preventing the label to shrink. It should be as small as the
+    // width of "...". This issue currently causes overflow in a horizontal
+    // layout that has multiple single-line labels.
     full_text_->SetDisplayRect(gfx::Rect(0, 0, width, 0));
     size = full_text_->GetStringSize();
 
@@ -1439,15 +1439,32 @@ SkColor Label::GetForegroundColor(SkColor foreground,
 }
 
 void Label::RecalculateColors() {
-  actual_enabled_color_ =
-      GetForegroundColor(requested_enabled_color_, resolved_background_color_);
+  SkColor enabled_color = gfx::kPlaceholderColor;
+  if (resolved_enabled_color_) {
+    enabled_color = resolved_enabled_color_.value();
+  } else if (requested_enabled_color_ &&
+             requested_enabled_color_->GetSkColor()) {
+    enabled_color = *requested_enabled_color_->GetSkColor();
+  }
+
+  SkColor background_color = gfx::kPlaceholderColor;
+  if (resolved_background_color_) {
+    background_color = resolved_background_color_.value();
+  } else if (requested_background_color_ &&
+             requested_background_color_->GetSkColor()) {
+    background_color = *requested_background_color_->GetSkColor();
+  }
+
+  actual_enabled_color_ = GetForegroundColor(enabled_color, background_color);
+  actual_background_color_ = background_color;
+
   // Using GetResultingPaintColor() here allows non-opaque selection backgrounds
   // to still participate in auto color readability, assuming
   // |background_color_| is itself opaque.
   actual_selection_text_color_ = GetForegroundColor(
       requested_selection_text_color_,
       color_utils::GetResultingPaintColor(selection_background_color_,
-                                          resolved_background_color_));
+                                          GetBackgroundColor()));
 
   ApplyTextColors();
   SchedulePaint();
@@ -1458,30 +1475,33 @@ void Label::ApplyTextColors() const {
     return;
   }
 
-  display_text_->SetColor(actual_enabled_color_);
+  display_text_->SetColor(GetEnabledColor());
   display_text_->set_selection_color(actual_selection_text_color_);
   display_text_->set_selection_background_focused_color(
       selection_background_color_);
+
   const bool subpixel_rendering_enabled =
-      subpixel_rendering_enabled_ && IsOpaque(resolved_background_color_);
+      subpixel_rendering_enabled_ && IsOpaque(GetBackgroundColor());
   display_text_->set_subpixel_rendering_suppressed(!subpixel_rendering_enabled);
 }
 
 void Label::UpdateColorsFromTheme() {
   ui::ColorProvider* color_provider = GetColorProvider();
-  if (enabled_color_id_.has_value()) {
-    requested_enabled_color_ = color_provider->GetColor(*enabled_color_id_);
-  } else if (!enabled_color_set_) {
+
+  if (requested_enabled_color_) {
+    resolved_enabled_color_ =
+        requested_enabled_color_->ResolveToSkColor(color_provider);
+  } else {
     const std::optional<SkColor> cascading_color =
         GetCascadingProperty(this, kCascadingLabelEnabledColor);
-    requested_enabled_color_ =
+    resolved_enabled_color_ =
         cascading_color.value_or(GetColorProvider()->GetColor(
             TypographyProvider::Get().GetColorId(text_context_, text_style_)));
   }
 
   if (requested_background_color_) {
     resolved_background_color_ =
-        requested_background_color_->ConvertToSkColor(color_provider);
+        requested_background_color_->ResolveToSkColor(color_provider);
   } else {
     resolved_background_color_ =
         color_provider->GetColor(ui::kColorDialogBackground);

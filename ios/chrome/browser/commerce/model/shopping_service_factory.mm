@@ -17,8 +17,6 @@
 #import "ios/chrome/browser/history/model/history_service_factory.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service_factory.h"
-#import "ios/chrome/browser/parcel_tracking/features.h"
-#import "ios/chrome/browser/parcel_tracking/parcel_tracking_opt_in_status.h"
 #import "ios/chrome/browser/power_bookmarks/model/power_bookmark_service_factory.h"
 #import "ios/chrome/browser/sessions/model/ios_chrome_tab_restore_service_factory.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
@@ -70,10 +68,6 @@ std::unique_ptr<KeyedService> ShoppingServiceFactory::BuildServiceInstanceFor(
   ProfileIOS* profile = ProfileIOS::FromBrowserState(state);
   PrefService* pref_service = profile->GetPrefs();
 
-  if (IsIOSParcelTrackingEnabled()) {
-    RecordParcelTrackingOptInStatus(pref_service);
-  }
-
   return std::make_unique<ShoppingService>(
       GetCurrentCountryCode(GetApplicationContext()->GetVariationsService()),
       GetApplicationContext()->GetApplicationLocale(),
@@ -88,7 +82,7 @@ std::unique_ptr<KeyedService> ShoppingServiceFactory::BuildServiceInstanceFor(
       PowerBookmarkServiceFactory::GetForProfile(profile), nullptr,
       /**ProductSpecificationsService not currently used on iOS
          crbug.com/329431295 */
-      nullptr,
+      nullptr, nullptr,
       nullptr, /** Cart and discount features are not available on iOS. */
       SessionProtoDBFactory<
           parcel_tracking_db::ParcelTrackingContent>::GetInstance()

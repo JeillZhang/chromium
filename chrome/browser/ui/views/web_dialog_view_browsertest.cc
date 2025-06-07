@@ -66,6 +66,8 @@ class WidgetResizeWaiter : public views::WidgetObserver {
   base::RunLoop run_loop_;
 };
 
+}  // namespace
+
 class WebDialogBrowserTest : public InProcessBrowserTest {
  public:
   WebDialogBrowserTest() = default;
@@ -102,7 +104,7 @@ void WebDialogBrowserTest::SetUpOnMainThread() {
   auto view = std::make_unique<views::WebDialogView>(
       browser()->profile(), delegate,
       std::make_unique<ChromeWebContentsHandler>());
-  view->SetOwnedByWidget(true);
+  view->SetOwnedByWidget(views::WidgetDelegate::OwnedByWidgetPassKey());
   gfx::NativeView parent_view =
       browser()->tab_strip_model()->GetActiveWebContents()->GetNativeView();
   view_ = view.get();
@@ -123,8 +125,6 @@ void WebDialogBrowserTest::SimulateEscapeKey() {
   }
 }
 
-}  // namespace
-
 // Windows has some issues resizing windows. An off by one problem, and a
 // minimum size that seems too big. See http://crbug.com/52602.
 #if BUILDFLAG(IS_WIN)
@@ -134,10 +134,9 @@ void WebDialogBrowserTest::SimulateEscapeKey() {
 #endif
 IN_PROC_BROWSER_TEST_F(WebDialogBrowserTest, MAYBE_SizeWindow) {
 #if BUILDFLAG(IS_MAC)
-  // On macOS 11 (and presumably later) the new mechanism for sheets, which are
-  // used for window modals like this dialog, always centers them within the
-  // parent window regardless of the requested origin. The size is still
-  // honored.
+  // On macOS, the new mechanism for sheets, which are used for window modals
+  // like this dialog, always centers them within the parent window regardless
+  // of the requested origin. The size is still honored.
   bool centered_in_window = true;
 #else
   bool centered_in_window = false;

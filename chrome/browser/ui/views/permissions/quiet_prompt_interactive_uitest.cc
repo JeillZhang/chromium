@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/permissions/quiet_notification_permission_ui_config.h"
 #include "chrome/browser/permissions/quiet_notification_permission_ui_state.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/views/content_setting_bubble_contents.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
@@ -42,8 +44,6 @@ const char kLocationBarView[] = "LocationBarView";
 class QuietPromptInteractiveUITest : public InteractiveBrowserTest {
  public:
   QuietPromptInteractiveUITest() {
-    scoped_features_.InitAndEnableFeature(
-        permissions::features::kPermissionPredictionsV3);
     https_server_ = std::make_unique<net::EmbeddedTestServer>(
         net::EmbeddedTestServer::TYPE_HTTPS);
   }
@@ -95,7 +95,7 @@ class QuietPromptInteractiveUITest : public InteractiveBrowserTest {
         new TestLocationBarModel;
     std::unique_ptr<LocationBarModel> location_bar_model(
         test_location_bar_model_);
-    browser()->swap_location_bar_models(&location_bar_model);
+    browser()->GetFeatures().swap_location_bar_models(&location_bar_model);
 
     test_location_bar_model_->set_formatted_full_url(text);
 
@@ -147,7 +147,6 @@ class QuietPromptInteractiveUITest : public InteractiveBrowserTest {
   }
 
  private:
-  base::test::ScopedFeatureList scoped_features_;
   std::unique_ptr<net::EmbeddedTestServer> https_server_;
   std::unique_ptr<test::PermissionRequestManagerTestApi> test_api_;
 };

@@ -23,6 +23,7 @@
 #include "ash/system/tray/tray_utils.h"
 #include "ash/wm/splitview/split_view_utils.h"
 #include "base/check.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -88,7 +89,7 @@ class FocusModeTray::TaskItemView : public views::BoxLayoutView {
     // Set the background color is not opaque.
     SetPaintToLayer();
     layer()->SetFillsBoundsOpaquely(false);
-    SetBackground(views::CreateThemedRoundedRectBackground(
+    SetBackground(views::CreateRoundedRectBackground(
         cros_tokens::kCrosSysSystemOnBase, kTaskItemViewCornerRadius));
 
     const bool is_network_connected = glanceables_util::IsNetworkConnected();
@@ -114,9 +115,9 @@ class FocusModeTray::TaskItemView : public views::BoxLayoutView {
     task_title_ = AddChildView(std::make_unique<views::Label>());
     TypographyProvider::Get()->StyleLabel(TypographyToken::kCrosButton2,
                                           *task_title_);
-    task_title_->SetEnabledColorId(is_network_connected
-                                       ? cros_tokens::kCrosSysOnSurface
-                                       : cros_tokens::kCrosSysDisabled);
+    task_title_->SetEnabledColor(is_network_connected
+                                     ? cros_tokens::kCrosSysOnSurface
+                                     : cros_tokens::kCrosSysDisabled);
     task_title_->SetText(title);
     task_title_->SetCustomTooltipText(title);
     task_title_->SetBorder(views::CreateEmptyBorder(kTaskTitleLabelInsets));
@@ -156,7 +157,7 @@ class FocusModeTray::TaskItemView : public views::BoxLayoutView {
         TypographyProvider::Get()
             ->ResolveTypographyToken(TypographyToken::kCrosButton2)
             .DeriveWithStyle(gfx::Font::FontStyle::STRIKE_THROUGH));
-    task_title_->SetEnabledColorId(cros_tokens::kCrosSysSecondary);
+    task_title_->SetEnabledColor(cros_tokens::kCrosSysSecondary);
   }
 
  private:

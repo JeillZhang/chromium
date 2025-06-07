@@ -12,8 +12,8 @@
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/web_apps/web_app_icon_name_and_origin_view.h"
-#include "chrome/browser/ui/views/web_apps/web_app_info_image_source.h"
 #include "chrome/browser/ui/web_applications/web_app_dialogs.h"
+#include "chrome/browser/ui/web_applications/web_app_info_image_source.h"
 #include "chrome/browser/web_applications/web_app_command_scheduler.h"
 #include "chrome/browser/web_applications/web_app_icon_manager.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
@@ -86,7 +86,7 @@ WebAppUninstallDialogDelegateView::WebAppUninstallDialogDelegateView(
 
   SetTitle(l10n_util::GetStringUTF16(IDS_APP_UNINSTALL_PROMPT_TITLE));
 
-  AddChildView(WebAppIconNameAndOriginView::Create(
+  AddChildViewRaw(WebAppIconNameAndOriginView::Create(
                    image_,
                    base::UTF8ToUTF16(
                        provider_->registrar_unsafe().GetAppShortName(app_id_)),
@@ -134,7 +134,7 @@ WebAppUninstallDialogDelegateView::WebAppUninstallDialogDelegateView(
     checkbox_ = checkbox_container->AddChildView(std::move(checkbox));
   }
 
-  AddChildView(checkbox_container);
+  AddChildViewRaw(checkbox_container);
 
   uninstall_source_ = uninstall_source;
   install_manager_observation_.Observe(&provider_->install_manager());

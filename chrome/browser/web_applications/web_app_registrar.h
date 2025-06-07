@@ -17,6 +17,7 @@
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/feature_list.h"
+#include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -34,14 +35,16 @@
 #include "components/services/app_service/public/cpp/file_handler.h"
 #include "components/services/app_service/public/cpp/protocol_handler_info.h"
 #include "components/webapps/common/web_app_id.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/mojom/installedapp/related_application.mojom.h"
 #include "third_party/skia/include/core/SkColor.h"
 
 class Profile;
 
 namespace apps {
+namespace proto {
 struct ShareTarget;
+}  // namespace proto
 }  // namespace apps
 
 namespace content {
@@ -185,7 +188,7 @@ class WebAppRegistrar {
   // the app with |app_id|. This permissions policy is not yet parsed by the
   // PermissionsPolicyParser, and thus may contain invalid permissions and/or
   // origin allowlists.
-  blink::ParsedPermissionsPolicy GetPermissionsPolicy(
+  network::ParsedPermissionsPolicy GetPermissionsPolicy(
       const webapps::AppId& app_id) const;
 
   // Returns true if there exists a currently installed app that has been
@@ -285,11 +288,25 @@ class WebAppRegistrar {
   bool IsAppFileHandlerPermissionBlocked(const webapps::AppId& app_id) const;
   bool IsIsolated(const webapps::AppId& app_id) const;
 
-  // Returns the state of the File Handling API for the given app.
+  // Returns approval state for File Handling API including
+  // DefaultHandlersForFileExtensions policy check.
   ApiApprovalState GetAppFileHandlerApprovalState(
+      const webapps::AppId& app_id,
+      std::optional<std::string> file_extension) const;
+
+  bool IsAppPolicyDefinedHandlerForFileExtension(
+      const webapps::AppId& app_id,
+      const std::string file_extension) const;
+
+  bool IsAppSetAsPolicyDefinedFileHandlerForAnyFileExtension(
       const webapps::AppId& app_id) const;
-  // Returns true iff it's expected that File Handlers have been, **or are in
-  // the process of being**, registered with the OS.
+
+  // Returns the state of the File Handling API for the given app.
+  ApiApprovalState GetAppFileHandlerUserApprovalState(
+      const webapps::AppId& app_id) const;
+
+  // Returns true iff it's expected that File Handlers have been, **or are
+  // in the process of being**, registered with the OS.
   bool ExpectThatFileHandlersAreRegisteredWithOs(
       const webapps::AppId& app_id) const;
 
@@ -323,6 +340,7 @@ class WebAppRegistrar {
   base::Time GetAppLastBadgingTime(const webapps::AppId& app_id) const;
   base::Time GetAppLastLaunchTime(const webapps::AppId& app_id) const;
   base::Time GetAppFirstInstallTime(const webapps::AppId& app_id) const;
+  base::Time GetAppLatestInstallTime(const webapps::AppId& app_id) const;
 
   std::optional<webapps::WebappInstallSource> GetLatestAppInstallSource(
       const webapps::AppId& app_id) const;
@@ -424,8 +442,8 @@ class WebAppRegistrar {
   // app, if it has tabbed mode enabled.
   bool IsUrlInHomeTabScope(const GURL& url, const webapps::AppId& app_id) const;
 
-  // Returns the current WebAppOsIntegrationState stored in the web_app DB.
-  std::optional<proto::WebAppOsIntegrationState>
+  // Returns the current WebAppOsIntegration stored in the web_app DB.
+  std::optional<proto::os_state::WebAppOsIntegration>
   GetAppCurrentOsIntegrationState(const webapps::AppId& app_id) const;
 
   // Returns the StoragePartitionConfig of all StoragePartitions used by
@@ -448,6 +466,9 @@ class WebAppRegistrar {
   // its scope. This returns false for apps that aren't installed.
   bool CanCaptureLinksInScope(const webapps::AppId& app_id) const;
 
+  // ChromeOS stores the per-app capturing setting in PreferredAppsImpl, not
+  // here.
+#if !BUILDFLAG(IS_CHROMEOS)
   // Returns true if a web app is set to be the default app to
   // capture links by the user. If an app is not locally installed, this returns
   // false.
@@ -475,13 +496,14 @@ class WebAppRegistrar {
   bool AppScopesMatchForUserLinkCapturing(const webapps::AppId& app_id1,
                                           const webapps::AppId& app_id2) const;
 
+  bool IsPreferredAppForCapturingUrl(const GURL& url,
+                                     const webapps::AppId& app_id);
+#endif
+
   // Returns information about apps that controls the input url, i.e. the app's
   // scope is a substring of the url passed to the API.
   base::flat_map<webapps::AppId, std::string> GetAllAppsControllingUrl(
       const GURL& url) const;
-
-  bool IsPreferredAppForCapturingUrl(const GURL& url,
-                                     const webapps::AppId& app_id);
 
   bool IsDiyApp(const webapps::AppId& app_id) const;
 
@@ -493,6 +515,9 @@ class WebAppRegistrar {
   void NotifyAlwaysShowToolbarInFullscreenChanged(const webapps::AppId& app_id,
                                                   bool show);
 #endif
+
+  // Returns whether the DIY app's icons are marked as masked on Mac.
+  bool IsDiyAppIconsMarkedMaskedOnMac(const webapps::AppId& app_id) const;
 
   void AddObserver(WebAppRegistrarObserver* observer);
   void RemoveObserver(WebAppRegistrarObserver* observer);

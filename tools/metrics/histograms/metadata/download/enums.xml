@@ -26,6 +26,13 @@ chromium-metrics-reviews@google.com.
 
 <enums>
 
+<enum name="AndroidDownloadWarningBypassDialogEvent">
+  <int value="0" label="Dialog shown"/>
+  <int value="1" label="User validated download"/>
+  <int value="2" label="User tapped Learn More"/>
+  <int value="3" label="Dialog dismissed"/>
+</enum>
+
 <enum name="BooleanOpenFromDuplicates">
   <int value="0" label="Created New file"/>
   <int value="1" label="Opened existing duplicate"/>
@@ -127,6 +134,14 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="ADDED_WARNING_FIRST_SHOWN"/>
   <int value="5" label="ADDED_WARNING_ACTION"/>
   <int value="6" label="NOT_ADDED_DOWNLOAD_NOT_DANGEROUS"/>
+</enum>
+
+<enum name="DownloadAppleWalletOrderFileUI">
+  <int value="0" label="Warning alert is presented"/>
+  <int value="1"
+      label="Warning alert is dismissed without presenting a SFSafariView"/>
+  <int value="2"
+      label="Warning alert is dismissed with presenting a SFSafariView"/>
 </enum>
 
 <enum name="DownloadARModelState">

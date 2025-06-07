@@ -16,6 +16,7 @@
 #include "base/location.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/themes/theme_service.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/views/autofill/popup/custom_cursor_suppressor.h"
 #include "chrome/browser/ui/views/autofill/popup/popup_view_utils.h"
@@ -77,7 +78,8 @@ std::unique_ptr<views::Border> CreateBorder() {
   auto border = std::make_unique<views::BubbleBorder>(
       views::BubbleBorder::NONE, views::BubbleBorder::STANDARD_SHADOW);
   border->SetColor(ui::kColorDropdownBackground);
-  border->SetCornerRadius(PopupBaseView::GetCornerRadius());
+  border->set_rounded_corners(
+      gfx::RoundedCornersF(PopupBaseView::GetCornerRadius()));
   border->set_md_shadow_elevation(
       ChromeLayoutProvider::Get()->GetShadowElevationMetric(
           base::FeatureList::IsEnabled(features::kAutofillMoreProminentPopup)
@@ -356,18 +358,16 @@ void PopupBaseView::NotifyAXSelection(views::View& selected_view) {
   }
   selected_view.GetViewAccessibility().SetPopupFocusOverride();
 #if DCHECK_IS_ON()
-  // TODO(crbug.com/362445293, crbug.com/379045422): Update the automation
-  // handler once the Typescript migration is complete.
   constexpr auto kDerivedClasses = base::MakeFixedFlatSet<std::string_view>(
       {"PopupSuggestionView", "PopupPasswordSuggestionView", "PopupFooterView",
        "PopupSeparatorView", "PopupWarningView", "PopupBaseView",
        "PasswordGenerationPopupViewViews::GeneratedPasswordBox", "PopupRowView",
-       "PopupRowWithButtonView", "PopupRowContentView", "MdTextButton",
-       "PopupRowAutofillAiFeedbackView", "AutofillAiLoadingStateView"});
+       "PopupRowWithButtonView", "PopupRowContentView", "MdTextButton"});
   DCHECK(kDerivedClasses.contains(selected_view.GetClassName()))
       << "If you add a new derived class from AutofillPopupRowView, add it "
          "here and to onSelection(evt) in "
-         "chrome/browser/resources/chromeos/accessibility/chromevox/background/"
+         "chrome/browser/resources/chromeos/accessibility/chromevox/mv2/"
+         "background/"
          "event/desktop_automation_handler.js to ensure that ChromeVox "
          "announces the item when selected. Missing class: "
       << selected_view.GetClassName();

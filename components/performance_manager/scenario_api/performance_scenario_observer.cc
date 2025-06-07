@@ -7,13 +7,15 @@
 #include <atomic>
 #include <utility>
 
-#include "base/check_op.h"
+#include "base/check.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
+#include "base/sequence_checker.h"
 #include "base/synchronization/lock.h"
 #include "base/types/pass_key.h"
+#include "components/performance_manager/scenario_api/performance_scenario_memory.h"
 #include "components/performance_manager/scenario_api/performance_scenarios.h"
 
 namespace performance_scenarios {
@@ -65,6 +67,41 @@ LockedObserverListPtr& GetLockedObserverListPtrForScope(ScenarioScope scope) {
 
 }  // namespace
 
+MatchingScenarioObserver::MatchingScenarioObserver(ScenarioPattern pattern)
+    : pattern_(pattern) {
+  for (ScenarioScope scope : ScenarioScopes::All()) {
+    LastMatchNotification(scope) = CurrentScenariosMatch(scope, pattern_);
+  }
+
+  // NotifyIfScenarioMatchChanged must always run on the sequence that called
+  // PerformanceScenarioObserverList::AddMatchingObserver, but that might not be
+  // the constructor sequence.
+  DETACH_FROM_SEQUENCE(sequence_checker_);
+}
+
+MatchingScenarioObserver::~MatchingScenarioObserver() = default;
+
+void MatchingScenarioObserver::NotifyIfScenarioMatchChanged(
+    ScenarioScope scope,
+    LoadingScenario loading_scenario,
+    InputScenario input_scenario) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  bool matches_pattern =
+      ScenariosMatch(loading_scenario, input_scenario, pattern_);
+  bool last_matches_pattern =
+      std::exchange(LastMatchNotification(scope), matches_pattern);
+  if (last_matches_pattern != matches_pattern) {
+    OnScenarioMatchChanged(scope, matches_pattern);
+  }
+}
+
+bool& MatchingScenarioObserver::LastMatchNotification(ScenarioScope scope) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  static_assert(static_cast<size_t>(ScenarioScopes::kMinValue) == 0,
+                "index will be wrong if enum doesn't start at 0");
+  return last_match_notifications_.at(static_cast<size_t>(scope));
+}
+
 // static
 scoped_refptr<PerformanceScenarioObserverList>
 PerformanceScenarioObserverList::GetForScope(ScenarioScope scope) {
@@ -81,30 +118,38 @@ void PerformanceScenarioObserverList::RemoveObserver(
   observers_->RemoveObserver(observer);
 }
 
+void PerformanceScenarioObserverList::AddMatchingObserver(
+    MatchingScenarioObserver* matching_observer) {
+  matching_observers_->AddObserver(matching_observer);
+}
+
+void PerformanceScenarioObserverList::RemoveMatchingObserver(
+    MatchingScenarioObserver* matching_observer) {
+  matching_observers_->RemoveObserver(matching_observer);
+}
+
 void PerformanceScenarioObserverList::NotifyIfScenarioChanged(
     base::Location location) {
-  {
-    base::AutoLock lock(loading_lock_);
-    LoadingScenario loading_scenario =
-        GetLoadingScenario(scope_)->load(std::memory_order_relaxed);
-    if (loading_scenario != last_loading_scenario_) {
-      observers_->Notify(location,
-                         &PerformanceScenarioObserver::OnLoadingScenarioChanged,
-                         scope_, last_loading_scenario_, loading_scenario);
-      last_loading_scenario_ = loading_scenario;
-    }
+  base::AutoLock lock(lock_);
+  LoadingScenario loading_scenario =
+      GetLoadingScenario(scope_)->load(std::memory_order_relaxed);
+  if (loading_scenario != last_loading_scenario_) {
+    observers_->Notify(location,
+                       &PerformanceScenarioObserver::OnLoadingScenarioChanged,
+                       scope_, last_loading_scenario_, loading_scenario);
+    last_loading_scenario_ = loading_scenario;
   }
-  {
-    base::AutoLock lock(input_lock_);
-    InputScenario input_scenario =
-        GetInputScenario(scope_)->load(std::memory_order_relaxed);
-    if (input_scenario != last_input_scenario_) {
-      observers_->Notify(location,
-                         &PerformanceScenarioObserver::OnInputScenarioChanged,
-                         scope_, last_input_scenario_, input_scenario);
-      last_input_scenario_ = input_scenario;
-    }
+  InputScenario input_scenario =
+      GetInputScenario(scope_)->load(std::memory_order_relaxed);
+  if (input_scenario != last_input_scenario_) {
+    observers_->Notify(location,
+                       &PerformanceScenarioObserver::OnInputScenarioChanged,
+                       scope_, last_input_scenario_, input_scenario);
+    last_input_scenario_ = input_scenario;
   }
+  matching_observers_->Notify(
+      location, &MatchingScenarioObserver::NotifyIfScenarioMatchChanged, scope_,
+      loading_scenario, input_scenario);
 }
 
 // static

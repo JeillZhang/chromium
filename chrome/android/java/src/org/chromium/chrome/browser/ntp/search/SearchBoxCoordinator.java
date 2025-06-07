@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.ntp.search;
 
 import android.content.Context;
-import android.graphics.drawable.Drawable;
 import android.text.TextWatcher;
 import android.view.View;
 import android.view.View.OnClickListener;
@@ -51,20 +50,12 @@ public class SearchBoxCoordinator {
         return mView;
     }
 
-    public View getVoiceSearchButton() {
-        return mView.findViewById(R.id.voice_search_button);
-    }
-
     public void destroy() {
         mMediator.onDestroy();
     }
 
     public void setAlpha(float alpha) {
         mModel.set(SearchBoxProperties.ALPHA, alpha);
-    }
-
-    public void setBackground(Drawable background) {
-        mModel.set(SearchBoxProperties.BACKGROUND, background);
     }
 
     public void setVisibility(boolean visible) {
@@ -101,6 +92,14 @@ public class SearchBoxCoordinator {
 
     public void addLensButtonClickListener(OnClickListener listener) {
         mMediator.addLensButtonClickListener(listener);
+    }
+
+    public void setComposeplateButtonVisibility(boolean visible) {
+        mModel.set(SearchBoxProperties.COMPOSEPLATE_BUTTON_VISIBILITY, visible);
+    }
+
+    public void setComposeplateButtonClickListener(OnClickListener listener) {
+        mMediator.setComposeplateButtonClickListener(listener);
     }
 
     public boolean isLensEnabled(@LensEntryPoint int lensEntryPoint) {

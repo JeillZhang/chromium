@@ -13,6 +13,7 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/unguessable_token.h"
+#include "net/base/features.h"
 #include "net/storage_access_api/status.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
@@ -237,13 +238,9 @@ class VisitedLinkPlatform : public TestingPlatformSupport {
 
 enum TestMode {
   kUnpartitionedStorageAndLinks,
-  kUnpartitionedStoragePartitionedNoSelfLinks,
   kUnpartitionedStorageParttionedWithSelfLinks,
-  kUnpartitionedStoragePartitionedLinksBothEnabled,
   kPartitionedStorageUnpartitionedLinks,
-  kPartitionedStorageAndLinksNoSelfLinks,
-  kPartitionedStorageAndLinksWithSelfLinks,
-  kPartitionedAllEnabled
+  kPartitionedStorageAndLinksWithSelfLinks
 };
 
 class DocumentLoaderTest : public testing::Test,
@@ -254,49 +251,21 @@ class DocumentLoaderTest : public testing::Test,
       case TestMode::kUnpartitionedStorageAndLinks:
         scoped_feature_list_.InitWithFeatures(
             {}, {net::features::kThirdPartyStoragePartitioning,
-                 blink::features::kPartitionVisitedLinkDatabase,
                  blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks});
-        break;
-      case TestMode::kUnpartitionedStoragePartitionedNoSelfLinks:
-        scoped_feature_list_.InitWithFeatures(
-            {blink::features::kPartitionVisitedLinkDatabase},
-            {net::features::kThirdPartyStoragePartitioning,
-             blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks});
         break;
       case TestMode::kUnpartitionedStorageParttionedWithSelfLinks:
         scoped_feature_list_.InitWithFeatures(
             {blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks},
-            {net::features::kThirdPartyStoragePartitioning,
-             blink::features::kPartitionVisitedLinkDatabase});
-        break;
-      case TestMode::kUnpartitionedStoragePartitionedLinksBothEnabled:
-        scoped_feature_list_.InitWithFeatures(
-            {blink::features::kPartitionVisitedLinkDatabase,
-             blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks},
             {net::features::kThirdPartyStoragePartitioning});
         break;
       case TestMode::kPartitionedStorageUnpartitionedLinks:
         scoped_feature_list_.InitWithFeatures(
             {net::features::kThirdPartyStoragePartitioning},
-            {blink::features::kPartitionVisitedLinkDatabase,
-             blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks});
-        break;
-      case TestMode::kPartitionedStorageAndLinksNoSelfLinks:
-        scoped_feature_list_.InitWithFeatures(
-            {net::features::kThirdPartyStoragePartitioning,
-             blink::features::kPartitionVisitedLinkDatabase},
             {blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks});
         break;
       case TestMode::kPartitionedStorageAndLinksWithSelfLinks:
         scoped_feature_list_.InitWithFeatures(
             {net::features::kThirdPartyStoragePartitioning,
-             blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks},
-            {blink::features::kPartitionVisitedLinkDatabase});
-        break;
-      case TestMode::kPartitionedAllEnabled:
-        scoped_feature_list_.InitWithFeatures(
-            {net::features::kThirdPartyStoragePartitioning,
-             blink::features::kPartitionVisitedLinkDatabase,
              blink::features::kPartitionVisitedLinkDatabaseWithSelfLinks},
             {});
         break;
@@ -343,12 +312,8 @@ class DocumentLoaderTest : public testing::Test,
   }
 
   bool are_visited_links_partitioned() {
-    return GetParam() == kUnpartitionedStoragePartitionedNoSelfLinks ||
-           (GetParam() == kUnpartitionedStorageParttionedWithSelfLinks) ||
-           (GetParam() == kUnpartitionedStoragePartitionedLinksBothEnabled) ||
-           (GetParam() == kPartitionedStorageAndLinksNoSelfLinks) ||
-           (GetParam() == kPartitionedStorageAndLinksWithSelfLinks) ||
-           (GetParam() == kPartitionedAllEnabled);
+    return GetParam() == kUnpartitionedStorageParttionedWithSelfLinks ||
+           (GetParam() == kPartitionedStorageAndLinksWithSelfLinks);
   }
 
   class ScopedLoaderDelegate {
@@ -371,13 +336,9 @@ INSTANTIATE_TEST_SUITE_P(
     DocumentLoaderTest,
     DocumentLoaderTest,
     testing::Values(TestMode::kUnpartitionedStorageAndLinks,
-                    TestMode::kUnpartitionedStoragePartitionedNoSelfLinks,
                     TestMode::kUnpartitionedStorageParttionedWithSelfLinks,
-                    TestMode::kUnpartitionedStoragePartitionedLinksBothEnabled,
                     TestMode::kPartitionedStorageUnpartitionedLinks,
-                    TestMode::kPartitionedStorageAndLinksNoSelfLinks,
-                    TestMode::kPartitionedStorageAndLinksWithSelfLinks,
-                    TestMode::kPartitionedAllEnabled));
+                    TestMode::kPartitionedStorageAndLinksWithSelfLinks));
 
 TEST_P(DocumentLoaderTest, SingleChunk) {
   class TestDelegate : public URLLoaderTestDelegate {

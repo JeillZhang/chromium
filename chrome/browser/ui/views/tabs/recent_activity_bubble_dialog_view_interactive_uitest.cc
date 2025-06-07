@@ -2,24 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/strings/string_view_util.h"
+#include "base/strings/stringprintf.h"
 #include "chrome/browser/data_sharing/data_sharing_service_factory.h"
 #include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/tabs/recent_activity_bubble_dialog_view.h"
 #include "chrome/browser/ui/views/tabs/tab_group_header.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
+#include "chrome/browser/ui/views/test/tab_strip_interactive_test_mixin.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "components/collaboration/public/features.h"
 #include "components/data_sharing/public/features.h"
-#include "components/saved_tab_groups/internal/tab_group_sync_service_impl.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/signin/public/base/avatar_icon_util.h"
 #include "components/tab_groups/tab_group_id.h"
+#include "components/tabs/public/tab_group.h"
 #include "content/public/test/browser_test.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/http_connection.h"
@@ -81,6 +83,7 @@ RecentActivityAction GetRecentActivityActionFromCollaborationEvent(
     case CollaborationEvent::COLLABORATION_MEMBER_ADDED:
     case CollaborationEvent::COLLABORATION_MEMBER_REMOVED:
       return RecentActivityAction::kManageSharing;
+    case CollaborationEvent::VERSION_OUT_OF_DATE:
     case CollaborationEvent::UNDEFINED:
       return RecentActivityAction::kNone;
   }
@@ -91,15 +94,14 @@ RecentActivityAction GetRecentActivityActionFromCollaborationEvent(
 namespace tab_groups {
 
 class RecentActivityBubbleDialogViewInteractiveUiTest
-    : public InteractiveBrowserTest {
+    : public TabStripInteractiveTestMixin<InteractiveBrowserTest> {
  public:
   RecentActivityBubbleDialogViewInteractiveUiTest() = default;
   ~RecentActivityBubbleDialogViewInteractiveUiTest() override = default;
 
   void SetUp() override {
     scoped_feature_list_.InitWithFeatures(
-        {tab_groups::kTabGroupsSaveV2,
-         tab_groups::kTabGroupSyncServiceDesktopMigration,
+        {tab_groups::kTabGroupSyncServiceDesktopMigration,
          data_sharing::features::kDataSharingFeature,
          collaboration::features::kCollaborationMessaging},
         {});
@@ -133,21 +135,6 @@ class RecentActivityBubbleDialogViewInteractiveUiTest
     http_response->set_code(net::HTTP_OK);
     http_response->set_content(CreateSerializedAvatar());
     return http_response;
-  }
-
-  MultiStep FinishTabstripAnimations() {
-    return Steps(
-        WaitForShow(kTabStripElementId),
-        std::move(WithView(kTabStripElementId, [](TabStrip* tab_strip) {
-                    tab_strip->StopAnimating(true);
-                  }).SetDescription("FinishTabstripAnimation")));
-  }
-
-  MultiStep HoverTabAt(int index) {
-    const char kTabToHover[] = "Tab to hover";
-    return Steps(NameDescendantViewByType<Tab>(kBrowserViewElementId,
-                                               kTabToHover, index),
-                 MoveMouseTo(kTabToHover));
   }
 
   MultiStep WaitForImages(int activity_log_index) {
@@ -191,10 +178,9 @@ class RecentActivityBubbleDialogViewInteractiveUiTest
   }
 
   SavedTabGroup ShareTabGroup(TabGroupId group_id,
-                              std::string collaboration_id) {
-    TabGroupSyncServiceImpl* tab_group_sync_service =
-        static_cast<TabGroupSyncServiceImpl*>(
-            TabGroupSyncServiceFactory::GetForProfile(browser()->profile()));
+                              syncer::CollaborationId collaboration_id) {
+    TabGroupSyncService* tab_group_sync_service =
+        TabGroupSyncServiceFactory::GetForProfile(browser()->profile());
     tab_group_sync_service->MakeTabGroupSharedForTesting(group_id,
                                                          collaboration_id);
     auto saved_tab_group = tab_group_sync_service->GetGroup(group_id);
@@ -217,7 +203,7 @@ class RecentActivityBubbleDialogViewInteractiveUiTest
   auto TriggerCurrentTabDialog(std::vector<ActivityLogItem> activity_log) {
     return WithView(kTabStripElementId, [&, activity_log](TabStrip* tab_strip) {
       bubble_coordinator_.ShowForCurrentTab(
-          tab_strip, browser()->tab_strip_model()->GetWebContentsAt(0),
+          tab_strip, browser()->tab_strip_model()->GetWebContentsAt(0), {},
           activity_log, browser()->profile());
     });
   }
@@ -271,8 +257,7 @@ IN_PROC_BROWSER_TEST_F(RecentActivityBubbleDialogViewInteractiveUiTest,
   // Set up tab group.
   tabs::TabInterface* tab = CreateTab();
   TabGroupId group_id = CreateTabGroup({tab});
-  std::string collaboration_id = "fake_collaboration_id";
-  ShareTabGroup(group_id, collaboration_id);
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"));
 
   // Create mock activity log.
   std::vector<ActivityLogItem> activity_log;
@@ -285,7 +270,7 @@ IN_PROC_BROWSER_TEST_F(RecentActivityBubbleDialogViewInteractiveUiTest,
       WaitForImages(activity_log_index),
       SetOnIncompatibleAction(OnIncompatibleAction::kIgnoreAndContinue,
                               kSkipPixelTestsReason),
-      Screenshot(kRecentActivityBubbleDialogId, "", "6131072"), HoverTabAt(0),
+      Screenshot(kRecentActivityBubbleDialogId, "", "6267139"), HoverTabAt(0),
       ClickMouse(), WaitForHide(kRecentActivityBubbleDialogId));
 }
 
@@ -295,14 +280,24 @@ IN_PROC_BROWSER_TEST_F(RecentActivityBubbleDialogViewInteractiveUiTest,
   tabs::TabInterface* tab = CreateTab();
   tabs::TabInterface* tab2 = CreateTab();
   TabGroupId group_id = CreateTabGroup({tab, tab2});
-  std::string collaboration_id = "fake_collaboration_id";
-  ShareTabGroup(group_id, collaboration_id);
+  ShareTabGroup(group_id, syncer::CollaborationId("fake_collaboration_id"));
 
   // Create mock activity log.
   std::vector<ActivityLogItem> activity_log;
   activity_log.emplace_back(CreateActivityForTab(group_id, tab));
   activity_log.emplace_back(CreateActivityForTab(group_id, tab));
-  activity_log.emplace_back(CreateActivityForTab(group_id, tab2));
+
+  auto activity_without_avatar = CreateActivityForTab(group_id, tab2);
+  activity_without_avatar.activity_metadata.triggering_user->avatar_url =
+      GURL("");
+  activity_log.emplace_back(activity_without_avatar);
+
+  auto activity_with_long_description = CreateActivityForTab(group_id, tab2);
+  activity_with_long_description.activity_metadata.triggering_user->avatar_url =
+      GURL("");
+  activity_with_long_description.description_text =
+      u"long long long long long long long long long long long long long long ";
+  activity_log.emplace_back(activity_with_long_description);
 
   RunTestSequence(
       WaitForShow(kTabGroupHeaderElementId), FinishTabstripAnimations(),
@@ -311,7 +306,7 @@ IN_PROC_BROWSER_TEST_F(RecentActivityBubbleDialogViewInteractiveUiTest,
       WaitForImages(1), WaitForImages(2),
       SetOnIncompatibleAction(OnIncompatibleAction::kIgnoreAndContinue,
                               kSkipPixelTestsReason),
-      Screenshot(kRecentActivityBubbleDialogId, "", "6259060"), HoverTabAt(0),
+      Screenshot(kRecentActivityBubbleDialogId, "", "6267139"), HoverTabAt(0),
       ClickMouse(), WaitForHide(kRecentActivityBubbleDialogId));
 }
 

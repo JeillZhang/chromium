@@ -23,7 +23,8 @@ bool TestTaskManager::IsTaskKillable(TaskId task_id) {
   return true;
 }
 
-void TestTaskManager::KillTask(TaskId task_id) {
+bool TestTaskManager::KillTask(TaskId task_id) {
+  return true;
 }
 
 double TestTaskManager::GetPlatformIndependentCPUUsage(TaskId task_id) const {
@@ -189,6 +190,10 @@ bool TestTaskManager::IsRunningInVM(TaskId task_id) const {
 TaskId TestTaskManager::GetTaskIdForWebContents(
     content::WebContents* web_contents) const {
   return -1;
+}
+
+bool TestTaskManager::IsTaskValid(TaskId task_id) const {
+  return true;
 }
 
 base::TimeDelta TestTaskManager::GetRefreshTime() {

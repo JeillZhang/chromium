@@ -195,7 +195,7 @@ ScrollableUsersListView::ScrollableUsersListView(
                                    base::RepeatingClosure());
     user_views_.push_back(view);
     view->UpdateForUser(users[i], false /*animate*/);
-    user_view_host_->AddChildView(view);
+    user_view_host_->AddChildViewRaw(view);
   }
 
   // |user_view_host_| is the same size as the user views, which may be shorter
@@ -216,7 +216,7 @@ ScrollableUsersListView::ScrollableUsersListView(
       views::BoxLayout::MainAxisAlignment::kCenter);
   ensure_min_height_layout->set_cross_axis_alignment(
       views::BoxLayout::MainAxisAlignment::kStart);
-  ensure_min_height->AddChildView(user_view_host_.get());
+  ensure_min_height->AddChildViewRaw(user_view_host_.get());
   SetContents(std::move(ensure_min_height));
   SetBackgroundColor(std::nullopt);
   SetDrawOverflowIndicator(false);
@@ -322,8 +322,13 @@ void ScrollableUsersListView::OnPaintBackground(gfx::Canvas* canvas) {
     flags.setAntiAlias(true);
     flags.setStyle(cc::PaintFlags::kFill_Style);
 
-    ui::ColorId background_color_id = cros_tokens::kCrosSysScrim2;
-    flags.setColor(GetColorProvider()->GetColor(background_color_id));
+    // Use a special color when showing a full list on the right side.
+    if (display_style_ == LoginDisplayStyle::kExtraSmall) {
+      ui::ColorId background_color_id = cros_tokens::kCrosSysScrim2;
+      flags.setColor(GetColorProvider()->GetColor(background_color_id));
+    } else {
+      flags.setColor(gradient_params_.color_to);
+    }
     canvas->DrawRoundRect(render_bounds,
                           login::kNonBlurredWallpaperBackgroundRadiusDp, flags);
   }

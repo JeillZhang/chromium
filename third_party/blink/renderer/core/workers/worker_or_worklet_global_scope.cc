@@ -103,7 +103,7 @@ class OutsideSettingsCSPDelegate final
   void DisableEval(const String& error_message) override {}
   void SetWasmEvalErrorMessage(const String& error_message) override {}
 
-  std::unique_ptr<SourceLocation> GetSourceLocation() override {
+  SourceLocation* GetSourceLocation() override {
     DCHECK_CALLED_ON_VALID_THREAD(worker_thread_checker_);
     // https://w3c.github.io/webappsec-csp/#create-violation-for-global
     // Step 2. If the user agent is currently executing script, and can extract
@@ -586,13 +586,6 @@ void WorkerOrWorkletGlobalScope::FetchModuleScript(
   // parser metadata is "not-parser-inserted,
   ParserDisposition parser_state = kNotParserInserted;
 
-  RejectCoepUnsafeNone reject_coep_unsafe_none(false);
-  if (ShouldRejectCoepUnsafeNoneTopModuleScript() &&
-      destination == network::mojom::RequestDestination::kWorker) {
-    DCHECK(!base::FeatureList::IsEnabled(features::kPlzDedicatedWorker));
-    reject_coep_unsafe_none = RejectCoepUnsafeNone(true);
-  }
-
   // credentials mode is credentials mode, and referrer policy is the empty
   // string.
   // Module worker scripts are fetched with fetchpriority kAuto.
@@ -600,15 +593,18 @@ void WorkerOrWorkletGlobalScope::FetchModuleScript(
       nonce, IntegrityMetadataSet(), integrity_attribute, parser_state,
       credentials_mode, network::mojom::ReferrerPolicy::kDefault,
       mojom::blink::FetchPriorityHint::kAuto,
-      RenderBlockingBehavior::kNonBlocking, reject_coep_unsafe_none);
+      RenderBlockingBehavior::kNonBlocking);
 
   Modulator* modulator = Modulator::From(ScriptController()->GetScriptState());
   // Step 3. "Perform the internal module script graph fetching procedure ..."
+  // The main script for a worker or worklet is always imported in the
+  // evaluation import phase.
   modulator->FetchTree(
-      module_url_record, ModuleType::kJavaScript,
+      module_url_record, ModuleType::kJavaScriptOrWasm,
       CreateOutsideSettingsFetcher(fetch_client_settings_object,
                                    resource_timing_notifier),
-      context_type, destination, options, custom_fetch_type, client);
+      context_type, destination, options, custom_fetch_type, client,
+      v8::ModuleImportPhase::kEvaluation);
 }
 
 void WorkerOrWorkletGlobalScope::SetDefersLoadingForResourceFetchers(

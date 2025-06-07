@@ -64,14 +64,14 @@ export class CrShortcutInputElement extends CrShortcutInputElementBase {
     };
   }
 
-  shortcut: string = '';
-  inputAriaLabel: string = '';
-  editButtonAriaLabel: string = '';
-  inputDisabled: boolean = false;
-  allowCtrlAltShortcuts = false;
-  protected readonly_: boolean = true;
+  accessor shortcut: string = '';
+  accessor inputAriaLabel: string = '';
+  accessor editButtonAriaLabel: string = '';
+  accessor inputDisabled: boolean = false;
+  accessor allowCtrlAltShortcuts = false;
+  protected accessor readonly_: boolean = true;
   private capturing_: boolean = false;
-  private error_: ShortcutError = ShortcutError.NO_ERROR;
+  private accessor error_: ShortcutError = ShortcutError.NO_ERROR;
   private pendingShortcut_: string = '';
 
   override firstUpdated() {
@@ -201,6 +201,16 @@ export class CrShortcutInputElement extends CrShortcutInputElementBase {
       this.error_ = ShortcutError.TOO_MANY_MODIFIERS;
       return;
     }
+    // <if expr="is_macosx">
+    // If Ctrl+Alt shortcuts are allowed, instances of too many modifiers
+    // should still be blocked. This can only occur on Mac when all modifiers
+    // are used.
+    if (this.allowCtrlAltShortcuts && e.metaKey && e.altKey && e.shiftKey &&
+        e.ctrlKey) {
+      this.error_ = ShortcutError.TOO_MANY_MODIFIERS;
+      return;
+    }
+    // </if>
     if (!hasValidModifiers(e)) {
       this.pendingShortcut_ = '';
       this.error_ = ShortcutError.INCLUDE_START_MODIFIER;

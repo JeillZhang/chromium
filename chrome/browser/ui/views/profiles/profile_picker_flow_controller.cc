@@ -5,13 +5,12 @@
 #include "chrome/browser/ui/views/profiles/profile_picker_flow_controller.h"
 
 #include <string>
+#include <variant>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
-#include "base/functional/overloaded.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/not_fatal_until.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "chrome/browser/browser_process.h"
@@ -34,7 +33,6 @@
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
 #include "chrome/browser/ui/views/profiles/avatar_toolbar_button.h"
 #include "chrome/browser/ui/views/profiles/profile_customization_bubble_sync_controller.h"
-#include "chrome/browser/ui/views/profiles/profile_customization_bubble_view.h"
 #include "chrome/browser/ui/views/profiles/profile_management_flow_controller.h"
 #include "chrome/browser/ui/views/profiles/profile_management_flow_controller_impl.h"
 #include "chrome/browser/ui/views/profiles/profile_management_step_controller.h"
@@ -49,6 +47,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "google_apis/gaia/core_account_id.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/mojom/themes.mojom.h"
 
@@ -105,9 +104,6 @@ void ShowCustomizationBubble(std::optional<SkColor> new_profile_color,
   if (!browser_view || !browser_view->toolbar_button_provider()) {
     return;
   }
-  views::View* anchor_view =
-      browser_view->toolbar_button_provider()->GetAvatarToolbarButton();
-  CHECK(anchor_view);
 
   if (ProfileCustomizationBubbleSyncController::CanThemeSyncStart(
           browser->profile())) {
@@ -116,11 +112,11 @@ void ShowCustomizationBubble(std::optional<SkColor> new_profile_color,
     // no conflict with a synced theme / color.
     ProfileCustomizationBubbleSyncController::
         ApplyColorAndShowBubbleWhenNoValueSynced(
-            browser, anchor_view,
+            browser,
             /*suggested_profile_color=*/new_profile_color.value());
   } else {
     // For non syncing users, simply show the bubble.
-    ProfileCustomizationBubbleView::CreateBubble(browser, anchor_view);
+    browser->signin_view_controller()->ShowModalProfileCustomizationDialog();
   }
 }
 
@@ -500,16 +496,16 @@ void ProfilePickerFlowController::SwitchToDiceSignIn(
 
   base::FilePath profile_path;
   // Split the variant information from `profile_info`.
-  absl::visit(base::Overloaded{
-                  [&suggested_profile_color =
-                       suggested_profile_color_](std::optional<SkColor> color) {
-                    suggested_profile_color = color;
-                  },
-                  [&profile_path](base::FilePath profile_path_info) {
-                    profile_path = profile_path_info;
-                  },
-              },
-              profile_info);
+  std::visit(absl::Overload{
+                 [&suggested_profile_color =
+                      suggested_profile_color_](std::optional<SkColor> color) {
+                   suggested_profile_color = color;
+                 },
+                 [&profile_path](base::FilePath profile_path_info) {
+                   profile_path = profile_path_info;
+                 },
+             },
+             profile_info);
 
   SwitchToIdentityStepsFromAccountSelection(std::move(switch_finished_callback),
                                             kAccessPoint,
@@ -757,11 +753,11 @@ ProfilePickerFlowController::RegisterPostIdentitySteps(
     // TODO(crbug.com/40942098): Find a way to get the web contents without
     // relying on the weak ptr.
     web_contents = weak_signed_in_flow_controller_->contents();
-    CHECK(web_contents, base::NotFatalUntil::M127);
+    CHECK(web_contents);
   } else {
     // TODO(crbug.com/40942098): Find another way to fetch the web contents.
     web_contents = GetSignedOutFlowWebContents();
-    CHECK(web_contents, base::NotFatalUntil::M127);
+    CHECK(web_contents);
   }
 
   auto search_engine_choice_step_completed = base::BindOnce(

@@ -4,8 +4,6 @@
 
 package org.chromium.chrome.browser;
 
-import static android.app.Activity.OVERRIDE_TRANSITION_CLOSE;
-import static android.app.Activity.OVERRIDE_TRANSITION_OPEN;
 import static android.view.ViewGroup.LayoutParams.MATCH_PARENT;
 
 import static org.chromium.chrome.browser.base.SplitCompatApplication.CHROME_SPLIT_NAME;
@@ -66,10 +64,10 @@ import org.chromium.components.browser_ui.edge_to_edge.SystemBarColorHelper;
 import org.chromium.components.browser_ui.edge_to_edge.layout.EdgeToEdgeLayoutCoordinator;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.util.AutomotiveUtils;
-import org.chromium.ui.InsetObserver;
 import org.chromium.ui.base.ImmutableWeakReference;
 import org.chromium.ui.display.DisplaySwitches;
 import org.chromium.ui.display.DisplayUtil;
+import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogManagerHolder;
 import org.chromium.ui.util.AttrUtils;
@@ -120,11 +118,13 @@ public class ChromeBaseAppCompatActivity extends AppCompatActivity
             new OneshotSupplierImpl<>();
 
     private NightModeStateProvider mNightModeStateProvider;
-    private LinkedHashSet<Integer> mThemeResIds = new LinkedHashSet<>();
+    private final LinkedHashSet<Integer> mThemeResIds = new LinkedHashSet<>();
     private ServiceTracingProxyProvider mServiceTracingProxyProvider;
     private InsetObserver mInsetObserver;
-    private EdgeToEdgeStateProvider mEdgeToEdgeStateProvider;
-    private EdgeToEdgeManager mEdgeToEdgeManager;
+    // Created in #onCreate
+    private @Nullable EdgeToEdgeStateProvider mEdgeToEdgeStateProvider;
+    // Created in #onCreate
+    private @Nullable EdgeToEdgeManager mEdgeToEdgeManager;
     private EdgeToEdgeLayoutCoordinator mEdgeToEdgeLayoutCoordinator;
 
     @Override
@@ -204,7 +204,7 @@ public class ChromeBaseAppCompatActivity extends AppCompatActivity
                         EdgeToEdgeUtils.isEdgeToEdgeEverywhereEnabled());
 
         if (EdgeToEdgeUtils.isEdgeToEdgeEverywhereEnabled()) {
-            initializeSystemBarColors();
+            initializeSystemBarColors(mEdgeToEdgeManager.getEdgeToEdgeSystemBarColorHelper());
         }
 
         if (VERSION.SDK_INT >= VERSION_CODES.UPSIDE_DOWN_CAKE
@@ -235,7 +235,8 @@ public class ChromeBaseAppCompatActivity extends AppCompatActivity
     }
 
     /** Set the default colors of the system bars for this activity. */
-    protected void initializeSystemBarColors() {
+    protected void initializeSystemBarColors(
+            EdgeToEdgeSystemBarColorHelper edgeToEdgeSystemBarColorHelper) {
         // TODO(crbug.com/379174458): Set color from Theme.
         final @ColorInt int defaultBgColor = SemanticColorUtils.getDefaultBgColor(this);
         @ColorInt
@@ -250,8 +251,6 @@ public class ChromeBaseAppCompatActivity extends AppCompatActivity
         defaultNavigationBarColor =
                 (defaultNavigationBarColor != 0) ? defaultNavigationBarColor : defaultBgColor;
 
-        EdgeToEdgeSystemBarColorHelper edgeToEdgeSystemBarColorHelper =
-                mEdgeToEdgeManager.getEdgeToEdgeSystemBarColorHelper();
         edgeToEdgeSystemBarColorHelper.setStatusBarColor(defaultStatusBarColor);
         edgeToEdgeSystemBarColorHelper.setNavigationBarColor(defaultNavigationBarColor);
     }
@@ -361,6 +360,19 @@ public class ChromeBaseAppCompatActivity extends AppCompatActivity
         return mEdgeToEdgeLayoutCoordinator;
     }
 
+    /**
+     * Returns the base content view, which is the highest level view in the layout containing app
+     * content. If drawing edge-to-edge, this content view already handles padding for the window
+     * insets.
+     */
+    public ViewGroup getContentView() {
+        if (mEdgeToEdgeLayoutCoordinator != null
+                && mEdgeToEdgeLayoutCoordinator.getView() != null) {
+            return mEdgeToEdgeLayoutCoordinator.getView();
+        }
+        return findViewById(android.R.id.content);
+    }
+
     /** Returns whether this activity should draw its content edge-to-edge by default. */
     protected boolean shouldDrawEdgeToEdgeOnCreate() {
         return EdgeToEdgeUtils.isEdgeToEdgeEverywhereEnabled();
@@ -396,8 +408,21 @@ public class ChromeBaseAppCompatActivity extends AppCompatActivity
     @VisibleForTesting
     static void applyOverridesForAutomotive(Context baseContext, Configuration overrideConfig) {
         if (BuildInfo.getInstance().isAutomotive) {
+            // Potentially clamp scaling for automotive devices.
+            if (ChromeFeatureList.sClampAutomotiveScaling.isEnabled()) {
+                float maxScalingFactor =
+                        ChromeFeatureList.sClampAutomotiveScalingMaxScalingPercentage.getValue()
+                                / 100.0f;
+                CommandLine.getInstance()
+                        .appendSwitchWithValue(
+                                DisplaySwitches.CLAMP_AUTOMOTIVE_SCALE_UP,
+                                Float.toString(maxScalingFactor));
+            }
             DisplayUtil.scaleUpConfigurationForAutomotive(baseContext, overrideConfig);
 
+            RecordHistogram.recordSparseHistogram(
+                    "Android.Automotive.UiScalingFactor",
+                    (int) (100 * DisplayUtil.getTargetScalingFactorForAutomotive(baseContext)));
             // Enable web ui scaling for automotive devices.
             CommandLine.getInstance()
                     .appendSwitch(DisplaySwitches.AUTOMOTIVE_WEB_UI_SCALE_UP_ENABLED);
@@ -462,25 +487,23 @@ public class ChromeBaseAppCompatActivity extends AppCompatActivity
         // OS versions.
         if (ChromeFeatureList.sAndroidElegantTextHeight.isEnabled()
                 && Build.VERSION.SDK_INT >= VERSION_CODES.TIRAMISU) {
-            int elegantTextHeightOverlay = R.style.ThemeOverlay_BrowserUI_ElegantTextHeight;
-            getTheme().applyStyle(elegantTextHeightOverlay, true);
-            mThemeResIds.add(elegantTextHeightOverlay);
+            applySingleThemeOverlay(R.style.ThemeOverlay_BrowserUI_ElegantTextHeight);
         }
 
         if (Build.VERSION.SDK_INT >= VERSION_CODES.TIRAMISU) {
-            int defaultFontFamilyOverlay =
-                    R.style.ThemeOverlay_BrowserUI_DefaultFontFamilyThemeOverlay;
-            getTheme().applyStyle(defaultFontFamilyOverlay, true);
-            mThemeResIds.add(defaultFontFamilyOverlay);
+            applySingleThemeOverlay(R.style.ThemeOverlay_BrowserUI_DefaultFontFamilyThemeOverlay);
         }
 
         if (EdgeToEdgeUtils.isEdgeToEdgeEverywhereEnabled()
                 || CommandLine.getInstance()
                         .hasSwitch(ChromeSwitches.DISABLE_OPT_OUT_EDGE_TO_EDGE)) {
-            int optOutEdgeToEdge = R.style.ThemeOverlay_BrowserUI_OptOutEdgeToEdge;
-            getTheme().applyStyle(optOutEdgeToEdge, true);
-            mThemeResIds.add(optOutEdgeToEdge);
+            applySingleThemeOverlay(R.style.ThemeOverlay_BrowserUI_OptOutEdgeToEdge);
         }
+    }
+
+    protected void applySingleThemeOverlay(int themeOverlay) {
+        getTheme().applyStyle(themeOverlay, /* force= */ true);
+        mThemeResIds.add(themeOverlay);
     }
 
     /** Sets the default task description that will appear in the recents UI. */
@@ -623,13 +646,13 @@ public class ChromeBaseAppCompatActivity extends AppCompatActivity
      * Returns the {@link EdgeToEdgeStateProvider} for checking and requesting changes to the
      * edge-to-edge state.
      */
-    protected EdgeToEdgeStateProvider getEdgeToEdgeStateProvider() {
+    protected @Nullable EdgeToEdgeStateProvider getEdgeToEdgeStateProvider() {
         return mEdgeToEdgeStateProvider;
     }
 
     /** Returns the {@link EdgeToEdgeManager} for access to core edge-to-edge logic. */
     @VisibleForTesting
-    public EdgeToEdgeManager getEdgeToEdgeManager() {
+    public @Nullable EdgeToEdgeManager getEdgeToEdgeManager() {
         return mEdgeToEdgeManager;
     }
 
@@ -642,7 +665,8 @@ public class ChromeBaseAppCompatActivity extends AppCompatActivity
 
     private InsetObserver createInsetObserver() {
         return new InsetObserver(
-                new ImmutableWeakReference<>(getWindow().getDecorView().getRootView()));
+                new ImmutableWeakReference<>(getWindow().getDecorView().getRootView()),
+                ChromeFeatureList.sAccountForSuppressedKeyboardInsets.isEnabled());
     }
 
     private void setAutomotiveToolbarBackButtonAction() {

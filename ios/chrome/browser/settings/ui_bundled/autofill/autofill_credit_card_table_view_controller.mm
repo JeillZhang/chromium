@@ -94,6 +94,15 @@ using autofill::autofill_metrics::MandatoryReauthOptInOrOutSource;
 
   // Timestamp for last successful reauth attempt by the ReauthenticationModule.
   NSDate* _lastSuccessfulReauthTime;
+
+  // Coordinator to add new credit card.
+  AutofillAddCreditCardCoordinator* _addCreditCardCoordinator;
+
+  // Add button for the toolbar.
+  UIBarButtonItem* _addButtonInToolbar;
+
+  // Reauthentication module.
+  ReauthenticationModule* _reauthenticationModule;
 }
 
 @property(nonatomic, getter=isAutofillCreditCardEnabled)
@@ -105,16 +114,6 @@ using autofill::autofill_metrics::MandatoryReauthOptInOrOutSource;
 // such as inserting or removing items/sections. This boolean is used to
 // stop the observer callback from acting on user-initiated changes.
 @property(nonatomic, readwrite, assign) BOOL deletionInProgress;
-
-// Coordinator to add new credit card.
-@property(nonatomic, strong)
-    AutofillAddCreditCardCoordinator* addCreditCardCoordinator;
-
-// Add button for the toolbar.
-@property(nonatomic, strong) UIBarButtonItem* addButtonInToolbar;
-
-// Reauthentication module.
-@property(nonatomic, strong) ReauthenticationModule* reauthenticationModule;
 
 @end
 
@@ -700,7 +699,40 @@ using autofill::autofill_metrics::MandatoryReauthOptInOrOutSource;
       editingStyle != UITableViewCellEditingStyleDelete) {
     return;
   }
-  [self deleteItemAtIndexPaths:@[ indexPath ]];
+
+  if (_personalDataManager->payments_data_manager()
+          .IsPaymentMethodsMandatoryReauthEnabled() &&
+      [self.reauthenticationModule canAttemptReauth]) {
+    LogMandatoryReauthSettingsPageDeleteCardEvent(
+        MandatoryReauthAuthenticationFlowEvent::kFlowStarted);
+
+    auto completionHandler = ^(ReauthenticationResult result) {
+      switch (result) {
+        case ReauthenticationResult::kSuccess:
+          LogMandatoryReauthSettingsPageDeleteCardEvent(
+              MandatoryReauthAuthenticationFlowEvent::kFlowSucceeded);
+          [self deleteItemAtIndexPaths:@[ indexPath ]];
+          break;
+        case ReauthenticationResult::kSkipped:
+          LogMandatoryReauthSettingsPageDeleteCardEvent(
+              MandatoryReauthAuthenticationFlowEvent::kFlowSkipped);
+          [self deleteItemAtIndexPaths:@[ indexPath ]];
+          break;
+        case ReauthenticationResult::kFailure:
+          LogMandatoryReauthSettingsPageDeleteCardEvent(
+              MandatoryReauthAuthenticationFlowEvent::kFlowFailed);
+          break;
+      }
+    };
+    [self.reauthenticationModule
+        attemptReauthWithLocalizedReason:
+            l10n_util::GetNSString(
+                IDS_PAYMENTS_AUTOFILL_SETTINGS_EDIT_MANDATORY_REAUTH)
+                    canReusePreviousAuth:YES
+                                 handler:completionHandler];
+  } else {
+    [self deleteItemAtIndexPaths:@[ indexPath ]];
+  }
 }
 
 #pragma mark - helper methods
@@ -770,11 +802,11 @@ using autofill::autofill_metrics::MandatoryReauthOptInOrOutSource;
   base::RecordAction(
       base::UserMetricsAction("MobileAddCreditCard.AddPaymentMethodButton"));
 
-  self.addCreditCardCoordinator = [[AutofillAddCreditCardCoordinator alloc]
+  _addCreditCardCoordinator = [[AutofillAddCreditCardCoordinator alloc]
       initWithBaseViewController:self
                          browser:_browser];
-  self.addCreditCardCoordinator.delegate = self;
-  [self.addCreditCardCoordinator start];
+  _addCreditCardCoordinator.delegate = self;
+  [_addCreditCardCoordinator start];
 }
 
 #pragma mark PersonalDataManagerObserver
@@ -838,9 +870,9 @@ using autofill::autofill_metrics::MandatoryReauthOptInOrOutSource;
 }
 
 - (void)stopAutofillAddCreditCardCoordinator {
-  [self.addCreditCardCoordinator stop];
-  self.addCreditCardCoordinator.delegate = nil;
-  self.addCreditCardCoordinator = nil;
+  [_addCreditCardCoordinator stop];
+  _addCreditCardCoordinator.delegate = nil;
+  _addCreditCardCoordinator = nil;
 }
 
 // Function that is invoked when the reauth is finished, and handles the reauth
@@ -876,14 +908,14 @@ using autofill::autofill_metrics::MandatoryReauthOptInOrOutSource;
 // according to the provided `enabled` state.
 - (void)updateAutofillCreditCardPrefAndToolbarForState:(BOOL)enabled {
   [self setAutofillCreditCardEnabled:enabled];
-  self.addButtonInToolbar.enabled = [self isAutofillCreditCardEnabled];
+  _addButtonInToolbar.enabled = [self isAutofillCreditCardEnabled];
 }
 
 #pragma mark - AutofillAddCreditCardCoordinatorDelegate
 
 - (void)autofillAddCreditCardCoordinatorWantsToBeStopped:
     (AutofillAddCreditCardCoordinator*)coordinator {
-  CHECK_EQ(coordinator, self.addCreditCardCoordinator);
+  CHECK_EQ(coordinator, _addCreditCardCoordinator);
   [self stopAutofillAddCreditCardCoordinator];
 }
 

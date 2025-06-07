@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_TOOLBAR_TOOLBAR_CONTROLLER_H_
 #define CHROME_BROWSER_UI_VIEWS_TOOLBAR_TOOLBAR_CONTROLLER_H_
 
+#include <variant>
 #include <vector>
 
 #include "base/callback_list.h"
@@ -32,11 +33,10 @@ class ToolbarController : public views::MenuDelegate,
   // Manages action-based pinned toolbar elements.
   class PinnedActionsDelegate {
    public:
-    virtual actions::ActionItem* GetActionItemFor(
-        const actions::ActionId& id) = 0;
+    virtual actions::ActionItem* GetActionItemFor(actions::ActionId id) = 0;
 
     // Returns true if the corresponding element is hidden.
-    virtual bool IsOverflowed(const actions::ActionId& id) = 0;
+    virtual bool IsOverflowed(actions::ActionId id) = 0;
 
     virtual views::View* GetContainerView() = 0;
 
@@ -106,13 +106,13 @@ class ToolbarController : public views::MenuDelegate,
     // | Profile         |
     // |-----------------|
     explicit ResponsiveElementInfo(
-        absl::variant<ElementIdInfo, actions::ActionId> overflow_id,
+        std::variant<ElementIdInfo, actions::ActionId> overflow_id,
         bool is_section_end = false);
     ResponsiveElementInfo(const ResponsiveElementInfo&);
     ~ResponsiveElementInfo();
 
     // The toolbar element that potentially overflows.
-    absl::variant<ElementIdInfo, actions::ActionId> overflow_id;
+    std::variant<ElementIdInfo, actions::ActionId> overflow_id;
 
     // True if current element is a section end in overflow menu structure.
     bool is_section_end = false;
@@ -178,11 +178,6 @@ class ToolbarController : public views::MenuDelegate,
   };
 
   // PinnedToolbarActionsModel::Observer
-  void OnActionAddedLocally(const actions::ActionId& id) override {}
-  void OnActionRemovedLocally(const actions::ActionId& id) override {}
-  void OnActionMovedLocally(const actions::ActionId& id,
-                            int from_index,
-                            int to_index) override {}
   void OnActionsChanged() override;
 
   // Return the default responsive elements list in the toolbar.
@@ -198,7 +193,7 @@ class ToolbarController : public views::MenuDelegate,
 
   // Return the action name from element identifier. Return empty if not found.
   static std::string GetActionNameFromElementIdentifier(
-      absl::variant<ui::ElementIdentifier, actions::ActionId> identifier);
+      std::variant<ui::ElementIdentifier, actions::ActionId> identifier);
 
   // Force the UI element with the identifier to show. Return whether the action
   // is successful.

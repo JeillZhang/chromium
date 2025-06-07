@@ -6,6 +6,9 @@
 
 #include "components/enterprise/common/proto/synced/browser_events.pb.h"
 #include "components/enterprise/connectors/core/common.h"
+#include "components/enterprise/connectors/core/reporting_constants.h"
+#include "components/enterprise/connectors/core/reporting_test_utils.h"
+#include "components/safe_browsing/core/common/features.h"
 #include "net/base/network_interfaces.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -93,19 +96,28 @@ TEST(ReportingUtilsTest, GetLoginEvent) {
   auto event = GetLoginEvent(/*url=*/GURL("https://google.com/"),
                              /*is_federated=*/federated_origin.IsValid(),
                              /*federated_origin=*/federated_origin,
-                             /*username=*/u"username");
+                             /*username=*/u"username",
+                             /*profile_identifier=*/"identifier",
+                             /*profile_username=*/"profile_username");
 
   ASSERT_EQ(event.url(), "https://google.com/");
   ASSERT_FALSE(event.is_federated());
   ASSERT_EQ(event.federated_origin(), "");
   ASSERT_EQ(event.login_user_name(), "*****");
+  ASSERT_EQ(event.profile_identifier(), "identifier");
+  ASSERT_EQ(event.profile_user_name(), "profile_username");
 }
 
 TEST(ReportingUtilsTest, GetInterstitialEvent) {
+  ReferrerChain referrer_chain;
+  referrer_chain.Add(test::MakeReferrerChainEntry());
   auto event = GetInterstitialEvent(/*url=*/GURL("https://google.com/"),
                                     /*reason=*/"MALWARE", /*net_error_code=*/0,
                                     /*clicked_through=*/false,
-                                    /*event_result=*/EventResult::WARNED);
+                                    /*event_result=*/EventResult::WARNED,
+                                    /*profile_identifier=*/"identifier",
+                                    /*profile_username=*/"profile_username",
+                                    /*referrer_chain*/ referrer_chain);
 
   ASSERT_EQ(event.url(), "https://google.com/");
   ASSERT_EQ(
@@ -114,6 +126,16 @@ TEST(ReportingUtilsTest, GetInterstitialEvent) {
   ASSERT_EQ(event.net_error_code(), 0);
   ASSERT_EQ(event.event_result(),
             chrome::cros::reporting::proto::EventResult::EVENT_RESULT_WARNED);
+  ASSERT_EQ(event.profile_identifier(), "identifier");
+  ASSERT_EQ(event.profile_user_name(), "profile_username");
+  if (base::FeatureList::IsEnabled(safe_browsing::kEnhancedFieldsForSecOps)) {
+    ASSERT_EQ(event.referrers_size(), 1);
+    auto referrer = event.referrers()[0];
+    ASSERT_EQ(referrer.url(), "https://referrer.com");
+    ASSERT_EQ(referrer.ip(), "1.2.3.4");
+  } else {
+    ASSERT_EQ(event.referrers_size(), 0);
+  }
 }
 
 TEST(ReportingUtilsTest, GetBrowserCrashEvent) {
@@ -140,6 +162,55 @@ TEST(ReportingUtilsTest, TestEventLocalIp) {
     EXPECT_TRUE(local_ip->IsValid());
     EXPECT_FALSE(local_ip->IsZero());
   }
+}
+
+TEST(ReportingUtilsTest, TestMaskUserName) {
+  EXPECT_EQ(MaskUsername(u"fakeuser"), "*****");
+  EXPECT_EQ(MaskUsername(u"fakeuser@gmail.com"), "*****@gmail.com");
+}
+
+TEST(ReportingUtilsTest, TestUrlMatchingForOptInEventReturnsTrue) {
+  ReportingSettings settings;
+  std::map<std::string, std::vector<std::string>> enabled_opt_in_events;
+  enabled_opt_in_events["passwordBreachEvent"].push_back("*");
+  settings.enabled_opt_in_events.insert(enabled_opt_in_events.begin(),
+                                        enabled_opt_in_events.end());
+
+  auto url_matcher = CreateURLMatcherForOptInEvent(std::move(settings),
+                                                   kKeyPasswordBreachEvent);
+  EXPECT_TRUE(IsUrlMatched(url_matcher.get(), GURL("gmail.com")));
+}
+
+TEST(ReportingUtilsTest, TestUrlMatchingForOptInEventReturnsFalse) {
+  ReportingSettings settings;
+  std::map<std::string, std::vector<std::string>> enabled_opt_in_events;
+  enabled_opt_in_events["passwordBreachEvent"].push_back("https://google.com/");
+  settings.enabled_opt_in_events.insert(enabled_opt_in_events.begin(),
+                                        enabled_opt_in_events.end());
+
+  auto url_matcher = CreateURLMatcherForOptInEvent(std::move(settings),
+                                                   kKeyPasswordBreachEvent);
+  EXPECT_FALSE(IsUrlMatched(url_matcher.get(), GURL("gmail.com")));
+}
+
+TEST(ReportingUtilsTest, TestAddReferrerChainToEvent) {
+  google::protobuf::RepeatedPtrField<safe_browsing::ReferrerChainEntry>
+      referrer_chain;
+  referrer_chain.Add(test::MakeReferrerChainEntry());
+  base::Value::Dict event;
+  AddReferrerChainToEvent(referrer_chain, event);
+  EXPECT_EQ(event.size(), 1u);
+  EXPECT_EQ(event.FindList(kKeyReferrers)->size(), 1u);
+}
+
+TEST(ReportingUtilsTest, TestEmptyReferrerChainAdded) {
+  google::protobuf::RepeatedPtrField<safe_browsing::ReferrerChainEntry>
+      referrer_chain;
+  base::Value::Dict event;
+  AddReferrerChainToEvent(referrer_chain, event);
+  EXPECT_EQ(event.size(), 1u);
+  EXPECT_TRUE(event.contains(kKeyReferrers));
+  EXPECT_TRUE(event.FindList(kKeyReferrers)->empty());
 }
 
 }  // namespace enterprise_connectors

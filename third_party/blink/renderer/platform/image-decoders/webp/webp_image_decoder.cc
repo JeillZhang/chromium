@@ -18,6 +18,7 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/wtf.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkData.h"
@@ -74,7 +75,7 @@ void alphaBlendPremultiplied(blink::ImageFrame& src,
   for (int x = 0; x < width; ++x) {
     int canvasX = left + x;
     blink::ImageFrame::PixelData* pixel = src.GetAddr(canvasX, canvasY);
-    if (SkGetPackedA32(*pixel) != 0xff) {
+    if (SkPMColorGetA(*pixel) != 0xff) {
       blink::ImageFrame::PixelData prevPixel = *dst.GetAddr(canvasX, canvasY);
       blink::ImageFrame::BlendSrcOverDstPremultiplied(pixel, prevPixel);
     }
@@ -89,7 +90,7 @@ void alphaBlendNonPremultiplied(blink::ImageFrame& src,
   for (int x = 0; x < width; ++x) {
     int canvasX = left + x;
     blink::ImageFrame::PixelData* pixel = src.GetAddr(canvasX, canvasY);
-    if (SkGetPackedA32(*pixel) != 0xff) {
+    if (SkPMColorGetA(*pixel) != 0xff) {
       blink::ImageFrame::PixelData prevPixel = *dst.GetAddr(canvasX, canvasY);
       blink::ImageFrame::BlendSrcOverDstRaw(pixel, prevPixel);
     }

@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "net/disk_cache/disk_cache.h"
 
@@ -126,7 +122,11 @@ enum class WhatToRead {
 
 class DiskCachePerfTest : public DiskCacheTestWithCache {
  public:
-  DiskCachePerfTest() { MaybeIncreaseFdLimitTo(kFdLimitForCacheTests); }
+  DiskCachePerfTest()
+      : DiskCacheTestWithCache(
+            base::test::TaskEnvironment::TimeSource::SYSTEM_TIME) {
+    MaybeIncreaseFdLimitTo(kFdLimitForCacheTests);
+  }
 
   const std::vector<TestEntry>& entries() const { return entries_; }
 
@@ -319,7 +319,8 @@ class ReadHandler {
 
   int pending_result_ = net::OK;
 
-  scoped_refptr<net::IOBuffer> read_buffers_[kMaxParallelOperations];
+  std::array<scoped_refptr<net::IOBuffer>, kMaxParallelOperations>
+      read_buffers_;
 };
 
 void ReadHandler::Run() {
@@ -460,7 +461,7 @@ TEST_F(DiskCachePerfTest, BlockfileHashes) {
 
 void DiskCachePerfTest::ResetAndEvictSystemDiskCache() {
   base::RunLoop().RunUntilIdle();
-  cache_.reset();
+  ResetCaches();
 
   // Flush all files in the cache out of system memory.
   const base::FilePath::StringType file_pattern = FILE_PATH_LITERAL("*");
@@ -473,7 +474,7 @@ void DiskCachePerfTest::ResetAndEvictSystemDiskCache() {
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   // And, cache directories, on platforms where the eviction utility supports
   // this (currently Linux and Android only).
-  if (simple_cache_mode_) {
+  if (backend_to_test() == BackendToTest::kSimple) {
     ASSERT_TRUE(
         base::EvictFileFromSystemCache(cache_path_.AppendASCII("index-dir")));
   }
@@ -533,7 +534,7 @@ TEST_F(DiskCachePerfTest, MAYBE_CacheBackendPerformance) {
 #define MAYBE_SimpleCacheBackendPerformance SimpleCacheBackendPerformance
 #endif
 TEST_F(DiskCachePerfTest, MAYBE_SimpleCacheBackendPerformance) {
-  SetSimpleCacheMode();
+  SetBackendToTest(BackendToTest::kSimple);
   CacheBackendPerformance("simple_cache");
 }
 
@@ -590,7 +591,7 @@ TEST_F(DiskCachePerfTest, SimpleCacheInitialReadPortion) {
   // overhead.
   const int kBatchSize = 100;
 
-  SetSimpleCacheMode();
+  SetBackendToTest(BackendToTest::kSimple);
 
   InitCache();
   // Write out the entries, and keep their objects around.

@@ -12,7 +12,6 @@ import androidx.annotation.Nullable;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.Supplier;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.fullscreen.FullscreenOptions;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
@@ -24,10 +23,10 @@ import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.components.browser_ui.widget.TouchEventObserver;
 import org.chromium.components.browser_ui.widget.TouchEventProvider;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.ui.InsetObserver;
 import org.chromium.ui.UiUtils;
 import org.chromium.ui.base.BackGestureEventSwipeEdge;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
@@ -47,7 +46,6 @@ public class HistoryNavigationCoordinator
     @Nullable private FullscreenManager mFullscreenManager;
     @Nullable private FullscreenManager.Observer mFullscreenObserver;
     private boolean mEnabled;
-    private boolean mIsAutomotiveFullscreenImprovementsEnabled;
     private boolean mIsFullscreen;
 
     private NavigationHandler mNavigationHandler;
@@ -154,12 +152,7 @@ public class HistoryNavigationCoordinator
             mInsetObserver = insetObserver;
             insetObserver.addObserver(this);
         }
-
-        mIsAutomotiveFullscreenImprovementsEnabled =
-                BuildInfo.getInstance().isAutomotive
-                        && ChromeFeatureList.isEnabled(
-                                ChromeFeatureList.AUTOMOTIVE_FULLSCREEN_TOOLBAR_IMPROVEMENTS);
-        if (mIsAutomotiveFullscreenImprovementsEnabled) {
+        if (BuildInfo.getInstance().isAutomotive) {
             mFullscreenObserver =
                     new FullscreenManager.Observer() {
                         @Override
@@ -207,7 +200,7 @@ public class HistoryNavigationCoordinator
             return mForceFeatureEnabledForTesting;
         }
 
-        if (mIsAutomotiveFullscreenImprovementsEnabled && mIsFullscreen) {
+        if (BuildInfo.getInstance().isAutomotive && mIsFullscreen) {
             return false;
         }
 

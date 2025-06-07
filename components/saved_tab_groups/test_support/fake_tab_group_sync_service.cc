@@ -17,6 +17,7 @@
 #include "components/saved_tab_groups/public/saved_tab_group_tab.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/saved_tab_groups/public/types.h"
+#include "components/sync/base/collaboration_id.h"
 
 namespace tab_groups {
 
@@ -25,7 +26,9 @@ FakeTabGroupSyncService::FakeTabGroupSyncService() = default;
 FakeTabGroupSyncService::~FakeTabGroupSyncService() = default;
 
 void FakeTabGroupSyncService::SetTabGroupSyncDelegate(
-    std::unique_ptr<TabGroupSyncDelegate> delegate) {}
+    std::unique_ptr<TabGroupSyncDelegate> delegate) {
+  delegate_ = std::move(delegate);
+}
 
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 void FakeTabGroupSyncService::SaveGroup(SavedTabGroup group) {
@@ -211,22 +214,24 @@ void FakeTabGroupSyncService::OnTabSelected(
   // No op.
 }
 
-SelectedTabInfo FakeTabGroupSyncService::GetCurrentlySelectedTabInfo() {
-  return SelectedTabInfo();
-}
-
 void FakeTabGroupSyncService::MakeTabGroupShared(
     const LocalTabGroupID& local_group_id,
-    std::string_view collaboration_id,
+    const syncer::CollaborationId& collaboration_id,
     TabGroupSharingCallback callback) {
   std::optional<int> index = GetIndexOf(local_group_id);
   CHECK(index.has_value());
   SavedTabGroup& group = groups_[index.value()];
-  group.SetCollaborationId(CollaborationId(std::string(collaboration_id)));
+  group.SetCollaborationId(collaboration_id);
   NotifyObserversOfTabGroupShared(group);
   if (callback) {
     std::move(callback).Run(TabGroupSharingResult::kSuccess);
   }
+}
+
+void FakeTabGroupSyncService::MakeTabGroupSharedForTesting(
+    const LocalTabGroupID& local_group_id,
+    const syncer::CollaborationId& collaboration_id) {
+  // No op.
 }
 
 void FakeTabGroupSyncService::AboutToUnShareTabGroup(
@@ -255,8 +260,17 @@ void FakeTabGroupSyncService::OnTabGroupUnShareComplete(
 }
 
 void FakeTabGroupSyncService::OnCollaborationRemoved(
-    const std::string& collaboration_id) {
+    const syncer::CollaborationId& collaboration_id) {
   // No op.
+}
+
+std::vector<const SavedTabGroup*> FakeTabGroupSyncService::ReadAllGroups()
+    const {
+  std::vector<const SavedTabGroup*> groups;
+  for (const SavedTabGroup& group : groups_) {
+    groups.push_back(&group);
+  }
+  return groups;
 }
 
 std::vector<SavedTabGroup> FakeTabGroupSyncService::GetAllGroups() const {
@@ -313,10 +327,11 @@ FakeTabGroupSyncService::GetTitleForPreviouslyExistingSharedTabGroup(
   return std::nullopt;
 }
 
-void FakeTabGroupSyncService::OpenTabGroup(
+std::optional<LocalTabGroupID> FakeTabGroupSyncService::OpenTabGroup(
     const base::Uuid& sync_group_id,
     std::unique_ptr<TabGroupActionContext> context) {
   // No op.
+  return std::nullopt;
 }
 
 void FakeTabGroupSyncService::UpdateLocalTabGroupMapping(
@@ -389,6 +404,17 @@ void FakeTabGroupSyncService::RecordTabGroupEvent(
   // No op.
 }
 
+void FakeTabGroupSyncService::UpdateArchivalStatus(const base::Uuid& sync_id,
+                                                   bool archival_status) {
+  // No op.
+}
+
+void FakeTabGroupSyncService::UpdateTabLastSeenTime(const base::Uuid& group_id,
+                                                    const base::Uuid& tab_id,
+                                                    TriggerSource source) {
+  // No op.
+}
+
 TabGroupSyncMetricsLogger*
 FakeTabGroupSyncService::GetTabGroupSyncMetricsLogger() {
   return nullptr;
@@ -401,6 +427,11 @@ FakeTabGroupSyncService::GetSavedTabGroupControllerDelegate() {
 
 base::WeakPtr<syncer::DataTypeControllerDelegate>
 FakeTabGroupSyncService::GetSharedTabGroupControllerDelegate() {
+  return base::WeakPtr<syncer::DataTypeControllerDelegate>();
+}
+
+base::WeakPtr<syncer::DataTypeControllerDelegate>
+FakeTabGroupSyncService::GetSharedTabGroupAccountControllerDelegate() {
   return base::WeakPtr<syncer::DataTypeControllerDelegate>();
 }
 
@@ -419,6 +450,9 @@ std::unique_ptr<std::vector<SavedTabGroup>>
 FakeTabGroupSyncService::TakeSharedTabGroupsAvailableAtStartupForMessaging() {
   return std::make_unique<std::vector<SavedTabGroup>>();
 }
+
+void FakeTabGroupSyncService::OnLastTabClosed(
+    const SavedTabGroup& saved_tab_group) {}
 
 void FakeTabGroupSyncService::AddObserver(Observer* observer) {
   observers_.AddObserver(observer);

@@ -14,29 +14,31 @@
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "base/test/metrics/histogram_tester.h"
+#import "base/test/test_timeouts.h"
 #import "base/time/time.h"
-#import "components/collaboration/test_support/mock_collaboration_service.h"
 #import "components/commerce/core/commerce_feature_list.h"
 #import "components/saved_tab_groups/public/saved_tab_group.h"
 #import "components/saved_tab_groups/test_support/fake_tab_group_sync_service.h"
 #import "components/saved_tab_groups/test_support/mock_tab_group_sync_service.h"
 #import "components/tab_groups/tab_group_id.h"
 #import "components/tab_groups/tab_group_visual_data.h"
-#import "ios/chrome/browser/collaboration/model/collaboration_service_factory.h"
 #import "ios/chrome/browser/commerce/model/shopping_persisted_data_tab_helper.h"
 #import "ios/chrome/browser/drag_and_drop/model/drag_item_util.h"
 #import "ios/chrome/browser/main/model/browser_web_state_list_delegate.h"
+#import "ios/chrome/browser/saved_tab_groups/model/tab_group_service.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/share_kit/model/test_share_kit_service.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/shared/model/web_state_list/tab_group.h"
+#import "ios/chrome/browser/shared/model/web_state_list/tab_utils.h"
 #import "ios/chrome/browser/shared/model/web_state_list/test/web_state_list_builder_from_description.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/snapshots/model/snapshot_browser_agent.h"
+#import "ios/chrome/browser/snapshots/model/snapshot_tab_helper.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_collection_drag_drop_metrics.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_item_identifier.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_mediator_test.h"
@@ -59,6 +61,8 @@
 #import "ui/base/l10n/l10n_util_mac.h"
 #import "url/gurl.h"
 
+using tab_groups::SavedTabGroup;
+using tab_groups::SavedTabGroupTab;
 using tab_groups::TabGroupId;
 using testing::_;
 
@@ -73,14 +77,6 @@ enum GridMediatorType { TEST_REGULAR_MEDIATOR, TEST_INCOGNITO_MEDIATOR };
 
 const char kHasPriceDropUserAction[] = "Commerce.TabGridSwitched.HasPriceDrop";
 const char kHasNoPriceDropUserAction[] = "Commerce.TabGridSwitched.NoPriceDrop";
-
-// Returns a test `SavedTabGroup`.
-tab_groups::SavedTabGroup TestSavedGroup() {
-  tab_groups::SavedTabGroup saved_group(
-      u"Test title", tab_groups::TabGroupColorId::kBlue, {}, std::nullopt,
-      base::Uuid::GenerateRandomV4(), tab_groups::TabGroupId::GenerateNew());
-  return saved_group;
-}
 
 }  // namespace
 
@@ -98,19 +94,14 @@ class BaseGridMediatorTest
       mediator_ =
           [[IncognitoGridMediator alloc] initWithModeHolder:mode_holder_];
     } else {
-      tab_group_sync_service_ =
-          std::make_unique<tab_groups::FakeTabGroupSyncService>();
-      share_kit_service_ =
-          std::make_unique<TestShareKitService>(nullptr, nullptr, nullptr);
-      collaboration_service_ =
-          std::make_unique<collaboration::MockCollaborationService>();
+      share_kit_service_ = std::make_unique<TestShareKitService>(
+          nullptr, nullptr, nullptr, tab_group_service_);
 
       mediator_ = [[RegularGridMediator alloc]
-            initWithModeHolder:mode_holder_
-           tabGroupSyncService:tab_group_sync_service_.get()
-               shareKitService:share_kit_service_.get()
-          collaborationService:collaboration_service_.get()
-              messagingService:nil];
+           initWithModeHolder:mode_holder_
+          tabGroupSyncService:tab_group_sync_service_.get()
+              shareKitService:share_kit_service_.get()
+             messagingService:nil];
     }
     mediator_.consumer = consumer_;
     mediator_.browser = browser_.get();
@@ -130,10 +121,7 @@ class BaseGridMediatorTest
   }
 
  protected:
-  std::unique_ptr<tab_groups::FakeTabGroupSyncService> tab_group_sync_service_;
   std::unique_ptr<ShareKitService> share_kit_service_;
-  std::unique_ptr<collaboration::MockCollaborationService>
-      collaboration_service_;
   BaseGridMediator* mediator_;
   base::HistogramTester histogram_tester_;
   TabGridModeHolder* mode_holder_;
@@ -255,7 +243,9 @@ TEST_P(BaseGridMediatorTest, SelectItemCommand) {
   // Previous selected index is 1.
   web::WebStateID identifier =
       browser_->GetWebStateList()->GetWebStateAt(2)->GetUniqueIdentifier();
-  [mediator_ selectItemWithID:identifier pinned:NO isFirstActionOnTabGrid:NO];
+  [mediator_ selectItemWithID:identifier
+                  pinnedState:WebStateSearchCriteria::PinnedState::kNonPinned
+       isFirstActionOnTabGrid:NO];
   EXPECT_EQ(2, browser_->GetWebStateList()->active_index());
   EXPECT_EQ(identifier, consumer_.selectedItem.tabSwitcherItem.identifier);
 }
@@ -279,19 +269,23 @@ TEST_P(BaseGridMediatorTest, SelectPinnedItemCommand) {
   ASSERT_EQ(identifier_1, consumer_.selectedItem.tabSwitcherItem.identifier);
 
   [mediator_ selectItemWithID:identifier_0
-                       pinned:YES
+                  pinnedState:WebStateSearchCriteria::PinnedState::kPinned
        isFirstActionOnTabGrid:NO];
 
   EXPECT_EQ(0, browser_->GetWebStateList()->active_index());
   EXPECT_EQ(identifier_0, consumer_.selectedItem.tabSwitcherItem.identifier);
 
-  [mediator_ selectItemWithID:identifier_2 pinned:NO isFirstActionOnTabGrid:NO];
+  [mediator_ selectItemWithID:identifier_2
+                  pinnedState:WebStateSearchCriteria::PinnedState::kNonPinned
+       isFirstActionOnTabGrid:NO];
 
   EXPECT_EQ(2, browser_->GetWebStateList()->active_index());
   EXPECT_EQ(identifier_2, consumer_.selectedItem.tabSwitcherItem.identifier);
 
-  // Selecting the pinned one with pinned = NO fails.
-  [mediator_ selectItemWithID:identifier_0 pinned:NO isFirstActionOnTabGrid:NO];
+  // Selecting the pinned one with pinnedState::kNonPinned fails.
+  [mediator_ selectItemWithID:identifier_0
+                  pinnedState:WebStateSearchCriteria::PinnedState::kNonPinned
+       isFirstActionOnTabGrid:NO];
 
   EXPECT_EQ(2, browser_->GetWebStateList()->active_index());
   EXPECT_EQ(identifier_2, consumer_.selectedItem.tabSwitcherItem.identifier);
@@ -411,6 +405,39 @@ TEST_P(BaseGridMediatorTest, SearchItemsWithTextCommand) {
   }
 }
 
+// Tests that after `-searchItemsWithText:` is called, then call
+// `-selectItemWithID:` with a pinned item's id, and tests that the consumer's
+// selected index is updated with pinned state.
+TEST_P(BaseGridMediatorTest, SearchPinnedItemsWithTextCommandAndSelect) {
+  if (GetParam() == TEST_INCOGNITO_MEDIATOR || !IsPinnedTabsEnabled()) {
+    // Test only available in non-incognito when pinned tabs are enabled.
+    return;
+  }
+  WebStateList* web_state_list = browser_->GetWebStateList();
+  web::WebStateID identifier_1 =
+      web_state_list->GetWebStateAt(1)->GetUniqueIdentifier();
+  web::WebStateID identifier_2 =
+      web_state_list->GetWebStateAt(2)->GetUniqueIdentifier();
+  [mediator_ setPinState:YES forItemWithID:identifier_2];
+  // The pinned web state moved to the first position, moving the others.
+  ASSERT_EQ(2, browser_->GetWebStateList()->active_index());
+  ASSERT_EQ(identifier_1, consumer_.selectedItem.tabSwitcherItem.identifier);
+
+  [mediator_ searchItemsWithText:@"hello"];
+
+  // Only one result should be found.
+  EXPECT_TRUE(WaitForConsumerUpdates(1UL));
+  EXPECT_EQ(identifier_2, consumer_.items[0]);
+
+  // Select the search one with pinnedState::kAny
+  [mediator_ selectItemWithID:identifier_2
+                  pinnedState:WebStateSearchCriteria::PinnedState::kAny
+       isFirstActionOnTabGrid:NO];
+
+  EXPECT_EQ(0, browser_->GetWebStateList()->active_index());
+  EXPECT_EQ(identifier_2, consumer_.selectedItem.tabSwitcherItem.identifier);
+}
+
 // Tests that when `-resetToAllItems:` is called, the consumer gets all the
 // items from items in WebStateList and correct item selected.
 TEST_P(BaseGridMediatorTest, resetToAllItems) {
@@ -444,7 +471,7 @@ TEST_P(BaseGridMediatorWithPriceDropIndicatorsTest,
       browser_->GetWebStateList()->GetWebStateAt(2);
   // No need to set a null price drop - it will be null by default.
   [mediator_ selectItemWithID:web_state_to_select->GetUniqueIdentifier()
-                       pinned:NO
+                  pinnedState:WebStateSearchCriteria::PinnedState::kNonPinned
        isFirstActionOnTabGrid:NO];
   EXPECT_EQ(1, user_action_tester_.GetActionCount(kHasNoPriceDropUserAction));
   EXPECT_EQ(0, user_action_tester_.GetActionCount(kHasPriceDropUserAction));
@@ -457,7 +484,7 @@ TEST_P(BaseGridMediatorWithPriceDropIndicatorsTest,
   // Add a fake price drop.
   SetFakePriceDrop(web_state_to_select);
   [mediator_ selectItemWithID:web_state_to_select->GetUniqueIdentifier()
-                       pinned:NO
+                  pinnedState:WebStateSearchCriteria::PinnedState::kNonPinned
        isFirstActionOnTabGrid:NO];
   EXPECT_EQ(1, user_action_tester_.GetActionCount(kHasPriceDropUserAction));
   EXPECT_EQ(0, user_action_tester_.GetActionCount(kHasNoPriceDropUserAction));
@@ -561,9 +588,6 @@ TEST_P(BaseGridMediatorTest, NoToolbarUpdateNotSelected) {
 // Tests selecting a NTP with no existing groups. The option to add to a group
 // should be presented, the others would be disabled.
 TEST_P(BaseGridMediatorTest, NTPSelectedWithoutGroup) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures({kTabGroupsIPad, kModernTabStrip}, {});
-
   ASSERT_EQ(3UL, consumer_.items.size());
   browser_->GetWebStateList()->InsertWebState(
       CreateFakeWebStateWithURL(GURL("about:newtab")));
@@ -619,9 +643,6 @@ TEST_P(BaseGridMediatorTest, NTPSelectedWithoutGroup) {
 
 // Tests selecting a tab with one existing group.
 TEST_P(BaseGridMediatorTest, SelectedTabWithGroup) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures({kTabGroupsIPad, kModernTabStrip}, {});
-
   EXPECT_EQ(3UL, consumer_.items.size());
 
   [mediator_ selectTabsButtonTapped:nil];
@@ -734,9 +755,6 @@ TEST_P(BaseGridMediatorTest, CloseAllThenAddWebState) {
 
 // Tests selecting a tab and a group with one existing group.
 TEST_P(BaseGridMediatorTest, SelectedTabAndGroupWithGroup) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures({kTabGroupsIPad, kModernTabStrip}, {});
-
   EXPECT_EQ(3UL, consumer_.items.size());
 
   [mediator_ selectTabsButtonTapped:nil];
@@ -803,25 +821,23 @@ TEST_P(BaseGridMediatorTest, SelectedTabAndGroupWithGroup) {
 
 // Tests that ungrouping a group correctly deletes the group.
 TEST_P(BaseGridMediatorTest, UnGroup) {
-  scoped_feature_list_.InitWithFeatures(
-      {kTabGroupsIPad, kModernTabStrip, kTabGroupSync}, {});
-
-  tab_groups::MockTabGroupSyncService* mock_service =
-      static_cast<tab_groups::MockTabGroupSyncService*>(
-          tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-              profile_.get()));
-
+  scoped_feature_list_.InitWithFeatures({kTabGroupSync}, {});
   WebStateList* web_state_list = browser_->GetWebStateList();
   TabGroupId tab_group_id = TabGroupId::GenerateNew();
   web_state_list->CreateGroup({1}, {}, tab_group_id);
   const TabGroup* group = web_state_list->GetGroupOfWebStateAt(1);
+
+  std::optional<SavedTabGroup> saved_group =
+      tab_group_sync_service_->GetGroup(tab_group_id);
+  ASSERT_TRUE(saved_group.has_value());
+  ASSERT_EQ(tab_group_id, saved_group->local_group_id().value());
   EXPECT_EQ(1u, web_state_list->GetGroups().size());
   EXPECT_EQ(3, web_state_list->count());
 
-  EXPECT_CALL(*mock_service, RemoveLocalTabGroupMapping(tab_group_id, _))
-      .Times(0);
-
   [mediator_ ungroupTabGroup:group];
+  std::optional<SavedTabGroup> updated_group =
+      tab_group_sync_service_->GetGroup(saved_group->saved_guid());
+  ASSERT_FALSE(updated_group.has_value());
   EXPECT_EQ(0u, web_state_list->GetGroups().size());
   EXPECT_EQ(3, web_state_list->count());
 }
@@ -829,8 +845,7 @@ TEST_P(BaseGridMediatorTest, UnGroup) {
 // Tests that ungrouping a group from another browser (e.g from Search)
 // correctly deletes the group.
 TEST_P(BaseGridMediatorTest, UnGroupFromAnotherBrowser) {
-  scoped_feature_list_.InitWithFeatures(
-      {kTabGroupsIPad, kModernTabStrip, kTabGroupSync}, {});
+  scoped_feature_list_.InitWithFeatures({kTabGroupSync}, {});
   mode_holder_.mode = TabGridMode::kSearch;
 
   WebStateList* other_web_state_list = other_browser_->GetWebStateList();
@@ -838,85 +853,75 @@ TEST_P(BaseGridMediatorTest, UnGroupFromAnotherBrowser) {
   ASSERT_TRUE(builder.BuildWebStateListFromDescription(
       "| a b c d e f g", other_browser_->GetProfile()));
 
-  tab_groups::MockTabGroupSyncService* mock_service =
-      static_cast<tab_groups::MockTabGroupSyncService*>(
-          tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-              profile_.get()));
   TabGroupId tab_group_id = TabGroupId::GenerateNew();
   other_web_state_list->CreateGroup({1}, {}, tab_group_id);
   const TabGroup* group = other_web_state_list->GetGroupOfWebStateAt(1);
+  std::optional<SavedTabGroup> saved_group =
+      tab_group_sync_service_->GetGroup(tab_group_id);
+  ASSERT_TRUE(saved_group.has_value());
   EXPECT_EQ(1u, other_web_state_list->GetGroups().size());
   EXPECT_EQ(7, other_web_state_list->count());
 
-  EXPECT_CALL(*mock_service, RemoveLocalTabGroupMapping(tab_group_id, _))
-      .Times(0);
 
   [mediator_ ungroupTabGroup:group];
+  std::optional<SavedTabGroup> updated_group =
+      tab_group_sync_service_->GetGroup(saved_group->saved_guid());
+  ASSERT_FALSE(updated_group.has_value());
   EXPECT_EQ(0u, other_web_state_list->GetGroups().size());
   EXPECT_EQ(7, other_web_state_list->count());
 }
 
 // Tests that closing the last tab of a selected group clears the selection.
 TEST_P(BaseGridMediatorTest, CloseSelectedGroup) {
-  scoped_feature_list_.InitWithFeatures(
-      {kTabGroupsIPad, kModernTabStrip, kTabGroupSync}, {});
-
-  tab_groups::MockTabGroupSyncService* mock_service =
-      static_cast<tab_groups::MockTabGroupSyncService*>(
-          tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-              profile_.get()));
-
+  scoped_feature_list_.InitWithFeatures({kTabGroupSync}, {});
   TabGroupId tab_group_id = TabGroupId::GenerateNew();
   WebStateList* web_state_list = browser_->GetWebStateList();
   const TabGroup* group = web_state_list->CreateGroup({1}, {}, tab_group_id);
   mode_holder_.mode = TabGridMode::kSelection;
-  [mediator_
-      addToSelectionItemID:[GridItemIdentifier groupIdentifier:group
-                                              withWebStateList:web_state_list]];
+  [mediator_ addToSelectionItemID:[GridItemIdentifier groupIdentifier:group]];
   EXPECT_EQ(1UL, [mediator_ allSelectedDragItems].count);
 
-  EXPECT_CALL(*mock_service, GetGroup(tab_group_id))
-      .WillOnce(testing::Return(TestSavedGroup()));
-  EXPECT_CALL(*mock_service, RemoveLocalTabGroupMapping(tab_group_id, _));
-  EXPECT_CALL(*mock_service, RemoveGroup(tab_group_id)).Times(0);
+  std::optional<SavedTabGroup> saved_group =
+      tab_group_sync_service_->GetGroup(tab_group_id);
+  ASSERT_TRUE(saved_group.has_value());
 
   [mediator_ closeItemsWithTabIDs:{} groupIDs:{tab_group_id} tabCount:1];
+
+  std::optional<SavedTabGroup> updated_group =
+      tab_group_sync_service_->GetGroup(saved_group->saved_guid());
+  ASSERT_TRUE(updated_group.has_value());
+  EXPECT_EQ(std::nullopt, updated_group->local_group_id());
 
   EXPECT_EQ(0UL, [mediator_ allSelectedDragItems].count);
 }
 
 // Tests that closing a group locally removes the mapping from the sync service.
 TEST_P(BaseGridMediatorTest, CloseGroupLocally) {
-  scoped_feature_list_.InitWithFeatures(
-      {kTabGroupsIPad, kModernTabStrip, kTabGroupSync}, {});
-
-  tab_groups::MockTabGroupSyncService* mock_service =
-      static_cast<tab_groups::MockTabGroupSyncService*>(
-          tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-              profile_.get()));
-
+  scoped_feature_list_.InitWithFeatures({kTabGroupSync}, {});
   WebStateList* web_state_list = browser_->GetWebStateList();
   TabGroupId tab_group_id = TabGroupId::GenerateNew();
   web_state_list->CreateGroup({1}, {}, tab_group_id);
   const TabGroup* group = web_state_list->GetGroupOfWebStateAt(1);
   EXPECT_EQ(1u, web_state_list->GetGroups().size());
 
-  EXPECT_CALL(*mock_service, GetGroup(tab_group_id))
-      .WillOnce(testing::Return(TestSavedGroup()));
-  EXPECT_CALL(*mock_service, RemoveLocalTabGroupMapping(tab_group_id, _));
-  EXPECT_CALL(*mock_service, RemoveGroup(tab_group_id)).Times(0);
+  std::optional<SavedTabGroup> saved_group =
+      tab_group_sync_service_->GetGroup(tab_group_id);
+  ASSERT_TRUE(saved_group.has_value());
 
-  [mediator_ closeItemWithIdentifier:[GridItemIdentifier
-                                          groupIdentifier:group
-                                         withWebStateList:web_state_list]];
+  [mediator_
+      closeItemWithIdentifier:[GridItemIdentifier groupIdentifier:group]];
   EXPECT_EQ(0u, web_state_list->GetGroups().size());
+
+  std::optional<SavedTabGroup> updated_group =
+      tab_group_sync_service_->GetGroup(saved_group->saved_guid());
+  ASSERT_TRUE(updated_group.has_value());
+  EXPECT_EQ(std::nullopt, updated_group->local_group_id());
 }
 
 // Tests that closing a group locally from another browser (e.g from Search)
 // correctly closes the group and removes the mapping from the sync service.
 TEST_P(BaseGridMediatorTest, CloseGroupFromAnotherBrowser) {
-  scoped_feature_list_.InitWithFeatures(
-      {kTabGroupsIPad, kModernTabStrip, kTabGroupSync}, {});
+  scoped_feature_list_.InitWithFeatures({kTabGroupSync}, {});
   mode_holder_.mode = TabGridMode::kSearch;
 
   WebStateList* other_web_state_list = other_browser_->GetWebStateList();
@@ -924,42 +929,33 @@ TEST_P(BaseGridMediatorTest, CloseGroupFromAnotherBrowser) {
   ASSERT_TRUE(builder.BuildWebStateListFromDescription(
       "| a b c d e f g", other_browser_->GetProfile()));
 
-  tab_groups::MockTabGroupSyncService* mock_service =
-      static_cast<tab_groups::MockTabGroupSyncService*>(
-          tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-              profile_.get()));
   TabGroupId tab_group_id = TabGroupId::GenerateNew();
   const TabGroup* group =
       other_web_state_list->CreateGroup({1}, {}, tab_group_id);
   EXPECT_EQ(1u, other_web_state_list->GetGroups().size());
 
-  EXPECT_CALL(*mock_service, GetGroup(tab_group_id))
-      .WillOnce(testing::Return(TestSavedGroup()));
-  EXPECT_CALL(*mock_service, RemoveLocalTabGroupMapping(tab_group_id, _));
-  EXPECT_CALL(*mock_service, RemoveGroup(tab_group_id)).Times(0);
+  std::optional<SavedTabGroup> saved_group =
+      tab_group_sync_service_->GetGroup(tab_group_id);
+  ASSERT_TRUE(saved_group.has_value());
 
   [mediator_
-      closeItemWithIdentifier:[GridItemIdentifier
-                                   groupIdentifier:group
-                                  withWebStateList:other_web_state_list]];
+      closeItemWithIdentifier:[GridItemIdentifier groupIdentifier:group]];
   EXPECT_EQ(0u, other_web_state_list->GetGroups().size());
+
+  std::optional<SavedTabGroup> updated_group =
+      tab_group_sync_service_->GetGroup(saved_group->saved_guid());
+  ASSERT_TRUE(updated_group.has_value());
+  EXPECT_EQ(std::nullopt, updated_group->local_group_id());
 }
 
 // Tests that closing multiple selected items doesn't delete saved groups.
 TEST_P(BaseGridMediatorTest, CloseSelectedTabsAndGroups) {
-  scoped_feature_list_.InitWithFeatures(
-      {kTabGroupsIPad, kModernTabStrip, kTabGroupSync}, {});
-
+  scoped_feature_list_.InitWithFeatures({kTabGroupSync}, {});
   WebStateList* web_state_list = browser_->GetWebStateList();
   CloseAllWebStates(*web_state_list, WebStateList::CLOSE_NO_FLAGS);
   WebStateListBuilderFromDescription builder(web_state_list);
   ASSERT_TRUE(builder.BuildWebStateListFromDescription(
       "| a b c [ 1 d e ] [ 2 f g ] h", browser_->GetProfile()));
-
-  tab_groups::MockTabGroupSyncService* mock_service =
-      static_cast<tab_groups::MockTabGroupSyncService*>(
-          tab_groups::TabGroupSyncServiceFactory::GetForProfile(
-              profile_.get()));
 
   const TabGroup* group_1 = builder.GetTabGroupForIdentifier('1');
   const TabGroup* group_2 = builder.GetTabGroupForIdentifier('2');
@@ -968,34 +964,37 @@ TEST_P(BaseGridMediatorTest, CloseSelectedTabsAndGroups) {
   web::WebState* web_state_a = builder.GetWebStateForIdentifier('a');
   web::WebState* web_state_b = builder.GetWebStateForIdentifier('b');
 
+  std::optional<SavedTabGroup> saved_group_1 =
+      tab_group_sync_service_->GetGroup(tab_group_id_1);
+  ASSERT_TRUE(saved_group_1.has_value());
+  std::optional<SavedTabGroup> saved_group_2 =
+      tab_group_sync_service_->GetGroup(tab_group_id_2);
+  ASSERT_TRUE(saved_group_2.has_value());
+
   mode_holder_.mode = TabGridMode::kSelection;
   [mediator_
       addToSelectionItemID:[GridItemIdentifier tabIdentifier:web_state_a]];
   [mediator_
       addToSelectionItemID:[GridItemIdentifier tabIdentifier:web_state_b]];
-  [mediator_
-      addToSelectionItemID:[GridItemIdentifier groupIdentifier:group_1
-                                              withWebStateList:web_state_list]];
-  [mediator_
-      addToSelectionItemID:[GridItemIdentifier groupIdentifier:group_2
-                                              withWebStateList:web_state_list]];
+  [mediator_ addToSelectionItemID:[GridItemIdentifier groupIdentifier:group_1]];
+  [mediator_ addToSelectionItemID:[GridItemIdentifier groupIdentifier:group_2]];
 
   // 2 tabs, 2 tab groups.
   EXPECT_EQ(4UL, [mediator_ allSelectedDragItems].count);
-
-  EXPECT_CALL(*mock_service, GetGroup(tab_group_id_1))
-      .WillOnce(testing::Return(TestSavedGroup()));
-  EXPECT_CALL(*mock_service, GetGroup(tab_group_id_2))
-      .WillOnce(testing::Return(TestSavedGroup()));
-  EXPECT_CALL(*mock_service, RemoveLocalTabGroupMapping(tab_group_id_1, _));
-  EXPECT_CALL(*mock_service, RemoveLocalTabGroupMapping(tab_group_id_2, _));
-  EXPECT_CALL(*mock_service, RemoveGroup(tab_group_id_1)).Times(0);
-  EXPECT_CALL(*mock_service, RemoveGroup(tab_group_id_2)).Times(0);
 
   [mediator_ closeItemsWithTabIDs:{web_state_a->GetUniqueIdentifier(),
                                    web_state_b->GetUniqueIdentifier()}
                          groupIDs:{tab_group_id_1, tab_group_id_2}
                          tabCount:6];
+
+  std::optional<SavedTabGroup> updated_group_1 =
+      tab_group_sync_service_->GetGroup(saved_group_1->saved_guid());
+  ASSERT_TRUE(updated_group_1.has_value());
+  EXPECT_EQ(std::nullopt, updated_group_1->local_group_id());
+  std::optional<SavedTabGroup> updated_group_2 =
+      tab_group_sync_service_->GetGroup(saved_group_2->saved_guid());
+  ASSERT_TRUE(updated_group_2.has_value());
+  EXPECT_EQ(std::nullopt, updated_group_2->local_group_id());
 
   ASSERT_EQ("| c h", builder.GetWebStateListDescription());
   EXPECT_EQ(0UL, [mediator_ allSelectedDragItems].count);
@@ -1008,9 +1007,7 @@ TEST_P(BaseGridMediatorTest, CloseSelectedGroupInBatch) {
   web_state_list->CreateGroup({1}, {}, TabGroupId::GenerateNew());
   const TabGroup* group = web_state_list->GetGroupOfWebStateAt(1);
   mode_holder_.mode = TabGridMode::kSelection;
-  [mediator_
-      addToSelectionItemID:[GridItemIdentifier groupIdentifier:group
-                                              withWebStateList:web_state_list]];
+  [mediator_ addToSelectionItemID:[GridItemIdentifier groupIdentifier:group]];
   EXPECT_EQ(1UL, [mediator_ allSelectedDragItems].count);
 
   {
@@ -1027,9 +1024,6 @@ TEST_P(BaseGridMediatorTest, CloseSelectedGroupInBatch) {
 // updates the selected element of the Grid, whether the tab itself is moving in
 // the web state list or not.
 TEST_P(BaseGridMediatorTest, SelectionAfterChangingGroup) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures({kTabGroupsIPad, kModernTabStrip}, {});
-
   WebStateList* web_state_list = browser_->GetWebStateList();
   CloseAllWebStates(*web_state_list, WebStateList::CLOSE_NO_FLAGS);
   WebStateListBuilderFromDescription builder(web_state_list);
@@ -1080,9 +1074,6 @@ TEST_P(BaseGridMediatorTest, DropLocalTab) {
 
 // Tests dropping a tabs from the tab group view in the grid.
 TEST_P(BaseGridMediatorTest, DropLocalTabFromTabGroup) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures({kTabGroupsIPad, kModernTabStrip}, {});
-
   WebStateList* web_state_list = browser_->GetWebStateList();
   CloseAllWebStates(*web_state_list, WebStateList::CLOSE_NO_FLAGS);
 
@@ -1156,9 +1147,6 @@ TEST_P(BaseGridMediatorTest, DropCrossWindowTab) {
 
 // Tests dropping a local Tab Group (i.e. from the same window).
 TEST_P(BaseGridMediatorTest, DropLocalTabGroup) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures({kTabGroupsIPad, kModernTabStrip}, {});
-
   WebStateList* web_state_list = browser_->GetWebStateList();
   CloseAllWebStates(*web_state_list, WebStateList::CLOSE_NO_FLAGS);
 
@@ -1184,9 +1172,6 @@ TEST_P(BaseGridMediatorTest, DropLocalTabGroup) {
 
 // Tests dropping a Tab Group from another browser (i.e. from the same window).
 TEST_P(BaseGridMediatorTest, DropCrossBrowserTabGroup) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures({kTabGroupsIPad, kModernTabStrip}, {});
-
   // Prepare the web state list in which the group will be dropped.
   WebStateList* web_state_list = browser_->GetWebStateList();
   CloseAllWebStates(*web_state_list, WebStateList::CLOSE_NO_FLAGS);
@@ -1279,6 +1264,27 @@ TEST_P(BaseGridMediatorTest, DropExternalURL) {
   EXPECT_EQ(GURL(kDraggedUrl),
             web_state->GetNavigationManager()->GetPendingItem()->GetURL());
   ExpectThatDragItemOriginMetricLogged(DragItemOrigin::kOther);
+}
+
+// Tests that `fetchTabSnapshotAndFavicon:completion:` is calling `completion`
+// twice.
+TEST_P(BaseGridMediatorTest, FetchTabSnapshotAndFavicon) {
+  auto fake_web_state = std::make_unique<web::FakeWebState>();
+  web::FakeWebState* web_state = fake_web_state.get();
+  SnapshotTabHelper::CreateForWebState(web_state);
+  WebStateTabSwitcherItem* item =
+      [[WebStateTabSwitcherItem alloc] initWithWebState:web_state];
+  __block int completion_block_called = 0;
+  auto completion_block = ^(TabSwitcherItem* inner_item,
+                            TabSnapshotAndFavicon* tab_snapshot_and_favicon) {
+    completion_block_called++;
+    ASSERT_LE(completion_block_called, 2);
+  };
+  [mediator_ fetchTabSnapshotAndFavicon:item completion:completion_block];
+  EXPECT_TRUE(base::test::ios::WaitUntilConditionOrTimeout(
+      TestTimeouts::action_timeout(), ^bool() {
+        return completion_block_called == 2;
+      }));
 }
 
 INSTANTIATE_TEST_SUITE_P(

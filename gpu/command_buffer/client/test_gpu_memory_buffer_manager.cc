@@ -74,9 +74,7 @@ class GpuMemoryBufferImpl : public gfx::GpuMemoryBuffer {
   }
   gfx::GpuMemoryBufferId GetId() const override { return id_; }
   gfx::GpuMemoryBufferHandle CloneHandle() const override {
-    gfx::GpuMemoryBufferHandle handle;
-    handle.type = gfx::SHARED_MEMORY_BUFFER;
-    handle.set_region(region_.Duplicate());
+    gfx::GpuMemoryBufferHandle handle(region_.Duplicate());
     handle.offset = base::checked_cast<uint32_t>(offset_);
     handle.stride = base::checked_cast<uint32_t>(stride_);
     return handle;
@@ -188,17 +186,6 @@ TestGpuMemoryBufferManager::CreateGpuMemoryBuffer(
           gfx::RowSizeForBufferFormat(size.width(), format, 0))));
   buffers_[last_gpu_memory_buffer_id_] = result.get();
   return result;
-}
-
-void TestGpuMemoryBufferManager::CopyGpuMemoryBufferAsync(
-    gfx::GpuMemoryBufferHandle buffer_handle,
-    base::UnsafeSharedMemoryRegion memory_region,
-    base::OnceCallback<void(bool)> callback) {
-  std::move(callback).Run(false);
-}
-
-bool TestGpuMemoryBufferManager::IsConnected() {
-  return true;
 }
 
 }  // namespace gpu

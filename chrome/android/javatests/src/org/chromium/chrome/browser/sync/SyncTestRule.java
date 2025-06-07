@@ -43,6 +43,7 @@ import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.test.util.TestAccounts;
+import org.chromium.components.sync.SyncFirstSetupCompleteSource;
 import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.internal.SyncPrefNames;
 import org.chromium.components.sync.protocol.AutofillWalletSpecifics;
@@ -233,19 +234,24 @@ public class SyncTestRule extends ChromeTabbedActivityTestRule {
      *
      * @return the test account that is signed in.
      */
+    @Deprecated
     public CoreAccountInfo setUpAccountAndEnableSyncForTesting() {
-        return setUpAccountAndEnableSyncForTesting(false);
-    }
+        CoreAccountInfo accountInfo =
+                mSigninTestRule.addTestAccountThenSigninWithConsentLevelSync();
 
-    /**
-     * Set up a child test account, sign in and enable sync. FirstSetupComplete bit will be set
-     * after this. For most purposes this function should be used as this emulates the basic sign in
-     * flow.
-     *
-     * @return the test account that is signed in.
-     */
-    public CoreAccountInfo setUpChildAccountAndEnableSyncForTesting() {
-        return setUpAccountAndEnableSyncForTesting(true);
+        // In addition to using ConsentLevel.SYNC above, configure SyncService
+        // to enable the legacy Sync-the-feature.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mSyncService.setInitialSyncFeatureSetupComplete(
+                            SyncFirstSetupCompleteSource.BASIC_FLOW);
+                });
+
+        // Enable UKM when enabling sync as it is done by the sync confirmation UI.
+        enableUKM();
+        SyncTestUtil.waitForSyncFeatureActive();
+        SyncTestUtil.triggerSyncAndWaitForCompletion();
+        return accountInfo;
     }
 
     /**
@@ -270,7 +276,7 @@ public class SyncTestRule extends ChromeTabbedActivityTestRule {
 
     public void signOut() {
         mSigninTestRule.signOut();
-        Assert.assertNull(mSigninTestRule.getPrimaryAccount(ConsentLevel.SYNC));
+        Assert.assertNull(mSigninTestRule.getPrimaryAccount(ConsentLevel.SIGNIN));
         Assert.assertFalse(SyncTestUtil.isSyncFeatureEnabled());
     }
 
@@ -445,17 +451,6 @@ public class SyncTestRule extends ChromeTabbedActivityTestRule {
                     UnifiedConsentServiceBridge.setUrlKeyedAnonymizedDataCollectionEnabled(
                             ProfileManager.getLastUsedRegularProfile(), true);
                 });
-    }
-
-    private CoreAccountInfo setUpAccountAndEnableSyncForTesting(boolean isChildAccount) {
-        CoreAccountInfo accountInfo =
-                mSigninTestRule.addTestAccountThenSigninAndEnableSync(mSyncService, isChildAccount);
-
-        // Enable UKM when enabling sync as it is done by the sync confirmation UI.
-        enableUKM();
-        SyncTestUtil.waitForSyncFeatureActive();
-        SyncTestUtil.triggerSyncAndWaitForCompletion();
-        return accountInfo;
     }
 
     private static PrefService getPrefService() {

@@ -4,18 +4,19 @@
 
 #include "base/functional/callback_helpers.h"
 #include "base/test/scoped_feature_list.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/extensions/extensions_dialogs.h"
 #include "chrome/browser/ui/views/extensions/extensions_dialogs_browsertest.h"
+#include "components/signin/public/base/gaia_id_hash.h"
 #include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/base/signin_prefs.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
-#include "components/sync/base/features.h"
 #include "content/public/test/browser_test.h"
-#include "extensions/browser/extension_system.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/mojom/manifest.mojom.h"
@@ -29,15 +30,18 @@ namespace {
 void SignIn(Profile* profile) {
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
-  AccountInfo account_info = signin::MakePrimaryAccountAvailable(
-      identity_manager, "testymctestface@gmail.com",
-      signin::ConsentLevel::kSignin);
+  AccountInfo account_info = signin::MakeAccountAvailable(
+      identity_manager,
+      signin::AccountAvailabilityOptionsBuilder()
+          .AsPrimary(signin::ConsentLevel::kSignin)
+          .WithAccessPoint(signin_metrics::AccessPoint::kExtensionInstallBubble)
+          .Build("testy@mctestface.com"));
+  ASSERT_TRUE(SigninPrefs(*profile->GetPrefs())
+                  .GetExtensionsExplicitBrowserSignin(account_info.gaia));
+
   signin::SimulateAccountImageFetch(identity_manager, account_info.account_id,
                                     "https://avatar.com/avatar.png",
                                     gfx::test::CreateImage(/*size=*/32));
-  // Pretend the user has now explcitly signed in. All this is required for
-  // extensions to sync in transport mode.
-  profile->GetPrefs()->SetBoolean(prefs::kExplicitBrowserSignin, true);
 }
 
 }  // namespace
@@ -47,7 +51,7 @@ class UploadExtensionToAccountDialogBrowserTest
  public:
   UploadExtensionToAccountDialogBrowserTest() {
     scoped_feature_list_.InitAndEnableFeature(
-        syncer::kSyncEnableExtensionsInTransportMode);
+        switches::kEnableExtensionsExplicitBrowserSignin);
   }
   ~UploadExtensionToAccountDialogBrowserTest() override = default;
   UploadExtensionToAccountDialogBrowserTest(
@@ -76,9 +80,7 @@ class UploadExtensionToAccountDialogBrowserTest
                     .Build();
 
     ASSERT_TRUE(extension);
-    ExtensionSystem::Get(browser()->profile())
-        ->extension_service()
-        ->AddExtension(extension.get());
+    ExtensionRegistrar::Get(browser()->profile())->AddExtension(extension);
 
     // Sign in AFTER the extension has been added so there is an active account
     // for extensions to be uploaded to.

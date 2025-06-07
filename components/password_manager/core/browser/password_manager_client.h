@@ -101,29 +101,21 @@ class FieldInfoManager;
 #if BUILDFLAG(IS_ANDROID)
 class FirstCctPageLoadPasswordsUkmRecorder;
 #endif  // BUILDFLAG(IS_ANDROID)
+class HttpAuthManager;
 class PasswordChangeServiceInterface;
 class PasswordFeatureManager;
 class PasswordFormManagerForUI;
 class PasswordManagerDriver;
 class PasswordManagerInterface;
 class PasswordManagerMetricsRecorder;
-class HttpAuthManager;
 class PasswordRequirementsService;
 class PasswordReuseManager;
 class PasswordStoreInterface;
+class SmsOtpBackend;
 class WebAuthnCredentialsDelegate;
 struct PasswordForm;
 
 enum class ErrorMessageFlowType { kSaveFlow, kFillFlow };
-
-#if BUILDFLAG(IS_ANDROID)
-struct PasswordFillingParams {
-  autofill::FormData form;
-  uint64_t username_field_index;
-  uint64_t password_field_index;
-  autofill::FieldRendererId focused_field_renderer_id_;
-};
-#endif  // BUILDFLAG(IS_ANDROID)
 
 // An abstraction of operations that depend on the embedders (e.g. Chrome)
 // environment. PasswordManagerClient is instantiated once per WebContents.
@@ -225,9 +217,7 @@ class PasswordManagerClient {
   // storage notice is gone.
   virtual void ShowKeyboardReplacingSurface(
       PasswordManagerDriver* driver,
-      const PasswordFillingParams& password_filling_params,
-      bool is_webauthn_form,
-      base::OnceCallback<void(bool)> shown_cb);
+      const autofill::PasswordSuggestionRequest& request);
 #endif
 
   // Checks whether user re-authentication should be triggered before password
@@ -297,7 +287,8 @@ class PasswordManagerClient {
   virtual void UpdateCredentialCache(
       const url::Origin& origin,
       base::span<const PasswordForm> best_matches,
-      bool is_blocklisted);
+      bool is_blocklisted,
+      std::optional<PasswordStoreBackendError> backend_error);
 
   // Called when a password is saved in an automated fashion. Embedder may
   // inform the user that this save has occurred.
@@ -490,6 +481,7 @@ class PasswordManagerClient {
 
   // Returns the identity manager for profile.
   virtual signin::IdentityManager* GetIdentityManager() = 0;
+  virtual const signin::IdentityManager* GetIdentityManager() const = 0;
 
   // Returns the field info manager for profile.
   virtual password_manager::FieldInfoManager* GetFieldInfoManager() const;
@@ -510,6 +502,10 @@ class PasswordManagerClient {
   // Causes a navigation to the manage passwords page.
   virtual void NavigateToManagePasswordsPage(ManagePasswordsReferrer referrer) {
   }
+
+  // If PasswordChangeService exists, notifies it of presence of OTP field on
+  // the page.
+  virtual void InformPasswordChangeServiceOfOtpPresent() {}
 
 #if BUILDFLAG(IS_ANDROID)
   virtual void NavigateToManagePasskeysPage(ManagePasswordsReferrer referrer) {}
@@ -532,6 +528,8 @@ class PasswordManagerClient {
   // Marks all credentials that have been loaded for this page and have been
   // received via the password sharing feature as notified.
   virtual void MarkSharedCredentialsAsNotified(const GURL& url);
+
+  virtual SmsOtpBackend* GetSmsOtpBackend() const;
 #endif  // BUILDFLAG(IS_ANDROID)
 
   // Returns the Chrome channel for the installation.
@@ -540,20 +538,18 @@ class PasswordManagerClient {
   // Refreshes password manager settings stored in prefs.
   virtual void RefreshPasswordManagerSettingsIfNeeded() const;
 
-  // Display username/password options to the user in the "ambient" sign-in
-  // bubble, which can also display other credential types for sign-in.
-  // If the user selects a password from the bubble, `callback` is invoked with
-  // the selected `PasswordForm`.
-  virtual void ShowCredentialsInAmbientBubble(
-      std::vector<std::unique_ptr<password_manager::PasswordForm>> forms,
-      int credential_type_flags,
-      CredentialsCallback callback);
+  virtual void TriggerSignIn(signin_metrics::AccessPoint access_point) const;
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
     BUILDFLAG(IS_CHROMEOS)
   // Shows the bubble with the details of the `form`.
   virtual void OpenPasswordDetailsBubble(
       const password_manager::PasswordForm& form) = 0;
+
+  // Possibly shows a promo priming the user to engage with password saving,
+  // based on the current URL.
+  virtual void MaybeShowSavePasswordPrimingPromo(const GURL& current_url) = 0;
+
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) ||
         // BUILDFLAG(IS_CHROMEOS)
 

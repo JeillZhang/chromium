@@ -16,6 +16,7 @@ import android.widget.EditText;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.ui.autofill.OtpVerificationDialogProperties.ViewDelegate;
 import org.chromium.chrome.browser.ui.autofill.internal.R;
 import org.chromium.ui.text.ChromeClickableSpan;
@@ -26,6 +27,7 @@ import org.chromium.ui.text.SpanApplier.SpanInfo;
 import java.util.Optional;
 
 /** Dialog shown to the user for credit card unmasking using OTP-based verification. */
+@NullMarked
 public class OtpVerificationDialogView extends RelativeLayout {
     private View mProgressBarOverlayView;
     private View mOtpVerificationDialogViewContents;
@@ -83,6 +85,11 @@ public class OtpVerificationDialogView extends RelativeLayout {
         mProgressBarOverlayView.setAlpha(0f);
         mProgressBarOverlayView.animate().alpha(1f).setDuration(ANIMATION_DURATION_MS);
         mOtpVerificationDialogViewContents.animate().alpha(0f).setDuration(ANIMATION_DURATION_MS);
+        String progressMessage =
+                getContext()
+                        .getString(R.string.autofill_card_unmask_otp_input_dialog_pending_message);
+        ((TextView) mProgressBarOverlayView.findViewById(R.id.progress_bar_message))
+                .setText(progressMessage);
     }
 
     /**
@@ -139,7 +146,7 @@ public class OtpVerificationDialogView extends RelativeLayout {
         };
     }
 
-    /** Builds Otp Resend Message Link * */
+    /** Builds Otp Resend Message Link */
     private SpannableString buildOtpResendMessageLink(Context context, ViewDelegate viewDelegate) {
         return SpanApplier.applySpans(
                 context.getString(

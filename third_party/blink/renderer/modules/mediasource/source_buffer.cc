@@ -149,10 +149,8 @@ scoped_refptr<media::StreamParserBuffer> MakeAudioStreamParserBuffer(
   // TODO(crbug.com/1144908): Add a way for StreamParserBuffer to share the
   // same underlying DecoderBuffer.
   auto stream_parser_buffer = media::StreamParserBuffer::CopyFrom(
-      audio_chunk.buffer()->data(),
-      base::checked_cast<int>(audio_chunk.buffer()->size()),
-      audio_chunk.buffer()->is_key_frame(), media::DemuxerStream::AUDIO,
-      kWebCodecsAudioTrackId);
+      *audio_chunk.buffer(), audio_chunk.buffer()->is_key_frame(),
+      media::DemuxerStream::AUDIO, kWebCodecsAudioTrackId);
 
   // Currently, we do not populate any side_data in these converters.
   DCHECK(!stream_parser_buffer->side_data());
@@ -174,10 +172,8 @@ scoped_refptr<media::StreamParserBuffer> MakeVideoStreamParserBuffer(
   // TODO(crbug.com/1144908): Add a way for StreamParserBuffer to share the
   // same underlying DecoderBuffer.
   auto stream_parser_buffer = media::StreamParserBuffer::CopyFrom(
-      video_chunk.buffer()->data(),
-      base::checked_cast<int>(video_chunk.buffer()->size()),
-      video_chunk.buffer()->is_key_frame(), media::DemuxerStream::VIDEO,
-      kWebCodecsVideoTrackId);
+      *video_chunk.buffer(), video_chunk.buffer()->is_key_frame(),
+      media::DemuxerStream::VIDEO, kWebCodecsVideoTrackId);
 
   // Currently, we do not populate any side_data in these converters.
   DCHECK(!stream_parser_buffer->side_data());
@@ -1897,8 +1893,8 @@ bool SourceBuffer::PrepareAppend(double media_time,
     //    If the incoming data exceeds wtf_size_t::max, then our implementation
     //    cannot deal with it, so we also throw a QuotaExceededError.
     DVLOG(3) << __func__ << " this=" << this << " -> throw QuotaExceededError";
-    MediaSource::LogAndThrowDOMException(
-        exception_state, DOMExceptionCode::kQuotaExceededError,
+    MediaSource::LogAndThrowQuotaExceededError(
+        exception_state,
         "The SourceBuffer is full, and cannot free space to append additional "
         "buffers.");
     TRACE_EVENT_NESTABLE_ASYNC_END0("media", "SourceBuffer::prepareAppend",
@@ -1994,8 +1990,8 @@ void SourceBuffer::AppendBufferInternal_Locked(
   // just a single async segment parser loop run later, with nothing added to
   // the parser's input buffer here synchronously.
   if (!web_source_buffer_->AppendToParseBuffer(data)) {
-    MediaSource::LogAndThrowDOMException(
-        *exception_state, DOMExceptionCode::kQuotaExceededError,
+    MediaSource::LogAndThrowQuotaExceededError(
+        *exception_state,
         "Unable to allocate space required to buffer appended media.");
     TRACE_EVENT_NESTABLE_ASYNC_END0("media", "SourceBuffer::prepareAsyncAppend",
                                     TRACE_ID_LOCAL(this));

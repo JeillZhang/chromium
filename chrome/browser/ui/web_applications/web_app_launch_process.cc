@@ -23,18 +23,19 @@
 #include "chrome/browser/ui/web_applications/web_app_launch_utils.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/web_app.h"
-#include "chrome/browser/web_applications/web_app_launch_queue.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_tab_helper.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
 #include "components/services/app_service/public/cpp/intent.h"
 #include "components/services/app_service/public/cpp/intent_util.h"
+#include "components/webapps/browser/launch_queue/launch_queue.h"
 #include "extensions/common/constants.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/display/scoped_display_for_new_windows.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/ash/browser_delegate/browser_delegate.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
 #include "chrome/browser/ui/ash/system_web_apps/system_web_app_ui_utils.h"
 #endif
@@ -154,11 +155,9 @@ content::WebContents* WebAppLaunchProcess::Run() {
   std::optional<ash::SystemWebAppType> system_app_type =
       ash::GetSystemWebAppTypeForAppId(&profile_.get(), params_->app_id);
   if (system_app_type) {
-    Browser* browser = LaunchSystemWebAppImpl(&profile_.get(), *system_app_type,
-                                              launch_url, *params_);
-
-    return browser ? browser->tab_strip_model()->GetActiveWebContents()
-                   : nullptr;
+    ash::BrowserDelegate* browser = LaunchSystemWebAppImpl(
+        &profile_.get(), *system_app_type, launch_url, *params_);
+    return browser ? browser->GetActiveWebContents() : nullptr;
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -355,9 +354,8 @@ WebAppLaunchProcess::NavigateResult WebAppLaunchProcess::MaybeNavigateBrowser(
     NavigateParams nav_params = NavigateParamsForShareTarget(
         browser, *share_target, *params_->intent, params_->launch_files);
     nav_params.disposition = navigation_disposition;
-    return {
-        .web_contents = NavigateWebAppUsingParams(params_->app_id, nav_params),
-        .did_navigate = true};
+    return {.web_contents = NavigateWebAppUsingParams(nav_params),
+            .did_navigate = true};
   }
 
   TabStripModel* const tab_strip = browser->tab_strip_model();
@@ -366,9 +364,8 @@ WebAppLaunchProcess::NavigateResult WebAppLaunchProcess::MaybeNavigateBrowser(
     NavigateParams nav_params(browser, launch_url,
                               ui::PAGE_TRANSITION_AUTO_BOOKMARK);
     nav_params.disposition = navigation_disposition;
-    return {
-        .web_contents = NavigateWebAppUsingParams(params_->app_id, nav_params),
-        .did_navigate = true};
+    return {.web_contents = NavigateWebAppUsingParams(nav_params),
+            .did_navigate = true};
   }
 
   content::WebContents* existing_tab = tab_strip->GetActiveWebContents();
@@ -422,7 +419,7 @@ void WebAppLaunchProcess::MaybeEnqueueWebLaunchParams(
     bool is_file_handling,
     content::WebContents* web_contents,
     bool started_new_navigation) {
-  WebAppLaunchParams launch_params;
+  webapps::LaunchParams launch_params;
   launch_params.started_new_navigation = started_new_navigation;
   launch_params.app_id = web_app_->app_id();
   launch_params.target_url = launch_url;

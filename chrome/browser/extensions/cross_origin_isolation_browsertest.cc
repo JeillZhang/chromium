@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "base/files/file_path.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
+#include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -23,10 +25,7 @@
 #include "net/dns/mock_host_resolver.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/extensions/extension_platform_browsertest.h"
-#else
-#include "chrome/browser/extensions/extension_browsertest.h"
+#if !BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
@@ -45,13 +44,7 @@ void RestrictProcessCount() {
   content::RenderProcessHost::SetMaxRendererProcessCount(1);
 }
 
-#if BUILDFLAG(IS_ANDROID)
-using CrossOriginIsolationTestBase = ExtensionPlatformBrowserTest;
-#else
-using CrossOriginIsolationTestBase = ExtensionBrowserTest;
-#endif
-
-class CrossOriginIsolationTest : public CrossOriginIsolationTestBase {
+class CrossOriginIsolationTest : public ExtensionBrowserTest {
  public:
   CrossOriginIsolationTest() = default;
   ~CrossOriginIsolationTest() override = default;
@@ -59,7 +52,7 @@ class CrossOriginIsolationTest : public CrossOriginIsolationTestBase {
   CrossOriginIsolationTest& operator=(const CrossOriginIsolationTest&) = delete;
 
   void SetUpOnMainThread() override {
-    CrossOriginIsolationTestBase::SetUpOnMainThread();
+    ExtensionBrowserTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(embedded_test_server()->Start());
   }
@@ -72,7 +65,7 @@ class CrossOriginIsolationTest : public CrossOriginIsolationTestBase {
     const char* test_js = "";
     bool is_platform_app = false;
   };
-  using CrossOriginIsolationTestBase::LoadExtension;
+  using ExtensionBrowserTest::LoadExtension;
   const Extension* LoadExtension(TestExtensionDir& dir,
                                  const Options& options) {
     CHECK(options.coep_value);
@@ -298,7 +291,7 @@ IN_PROC_BROWSER_TEST_F(CrossOriginIsolationTest, WebAccessibleFrame) {
   ASSERT_TRUE(coi_background_render_frame_host);
   EXPECT_TRUE(IsCrossOriginIsolated(coi_background_render_frame_host));
 
-  GURL extension_test_url = coi_extension->GetResourceURL("test.html");
+  GURL extension_test_url = coi_extension->ResolveExtensionURL("test.html");
   ASSERT_TRUE(
       content::NavigateToURL(GetActiveWebContents(), extension_test_url));
   content::WebContents* web_contents = GetActiveWebContents();
@@ -444,7 +437,7 @@ IN_PROC_BROWSER_TEST_F(CrossOriginIsolationTest, ServiceWorker) {
   ASSERT_TRUE(coi_extension);
   EXPECT_TRUE(ready_listener.WaitUntilSatisfied());
 
-  GURL extension_test_url = coi_extension->GetResourceURL("test.html");
+  GURL extension_test_url = coi_extension->ResolveExtensionURL("test.html");
   ASSERT_TRUE(
       content::NavigateToURL(GetActiveWebContents(), extension_test_url));
   content::RenderFrameHost* extension_tab =
@@ -499,7 +492,7 @@ IN_PROC_BROWSER_TEST_F(CrossOriginIsolationTest,
       GetBackgroundRenderFrameHost(*coi_extension);
   ASSERT_TRUE(coi_background_render_frame_host);
 
-  GURL extension_test_url = coi_extension->GetResourceURL("test.html");
+  GURL extension_test_url = coi_extension->ResolveExtensionURL("test.html");
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
       browser(), embedded_test_server()->GetURL("/iframe_blank.html")));
   content::WebContents* web_contents =
@@ -608,7 +601,7 @@ IN_PROC_BROWSER_TEST_F(CrossOriginIsolationTest, ExtensionMessaging_Frames) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
 
-  GURL extension_test_url = coi_extension->GetResourceURL("test.html");
+  GURL extension_test_url = coi_extension->ResolveExtensionURL("test.html");
   ASSERT_TRUE(
       content::NavigateIframeToURL(web_contents, "test", extension_test_url));
   content::RenderFrameHost* extension_iframe =
@@ -708,7 +701,7 @@ IN_PROC_BROWSER_TEST_F(CrossOriginIsolationTest,
   ASSERT_TRUE(coi_extension);
   EXPECT_TRUE(ready_listener.WaitUntilSatisfied());
 
-  GURL extension_test_url = coi_extension->GetResourceURL("test.html");
+  GURL extension_test_url = coi_extension->ResolveExtensionURL("test.html");
   content::RenderFrameHost* extension_tab =
       ui_test_utils::NavigateToURL(browser(), extension_test_url);
   ASSERT_TRUE(extension_tab);
@@ -738,8 +731,7 @@ IN_PROC_BROWSER_TEST_F(CrossOriginIsolationTest,
 
 // Verify extension resource access if it's in an iframe. Regression test for
 // crbug.com/1343610.
-IN_PROC_BROWSER_TEST_F(ExtensionPlatformBrowserTest,
-                       ExtensionResourceInIframe) {
+IN_PROC_BROWSER_TEST_F(ExtensionBrowserTest, ExtensionResourceInIframe) {
   EXPECT_TRUE(embedded_test_server()->Start());
 
   // Load an extension that has one web accessible resource.
@@ -774,7 +766,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionPlatformBrowserTest,
 
     // Navigate the iframe with a renderer initiated navigation to a web
     // accessible resource. This should succeed.
-    GURL target = extension->GetResourceURL("accessible_resource.html");
+    GURL target = extension->ResolveExtensionURL("accessible_resource.html");
     content::TestNavigationObserver nav_observer(web_contents);
     EXPECT_TRUE(content::NavigateIframeToURL(web_contents, "test", target));
     nav_observer.Wait();
@@ -799,7 +791,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionPlatformBrowserTest,
 
     // Navigate the iframe with a renderer initiated navigation to an extension
     // resource that isn't a web accessible resource. This should be blocked.
-    GURL target = extension->GetResourceURL("inaccessible_resource.html");
+    GURL target = extension->ResolveExtensionURL("inaccessible_resource.html");
     content::TestNavigationObserver nav_observer(web_contents);
     EXPECT_TRUE(content::NavigateIframeToURL(web_contents, "test", target));
     nav_observer.Wait();

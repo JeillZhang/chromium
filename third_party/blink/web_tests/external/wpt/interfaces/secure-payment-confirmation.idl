@@ -11,13 +11,22 @@ dictionary SecurePaymentConfirmationRequest {
     unsigned long timeout;
     USVString payeeName;
     USVString payeeOrigin;
+    sequence<PaymentEntityLogo> paymentEntitiesLogos;
     AuthenticationExtensionsClientInputs extensions;
     sequence<USVString> locale;
     boolean showOptOut;
 };
 
+enum SecurePaymentConfirmationAvailability {
+  "available",
+  "unavailable-unknown-reason",
+  "unavailable-feature-not-enabled",
+  "unavailable-no-permission-policy",
+  "unavailable-no-user-verifying-platform-authenticator",
+};
+
 partial interface PaymentRequest {
-    static Promise<boolean> isSecurePaymentConfirmationAvailable();
+    static Promise<SecurePaymentConfirmationAvailability> securePaymentConfirmationAvailability();
 };
 
 partial dictionary AuthenticationExtensionsClientInputs {
@@ -32,6 +41,7 @@ dictionary AuthenticationExtensionsPaymentInputs {
   USVString topOrigin;
   USVString payeeName;
   USVString payeeOrigin;
+  sequence<PaymentEntityLogo> paymentEntitiesLogos;
   PaymentCurrencyAmount total;
   PaymentCredentialInstrument instrument;
 };
@@ -45,6 +55,7 @@ dictionary CollectedClientAdditionalPaymentData {
     required USVString topOrigin;
     USVString payeeName;
     USVString payeeOrigin;
+    sequence<PaymentEntityLogo> paymentEntitiesLogos;
     required PaymentCurrencyAmount total;
     required PaymentCredentialInstrument instrument;
 };
@@ -53,4 +64,9 @@ dictionary PaymentCredentialInstrument {
     required USVString displayName;
     required USVString icon;
     boolean iconMustBeShown = true;
+};
+
+dictionary PaymentEntityLogo {
+    required USVString url;
+    required USVString label;
 };

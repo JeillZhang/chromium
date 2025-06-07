@@ -26,6 +26,7 @@ class GetSessionRequest : public google_apis::UrlFetchRequestBase {
                      google_apis::ApiErrorCode> result)>;
 
   GetSessionRequest(google_apis::RequestSender* sender,
+                    std::string url_base,
                     bool is_producer,
                     GaiaId gaia_id,
                     Callback callback);
@@ -36,10 +37,11 @@ class GetSessionRequest : public google_apis::UrlFetchRequestBase {
   void set_device_id(std::string device_id) {
     device_id_ = std::move(device_id);
   }
+  void set_callback(Callback callback) { callback_ = std::move(callback); }
+  Callback callback() { return std::move(callback_); }
 
   // For testing.
   void OverrideURLForTesting(std::string url);
-  Callback callback() { return std::move(callback_); }
 
  protected:
   // UrlFetchRequestBase:

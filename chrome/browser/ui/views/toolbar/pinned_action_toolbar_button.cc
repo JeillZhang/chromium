@@ -17,13 +17,15 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/customize_chrome/side_panel_controller.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
-#include "chrome/browser/ui/ui_features.h"
+#include "chrome/browser/ui/views/event_utils.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_action_callback.h"
+#include "chrome/browser/ui/views/toolbar/pinned_action_toolbar_button_menu_model.h"
 #include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions_container.h"
 #include "chrome/browser/ui/views/toolbar/pinned_toolbar_actions_container_layout.h"
 #include "chrome/browser/ui/views/toolbar/pinned_toolbar_button_status_indicator.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_button.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
+#include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/actions/action_id.h"
 #include "ui/actions/action_utils.h"
@@ -50,7 +52,12 @@ PinnedActionToolbarButton::PinnedActionToolbarButton(
     Browser* browser,
     actions::ActionId action_id,
     PinnedToolbarActionsContainer* container)
-    : ToolbarButton(PressedCallback(), CreateMenuModel(), nullptr, false),
+    : ToolbarButton(
+          PressedCallback(),
+          std::make_unique<PinnedActionToolbarButtonMenuModel>(browser,
+                                                               action_id),
+          nullptr,
+          false),
       browser_(browser),
       action_id_(action_id),
       container_(container) {
@@ -58,9 +65,10 @@ PinnedActionToolbarButton::PinnedActionToolbarButton(
               kPinnedActionToolbarButtonElementId);
   ConfigureInkDropForToolbar(this);
   SetHorizontalAlignment(gfx::ALIGN_CENTER);
-  SetProperty(
-      views::kMarginsKey,
-      gfx::Insets::VH(0, GetLayoutConstant(TOOLBAR_ICON_DEFAULT_MARGIN)));
+  // Pinned action toolbar buttons have right margin and no left margin.
+  SetProperty(views::kMarginsKey,
+              gfx::Insets::TLBR(
+                  0, 0, 0, GetLayoutConstant(TOOLBAR_ICON_DEFAULT_MARGIN)));
   set_drag_controller(container);
   GetViewAccessibility().SetDescription(
       std::u16string(), ax::mojom::DescriptionFrom::kAttributeExplicitlyEmpty);
@@ -88,6 +96,12 @@ PinnedActionToolbarButton::PinnedActionToolbarButton(
   // buttons.
   GetViewAccessibility().SetRole(ax::mojom::Role::kToggleButton);
   GetViewAccessibility().SetCheckedState(ax::mojom::CheckedState::kFalse);
+
+  if (web_app::AppBrowserController::IsWebApp(browser_)) {
+    SetLayoutInsets(gfx::Insets());
+    SetHorizontalAlignment(gfx::ALIGN_CENTER);
+    SetAppearDisabledInInactiveWidget(true);
+  }
 }
 
 PinnedActionToolbarButton::~PinnedActionToolbarButton() {
@@ -128,25 +142,23 @@ void PinnedActionToolbarButton::SetPinned(bool pinned) {
 }
 
 bool PinnedActionToolbarButton::OnKeyPressed(const ui::KeyEvent& event) {
-  constexpr int kModifiedFlag =
-#if BUILDFLAG(IS_MAC)
-      ui::EF_COMMAND_DOWN;
-#else
-      ui::EF_CONTROL_DOWN;
-#endif
-  if (event.type() == ui::EventType::kKeyPressed &&
-      (event.flags() & kModifiedFlag)) {
-    const bool is_right = event.key_code() == ui::VKEY_RIGHT;
-    const bool is_left = event.key_code() == ui::VKEY_LEFT;
-    if (is_right || is_left) {
-      const bool is_rtl = base::i18n::IsRTL();
-      const bool is_next = (is_right && !is_rtl) || (is_left && is_rtl);
-      if (pinned_ && browser_->profile()->IsRegularProfile()) {
-        container_->MovePinnedActionBy(action_id_, is_next ? 1 : -1);
-        return true;
-      }
+  std::optional<event_utils::ReorderDirection> reorder_direction =
+      event_utils::GetReorderCommandForKeyboardEvent(event);
+  if (reorder_direction && pinned_ && browser_->profile()->IsRegularProfile()) {
+    int move_by = 0;
+    switch (*reorder_direction) {
+      case event_utils::ReorderDirection::kPrevious:
+        move_by = -1;
+        break;
+      case event_utils::ReorderDirection::kNext:
+        move_by = 1;
+        break;
     }
+
+    container_->MovePinnedActionBy(action_id_, move_by);
+    return true;
   }
+
   return ToolbarButton::OnKeyPressed(event);
 }
 
@@ -200,7 +212,9 @@ void PinnedActionToolbarButton::OnMouseReleased(const ui::MouseEvent& event) {
 
 void PinnedActionToolbarButton::UpdateIcon() {
   const std::optional<VectorIcons>& icons = GetVectorIcons();
-  if (!icons.has_value()) {
+  // If the button is a cached permanent button the color provider will not be
+  // available.
+  if (!icons.has_value() || !GetColorProvider()) {
     return;
   }
 
@@ -254,25 +268,6 @@ void PinnedActionToolbarButton::UpdateStatusIndicator() {
   }
 }
 
-std::unique_ptr<ui::SimpleMenuModel>
-PinnedActionToolbarButton::CreateMenuModel() {
-  std::unique_ptr<ui::SimpleMenuModel> model =
-      std::make_unique<ui::SimpleMenuModel>(this);
-  // String ID and icon do not mean anything here as it is dynamic. It will get
-  // recomputed  from `GetLabelForCommandId()` and `GetIconForCommandId`.
-  model->AddItemWithStringIdAndIcon(
-      IDC_UPDATE_SIDE_PANEL_PIN_STATE,
-      IDS_SIDE_PANEL_TOOLBAR_BUTTON_CXMENU_UNPIN,
-      ui::ImageModel::FromVectorIcon(kKeepOffIcon, ui::kColorIcon, 16));
-  if (features::IsToolbarPinningEnabled()) {
-    model->AddSeparator(ui::NORMAL_SEPARATOR);
-    model->AddItemWithStringIdAndIcon(
-        IDC_SHOW_CUSTOMIZE_CHROME_TOOLBAR, IDS_SHOW_CUSTOMIZE_CHROME_TOOLBAR,
-        ui::ImageModel::FromVectorIcon(kSettingsMenuIcon, ui::kColorIcon, 16));
-  }
-  return model;
-}
-
 void PinnedActionToolbarButton::OnAnchorCountChanged(size_t anchor_count) {
   // If there is something anchored to the button we want to make sure the
   // button will be visible in the toolbar in cases where the window might be
@@ -300,77 +295,6 @@ void PinnedActionToolbarButton::OnAnchorCountChanged(size_t anchor_count) {
     has_anchor_ = false;
     container_->MaybeRemovePoppedOutButtonFor(GetActionId());
   }
-}
-
-bool PinnedActionToolbarButton::IsItemForCommandIdDynamic(
-    int command_id) const {
-  return command_id == IDC_UPDATE_SIDE_PANEL_PIN_STATE;
-}
-
-std::u16string PinnedActionToolbarButton::GetLabelForCommandId(
-    int command_id) const {
-  if (command_id == IDC_UPDATE_SIDE_PANEL_PIN_STATE) {
-    return l10n_util::GetStringUTF16(
-        container_->IsActionPinned(action_id_)
-            ? IDS_SIDE_PANEL_TOOLBAR_BUTTON_CXMENU_UNPIN
-            : IDS_SIDE_PANEL_TOOLBAR_BUTTON_CXMENU_PIN);
-  }
-  return std::u16string();
-}
-
-ui::ImageModel PinnedActionToolbarButton::GetIconForCommandId(
-    int command_id) const {
-  if (command_id == IDC_UPDATE_SIDE_PANEL_PIN_STATE) {
-    return ui::ImageModel::FromVectorIcon(pinned_ ? kKeepOffIcon : kKeepIcon,
-                                          ui::kColorIcon, 16);
-  }
-  return ui::ImageModel();
-}
-
-void PinnedActionToolbarButton::ExecuteCommand(int command_id,
-                                               int event_flags) {
-  if (command_id == IDC_UPDATE_SIDE_PANEL_PIN_STATE) {
-    UpdatePinnedStateForContextMenu();
-  } else if (command_id == IDC_SHOW_CUSTOMIZE_CHROME_TOOLBAR) {
-    chrome::ExecuteCommand(browser_, IDC_SHOW_CUSTOMIZE_CHROME_TOOLBAR);
-  }
-}
-
-bool PinnedActionToolbarButton::IsCommandIdEnabled(int command_id) const {
-  if (command_id == IDC_UPDATE_SIDE_PANEL_PIN_STATE) {
-    return browser_->profile()->IsRegularProfile() && is_pinnable_;
-  }
-  if (command_id == IDC_SHOW_CUSTOMIZE_CHROME_TOOLBAR) {
-    tabs::TabInterface* tab = browser_->tab_strip_model()->GetActiveTab();
-    customize_chrome::SidePanelController* side_panel_controller =
-        tab->GetTabFeatures()->customize_chrome_side_panel_controller();
-    return side_panel_controller &&
-           side_panel_controller->IsCustomizeChromeEntryAvailable();
-  }
-  return true;
-}
-
-void PinnedActionToolbarButton::UpdatePinnedStateForContextMenu() {
-  PinnedToolbarActionsModel* const actions_model =
-      PinnedToolbarActionsModel::Get(browser_->profile());
-
-  const bool updated_pin_state = !container_->IsActionPinned(action_id_);
-  const std::optional<std::string> metrics_name =
-      actions::ActionIdMap::ActionIdToString(action_id_);
-  CHECK(metrics_name.has_value());
-  base::RecordComputedAction(
-      base::StrCat({"Actions.PinnedToolbarButton.",
-                    updated_pin_state ? "Pinned" : "Unpinned",
-                    ".ByContextMenu.", metrics_name.value()}));
-  if (features::IsToolbarPinningEnabled()) {
-    GetViewAccessibility().AnnounceText(l10n_util::GetStringUTF16(
-        updated_pin_state ? IDS_TOOLBAR_BUTTON_PINNED
-                          : IDS_TOOLBAR_BUTTON_UNPINNED));
-  } else {
-    GetViewAccessibility().AnnounceText(l10n_util::GetStringUTF16(
-        updated_pin_state ? IDS_SIDE_PANEL_PINNED : IDS_SIDE_PANEL_UNPINNED));
-  }
-  actions_model->UpdatePinnedState(action_id_, updated_pin_state);
 }
 
 std::unique_ptr<views::ActionViewInterface>
@@ -406,7 +330,9 @@ void PinnedActionToolbarButtonActionViewInterface::ActionItemChangedImpl(
 
   OnViewChangedImpl(action_item);
   action_view_->SetIsPinnable(
-      action_item->GetProperty(actions::kActionItemPinnableKey));
+      action_item->GetProperty(actions::kActionItemPinnableKey) ==
+      std::underlying_type_t<actions::ActionPinnableState>(
+          actions::ActionPinnableState::kPinnable));
   action_view_->SetIsActionShowingBubble(action_item->GetIsShowingBubble());
 }
 

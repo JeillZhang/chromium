@@ -250,7 +250,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterFloss final
   void OnDeviceUuidsChanged(BluetoothDeviceFloss* device_ptr);
   void OnGetConnectionState(const FlossDeviceId& device_id,
                             DBusResult<uint32_t> ret);
-  void OnGetBondState(const FlossDeviceId& device_id, DBusResult<uint32_t> ret);
 
   // Announce to observers a change in the adapter state.
   void DiscoveringChanged(bool discovering);
@@ -286,6 +285,7 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothAdapterFloss final
   void AdapterDiscoveringChanged(bool state) override;
   void AdapterFoundDevice(const FlossDeviceId& device_found) override;
   void AdapterClearedDevice(const FlossDeviceId& device_found) override;
+  void AdapterKeyMissingDevice(const FlossDeviceId& device) override;
   void AdapterDevicePropertyChanged(
       FlossAdapterClient::BtPropertyType prop_type,
       const FlossDeviceId& device) override;

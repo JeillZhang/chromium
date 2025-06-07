@@ -19,6 +19,8 @@
 #include "base/containers/adapters.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/color/color_provider.h"
@@ -245,8 +247,8 @@ class DragImageItemChipView : public DragImageItemView {
     // `this` is never added to widget, enabled color id will never be resolved.
     // Thus we need to manually resolve it and set the color as the enabled
     // color for the label.
-    if (auto enabled_color_id = label->GetEnabledColorId()) {
-      label->SetEnabledColor(color_provider()->GetColor(*enabled_color_id));
+    if (auto enabled_color = label->GetRequestedEnabledColor()) {
+      label->SetEnabledColor(enabled_color->ResolveToSkColor(color_provider()));
     }
 
     label->SetElideBehavior(gfx::ElideBehavior::ELIDE_MIDDLE);

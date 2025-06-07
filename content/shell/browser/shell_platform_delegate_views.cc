@@ -157,7 +157,7 @@ class ShellView : public views::BoxLayoutView,
     auto builder =
         views::Builder<views::BoxLayoutView>(this)
             .SetBackground(
-                views::CreateThemedSolidBackground(ui::kColorWindowBackground))
+                views::CreateSolidBackground(ui::kColorWindowBackground))
             .SetOrientation(views::BoxLayout::Orientation::kVertical);
 
     if (!Shell::ShouldHideToolbar()) {
@@ -359,7 +359,7 @@ void ShellPlatformDelegate::CreatePlatformWindow(
   auto delegate = std::make_unique<views::WidgetDelegate>();
   delegate->SetContentsView(std::make_unique<ShellView>(shell));
   delegate->SetHasWindowSizeControls(true);
-  delegate->SetOwnedByWidget(true);
+  delegate->SetOwnedByWidget(views::WidgetDelegate::OwnedByWidgetPassKey());
 
 #if BUILDFLAG(IS_CHROMEOS)
   shell_data.window_widget = views::Widget::CreateWindowWithContext(
@@ -373,10 +373,12 @@ void ShellPlatformDelegate::CreatePlatformWindow(
       views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET);
   params.bounds = gfx::Rect(initial_size);
   params.delegate = delegate.release();
+#if BUILDFLAG(IS_LINUX)
   params.wm_class_class = "chromium-content_shell";
   params.wm_class_name = params.wm_class_class;
+#endif  // BUILDFLAG(IS_LINUX)
   shell_data.window_widget->Init(std::move(params));
-#endif
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // |window_widget| is made visible in PlatformSetContents(), so that the
   // platform-window size does not need to change due to layout again.

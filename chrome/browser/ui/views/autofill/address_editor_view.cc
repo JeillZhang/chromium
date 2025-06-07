@@ -122,7 +122,7 @@ void AddressEditorView::CreateEditorView() {
 
   const int kBetweenChildSpacing =
       ChromeLayoutProvider::Get()->GetDistanceMetric(
-          DISTANCE_CONTROL_LIST_VERTICAL);
+          views::DISTANCE_CONTROL_LIST_VERTICAL);
 
   SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical,
@@ -141,7 +141,7 @@ void AddressEditorView::CreateEditorView() {
     validation_error_ =
         AddChildView(views::Builder<views::Label>()
                          .SetMultiLine(true)
-                         .SetEnabledColorId(ui::kColorAlertHighSeverity)
+                         .SetEnabledColor(ui::kColorAlertHighSeverity)
                          .SetHorizontalAlignment(gfx::ALIGN_LEFT)
                          .Build());
   }

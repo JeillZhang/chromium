@@ -27,15 +27,20 @@ import android.view.ViewStub;
 
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.native_page.ContextMenuManager;
 import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -58,6 +63,7 @@ import java.util.ArrayList;
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class MostVisitedMediatorUnitTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock Resources mResources;
     @Mock Configuration mConfiguration;
     @Mock UiConfig mUiConfig;
@@ -84,7 +90,6 @@ public class MostVisitedMediatorUnitTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         mModel = new PropertyModel(MostVisitedTilesProperties.ALL_KEYS);
         when(mResources.getConfiguration()).thenReturn(mConfiguration);
         mDisplayMetrics.widthPixels = 1000;
@@ -123,7 +128,7 @@ public class MostVisitedMediatorUnitTest {
 
         verify(mTileRenderer, atLeastOnce())
                 .renderTileSection(anyList(), eq(mMvTilesLayout), any());
-        verify(mMvTilesLayout).addView(any());
+        verify(mMvTilesLayout).addTile(any());
         verify(mSnapshotTileGridChangedRunnable, atLeastOnce()).run();
     }
 
@@ -161,7 +166,18 @@ public class MostVisitedMediatorUnitTest {
     }
 
     @Test
-    public void testMvtContainerOnTileCountChanged() {
+    @DisableFeatures({ChromeFeatureList.MOST_VISITED_TILES_CUSTOMIZATION})
+    public void testMvtContainerOnTileCountChanged_DisableMvtCustomization() {
+        doTestMvtContainerOnTileCountChanged();
+    }
+
+    @Test
+    @EnableFeatures({ChromeFeatureList.MOST_VISITED_TILES_CUSTOMIZATION})
+    public void testMvtContainerOnTileCountChanged_EndableMvtCustomization() {
+        doTestMvtContainerOnTileCountChanged();
+    }
+
+    private void doTestMvtContainerOnTileCountChanged() {
         ArrayList<SiteSuggestion> array = new ArrayList<>();
         array.add(mData);
         mMostVisitedSites.setTileSuggestions(array);
@@ -169,10 +185,16 @@ public class MostVisitedMediatorUnitTest {
 
         Assert.assertTrue(mModel.get(IS_CONTAINER_VISIBLE));
 
-        // When there's no mv tile, the mv tiles container should be hidden.
         mMostVisitedSites.setTileSuggestions(new ArrayList<>());
         mMediator.onTileCountChanged();
-        Assert.assertFalse(mModel.get(IS_CONTAINER_VISIBLE));
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.MOST_VISITED_TILES_CUSTOMIZATION)) {
+            // When there's no mv tile, the mv tiles container should show (with the "Add new"
+            // button).
+            Assert.assertTrue(mModel.get(IS_CONTAINER_VISIBLE));
+        } else {
+            // When there's no mv tile, the mv tiles container should be hidden.
+            Assert.assertFalse(mModel.get(IS_CONTAINER_VISIBLE));
+        }
 
         // When there is mv tile, the mv tiles container should be shown.
         mMostVisitedSites.setTileSuggestions(JUnitTestGURLs.HTTP_URL.getSpec());
@@ -350,9 +372,13 @@ public class MostVisitedMediatorUnitTest {
     private void createMediator(boolean isTablet) {
         mMvTilesLayout = Mockito.mock(MostVisitedTilesLayout.class);
 
-        mMvTilesLayout.addView(mTileView);
+        when(mMvTilesLayout.getResources()).thenReturn(mResources);
         when(mMvTilesLayout.getChildCount()).thenReturn(1);
         when(mMvTilesLayout.getChildAt(0)).thenReturn(mTileView);
+        when(mMvTilesLayout.getTileCount()).thenReturn(1);
+        when(mMvTilesLayout.getTileAt(0)).thenReturn(mTileView);
+        mMvTilesLayout.addTile(mTileView);
+
         when(mNoMvPlaceholderStub.inflate()).thenReturn(mNoMvPlaceholder);
 
         mMediator =

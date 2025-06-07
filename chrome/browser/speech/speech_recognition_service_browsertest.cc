@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <string_view>
+#include <utility>
 
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
@@ -44,7 +45,6 @@
 #include "sandbox/policy/switches.h"
 #include "services/audio/public/cpp/fake_stream_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/abseil-cpp/absl/utility/utility.h"
 
 #if BUILDFLAG(IS_WIN)
 #include <windows.h>
@@ -212,9 +212,7 @@ void SpeechRecognitionServiceTest::OnSpeechRecognitionRecognitionEvent(
   std::string transcription = result.transcription;
   // The language pack used by the MacOS builder is newer and has punctuation
   // enabled whereas the one used by the Linux builder does not.
-  transcription.erase(
-      std::remove(transcription.begin(), transcription.end(), ','),
-      transcription.end());
+  std::erase(transcription, ',');
   recognition_results_.push_back(std::move(transcription));
   std::move(reply).Run(is_client_requesting_speech_recognition_);
 }

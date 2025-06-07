@@ -45,8 +45,11 @@ class MockAutofillManager : public AutofillManager {
               OnJavaScriptChangedAutofilledValueImpl,
               (const FormData& form,
                const FieldGlobalId& field_id,
-               const std::u16string& old_value,
-               bool formatting_only),
+               const std::u16string& old_value),
+              (override));
+  MOCK_METHOD(void,
+              OnLoadedServerPredictionsImpl,
+              ((base::span<const raw_ptr<FormStructure, VectorExperimental>>)),
               (override));
   MOCK_METHOD(void,
               OnFormSubmittedImpl,
@@ -68,13 +71,15 @@ class MockAutofillManager : public AutofillManager {
               OnTextFieldDidScrollImpl,
               (const FormData& form, const FieldGlobalId& field_id),
               (override));
-  MOCK_METHOD(void,
-              OnAskForValuesToFillImpl,
-              (const FormData& form,
-               const FieldGlobalId& field_id,
-               const gfx::Rect& caret_bounds,
-               AutofillSuggestionTriggerSource trigger_source),
-              (override));
+  MOCK_METHOD(
+      void,
+      OnAskForValuesToFillImpl,
+      (const FormData& form,
+       const FieldGlobalId& field_id,
+       const gfx::Rect& caret_bounds,
+       AutofillSuggestionTriggerSource trigger_source,
+       base::optional_ref<const PasswordSuggestionRequest> password_request),
+      (override));
   MOCK_METHOD(void,
               OnFocusOnFormFieldImpl,
               (const FormData& form, const FieldGlobalId& field_id),

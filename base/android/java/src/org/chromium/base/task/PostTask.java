@@ -15,6 +15,7 @@ import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ThreadUtils;
 import org.chromium.build.BuildConfig;
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.NullUnmarked;
 import org.chromium.build.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -45,6 +46,7 @@ public class PostTask {
     // one-way switch (outside of testing) and volatile makes writes to it immediately visible to
     // other threads.
     private static volatile boolean sNativeInitialized;
+    private static volatile boolean sDisablePreNativeUiTasks;
     private static ChromeThreadPoolExecutor sPrenativeThreadPoolExecutor =
             new ChromeThreadPoolExecutor();
     private static volatile @Nullable Executor sPrenativeThreadPoolExecutorForTesting;
@@ -54,12 +56,7 @@ public class PostTask {
             new TaskRunner[TaskTraits.UI_TRAITS_END + 1];
 
     static {
-        for (@TaskTraits int i = 0; i <= TaskTraits.THREAD_POOL_TRAITS_END; i++) {
-            sTraitsToRunnerMap[i] = new TaskRunnerImpl(i);
-        }
-        for (@TaskTraits int i = TaskTraits.UI_TRAITS_START; i <= TaskTraits.UI_TRAITS_END; i++) {
-            sTraitsToRunnerMap[i] = new UiThreadTaskRunnerImpl(i);
-        }
+        resetTaskRunner();
     }
 
     // Used by AsyncTask / ChainedTask to auto-cancel tasks from prior tests.
@@ -90,17 +87,6 @@ public class PostTask {
 
     private static boolean isUiTaskTraits(@TaskTraits int taskTraits) {
         return taskTraits >= TaskTraits.UI_TRAITS_START;
-    }
-
-    /**
-     * @param taskTraits The TaskTraits that describe the desired TaskRunner.
-     * @return The TaskRunner for the specified TaskTraits.
-     */
-    public static TaskRunner createTaskRunner(@TaskTraits int taskTraits) {
-        if (isUiTaskTraits(taskTraits)) {
-            return sTraitsToRunnerMap[taskTraits];
-        }
-        return new TaskRunnerImpl(taskTraits);
     }
 
     /**
@@ -151,10 +137,13 @@ public class PostTask {
         }
     }
 
-    /** Returns true if the traits are UI traits, and the current thread is the UI thread. */
+    /**
+     * Returns true if the traits are UI traits, the current thread is the UI thread and for
+     * pre-native tasks, scheduling is not disabled.
+     */
     public static boolean canRunTaskImmediately(@TaskTraits int taskTraits) {
         if (isUiTaskTraits(taskTraits)) {
-            return ThreadUtils.runningOnUiThread();
+            return ThreadUtils.runningOnUiThread() && !sDisablePreNativeUiTasks;
         }
         return false;
     }
@@ -186,9 +175,10 @@ public class PostTask {
      * @param r The task to be run with the specified traits.
      */
     public static void runSynchronously(@TaskTraits int taskTraits, Runnable r) {
-        runSynchronouslyInternal(taskTraits, new FutureTask<Void>(r, null));
+        runSynchronouslyInternal(taskTraits, new FutureTask<@Nullable Void>(r, null));
     }
 
+    @NullUnmarked // https://github.com/uber/NullAway/issues/1075
     private static <T extends @Nullable Object> T runSynchronouslyInternal(
             @TaskTraits int taskTraits, FutureTask<T> task) {
         // Ensure no task origin "caused by" is added, since we are wrapping in a RuntimeException
@@ -330,8 +320,67 @@ public class PostTask {
         }
     }
 
+    /**
+     * If set to true, prevents directly running or forwarding pre-native UI tasks to the Android UI
+     * thread handler. Instead, those tasks are left in the pre-native queue and thus handled by the
+     * native task runner.
+     */
+    public static void disablePreNativeUiTasks(boolean disable) {
+        sDisablePreNativeUiTasks = disable;
+    }
+
+    static boolean preNativeUiTasksAreDisabled() {
+        return sDisablePreNativeUiTasks;
+    }
+
     public static void resetUiThreadForTesting() {
         // UI Thread cannot be reset cleanly after native initialization.
         assert !sNativeInitialized;
+    }
+
+    @CalledByNative
+    private static void resetTaskRunner() {
+        for (@TaskTraits int i = 0; i <= TaskTraits.THREAD_POOL_TRAITS_END; i++) {
+            sTraitsToRunnerMap[i] = new TaskRunnerImpl(i);
+        }
+        for (@TaskTraits int i = TaskTraits.UI_TRAITS_START; i <= TaskTraits.UI_TRAITS_END; i++) {
+            sTraitsToRunnerMap[i] = new UiThreadTaskRunnerImpl(i);
+        }
+    }
+
+    public static TaskRunner getTaskRunner(@TaskTraits int taskTraits) {
+        return sTraitsToRunnerMap[taskTraits];
+    }
+
+    public static TaskRunner getUiBestEffortExecutor() {
+        return sTraitsToRunnerMap[TaskTraits.UI_BEST_EFFORT];
+    }
+
+    public static TaskRunner getUiUserVisibleExecutor() {
+        return sTraitsToRunnerMap[TaskTraits.UI_USER_VISIBLE];
+    }
+
+    public static TaskRunner getUiUserBlockingExecutor() {
+        return sTraitsToRunnerMap[TaskTraits.UI_USER_BLOCKING];
+    }
+
+    public static TaskRunner getBackgroundBestEffortExecutor() {
+        return sTraitsToRunnerMap[TaskTraits.BEST_EFFORT];
+    }
+
+    public static TaskRunner getBackgroundBestEffortMayBlockExecutor() {
+        return sTraitsToRunnerMap[TaskTraits.BEST_EFFORT_MAY_BLOCK];
+    }
+
+    public static TaskRunner getBackgroundUserVisibleExecutor() {
+        return sTraitsToRunnerMap[TaskTraits.USER_VISIBLE];
+    }
+
+    public static TaskRunner getBackgroundUserBlockingExecutor() {
+        return sTraitsToRunnerMap[TaskTraits.USER_BLOCKING];
+    }
+
+    public static TaskRunner getBackgroundUserBlockingMayBlockExecutor() {
+        return sTraitsToRunnerMap[TaskTraits.USER_BLOCKING_MAY_BLOCK];
     }
 }

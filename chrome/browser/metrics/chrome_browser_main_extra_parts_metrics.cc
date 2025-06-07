@@ -26,6 +26,7 @@
 #include "base/power_monitor/power_monitor_buildflags.h"
 #include "base/rand_util.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/system/sys_info.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -43,13 +44,13 @@
 #include "chrome/browser/google/google_brand.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/metrics/process_memory_metrics_emitter.h"
+#include "chrome/browser/metrics/tab_stats/tab_stats_tracker.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/performance_controls/performance_controls_metrics.h"
 #include "chrome/browser/web_applications/sampling_metrics_provider.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/metrics/android_metrics_helper.h"
-#include "components/performance_manager/public/features.h"
 #include "components/performance_manager/public/performance_manager.h"
 #include "components/policy/core/common/management/management_service.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -75,7 +76,6 @@
 #include "chrome/browser/metrics/power/battery_discharge_reporter.h"
 #include "chrome/browser/metrics/power/power_metrics_reporter.h"
 #include "chrome/browser/metrics/power/process_monitor.h"
-#include "chrome/browser/metrics/tab_stats/tab_stats_tracker.h"
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_ANDROID)
@@ -107,6 +107,7 @@
 #include "base/win/windows_version.h"
 #include "chrome/browser/metrics/key_credential_manager_support_reporter_win.h"
 #include "chrome/browser/shell_integration_win.h"
+#include "chrome/browser/win/cloud_synced_folder_checker.h"
 #include "chrome/installer/util/taskbar_util.h"
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -778,7 +779,7 @@ void RecordAppCompatMetrics() {
   base::UmaHistogramBoolean("Windows.AcLayersLoaded", !!mod);
 }
 
-void RecordWin11UpgradeEligibilityMetrics(
+void RecordWin11HardwareRequirementsMetrics(
     const base::win::HardwareEvaluationResult& result) {
   base::UmaHistogramBoolean("Windows.Win11UpgradeEligible",
                             result.IsEligible());
@@ -794,12 +795,54 @@ void RecordWin11UpgradeEligibilityMetrics(
                             result.tpm);
 }
 
+void MaybeRecordOneDriveSyncMetrics() {
+  if (!base::FeatureList::IsEnabled(
+          cloud_synced_folder_checker::features::kCloudSyncedFolderChecker)) {
+    return;
+  }
+
+  cloud_synced_folder_checker::CloudSyncStatus status =
+      cloud_synced_folder_checker::EvaluateOneDriveSyncStatus();
+
+  base::UmaHistogramBoolean("Windows.OneDriveSyncState.Synced",
+                            status.synced());
+  base::UmaHistogramBoolean("Windows.OneDriveSyncState.DesktopSynced",
+                            status.desktop_synced());
+  base::UmaHistogramBoolean("Windows.OneDriveSyncState.DocumentsSynced",
+                            status.documents_synced());
+}
+
 #endif  // BUILDFLAG(IS_WIN)
 
 void RecordDisplayHDRStatus(const display::Display& display) {
   base::UmaHistogramBoolean("Hardware.Display.SupportsHDR",
                             display.GetColorSpaces().SupportsHDR());
 }
+
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+// Records whether Chrome is the default PDF viewer.
+void RecordDefaultPdfViewerState() {
+#if BUILDFLAG(IS_MAC)
+  auto is_default_callback = base::BindOnce(
+      &shell_integration::IsDefaultHandlerForUTType, "com.adobe.pdf");
+#elif BUILDFLAG(IS_WIN)
+  auto is_default_callback = base::BindOnce(
+      &shell_integration::IsDefaultHandlerForFileExtension, ".pdf");
+#else
+#error Unsupported platform
+#endif
+  auto record_default_state_callback =
+      std::move(is_default_callback)
+          .Then(base::BindOnce(
+              [](shell_integration::DefaultWebClientState default_state) {
+                base::UmaHistogramEnumeration(
+                    "PDF.DefaultState", default_state,
+                    shell_integration::NUM_DEFAULT_STATES);
+              }));
+  base::ThreadPool::PostTask(FROM_HERE, {base::MayBlock()},
+                             std::move(record_default_state_callback));
+}
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 
 // Called on a background thread, with low priority to avoid slowing down
 // startup with metrics that aren't trivial to compute.
@@ -837,10 +880,12 @@ void RecordStartupMetrics() {
                             IsParallelDllLoadingEnabled());
   RecordAppCompatMetrics();
 
+  MaybeRecordOneDriveSyncMetrics();
+
   if (base::win::OSInfo::Kernel32Version() < base::win::Version::WIN11) {
     base::win::HardwareEvaluationResult result =
-        base::win::EvaluateWin11UpgradeEligibility();
-    RecordWin11UpgradeEligibilityMetrics(result);
+        base::win::EvaluateWin11HardwareRequirements();
+    RecordWin11HardwareRequirementsMetrics(result);
   }
   key_credential_manager_support::ReportKeyCredentialManagerSupport();
 #endif  // BUILDFLAG(IS_WIN)
@@ -861,6 +906,11 @@ void RecordStartupMetrics() {
   base::UmaHistogramEnumeration("DefaultBrowser.State", default_state,
                                 shell_integration::NUM_DEFAULT_STATES);
 #endif  // !BUILDFLAG(IS_LINUX)
+
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+  // Record whether Chrome is the default PDF viewer.
+  RecordDefaultPdfViewerState();
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(IS_MAC)
   base::mac::ProcessRequirement::MaybeGatherMetrics();
@@ -921,7 +971,6 @@ ChromeBrowserMainExtraPartsMetrics::~ChromeBrowserMainExtraPartsMetrics() =
     default;
 
 void ChromeBrowserMainExtraPartsMetrics::PreCreateThreads() {
-#if !BUILDFLAG(IS_ANDROID)
   // Initialize the TabStatsTracker singleton instance. Must be initialized
   // before `responsiveness::Watcher`, which happens in
   // BrowserMainLoop::PreMainMessageLoopRun(), thus the decision to use
@@ -934,7 +983,6 @@ void ChromeBrowserMainExtraPartsMetrics::PreCreateThreads() {
         std::make_unique<metrics::TabStatsTracker>(
             g_browser_process->local_state()));
   }
-#endif
 }
 
 void ChromeBrowserMainExtraPartsMetrics::PostCreateMainMessageLoop() {
@@ -955,7 +1003,7 @@ void ChromeBrowserMainExtraPartsMetrics::PreBrowserStart() {
 
   // Log once here at browser start rather than at each renderer launch.
   ChromeMetricsServiceAccessor::RegisterSyntheticFieldTrial("ClangPGO",
-#if BUILDFLAG(CLANG_PGO)
+#if BUILDFLAG(CLANG_PGO_OPTIMIZED)
 #if BUILDFLAG(USE_THIN_LTO)
                                                             "EnabledWithThinLTO"
 #else
@@ -1155,12 +1203,9 @@ void ChromeBrowserMainExtraPartsMetrics::PostBrowserStart() {
         std::make_unique<PowerMetricsReporter>(process_monitor_.get());
   }
 
-  if (performance_manager::features::
-          ShouldUsePerformanceInterventionBackend()) {
-    performance_intervention_metrics_reporter_ =
-        std::make_unique<PerformanceInterventionMetricsReporter>(
-            g_browser_process->local_state());
-  }
+  performance_intervention_metrics_reporter_ =
+      std::make_unique<PerformanceInterventionMetricsReporter>(
+          g_browser_process->local_state());
 
   web_app_metrics_provider_ =
       std::make_unique<web_app::SamplingMetricsProvider>();
@@ -1194,7 +1239,6 @@ void ChromeBrowserMainExtraPartsMetrics::PreMainMessageLoopRun() {
 }
 
 void ChromeBrowserMainExtraPartsMetrics::PostDestroyThreads() {
-#if !BUILDFLAG(IS_ANDROID)
   if (metrics::TabStatsTracker::HasInstance()) {
     // responsiveness::Watcher currently outlives TabStatsTracker and
     // RemoveObserver is never called (see UsageScenarioTracker). This should be
@@ -1204,6 +1248,7 @@ void ChromeBrowserMainExtraPartsMetrics::PostDestroyThreads() {
     metrics::TabStatsTracker::ClearInstance();
   }
 
+#if !BUILDFLAG(IS_ANDROID)
   // Reset the pointer to `performance_intervention_metrics_reporter_` to ensure
   // that PrefService outlives the metrics reporter to prevent the reporter from
   // holding a dangling pointer.

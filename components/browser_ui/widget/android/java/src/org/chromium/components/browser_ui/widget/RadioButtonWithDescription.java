@@ -169,24 +169,47 @@ public class RadioButtonWithDescription extends RelativeLayout implements OnClic
         return R.layout.radio_button_with_description;
     }
 
-    /** @return RadioButton View inside this {@link RadioButtonWithDescription}. */
+    /**
+     * @return RadioButton View inside this {@link RadioButtonWithDescription}.
+     */
     protected RadioButton getRadioButtonView() {
-        return (RadioButton) findViewById(R.id.radio_button);
+        return findViewById(R.id.radio_button);
     }
 
-    /** @return ChromeImageView inside this {@link RadioButtonWithDescription}. */
+    /**
+     * @return ChromeImageView inside this {@link RadioButtonWithDescription}.
+     */
     protected ChromeImageView getIcon() {
-        return (ChromeImageView) findViewById(R.id.icon);
+        return findViewById(R.id.icon);
     }
 
-    /** @return TextView displayed as primary inside this {@link RadioButtonWithDescription}. */
+    /** Set the icon in the front of the primary texts {@link RadioButtonWithDescription}. */
+    public void setIcon(int resId) {
+        mIcon.setImageResource(resId);
+        mIcon.setVisibility(View.VISIBLE);
+    }
+
+    /** Set the icon margin end. */
+    public void setIconMarginEnd(int end) {
+        LayoutParams params = new LayoutParams(mIcon.getLayoutParams());
+        params.setMarginEnd(end);
+        params.addRule(RelativeLayout.END_OF, mRadioButton.getId());
+        params.addRule(RelativeLayout.CENTER_VERTICAL);
+        mIcon.setLayoutParams(params);
+    }
+
+    /**
+     * @return TextView displayed as primary inside this {@link RadioButtonWithDescription}.
+     */
     protected TextView getPrimaryTextView() {
-        return (TextView) findViewById(R.id.primary);
+        return findViewById(R.id.primary);
     }
 
-    /** @return TextView displayed as description inside this {@link RadioButtonWithDescription}. */
+    /**
+     * @return TextView displayed as description inside this {@link RadioButtonWithDescription}.
+     */
     protected TextView getDescriptionTextView() {
-        return (TextView) findViewById(R.id.description);
+        return findViewById(R.id.description);
     }
 
     /**

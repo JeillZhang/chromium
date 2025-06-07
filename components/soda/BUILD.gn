@@ -76,6 +76,7 @@ source_set("utils") {
     ":soda",
     "//base",
     "//media",
+    "//media/mojo/mojom",
     "//ui/base",
   ]
 
@@ -101,4 +102,19 @@ source_set("unit_tests") {
       "//testing/gtest",
     ]
   }
+}
+
+static_library("test_support") {
+  testonly = true
+
+  sources = [
+    "mock_soda_installer.cc",
+    "mock_soda_installer.h",
+  ]
+
+  deps = [
+    ":soda",
+    "//base",
+    "//testing/gmock",
+  ]
 }

@@ -271,9 +271,12 @@ ProfileIOSImpl::ProfileIOSImpl(
       base::BindRepeating(&ApplicationContext::GetNetworkConnectionTracker,
                           base::Unretained(GetApplicationContext())));
 
-  policy_connector_ =
-      BuildProfilePolicyConnector(policy_schema_registry_.get(), connector,
-                                  user_cloud_policy_manager_.get());
+  policy_connector_ = BuildProfilePolicyConnector(
+      policy_schema_registry_.get(), connector,
+      user_cloud_policy_manager_.get(),
+      user_cloud_policy_manager_ && user_cloud_policy_manager_->core()
+          ? user_cloud_policy_manager_->core()->store()
+          : nullptr);
 
   // Register Profile preferences.
   RegisterProfilePrefs(pref_registry_.get());
@@ -493,9 +496,7 @@ void ProfileIOSImpl::PrefsInitStage2(InitInfo init_info, bool success) {
   if (!init_info.is_new_profile) {
     MigrateObsoleteProfilePrefs(prefs_.get());
 
-    // TODO(crbug.com/369296278): Remove ~one year after the full launch of
-    // kForceMigrateSyncingUserToSignedIn (also remove the corresponding
-    // tests and -signinAndEnableLegacySyncFeature: test helper).
+    // TODO(crbug.com/369296278): Remove on 12/2025.
     //
     // MaybeMigrateSyncingUserToSignedIn(...) may perform disk IO which is
     // not permitted if the Profile is loaded asynchronously.

@@ -26,6 +26,7 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.NativeMethods;
 
 import org.chromium.android_webview.client_hints.AwUserAgentMetadata;
+import org.chromium.android_webview.common.AwFeatureMap;
 import org.chromium.android_webview.common.AwFeatures;
 import org.chromium.android_webview.common.AwSwitches;
 import org.chromium.android_webview.common.Lifetime;
@@ -121,7 +122,7 @@ public class AwSettings {
 
     private Set<String> mRequestedWithHeaderAllowedOriginRules;
 
-    private Context mContext;
+    private final Context mContext;
     private WebContents mWebContents;
 
     // This class must be created on the UI thread. Afterwards, it can be
@@ -161,7 +162,6 @@ public class AwSettings {
     private boolean mJavaScriptCanOpenWindowsAutomatically;
     private boolean mSupportMultipleWindows;
     private boolean mDomStorageEnabled;
-    private boolean mDatabaseEnabled;
     private boolean mUseWideViewport;
     private boolean mZeroLayoutHeightDisablesViewportQuirk;
     private boolean mForceZeroLayoutHeight;
@@ -217,7 +217,10 @@ public class AwSettings {
     private boolean mSupportZoom = true;
     private boolean mBuiltInZoomControls;
     private boolean mDisplayZoomControls = true;
+    private boolean mPaymentRequestEnabled;
+    private boolean mHasEnrolledInstrumentEnabled = true;
     private final AwMediaIntegrityApiStatusConfig mIntegrityApiStatusConfig;
+    private boolean mIncludeCookiesOnIntercept;
 
     private @WebauthnMode int mWebauthnMode = WebauthnMode.NONE;
 
@@ -1588,30 +1591,6 @@ public class AwSettings {
         return mDomStorageEnabled;
     }
 
-    /** See {@link android.webkit.WebSettings#setDatabaseEnabled}. */
-    public void setDatabaseEnabled(boolean flag) {
-        if (TRACE) Log.i(TAG, "setDatabaseEnabled=" + flag);
-        synchronized (mAwSettingsLock) {
-            if (mDatabaseEnabled != flag) {
-                mDatabaseEnabled = flag;
-                mEventHandler.updateWebkitPreferencesLocked();
-            }
-        }
-    }
-
-    /** See {@link android.webkit.WebSettings#getDatabaseEnabled}. */
-    public boolean getDatabaseEnabled() {
-        synchronized (mAwSettingsLock) {
-            return mDatabaseEnabled;
-        }
-    }
-
-    @CalledByNative
-    private boolean getDatabaseEnabledLocked() {
-        assert Thread.holdsLock(mAwSettingsLock);
-        return mDatabaseEnabled;
-    }
-
     /** See {@link android.webkit.WebSettings#setDefaultTextEncodingName}. */
     public void setDefaultTextEncodingName(String encoding) {
         if (TRACE) Log.i(TAG, "setDefaultTextEncodingName=" + encoding);
@@ -1753,6 +1732,39 @@ public class AwSettings {
     public boolean getDisplayZoomControls() {
         synchronized (mAwSettingsLock) {
             return mDisplayZoomControls;
+        }
+    }
+
+    public void setPaymentRequestEnabled(boolean enabled) {
+        if (TRACE) Log.i(TAG, "setPaymentRequestEnabled=" + enabled);
+        synchronized (mAwSettingsLock) {
+            if (mPaymentRequestEnabled != enabled) {
+                mPaymentRequestEnabled = enabled;
+                mEventHandler.updateWebkitPreferencesLocked();
+            }
+        }
+    }
+
+    @CalledByNative
+    public boolean getPaymentRequestEnabled() {
+        synchronized (mAwSettingsLock) {
+            return mPaymentRequestEnabled;
+        }
+    }
+
+    public void setHasEnrolledInstrumentEnabled(boolean enabled) {
+        if (TRACE) Log.i(TAG, "setHasEnrolledInstrumentEnabled=" + enabled);
+        synchronized (mAwSettingsLock) {
+            if (mHasEnrolledInstrumentEnabled != enabled) {
+                flushBackForwardCacheOnUiThreadLocked();
+            }
+            mHasEnrolledInstrumentEnabled = enabled;
+        }
+    }
+
+    public boolean getHasEnrolledInstrumentEnabled() {
+        synchronized (mAwSettingsLock) {
+            return mHasEnrolledInstrumentEnabled;
         }
     }
 
@@ -2226,6 +2238,22 @@ public class AwSettings {
     public int getWebauthnSupport() {
         synchronized (mAwSettingsLock) {
             return getWebauthnSupportLocked();
+        }
+    }
+
+    /**
+     * Set whether the shouldInterceptRequest API should include request cookies and accept response
+     * cookies.
+     */
+    public void setIncludeCookiesOnIntercept(boolean includeCookiesOnIntercept) {
+        synchronized (mAwSettingsLock) {
+            this.mIncludeCookiesOnIntercept = includeCookiesOnIntercept;
+        }
+    }
+
+    public boolean getIncludeCookiesOnIntercept() {
+        synchronized (mAwSettingsLock) {
+            return mIncludeCookiesOnIntercept;
         }
     }
 

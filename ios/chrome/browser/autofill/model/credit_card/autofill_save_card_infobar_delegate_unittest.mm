@@ -4,8 +4,10 @@
 
 #import <memory>
 #import <string>
+#import <variant>
 
 #import "base/functional/bind.h"
+#import "base/strings/string_number_conversions.h"
 #import "base/test/metrics/histogram_tester.h"
 #import "base/test/scoped_feature_list.h"
 #import "components/autofill/core/browser/payments/autofill_save_card_delegate.h"
@@ -16,7 +18,6 @@
 #import "testing/gmock/include/gmock/gmock.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/platform_test.h"
-#import "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace autofill {
 
@@ -69,7 +70,7 @@ class AutofillSaveCardInfoBarDelegateTest : public PlatformTest {
   }
 
   std::unique_ptr<AutofillSaveCardInfoBarDelegateIOS> CreateDelegate(
-      absl::variant<
+      std::variant<
           payments::PaymentsAutofillClient::LocalSaveCardPromptCallback,
           payments::PaymentsAutofillClient::UploadSaveCardPromptCallback>
           save_card_callback,
@@ -151,9 +152,6 @@ TEST_F(AutofillSaveCardInfoBarDelegateTest, UpdateAndAccept_Upload) {
 // credit_card_upload_completion_callback with card successfully saved.
 TEST_F(AutofillSaveCardInfoBarDelegateTest,
        CreditCardUploadCompleted_CardSaved) {
-  feature_list_.InitAndEnableFeature(
-      autofill::features::kAutofillEnableSaveCardLoadingAndConfirmation);
-
   payments::PaymentsAutofillClient::UploadSaveCardPromptCallback callback =
       base::BindOnce(
           &AutofillSaveCardInfoBarDelegateTest::UploadSaveCardPromptCallbackFn,
@@ -179,9 +177,6 @@ TEST_F(AutofillSaveCardInfoBarDelegateTest,
 // credit_card_upload_completion_callback with card not successfully saved.
 TEST_F(AutofillSaveCardInfoBarDelegateTest,
        CreditCardUploadCompleted_CardNotSaved) {
-  feature_list_.InitAndEnableFeature(
-      autofill::features::kAutofillEnableSaveCardLoadingAndConfirmation);
-
   payments::PaymentsAutofillClient::UploadSaveCardPromptCallback callback =
       base::BindOnce(
           &AutofillSaveCardInfoBarDelegateTest::UploadSaveCardPromptCallbackFn,
@@ -207,9 +202,6 @@ TEST_F(AutofillSaveCardInfoBarDelegateTest,
 // `on_confirmation_closed_callback_` when infobar is not presenting.
 TEST_F(AutofillSaveCardInfoBarDelegateTest,
        CreditCardUploadCompleted_InfobarNotPresenting) {
-  feature_list_.InitAndEnableFeature(
-      autofill::features::kAutofillEnableSaveCardLoadingAndConfirmation);
-
   payments::PaymentsAutofillClient::UploadSaveCardPromptCallback callback =
       base::BindOnce(
           &AutofillSaveCardInfoBarDelegateTest::UploadSaveCardPromptCallbackFn,
@@ -231,9 +223,6 @@ TEST_F(AutofillSaveCardInfoBarDelegateTest,
 // Tests that `OnConfirmationClosed()` runs
 // `on_confirmation_closed_callback_` when it holds a value.
 TEST_F(AutofillSaveCardInfoBarDelegateTest, OnConfirmationClosedCallbackSet) {
-  feature_list_.InitAndEnableFeature(
-      autofill::features::kAutofillEnableSaveCardLoadingAndConfirmation);
-
   std::unique_ptr<AutofillSaveCardInfoBarDelegateIOS> delegate = CreateDelegate(
       static_cast<
           payments::PaymentsAutofillClient::UploadSaveCardPromptCallback>(
@@ -252,9 +241,6 @@ TEST_F(AutofillSaveCardInfoBarDelegateTest, OnConfirmationClosedCallbackSet) {
 // `on_confirmation_closed_callback_` doesn't hold a value.
 TEST_F(AutofillSaveCardInfoBarDelegateTest,
        OnConfirmationClosedCallbackNotSet) {
-  feature_list_.InitAndEnableFeature(
-      autofill::features::kAutofillEnableSaveCardLoadingAndConfirmation);
-
   std::unique_ptr<AutofillSaveCardInfoBarDelegateIOS> delegate = CreateDelegate(
       static_cast<
           payments::PaymentsAutofillClient::UploadSaveCardPromptCallback>(

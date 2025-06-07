@@ -8,6 +8,7 @@
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/search_engines/template_url_service.h"
+#include "content/public/browser/navigation_entry.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using TabMatcherDesktopTest = BrowserWithTestWindowTest;

@@ -103,7 +103,7 @@ class FakeBaseTabStripController : public TabStripController {
   TabGroup* GetTabGroup(const tab_groups::TabGroupId& group_id) const override;
   Profile* GetProfile() const override;
   BrowserWindowInterface* GetBrowserWindowInterface() override;
-  const Browser* GetBrowser() const override;
+  Browser* GetBrowser() override;
   bool CanShowModalUI() const override;
   std::unique_ptr<ScopedTabStripModalUI> ShowModalUI() override;
 
@@ -118,7 +118,7 @@ class FakeBaseTabStripController : public TabStripController {
  private:
   void SetActiveIndex(int new_index);
 
-  // If not nullptr, is kept in sync as |this| is changed.
+  // If not nullptr, is kept in sync as `this` is changed.
   raw_ptr<TabStrip> tab_strip_ = nullptr;
 
   int num_tabs_ = 0;

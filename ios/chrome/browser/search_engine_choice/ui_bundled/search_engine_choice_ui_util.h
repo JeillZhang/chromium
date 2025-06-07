@@ -13,11 +13,14 @@ class FaviconLoader;
 class TemplateURL;
 class TemplateURLService;
 
-namespace search_engines {
-class SearchEngineChoiceService;
-}  // namespace search_engines
+namespace regional_capabilities {
+class RegionalCapabilitiesService;
+}  // namespace regional_capabilities
 
 // UI Util containing helper methods for the choice screen UI.
+
+// Returns the resource id for a search engine based on a template URL.
+int GetResourceIdFromTemplateURL(const TemplateURL& template_url);
 
 // Returns embedded favicon for search engine from `template_url`. The search
 // engine has to be prepopulated. Returns `nil` if the icon is not embedded
@@ -29,7 +32,7 @@ UIImage* SearchEngineFaviconFromTemplateURL(const TemplateURL& template_url);
 // available or not.
 void GetSearchEngineFavicon(
     const TemplateURL& template_url,
-    search_engines::SearchEngineChoiceService* search_engine_choice_service,
+    regional_capabilities::RegionalCapabilitiesService& regional_capabilities,
     TemplateURLService* template_url_service,
     FaviconLoader* favicon_loader,
     FaviconLoader::FaviconAttributesCompletionBlock favicon_block_handler);

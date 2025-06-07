@@ -16,7 +16,7 @@
 #include "base/test/values_test_util.h"
 #include "base/values.h"
 #include "chrome/browser/ash/app_mode/kiosk_chrome_app_manager.h"
-#include "chrome/browser/ash/app_mode/web_app/web_kiosk_app_manager.h"
+#include "chrome/browser/ash/app_mode/web_app/kiosk_web_app_manager.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/policy/remote_commands/crd/crd_remote_command_utils.h"
 #include "chrome/browser/ash/policy/remote_commands/fake_cros_network_config.h"
@@ -113,13 +113,13 @@ class DeviceCommandFetchCrdAvailabilityInfoJobTest
     ASSERT_TRUE(profile_manager_.SetUp());
 
     user_activity_detector_ = ui::UserActivityDetector::Get();
-    web_kiosk_app_manager_ = std::make_unique<ash::WebKioskAppManager>();
+    kiosk_web_app_manager_ = std::make_unique<ash::KioskWebAppManager>();
     kiosk_chrome_app_manager_ = std::make_unique<ash::KioskChromeAppManager>();
   }
 
   void TearDown() override {
     kiosk_chrome_app_manager_.reset();
-    web_kiosk_app_manager_.reset();
+    kiosk_web_app_manager_.reset();
     DeviceSettingsTestBase::TearDown();
   }
 
@@ -184,7 +184,7 @@ class DeviceCommandFetchCrdAvailabilityInfoJobTest
   user_manager::TypedScopedUserManager<ash::FakeChromeUserManager>
       user_manager_{std::make_unique<ash::FakeChromeUserManager>()};
 
-  std::unique_ptr<ash::WebKioskAppManager> web_kiosk_app_manager_;
+  std::unique_ptr<ash::KioskWebAppManager> kiosk_web_app_manager_;
   std::unique_ptr<ash::KioskChromeAppManager> kiosk_chrome_app_manager_;
 
   // Automatically installed as a singleton upon creation.
@@ -223,9 +223,6 @@ class DeviceCommandFetchCrdAvailabilityInfoJobTestParameterizedOverSessionType
   CrdSessionAvailability GetExpectedRemoteSupportAvailabilityFor(
       TestSessionType session_type) {
     switch (session_type) {
-      // TODO(b:393521569) Update session availability on default enabled state
-      // for CRD unattended feature flag.
-      case TestSessionType::kNoSession:
       case TestSessionType::kGuestSession:
       case TestSessionType::kUnaffiliatedUserSession:
         return CrdSessionAvailability::
@@ -237,6 +234,7 @@ class DeviceCommandFetchCrdAvailabilityInfoJobTestParameterizedOverSessionType
       case TestSessionType::kAutoLaunchedKioskSession:
       case TestSessionType::kManagedGuestSession:
       case TestSessionType::kAffiliatedUserSession:
+      case TestSessionType::kNoSession:
         return CrdSessionAvailability::AVAILABLE;
     }
   }
@@ -310,15 +308,15 @@ TEST_F(DeviceCommandFetchCrdAvailabilityInfoJobTest,
 }
 
 TEST_F(DeviceCommandFetchCrdAvailabilityInfoJobTest,
-       AllowRemoteSupportSessionAtLoginScreenIfEnabledByFeatureFlag) {
+       DontAllowRemoteSupportSessionAtLoginScreenIfDisabledByFeatureFlag) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(kEnableCrdSharedSessionToUnattendedDevice);
+  feature_list.InitAndDisableFeature(kEnableCrdSharedSessionToUnattendedDevice);
 
   StartSessionOfType(TestSessionType::kNoSession);
   Result result = CreateAndRunJob();
 
   EXPECT_EQ(ParseJsonDict(result.payload).FindInt("remoteSupportAvailability"),
-            CrdSessionAvailability::AVAILABLE);
+            CrdSessionAvailability::UNAVAILABLE_UNSUPPORTED_USER_SESSION_TYPE);
 }
 
 TEST_P(DeviceCommandFetchCrdAvailabilityInfoJobTestParameterizedOverSessionType,
@@ -371,7 +369,10 @@ TEST_P(DeviceCommandFetchCrdAvailabilityInfoJobTestParameterizedOverSessionType,
   const base::Value::List expected = [&]() {
     switch (session_type) {
       case TestSessionType::kNoSession:
-        return ToList({CrdSessionType::REMOTE_ACCESS_SESSION});
+        return ToList({
+            CrdSessionType::REMOTE_SUPPORT_SESSION,
+            CrdSessionType::REMOTE_ACCESS_SESSION,
+        });
 
       case TestSessionType::kManuallyLaunchedWebKioskSession:
       case TestSessionType::kManuallyLaunchedKioskSession:
@@ -428,12 +429,12 @@ TEST_P(DeviceCommandFetchCrdAvailabilityInfoJobTestParameterizedOverSessionType,
 
   const CrdSessionAvailability expected = [&]() {
     switch (session_type) {
-      case TestSessionType::kNoSession:
       case TestSessionType::kGuestSession:
       case TestSessionType::kUnaffiliatedUserSession:
         return CrdSessionAvailability::
             UNAVAILABLE_UNSUPPORTED_USER_SESSION_TYPE;
 
+      case TestSessionType::kNoSession:
       case TestSessionType::kManuallyLaunchedWebKioskSession:
       case TestSessionType::kManuallyLaunchedKioskSession:
       case TestSessionType::kAutoLaunchedWebKioskSession:

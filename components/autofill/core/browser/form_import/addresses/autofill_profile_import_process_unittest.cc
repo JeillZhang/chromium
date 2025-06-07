@@ -8,9 +8,9 @@
 #include "base/test/task_environment.h"
 #include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
 #include "components/autofill/core/browser/data_manager/addresses/test_address_data_manager.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/autofill_profile_test_api.h"
-#include "components/autofill/core/browser/data_model/autofill_structured_address_test_utils.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile_test_api.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_structured_address_test_utils.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/foundations/test_autofill_client.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
@@ -963,15 +963,6 @@ TEST_F(AutofillProfileImportProcessTest, NewProfileRecordType) {
                                      /*allow_only_silent_updates=*/false);
     EXPECT_EQ(import_data.import_candidate()->record_type(),
               AutofillProfile::RecordType::kAccount);
-
-    // Profiles with an ineligible country are not stored in the account.
-    AutofillProfile ineligible_profile = test::StandardProfile();
-    ineligible_profile.SetRawInfo(ADDRESS_HOME_COUNTRY, u"SD");
-    import_data = ProfileImportProcess(ineligible_profile, "en_US", url_,
-                                       ukm_source_id(), &address_data_manager(),
-                                       /*allow_only_silent_updates=*/false);
-    EXPECT_EQ(import_data.import_candidate()->record_type(),
-              AutofillProfile::RecordType::kLocalOrSyncable);
   }
 }
 

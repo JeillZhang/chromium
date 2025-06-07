@@ -25,12 +25,14 @@
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_interactive_uitest.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
+#include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_host_registry.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/common/extension_features.h"
@@ -799,8 +801,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionsMenuMainPageViewInteractiveTest,
 
 // Tests clicking on the 'context menu' button opens the extension's context
 // menu.
+// TODO(crbug.com/400536589): Re-enable this flaky test.
 IN_PROC_BROWSER_TEST_F(ExtensionsMenuMainPageViewInteractiveTest,
-                       ContextMenuButtonOpensContextMenu) {
+                       DISABLED_ContextMenuButtonOpensContextMenu) {
   DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kTab);
   const extensions::Extension* extension =
       LoadExtension(test_data_dir_.AppendASCII("simple_with_icon"));
@@ -1199,6 +1202,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsMenuMainPageViewInteractiveTest,
                        PinningDisabledInIncognito) {
   DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kTab);
   Browser* const incognito_browser = CreateIncognitoBrowser(profile());
+  ui_test_utils::BrowserActivationWaiter(incognito_browser).WaitForActivation();
 
   const extensions::Extension* extension =
       LoadExtension(test_data_dir_.AppendASCII("uitest/window_open"),

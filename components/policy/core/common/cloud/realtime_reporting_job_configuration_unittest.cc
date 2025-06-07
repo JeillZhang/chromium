@@ -4,6 +4,7 @@
 
 #include "components/policy/core/common/cloud/realtime_reporting_job_configuration.h"
 
+#include <cstddef>
 #include <optional>
 #include <set>
 #include <vector>
@@ -11,6 +12,7 @@
 #include "base/check_deref.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/values.h"
@@ -18,12 +20,14 @@
 #include "components/enterprise/common/proto/synced/browser_events.pb.h"
 #include "components/enterprise/common/proto/synced_from_google3/chrome_reporting_entity.pb.h"
 #include "components/enterprise/common/proto/upload_request_response.pb.h"
+#include "components/enterprise/connectors/core/reporting_constants.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/cloud_policy_util.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/cloud/dm_auth.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
 #include "components/policy/core/common/cloud/mock_device_management_service.h"
+#include "components/policy/core/common/features.h"
 #include "components/version_info/version_info.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -41,7 +45,6 @@ namespace policy {
 
 constexpr char kAppPackage[] = "appPackage";
 constexpr char kEventType[] = "eventType";
-constexpr char kAppInstallEvent[] = "androidAppInstallEvent";
 constexpr char kEventId[] = "eventId";
 constexpr char kStatusCode[] = "status";
 
@@ -77,13 +80,15 @@ class RealtimeReportingJobConfigurationTest
 
   void SetUp() override {
     client_.SetDMToken(kDummyToken);
-    bool use_proto_format = GetParam();
-    if (use_proto_format) {
-      feature_list_.InitAndEnableFeature(
-          kUploadRealtimeReportingEventsUsingProto);
+    if (use_proto_format()) {
+      feature_list_.InitWithFeatures(
+          {kUploadRealtimeReportingEventsUsingProto,
+           policy::features::kEnhancedSecurityEventFields},
+          {});
     } else {
-      feature_list_.InitAndDisableFeature(
-          kUploadRealtimeReportingEventsUsingProto);
+      feature_list_.InitWithFeatures(
+          {policy::features::kEnhancedSecurityEventFields},
+          {kUploadRealtimeReportingEventsUsingProto});
     }
 
     configuration_ = std::make_unique<RealtimeReportingJobConfiguration>(
@@ -91,7 +96,7 @@ class RealtimeReportingJobConfigurationTest
         /*include_device_info=*/true,
         base::BindOnce(&MockCallbackObserver::OnURLLoadComplete,
                        base::Unretained(&callback_observer_)));
-    if (use_proto_format) {
+    if (use_proto_format()) {
       ::chrome::cros::reporting::proto::UploadEventsRequest request;
       request.mutable_browser()->set_user_agent("dummyAgent");
       for (size_t i = 0; i < kIds.size(); ++i) {
@@ -113,14 +118,18 @@ class RealtimeReportingJobConfigurationTest
     }
   }
 
+  bool use_proto_format() { return GetParam(); }
+
  protected:
   const std::vector<std::string> kIds = {"id1", "id2", "id3"};
+  base::HistogramTester histogram_;
   static base::Value::Dict CreateEvent(const std::string& event_id, int type) {
     base::Value::Dict event;
     event.Set(kAppPackage, kPackage);
     event.Set(kEventType, type);
     base::Value::Dict wrapper;
-    wrapper.Set(kAppInstallEvent, std::move(event));
+    wrapper.Set(enterprise_connectors::kExtensionInstallEvent,
+                std::move(event));
     wrapper.Set(kEventId, event_id);
     return wrapper;
   }
@@ -218,7 +227,7 @@ class RealtimeReportingJobConfigurationTest
 };
 
 TEST_P(RealtimeReportingJobConfigurationTest, ValidatePayload) {
-  if (GetParam()) {
+  if (use_proto_format()) {
     // If using the proto format, validate the request.
     ::chrome::cros::reporting::proto::UploadEventsRequest request;
     request.ParseFromString(configuration_->GetPayload());
@@ -231,6 +240,9 @@ TEST_P(RealtimeReportingJobConfigurationTest, ValidatePayload) {
     EXPECT_EQ(GetOSVersion(), request.device().os_version());
     EXPECT_FALSE(GetDeviceName().empty());
     EXPECT_EQ(GetDeviceName(), request.device().name());
+    EXPECT_FALSE(GetDeviceFqdn().empty());
+    EXPECT_EQ(GetDeviceFqdn(), request.device().device_fqdn());
+    EXPECT_EQ(GetNetworkName(), request.device().network_name());
 
     EXPECT_EQ(kIds.size(), base::checked_cast<size_t>(request.events_size()));
     int i = -1;
@@ -276,6 +288,15 @@ TEST_P(RealtimeReportingJobConfigurationTest, ValidatePayload) {
     EXPECT_EQ(GetDeviceName(), *payload_dict.FindStringByDottedPath(
                                    ReportingJobConfigurationBase::
                                        DeviceDictionaryBuilder::GetNamePath()));
+    EXPECT_FALSE(GetDeviceFqdn().empty());
+    EXPECT_EQ(GetDeviceFqdn(),
+              *payload_dict.FindStringByDottedPath(
+                  ReportingJobConfigurationBase::DeviceDictionaryBuilder::
+                      GetDeviceFqdnPath()));
+    EXPECT_EQ(GetNetworkName(),
+              *payload_dict.FindStringByDottedPath(
+                  ReportingJobConfigurationBase::DeviceDictionaryBuilder::
+                      GetNetworkNamePath()));
 
     base::Value::List* events = payload->GetDict().FindList(
         RealtimeReportingJobConfiguration::kEventListKey);
@@ -286,7 +307,8 @@ TEST_P(RealtimeReportingJobConfigurationTest, ValidatePayload) {
       const std::string& id = CHECK_DEREF(event.FindString(kEventId));
       EXPECT_EQ(kIds[++i], id);
       const std::optional<int> type =
-          event.FindDict(kAppInstallEvent)->FindInt(kEventType);
+          event.FindDict(enterprise_connectors::kExtensionInstallEvent)
+              ->FindInt(kEventType);
       ASSERT_TRUE(type.has_value());
       EXPECT_EQ(i, *type);
     }
@@ -401,6 +423,18 @@ TEST_P(RealtimeReportingJobConfigurationTest, OnBeforeRetry_HttpFailure) {
   configuration_->OnBeforeRetry(DeviceManagementService::kServiceUnavailable,
                                 "");
   EXPECT_EQ(original_payload, configuration_->GetPayload());
+}
+
+TEST_P(RealtimeReportingJobConfigurationTest, GetPayloadRecordsUmaMetrics) {
+  // GetPayload should record the payload size as an UMA metric.
+  std::string payload = configuration_->GetPayload();
+  histogram_.ExpectUniqueSample(
+      enterprise_connectors::kAllUploadSizeUmaMetricName, payload.size(), 1);
+
+  histogram_.ExpectUniqueSample(
+      enterprise_connectors::GetPayloadSizeUmaMetricName(
+          enterprise_connectors::kExtensionInstallEvent),
+      payload.size(), 1);
 }
 
 TEST_P(RealtimeReportingJobConfigurationTest, OnBeforeRetry_PartialBatch) {

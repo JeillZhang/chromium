@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -17,6 +18,7 @@
 #include "base/check.h"
 #include "base/containers/flat_set.h"
 #include "base/feature_list.h"
+#include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_forward.h"
@@ -33,6 +35,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/favicon_base/favicon_callback.h"
+#include "components/favicon_base/favicon_types.h"
 #include "components/favicon_base/favicon_usage_data.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/history/core/browser/keyword_id.h"
@@ -49,10 +52,6 @@ class GURL;
 class HistoryQuickProviderTest;
 class InMemoryURLIndexTest;
 class SkBitmap;
-
-namespace base {
-class FilePath;
-}  // namespace base
 
 namespace favicon {
 class FaviconServiceImpl;
@@ -202,7 +201,10 @@ class HistoryService : public KeyedService,
                VisitSource visit_source,
                bool did_replace_entry);
 
-  // For adding pages to history where no tracking information can be done.
+  // For adding pages to history where no tracking information can be done
+  // (namely, `chrome.history.addUrl()`). NOTE: when adding to the
+  // VisitedLinkDatabase, this function will construct a "self-link" of
+  // `<url, url, url>`.
   void AddPage(const GURL& url, base::Time time, VisitSource visit_source);
 
   // All AddPage variants end up here.
@@ -285,15 +287,6 @@ class HistoryService : public KeyedService,
                                            VisitID visit_id);
 
   // Querying ------------------------------------------------------------------
-
-  // Returns the most recent visit associated with each url. Similar to
-  // QueryURL but it sends a vector of visits to the caller instead of a
-  // QueryResult.
-  // Note: Virtual needed for mocking.
-  virtual base::CancelableTaskTracker::TaskId GetMostRecentVisitForEachURL(
-      const std::vector<GURL>& urls,
-      base::OnceCallback<void(std::map<GURL, VisitRow>)> callback,
-      base::CancelableTaskTracker* tracker);
 
   // Returns the information about the requested URL. If the URL is found,
   // success will be true and the information will be in the URLRow parameter.
@@ -379,7 +372,10 @@ class HistoryService : public KeyedService,
   virtual base::CancelableTaskTracker::TaskId QueryMostVisitedURLs(
       int result_count,
       QueryMostVisitedURLsCallback callback,
-      base::CancelableTaskTracker* tracker);
+      base::CancelableTaskTracker* tracker,
+      const std::optional<std::string>& recency_factor_name = std::nullopt,
+      std::optional<size_t> recency_window_days = std::nullopt,
+      bool check_visual_deduplication_flag = false);
 
   // Request `result_count` of the most repeated queries for the given keyword.
   // Used by TopSites.

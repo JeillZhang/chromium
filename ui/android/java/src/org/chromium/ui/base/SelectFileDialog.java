@@ -350,7 +350,7 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
                 UiAndroidFeatureMap.isEnabled(UiAndroidFeatures.SELECT_FILE_OPEN_DOCUMENT)
                         ? intentAction
                         : Intent.ACTION_GET_CONTENT;
-        mFileTypes = new ArrayList<String>(Arrays.asList(fileTypes));
+        mFileTypes = new ArrayList<>(Arrays.asList(fileTypes));
         mMimeTypes = convertToSupportedMimeTypes(mFileTypes);
         mCapture = capture;
         mAllowMultiple = multiple;
@@ -632,7 +632,7 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
             getContentIntent.putExtra(Intent.EXTRA_MIME_TYPES, types.toArray(new String[0]));
         }
 
-        ArrayList<Intent> extraIntents = new ArrayList<Intent>();
+        ArrayList<Intent> extraIntents = new ArrayList<>();
         if (shouldShowImageTypes() && camera != null) extraIntents.add(camera);
         if (shouldShowVideoTypes() && camcorder != null) extraIntents.add(camcorder);
         if (shouldShowAudioTypes() && soundRecorder != null) extraIntents.add(soundRecorder);
@@ -672,7 +672,7 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
         // Set to all types, but potentially restricted further by MIME-type below.
         getContentIntent.setType(ALL_TYPES);
 
-        ArrayList<Intent> extraIntents = new ArrayList<Intent>();
+        ArrayList<Intent> extraIntents = new ArrayList<>();
         if (acceptsSingleType()) {
             // Attention: We should change the variable below to `mMimeTypes`. Using of `mFileTypes`
             // is discouraged because it may include both file and MIME types. We keep the current
@@ -813,13 +813,14 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
     }
 
     @Override
-    public void onPhotoPickerUserAction(@PhotoPickerAction int action, Uri[] photos) {
+    public void onPhotoPickerUserAction(@PhotoPickerAction int action, Uri @Nullable [] photos) {
         switch (action) {
             case PhotoPickerAction.CANCEL:
                 onFileNotSelected();
                 break;
 
             case PhotoPickerAction.PHOTOS_SELECTED:
+                assumeNonNull(photos);
                 if (photos.length == 0) {
                     onFileNotSelected();
                     return;
@@ -865,9 +866,9 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
     }
 
     private class GetCameraIntentTask extends AsyncTask<@Nullable Uri> {
-        private Boolean mDirectToCamera;
-        private WindowAndroid mWindow;
-        private WindowAndroid.IntentCallback mCallback;
+        private final Boolean mDirectToCamera;
+        private final WindowAndroid mWindow;
+        private final WindowAndroid.IntentCallback mCallback;
 
         public GetCameraIntentTask(
                 Boolean directToCamera,
@@ -952,8 +953,7 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
 
     public static boolean isContentUriUnderAppDir(Uri uri, Context context) {
         assert !ThreadUtils.runningOnUiThread();
-        try {
-            ParcelFileDescriptor pfd = context.getContentResolver().openFileDescriptor(uri, "r");
+        try (ParcelFileDescriptor pfd = context.getContentResolver().openFileDescriptor(uri, "r")) {
             assumeNonNull(pfd);
             int fd = pfd.getFd();
             // Use the file descriptor to find out the read file path thru symbolic link.

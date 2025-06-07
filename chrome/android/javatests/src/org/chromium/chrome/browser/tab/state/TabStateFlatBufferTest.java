@@ -8,13 +8,11 @@ import androidx.test.filters.LargeTest;
 
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.Token;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
@@ -27,24 +25,25 @@ import org.chromium.base.test.util.Matchers;
 import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
-import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tab.TabState;
-import org.chromium.chrome.browser.tab.TabStateExtractor;
+import org.chromium.chrome.browser.tab.WebContentsState;
 import org.chromium.chrome.browser.tab.flatbuffer.UserAgentType;
 import org.chromium.chrome.browser.tabpersistence.TabStateFileManager;
+import org.chromium.chrome.browser.tabpersistence.TabStateFileManager.TabStateMigrationStatus;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
 import org.chromium.chrome.test.util.ByteBufferTestUtils;
-import org.chromium.net.test.EmbeddedTestServer;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Random;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
@@ -55,25 +54,15 @@ import java.util.stream.Stream;
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @Batch(Batch.PER_CLASS)
 public class TabStateFlatBufferTest {
-    @ClassRule
-    public static ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
-
     @Rule
-    public BlankCTATabInitialStateRule mBlankCTATabInitialStateRule =
-            new BlankCTATabInitialStateRule(sActivityTestRule, false);
+    public AutoResetCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.fastAutoResetCtaActivityRule();
 
     @Rule public TemporaryFolder temporaryFolder = new TemporaryFolder();
-
-    private static EmbeddedTestServer sTestServer;
     private static CipherFactory sCipherFactory;
-
-    private static final String TEST_URL = "/chrome/test/data/browsing_data/e.html";
-    private static final String TEST_URL_DISPLAY_TITLE = "My_title";
 
     @BeforeClass
     public static void beforeClass() {
-        sTestServer = sActivityTestRule.getTestServer();
         sCipherFactory = new CipherFactory();
     }
 
@@ -105,23 +94,25 @@ public class TabStateFlatBufferTest {
     public void testFlatBufferCleanup() throws IOException, TimeoutException, ExecutionException {
         List<File> flatBufferFiles = new ArrayList<>();
         List<File> legacyHandWrittenFiles = new ArrayList<>();
-        for (int tabId = 0; tabId < 4; tabId++) {
+        List<Integer> tabIds = List.of(1, 2, 3, 4, 5);
+        for (int tabId : tabIds) {
             legacyHandWrittenFiles.add(getLegacyTestFile(tabId, /* isEncrypted= */ tabId % 2 == 0));
             flatBufferFiles.add(getTestFile(tabId, /* isEncrypted= */ tabId % 2 == 0));
         }
 
-        for (int tabId = 0; tabId < 4; tabId++) {
+        for (int i = 0; i < tabIds.size(); i++) {
+            int tabId = tabIds.get(i);
             TabState tabState =
                     getTestTabState(
                             /* isIncognito */
                             tabId % 2 == 0);
             TabStateFileManager.saveStateInternal(
-                    legacyHandWrittenFiles.get(tabId),
+                    legacyHandWrittenFiles.get(i),
                     tabState,
                     /* encrypted= */ tabId % 2 == 0,
                     sCipherFactory);
             TabStateFileManager.saveStateInternal(
-                    flatBufferFiles.get(tabId),
+                    flatBufferFiles.get(i),
                     tabState,
                     /* encrypted= */ tabId % 2 == 0,
                     sCipherFactory);
@@ -264,6 +255,109 @@ public class TabStateFlatBufferTest {
                 });
     }
 
+    @Test
+    @LargeTest
+    @EnableFeatures(
+            ChromeFeatureList.LEGACY_TAB_STATE_DEPRECATION
+                    + ":delete_migrated_files_after_restore/true")
+    public void testLegacyTabStateFileMarkedForDeletion() throws ExecutionException {
+        TabState state = getTestTabState(/* isIncognito= */ false);
+        File legacyTabStateFile =
+                TabStateFileManager.getTabStateFile(
+                        temporaryFolder.getRoot(),
+                        /* tabId= */ 4,
+                        /* encrypted= */ false,
+                        /* isFlatbuffer= */ false);
+        File flatBufferTabStateFile =
+                TabStateFileManager.getTabStateFile(
+                        temporaryFolder.getRoot(),
+                        /* tabId= */ 4,
+                        /* encrypted= */ false,
+                        /* isFlatbuffer= */ true);
+        Assert.assertFalse(legacyTabStateFile.exists());
+        Assert.assertFalse(flatBufferTabStateFile.exists());
+        TabStateFileManager.saveStateInternal(
+                legacyTabStateFile, state, /* encrypted= */ false, sCipherFactory);
+        TabStateFileManager.saveStateInternal(
+                flatBufferTabStateFile, state, /* encrypted= */ false, sCipherFactory);
+        Assert.assertTrue(legacyTabStateFile.exists());
+        Assert.assertTrue(flatBufferTabStateFile.exists());
+        TabState restored =
+                TabStateFileManager.restoreTabState(
+                        temporaryFolder.getRoot(), /* id= */ 4, sCipherFactory);
+        Assert.assertEquals(restored.legacyFileToDelete, legacyTabStateFile);
+    }
+
+    @Test
+    @LargeTest
+    @EnableFeatures(
+            ChromeFeatureList.LEGACY_TAB_STATE_DEPRECATION
+                    + ":delete_migrated_files_after_restore/true")
+    public void testUnmigratedLegacyTabStateFileNotMarkedForDeletion() throws ExecutionException {
+        TabState state = getTestTabState(/* isIncognito= */ false);
+        File legacyTabStateFile =
+                TabStateFileManager.getTabStateFile(
+                        temporaryFolder.getRoot(),
+                        /* tabId= */ 4,
+                        /* encrypted= */ false,
+                        /* isFlatbuffer= */ false);
+        Assert.assertFalse(legacyTabStateFile.exists());
+        TabStateFileManager.saveStateInternal(
+                legacyTabStateFile, state, /* encrypted= */ false, sCipherFactory);
+        TabState restored =
+                TabStateFileManager.restoreTabState(
+                        temporaryFolder.getRoot(), /* id= */ 4, sCipherFactory);
+        Assert.assertNull(restored.legacyFileToDelete);
+    }
+
+    @Test
+    @LargeTest
+    public void testMigrationStatusRecordingBothFiles() throws ExecutionException, IOException {
+        TabState state = getTestTabState(/* isIncognito= */ false);
+        File legacyFile = getLegacyTestFile(/* tabId= */ 1, /* isEncrypted= */ false);
+        File flatBufferFile = getTestFile(/* tabId= */ 1, /* isEncrypted= */ false);
+        TabStateFileManager.saveStateInternal(
+                legacyFile, state, /* encrypted= */ false, sCipherFactory);
+        TabStateFileManager.saveStateInternal(
+                flatBufferFile, state, /* encrypted= */ false, sCipherFactory);
+        var histograms =
+                HistogramWatcher.newSingleRecordWatcher(
+                        "Tabs.TabState.MigrationStatus",
+                        TabStateMigrationStatus.FLATBUFFER_AND_LEGACY_HAND_WRITTEN);
+        TabStateFileManager.recordTabStateMigrationStatus(temporaryFolder.getRoot(), /* id= */ 1);
+        histograms.assertExpected();
+    }
+
+    @Test
+    @LargeTest
+    public void testMigrationStatusRecordingFlatBufferOnly()
+            throws ExecutionException, IOException {
+        TabState state = getTestTabState(/* isIncognito= */ false);
+        File flatBufferFile = getTestFile(/* tabId= */ 1, /* isEncrypted= */ false);
+        TabStateFileManager.saveStateInternal(
+                flatBufferFile, state, /* encrypted= */ false, sCipherFactory);
+        var histograms =
+                HistogramWatcher.newSingleRecordWatcher(
+                        "Tabs.TabState.MigrationStatus", TabStateMigrationStatus.FLATBUFFER);
+        TabStateFileManager.recordTabStateMigrationStatus(temporaryFolder.getRoot(), /* id= */ 1);
+        histograms.assertExpected();
+    }
+
+    @Test
+    @LargeTest
+    public void testMigrationStatusRecordingLegacyOnly() throws ExecutionException, IOException {
+        TabState state = getTestTabState(/* isIncognito= */ false);
+        File legacyFile = getLegacyTestFile(/* tabId= */ 1, /* isEncrypted= */ false);
+        TabStateFileManager.saveStateInternal(
+                legacyFile, state, /* encrypted= */ false, sCipherFactory);
+        var histograms =
+                HistogramWatcher.newSingleRecordWatcher(
+                        "Tabs.TabState.MigrationStatus",
+                        TabStateMigrationStatus.LEGACY_HAND_WRITTEN);
+        TabStateFileManager.recordTabStateMigrationStatus(temporaryFolder.getRoot(), /* id= */ 1);
+        histograms.assertExpected();
+    }
+
     private static TabState getTestTabState(boolean isIncognito) throws ExecutionException {
         TabState state = new TabState();
         state.parentId = 4;
@@ -275,11 +369,15 @@ public class TabStateFlatBufferTest {
         state.lastNavigationCommittedTimestampMillis = 42L;
         state.timestampMillis = 41L;
         state.tabHasSensitiveContent = true;
+        state.isPinned = true;
         state.isIncognito = isIncognito;
-        String url = sTestServer.getURL(TEST_URL);
-        Tab tab = sActivityTestRule.loadUrlInNewTab(url);
-        state.contentsState =
-                ThreadUtils.runOnUiThreadBlocking(() -> TabStateExtractor.getWebContentsState(tab));
+        int capacity = 100;
+        byte[] bytes = new byte[capacity];
+        new Random().nextBytes(bytes);
+        ByteBuffer buffer = ByteBuffer.allocateDirect(capacity);
+        buffer.put(bytes);
+        buffer.rewind();
+        state.contentsState = new WebContentsState(buffer);
         state.openerAppId = "openerAppId";
         return state;
     }
@@ -317,15 +415,9 @@ public class TabStateFlatBufferTest {
         Assert.assertEquals(expected.timestampMillis, actual.timestampMillis);
         Assert.assertEquals(expected.themeColor, actual.themeColor);
         Assert.assertEquals(expected.tabHasSensitiveContent, actual.tabHasSensitiveContent);
+        Assert.assertEquals(expected.isPinned, actual.isPinned);
         ByteBufferTestUtils.verifyByteBuffer(
                 expected.contentsState.buffer(), actual.contentsState.buffer());
-        Assert.assertTrue(
-                actual.contentsState.getDisplayTitleFromState().contains(TEST_URL_DISPLAY_TITLE));
-        Assert.assertEquals(
-                expected.contentsState.getVirtualUrlFromState(),
-                actual.contentsState.getVirtualUrlFromState());
-        Assert.assertEquals(
-                expected.contentsState.getDisplayTitleFromState(),
-                actual.contentsState.getDisplayTitleFromState());
+        // Don't assert on the fields of the WebContentsState as it is random data in this test.
     }
 }

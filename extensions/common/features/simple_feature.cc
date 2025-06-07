@@ -18,7 +18,6 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "components/crx_file/id_util.h"
-#include "content/public/common/content_features.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/extension_id.h"
@@ -275,15 +274,10 @@ Feature::Availability SimpleFeature::IsAvailableToContextImpl(
       return manifest_availability;
   }
 
-  bool is_for_service_worker = false;
-  if (extension != nullptr && BackgroundInfo::IsServiceWorkerBased(extension) &&
-      url.is_valid()) {
-    const GURL script_url = extension->GetResourceURL(
-        BackgroundInfo::GetBackgroundServiceWorkerScript(extension));
-    if (script_url == url) {
-      is_for_service_worker = true;
-    }
-  }
+  bool is_for_service_worker =
+      extension && BackgroundInfo::IsServiceWorkerBased(extension) &&
+      url.is_valid() &&
+      url == BackgroundInfo::GetBackgroundServiceWorkerScriptURL(extension);
 
   Availability context_availability =
       GetContextAvailability(context, url, is_for_service_worker);
@@ -658,6 +652,15 @@ Feature::Availability SimpleFeature::GetEnvironmentAvailability(
     if (name() == "debugger" && !debugger_api_restricted) {
       return CreateAvailability(IS_AVAILABLE);
     }
+
+    if (name().starts_with("userScripts") &&
+        // TODO(crbug.com/390138269): Remove dev mode restriction from
+        // userScripts API when feature is enabled.
+        base::FeatureList::IsEnabled(
+            extensions_features::kUserScriptUserExtensionToggle)) {
+      return CreateAvailability(IS_AVAILABLE);
+    }
+
     return CreateAvailability(REQUIRES_DEVELOPER_MODE);
   }
 

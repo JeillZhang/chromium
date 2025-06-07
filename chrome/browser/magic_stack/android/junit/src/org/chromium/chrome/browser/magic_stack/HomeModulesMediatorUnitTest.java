@@ -90,13 +90,11 @@ public class HomeModulesMediatorUnitTest {
         mModuleProviders = new ModuleProvider[MODULE_TYPES];
         OneshotSupplierImpl<Profile> profileSupplier = new OneshotSupplierImpl<>();
         profileSupplier.set(mProfile);
-        for (int i = 0; i < MODULE_TYPES; i++) {
-            mModuleTypeList[i] = i;
-            mModuleProviderBuilderList[i] = Mockito.mock(ModuleProviderBuilder.class);
-            doReturn(true).when(mModuleProviderBuilderList[i]).build(eq(mModuleDelegate), any());
-            mListItems[i] = new ListItem(mModuleTypeList[i], Mockito.mock(PropertyModel.class));
-            mModuleProviders[i] = Mockito.mock(ModuleProvider.class);
-        }
+
+        registerModule(0, ModuleType.SINGLE_TAB);
+        registerModule(1, ModuleType.PRICE_CHANGE);
+        registerModule(2, ModuleType.SAFETY_HUB);
+
         mHomeModulesConfigManager = HomeModulesConfigManager.getInstance();
         assertEquals(0, mHomeModulesConfigManager.getEnabledModuleSet().size());
         mMediator =
@@ -127,8 +125,8 @@ public class HomeModulesMediatorUnitTest {
         Map<Integer, Integer> moduleTypeToRankingIndexMap =
                 mMediator.getModuleTypeToRankingIndexMapForTesting();
         assertEquals(2, moduleTypeToRankingIndexMap.size());
-        assertEquals(0, (int) moduleTypeToRankingIndexMap.get(2));
-        assertEquals(1, (int) moduleTypeToRankingIndexMap.get(0));
+        assertEquals(0, (int) moduleTypeToRankingIndexMap.get(mModuleTypeList[2]));
+        assertEquals(1, (int) moduleTypeToRankingIndexMap.get(mModuleTypeList[0]));
     }
 
     @Test
@@ -240,7 +238,7 @@ public class HomeModulesMediatorUnitTest {
 
         // Calls onModuleBuilt() to add ModuleProviders to the map.
         for (int i = 0; i < 3; i++) {
-            mMediator.onModuleBuilt(i, mModuleProviders[i]);
+            mMediator.onModuleBuilt(mModuleTypeList[i], mModuleProviders[i]);
         }
 
         // The response of the second highest ranking module arrives first.
@@ -287,7 +285,7 @@ public class HomeModulesMediatorUnitTest {
 
         // Calls onModuleBuilt() to add ModuleProviders to the map.
         for (int i = 0; i < 3; i++) {
-            mMediator.onModuleBuilt(i, mModuleProviders[i]);
+            mMediator.onModuleBuilt(mModuleTypeList[i], mModuleProviders[i]);
         }
         // Adds modules to the recyclerview and show.
         PropertyModel propertyModel0 = Mockito.mock(PropertyModel.class);
@@ -478,7 +476,7 @@ public class HomeModulesMediatorUnitTest {
         mMediator.buildModulesAndShow(moduleList, mModuleDelegate, mOnHomeModulesChangedCallback);
         // Calls onModuleBuilt() to add ModuleProviders to the map.
         for (int i = 0; i < 3; i++) {
-            mMediator.onModuleBuilt(i, mModuleProviders[i]);
+            mMediator.onModuleBuilt(mModuleTypeList[i], mModuleProviders[i]);
         }
         Boolean[] moduleFetchResultsIndicator =
                 mMediator.getModuleFetchResultsIndicatorForTesting();
@@ -583,13 +581,13 @@ public class HomeModulesMediatorUnitTest {
                 Set.of(
                         ModuleType.PRICE_CHANGE,
                         ModuleType.SINGLE_TAB,
-                        ModuleType.TAB_RESUMPTION,
                         ModuleType.SAFETY_HUB,
                         ModuleType.AUXILIARY_SEARCH,
                         ModuleType.DEFAULT_BROWSER_PROMO,
                         ModuleType.TAB_GROUP_PROMO,
                         ModuleType.TAB_GROUP_SYNC_PROMO,
-                        ModuleType.QUICK_DELETE_PROMO);
+                        ModuleType.QUICK_DELETE_PROMO,
+                        ModuleType.HISTORY_SYNC_PROMO);
         assertEquals(expectedModuleSet, mMediator.getFilteredEnabledModuleSet());
 
         // Verifies that the single tab module isn't shown if it isn't the home surface even with
@@ -598,65 +596,13 @@ public class HomeModulesMediatorUnitTest {
         expectedModuleSet =
                 Set.of(
                         ModuleType.PRICE_CHANGE,
-                        ModuleType.TAB_RESUMPTION,
                         ModuleType.SAFETY_HUB,
                         ModuleType.AUXILIARY_SEARCH,
                         ModuleType.DEFAULT_BROWSER_PROMO,
                         ModuleType.TAB_GROUP_PROMO,
                         ModuleType.TAB_GROUP_SYNC_PROMO,
-                        ModuleType.QUICK_DELETE_PROMO);
-        assertEquals(expectedModuleSet, mMediator.getFilteredEnabledModuleSet());
-    }
-
-    @Test
-    @SmallTest
-    @EnableFeatures({ChromeFeatureList.TAB_RESUMPTION_MODULE_ANDROID})
-    public void testGetFilteredEnabledModuleSet_CombineTabs_TabResumptionEnabled() {
-        ChromeFeatureList.sTabResumptionModuleAndroidCombineTabs.setForTesting(true);
-        Set<Integer> activeModules = HomeModulesMetricsUtils.getAllActiveModulesForTesting();
-        for (@ModuleType int moduleType : activeModules) {
-            mHomeModulesConfigManager.registerModuleEligibilityChecker(
-                    moduleType, mModuleConfigChecker);
-        }
-        when(mModuleDelegateHost.isHomeSurface()).thenReturn(true);
-
-        // Verifies that the tab resumption module will be added to the list without the single tab
-        // module.
-        Set<Integer> expectedModuleSet =
-                Set.of(
-                        ModuleType.PRICE_CHANGE,
-                        ModuleType.TAB_RESUMPTION,
-                        ModuleType.SAFETY_HUB,
-                        ModuleType.AUXILIARY_SEARCH,
-                        ModuleType.DEFAULT_BROWSER_PROMO,
-                        ModuleType.TAB_GROUP_PROMO,
-                        ModuleType.TAB_GROUP_SYNC_PROMO,
-                        ModuleType.QUICK_DELETE_PROMO);
-        assertEquals(expectedModuleSet, mMediator.getFilteredEnabledModuleSet());
-    }
-
-    @Test
-    @SmallTest
-    @DisableFeatures({
-        ChromeFeatureList.TAB_RESUMPTION_MODULE_ANDROID,
-    })
-    public void testGetFilteredEnabledModuleSet_CombineTabs_TabResumptionDisabled() {
-        ChromeFeatureList.sTabResumptionModuleAndroidCombineTabs.setForTesting(true);
-        mHomeModulesConfigManager.registerModuleEligibilityChecker(
-                ModuleType.PRICE_CHANGE, mModuleConfigChecker);
-        mHomeModulesConfigManager.registerModuleEligibilityChecker(
-                ModuleType.SINGLE_TAB, mModuleConfigChecker);
-
-        when(mModuleDelegateHost.isHomeSurface()).thenReturn(true);
-        // Verifies that the single tab module will be added to the set if the tab resumption
-        // feature flag is disabled.
-        Set<Integer> expectedModuleSet = Set.of(ModuleType.PRICE_CHANGE, ModuleType.SINGLE_TAB);
-        assertEquals(expectedModuleSet, mMediator.getFilteredEnabledModuleSet());
-
-        when(mModuleDelegateHost.isHomeSurface()).thenReturn(false);
-        // Verifies that the single tab module won't be added to the list if it isn't on home
-        // surface.
-        expectedModuleSet = Set.of(ModuleType.PRICE_CHANGE);
+                        ModuleType.QUICK_DELETE_PROMO,
+                        ModuleType.HISTORY_SYNC_PROMO);
         assertEquals(expectedModuleSet, mMediator.getFilteredEnabledModuleSet());
     }
 
@@ -703,16 +649,17 @@ public class HomeModulesMediatorUnitTest {
                 new ClassificationResult(
                         org.chromium.components.segmentation_platform.prediction_status
                                 .PredictionStatus.SUCCEEDED,
-                        new String[] {"TabResumption", "SingleTab", "PriceChange"});
+                        new String[] {"SafetyHub", "SingleTab", "PriceChange"},
+                        /* requestId= */ 0);
         Set<Integer> filteredEnabledModuleSet = new HashSet<>();
         filteredEnabledModuleSet.add(ModuleType.SINGLE_TAB);
         filteredEnabledModuleSet.add(ModuleType.PRICE_CHANGE);
-        filteredEnabledModuleSet.add(ModuleType.TAB_RESUMPTION);
+        filteredEnabledModuleSet.add(ModuleType.SAFETY_HUB);
 
         // Verifies that result of #filterEnabledModuleList() is used if the segmentation
         // service returns a valid result.
         List<Integer> expectedModuleList =
-                List.of(ModuleType.TAB_RESUMPTION, ModuleType.SINGLE_TAB, ModuleType.PRICE_CHANGE);
+                List.of(ModuleType.SAFETY_HUB, ModuleType.SINGLE_TAB, ModuleType.PRICE_CHANGE);
         assertEquals(
                 expectedModuleList,
                 mMediator.filterEnabledModuleList(
@@ -720,7 +667,7 @@ public class HomeModulesMediatorUnitTest {
 
         // Verifies that the disabled module will be removed from the result of the segmentation
         // service.
-        filteredEnabledModuleSet.remove(ModuleType.TAB_RESUMPTION);
+        filteredEnabledModuleSet.remove(ModuleType.SAFETY_HUB);
         expectedModuleList = List.of(ModuleType.SINGLE_TAB, ModuleType.PRICE_CHANGE);
         assertEquals(
                 expectedModuleList,
@@ -730,9 +677,30 @@ public class HomeModulesMediatorUnitTest {
 
     @Test
     @SmallTest
+    public void testFilterEnabledModuleList_withInvalidType() {
+        ClassificationResult classificationResult =
+                new ClassificationResult(
+                        org.chromium.components.segmentation_platform.prediction_status
+                                .PredictionStatus.SUCCEEDED,
+                        new String[] {"TabResumption"},
+                        /* requestId= */ 0);
+        Set<Integer> filteredEnabledModuleSet = new HashSet<>();
+        filteredEnabledModuleSet.add(ModuleType.SINGLE_TAB);
+        filteredEnabledModuleSet.add(ModuleType.PRICE_CHANGE);
+        filteredEnabledModuleSet.add(ModuleType.SAFETY_HUB);
+
+        assertTrue(
+                mMediator
+                        .filterEnabledModuleList(
+                                classificationResult.orderedLabels, filteredEnabledModuleSet)
+                        .isEmpty());
+    }
+
+    @Test
+    @SmallTest
     public void testInput() {
-        @ModuleType int moduleType = ModuleType.TAB_RESUMPTION;
-        String expectedFreshnessString = "tab_resumption_freshness";
+        @ModuleType int moduleType = ModuleType.SINGLE_TAB;
+        String expectedFreshnessString = "single_tab_freshness";
         TextUtils.equals(
                 expectedFreshnessString,
                 HomeModulesUtils.getFreshnessInputContextString(moduleType));
@@ -755,5 +723,19 @@ public class HomeModulesMediatorUnitTest {
         assertEquals(
                 INVALID_IMPRESSION_COUNT_BEFORE_INTERACTION,
                 HomeModulesUtils.getImpressionCountBeforeInteraction(moduleType2));
+    }
+
+    /**
+     * Helps to register a module.
+     *
+     * @param index The index of the module on the list.
+     * @param type The module type.
+     */
+    private void registerModule(int index, @ModuleType int type) {
+        mModuleTypeList[index] = type;
+        mModuleProviderBuilderList[index] = Mockito.mock(ModuleProviderBuilder.class);
+        doReturn(true).when(mModuleProviderBuilderList[index]).build(eq(mModuleDelegate), any());
+        mListItems[index] = new ListItem(mModuleTypeList[index], Mockito.mock(PropertyModel.class));
+        mModuleProviders[index] = Mockito.mock(ModuleProvider.class);
     }
 }

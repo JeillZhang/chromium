@@ -127,6 +127,9 @@ void UrlLoaderNetworkServiceObserver::OnPrivateNetworkAccessPermissionRequired(
     const std::optional<std::string>& private_network_device_name,
     OnPrivateNetworkAccessPermissionRequiredCallback callback) {}
 
+void UrlLoaderNetworkServiceObserver::OnLocalNetworkAccessPermissionRequired(
+    OnLocalNetworkAccessPermissionRequiredCallback callback) {}
+
 void UrlLoaderNetworkServiceObserver::OnClearSiteData(
     const GURL& url,
     const std::string& header_value,
@@ -156,6 +159,10 @@ void UrlLoaderNetworkServiceObserver::OnSharedStorageHeaderReceived(
     OnSharedStorageHeaderReceivedCallback callback) {
   std::move(callback).Run();
 }
+
+void UrlLoaderNetworkServiceObserver::OnAdAuctionEventRecordHeaderReceived(
+    network::AdAuctionEventRecord event_record,
+    const std::optional<url::Origin>& top_frame_origin) {}
 
 void UrlLoaderNetworkServiceObserver::Clone(
     mojo::PendingReceiver<network::mojom::URLLoaderNetworkServiceObserver>

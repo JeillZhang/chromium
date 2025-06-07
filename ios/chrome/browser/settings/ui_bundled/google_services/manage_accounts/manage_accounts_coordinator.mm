@@ -10,6 +10,8 @@
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/app/application_delegate/app_state.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_ui_util.h"
+#import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_utils.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signout_action_sheet/signout_action_sheet_coordinator.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
@@ -25,6 +27,7 @@
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
+#import "ios/chrome/browser/shared/model/profile/features.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
@@ -70,6 +73,9 @@ using signin_metrics::PromoAction;
 
   // Modal alert for sign out.
   SignoutActionSheetCoordinator* _signoutCoordinator;
+
+  // The Add Account coordinator
+  SigninCoordinator* _addAccountSigninCoordinator;
 }
 
 @synthesize baseNavigationController = _baseNavigationController;
@@ -83,7 +89,6 @@ using signin_metrics::PromoAction;
   self = [super initWithBaseViewController:viewController browser:browser];
   if (self) {
     _closeSettingsOnAddAccount = closeSettingsOnAddAccount;
-    _showAddAccountButton = YES;
   }
   return self;
 }
@@ -103,7 +108,7 @@ using signin_metrics::PromoAction;
 
 - (void)start {
   base::RecordAction(base::UserMetricsAction("Signin_AccountsTableView_Open"));
-  ProfileIOS* profile = self.browser->GetProfile();
+  ProfileIOS* profile = self.profile;
   _mediator = [[ManageAccountsMediator alloc]
       initWithAccountManagerService:ChromeAccountManagerServiceFactory::
                                         GetForProfile(profile)
@@ -112,7 +117,7 @@ using signin_metrics::PromoAction;
                     identityManager:IdentityManagerFactory::GetForProfile(
                                         profile)];
 
-  if (base::FeatureList::IsEnabled(kIdentityDiscAccountMenu)) {
+  if (IsIdentityDiscAccountMenuEnabled()) {
     ManageAccountsTableViewController* viewController =
         [[ManageAccountsTableViewController alloc]
             initWithOfferSignout:self.showSignoutButton];
@@ -160,6 +165,7 @@ using signin_metrics::PromoAction;
 
 - (void)stop {
   [super stop];
+  [self stopAddAccountCoordinator];
   ManageAccountsTableViewController* accountsTableViewController =
       base::apple::ObjCCast<ManageAccountsTableViewController>(_viewController);
   if (accountsTableViewController) {
@@ -250,54 +256,46 @@ using signin_metrics::PromoAction;
 - (void)showAddAccountToDevice {
   [_viewController preventUserInteraction];
   __weak __typeof(self) weakSelf = self;
-  if (self.delegate &&
-      [self.delegate
-          respondsToSelector:@selector
-          (manageAccountsCoordinator:
-              didRequestAddAccountWithBaseViewController:completion:)]) {
-    [self.delegate manageAccountsCoordinator:self
-        didRequestAddAccountWithBaseViewController:_viewController
-                                        completion:^(
-                                            SigninCoordinatorResult result,
-                                            id<SystemIdentity>) {
-                                          [weakSelf
-                                              addAccountToDeviceCompleted];
-                                        }];
-  } else {
-    ShowSigninCommand* command = [[ShowSigninCommand alloc]
-        initWithOperation:AuthenticationOperation::kAddAccount
-                 identity:nil
-              accessPoint:AccessPoint::kSettings
-              promoAction:PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO
-               completion:^(SigninCoordinatorResult result,
-                            id<SystemIdentity> completionIdentity) {
-                 [weakSelf addAccountToDeviceCompleted];
-               }];
-    [HandlerForProtocol(self.browser->GetCommandDispatcher(),
-                        ApplicationCommands) showSignin:command
-                                     baseViewController:_viewController];
-  }
+  _addAccountSigninCoordinator = [SigninCoordinator
+      addAccountCoordinatorWithBaseViewController:_viewController
+                                          browser:self.browser
+                                     contextStyle:SigninContextStyle::kDefault
+                                      accessPoint:AccessPoint::kSettings
+                             continuationProvider:
+                                 DoNothingContinuationProvider()];
+  _addAccountSigninCoordinator.signinCompletion =
+      ^(SigninCoordinatorResult result, id<SystemIdentity> completionIdentity) {
+        [weakSelf addAccountToDeviceCompleted];
+      };
+  [_addAccountSigninCoordinator start];
 }
 
 - (void)signOutWithItemView:(UIView*)itemView {
   DCHECK(!_signoutCoordinator);
+  constexpr signin_metrics::ProfileSignout metricSignOut =
+      signin_metrics::ProfileSignout::kUserClickedSignoutSettings;
+
+  __weak __typeof(self) weakSelf = self;
   _signoutCoordinator = [[SignoutActionSheetCoordinator alloc]
       initWithBaseViewController:_viewController
                          browser:self.browser
                             rect:itemView.bounds
                             view:itemView
         forceSnackbarOverToolbar:NO
-                      withSource:signin_metrics::ProfileSignout::
-                                     kUserClickedSignoutSettings];
-  __weak __typeof(self) weakSelf = self;
-  _signoutCoordinator.signoutCompletion = ^(BOOL success) {
-    [weakSelf handleSignOutCompleted:success];
-  };
+                      withSource:metricSignOut
+                      completion:^(BOOL success, SceneState* scene_state) {
+                        [weakSelf handleSignOutCompleted:success];
+                      }];
   _signoutCoordinator.delegate = self;
   [_signoutCoordinator start];
 }
 
 #pragma mark - Private
+
+- (void)stopAddAccountCoordinator {
+  [_addAccountSigninCoordinator stop];
+  _addAccountSigninCoordinator = nil;
+}
 
 // Requests the delegate to stop the coordinator, if set. Otherwise stop itself.
 - (void)requestStop {
@@ -319,9 +317,8 @@ using signin_metrics::PromoAction;
 - (void)removeAccountDialogConfirmedWithIdentity:(id<SystemIdentity>)identity {
   [self dismissConfirmRemoveIdentityAlertCoordinator];
 
-  ProfileIOS* profile = self.browser->GetProfile();
   NSArray<id<SystemIdentity>>* identitiesOnDevice =
-      signin::GetIdentitiesOnDevice(profile);
+      signin::GetIdentitiesOnDevice(self.profile);
   if (![identitiesOnDevice containsObject:identity]) {
     // If the identity was removed by another way (another window, another app
     // or by gaia), there is nothing to do.
@@ -351,9 +348,8 @@ using signin_metrics::PromoAction;
 - (void)forgetIdentityDone {
   _UIBlocker.reset();
   [_viewController allowUserInteraction];
-  ProfileIOS* profile = self.browser->GetProfile();
-  if (!AuthenticationServiceFactory::GetForProfile(profile)->HasPrimaryIdentity(
-          signin::ConsentLevel::kSignin)) {
+  if (!AuthenticationServiceFactory::GetForProfile(self.profile)
+           ->HasPrimaryIdentity(signin::ConsentLevel::kSignin)) {
     // If there is no signed-in account after identity removal, then the primary
     // identity was removed, and there is no signed-in account at this stage.
     [self closeSettings];
@@ -390,6 +386,7 @@ using signin_metrics::PromoAction;
 }
 
 - (void)addAccountToDeviceCompleted {
+  [self stopAddAccountCoordinator];
   [_viewController allowUserInteraction];
   if (_closeSettingsOnAddAccount) {
     [self closeSettings];
@@ -402,10 +399,8 @@ using signin_metrics::PromoAction;
   if (!success) {
     return;
   }
-  ProfileIOS* profile = self.browser->GetProfile();
-  CHECK(
-      !AuthenticationServiceFactory::GetForProfile(profile)->HasPrimaryIdentity(
-          signin::ConsentLevel::kSignin));
+  CHECK(!AuthenticationServiceFactory::GetForProfile(self.profile)
+             ->HasPrimaryIdentity(signin::ConsentLevel::kSignin));
   [self closeSettings];
 }
 

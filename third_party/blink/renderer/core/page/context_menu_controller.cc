@@ -45,6 +45,7 @@
 #include "third_party/blink/public/web/web_plugin.h"
 #include "third_party/blink/public/web/web_text_check_client.h"
 #include "third_party/blink/renderer/core/annotation/annotation_agent_container_impl.h"
+#include "third_party/blink/renderer/core/annotation/annotation_agent_impl.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
@@ -93,8 +94,10 @@
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
+#include "third_party/blink/renderer/core/svg/svg_a_element.h"
 #include "third_party/blink/renderer/platform/bindings/script_regexp.h"
 #include "third_party/blink/renderer/platform/exported/wrapped_resource_response.h"
+#include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_visitor.h"
 
 namespace blink {
@@ -374,8 +377,9 @@ static int ComputeEditFlags(Document& selected_document, Editor& editor) {
   if (IsA<HTMLDocument>(selected_document) ||
       selected_document.IsXHTMLDocument()) {
     edit_flags |= ContextMenuDataEditFlags::kCanTranslate;
-    if (selected_document.queryCommandEnabled("selectAll", ASSERT_NO_EXCEPTION))
+    if (editor.IsCommandEnabled("selectAll")) {
       edit_flags |= ContextMenuDataEditFlags::kCanSelectAll;
+    }
   }
   return edit_flags;
 }
@@ -421,7 +425,7 @@ bool ContextMenuController::ShouldShowContextMenuFromTouch(
          !data.link_url.is_empty() ||
          data.media_type == mojom::blink::ContextMenuDataMediaType::kImage ||
          data.media_type == mojom::blink::ContextMenuDataMediaType::kVideo ||
-         data.is_editable || data.opened_from_highlight ||
+         data.is_editable || data.annotation_type ||
          !data.selected_text.empty();
 }
 
@@ -499,6 +503,29 @@ bool ContextMenuController::ShowContextMenu(LocalFrame* frame,
     data.title_text = html_element->title().Utf8();
     data.alt_text = html_element->AltText().Utf8();
   }
+
+  if (source_type == kMenuSourceLongPress ||
+      source_type == kMenuSourceLongTap) {
+    for (Node* node = result.InnerNode(); node; node = node->parentNode()) {
+      if (HTMLElement* element = DynamicTo<HTMLElement>(node);
+          element && element->InterestTargetElement()) {
+        auto* context = element->GetDocument().GetExecutionContext();
+        CHECK(RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled(
+            context));
+        data.opened_from_interest_target = true;
+        if (RuntimeEnabledFeatures::
+                HTMLInterestTargetContextMenuItemOnlyEnabled(context)) {
+          data.interest_target_node_id = element->NodeID();
+        } else {
+          static_assert(kInvalidDOMNodeId == 0,
+                        "The Android Java code assumes 0 === invalid");
+          data.interest_target_node_id = kInvalidDOMNodeId;
+        }
+        break;
+      }
+    }
+  }
+
   if (!result.AbsoluteMediaURL().IsEmpty() ||
       result.GetMediaStreamDescriptor() || result.GetMediaSourceHandle()) {
     if (!result.AbsoluteMediaURL().IsEmpty())
@@ -627,9 +654,15 @@ bool ContextMenuController::ShowContextMenu(LocalFrame* frame,
     if (potential_image_node != nullptr &&
         IsA<HTMLCanvasElement>(potential_image_node)) {
       data.media_type = mojom::blink::ContextMenuDataMediaType::kCanvas;
-      // TODO(crbug.com/1267243): Support WebGPU canvas.
+#if BUILDFLAG(IS_LINUX)
+      // TODO(crbug.com/40902474): Support reading from the WebGPU front buffer
+      // on Linux and remove the below code, which results in "Copy Image" and
+      // "Save Image To" being grayed out in the context menu.
       data.has_image_contents =
           !To<HTMLCanvasElement>(potential_image_node)->IsWebGPU();
+#else
+      data.has_image_contents = true;
+#endif
     } else if (potential_image_node != nullptr &&
                !HitTestResult::AbsoluteImageURL(potential_image_node)
                     .IsEmpty()) {
@@ -684,8 +717,9 @@ bool ContextMenuController::ShowContextMenu(LocalFrame* frame,
   if (result.InnerNodeFrame()) {
     result.InnerNodeFrame()->View()->UpdateAllLifecyclePhasesExceptPaint(
         DocumentUpdateReason::kHitTest);
-    if (TextFragmentHandler::IsOverTextFragment(result)) {
-      data.opened_from_highlight = true;
+    if (std::optional<mojom::blink::AnnotationType> annotation =
+            AnnotationAgentImpl::IsOverAnnotation(result)) {
+      data.annotation_type = annotation;
     }
   }
 
@@ -774,6 +808,20 @@ bool ContextMenuController::ShowContextMenu(LocalFrame* frame,
             selected_frame->GetAttributionSrcLoader()) {
       data.impression = attribution_src_loader->PrepareContextMenuNavigation(
           result.AbsoluteLinkURL(), anchor);
+    }
+  }
+
+  if (RuntimeEnabledFeatures::SvgAnchorElementRelAttributesEnabled()) {
+    if (auto* anchor = DynamicTo<SVGAElement>(result.URLElement())) {
+      // TODO(dmangal): Add support for `download` attribute
+
+      // If the anchor wants to suppress the referrer, update the referrerPolicy
+      // accordingly.
+      if (anchor->HasRel(kRelationNoReferrer)) {
+        data.referrer_policy = network::mojom::ReferrerPolicy::kNever;
+      }
+
+      data.link_text = anchor->innerText().Utf8();
     }
   }
 

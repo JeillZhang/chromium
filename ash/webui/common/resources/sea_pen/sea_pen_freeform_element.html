@@ -46,6 +46,12 @@
     background-color: var(--cros-sys-hover_on_subtle);
   }
 
+  #tabContainer {
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+  }
+
   #tabContainer,
   #promptingGuide {
     flex-grow: 1;
@@ -60,6 +66,7 @@
     font: var(--cros-annotation-1-font);
     margin-top: 16px;
     padding-inline-end: 0;
+    padding-inline-start: 16px;
   }
 
   #shuffle {
@@ -89,7 +96,7 @@
   </iron-a11y-keys>
   <div
       id="tabContainer"
-      hidden="[[isTabContainerHidden_(seaPenQuery_, thumbnailResponseStatusCode_)]]"
+      hidden="[[isTabContainerHidden_(seaPenQuery_, thumbnailResponseStatusCode_, thumbnails_)]]"
       role="tablist">
     <cr-button id="resultsTab"
         aria-selected="[[isResultsTabSelected_(freeformTab_)]]"
@@ -123,14 +130,17 @@
       </div>
       <cr-button
           id="shuffle"
-          aria-description="$i18n{seaPenFreeformAriaLabelSamplePrompts}"
+          aria-description$="[[i18n('seaPenFreeformAriaLabelSamplePrompts')]]"
           on-click="onShuffleClicked_">
         <iron-icon icon="personalization-shared:refresh" slot="prefix-icon">
         </iron-icon>
         <p>[[i18n('seaPenFreeformShuffle')]]</p>
       </cr-button>
     </div>
-    <sea-pen-samples samples="[[samples]]"></sea-pen-samples>
+    <sea-pen-samples
+        is-tab-hidden="[[isTabContainerHidden_(seaPenQuery_, thumbnailResponseStatusCode_, thumbnails_)]]"
+        samples="[[samples]]">
+    </sea-pen-samples>
     <sea-pen-recent-wallpapers></sea-pen-recent-wallpapers>
   </div>
 </template>

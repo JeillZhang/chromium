@@ -18,9 +18,11 @@
 #include "chrome/browser/translate/translate_test_utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/views/translate/translate_bubble_controller.h"
 #include "chrome/browser/ui/views/translate/translate_bubble_view.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
@@ -198,8 +200,9 @@ class TranslateBubbleViewUITest
   }
 
   TranslateBubbleView* GetCurrentTranslateBubble() {
-    return TranslateBubbleController::FromWebContents(
-               browser()->tab_strip_model()->GetActiveWebContents())
+    return browser()
+        ->GetFeatures()
+        .translate_bubble_controller()
         ->GetTranslateBubble();
   }
 

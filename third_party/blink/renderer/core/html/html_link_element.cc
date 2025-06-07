@@ -28,6 +28,7 @@
 #include <utility>
 
 #include "base/numerics/safe_conversions.h"
+#include "base/trace_event/typed_macros.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/public/platform/web_icon_sizes_parser.h"
 #include "third_party/blink/public/platform/web_prescient_networking.h"
@@ -73,7 +74,6 @@ void HTMLLinkElement::ParseAttribute(
     RemoveExpectRenderBlockingLink();
 
     rel_attribute_ = LinkRelAttribute(value);
-    // TODO(vmpstr): Add rel=expect to UseCounter.
     AddExpectRenderBlockingLinkIfNeeded();
 
     if (rel_attribute_.IsMonetization() &&
@@ -101,6 +101,20 @@ void HTMLLinkElement::ParseAttribute(
         GetDocument().IsInOutermostMainFrame()) {
       UseCounter::Count(&GetDocument(), WebFeature::kLinkRelFacilitatedPayment);
       MaybeHandlePaymentLink();
+    }
+    if (rel_attribute_.IsPreconnect()) {
+      TRACE_EVENT_INSTANT(
+          TRACE_DISABLED_BY_DEFAULT("devtools.timeline"), "LinkPreconnect",
+          "data", [&](perfetto::TracedValue context) {
+            auto dict = std::move(context).WriteDictionary();
+            if (GetDocument().GetFrame()) {
+              dict.Add("frame",
+                       GetDocument().GetFrame()->GetFrameIdForTracing());
+            }
+            dict.Add("node_id", GetDomNodeId());
+            const KURL& url = GetNonEmptyURLAttribute(html_names::kHrefAttr);
+            dict.Add("url", url.GetString());
+          });
     }
     rel_list_->DidUpdateAttributeValue(params.old_value, value);
     Process();
@@ -431,7 +445,8 @@ void HTMLLinkElement::HandleExpectBlockingChanges() {
     return;
   }
 
-  if (blocking_attribute_->HasRenderToken()) {
+  if (blocking_attribute_->HasRenderToken() ||
+      blocking_attribute_->HasFullFrameRateToken()) {
     AddExpectRenderBlockingLinkIfNeeded();
   } else {
     RemoveExpectRenderBlockingLink();
@@ -508,16 +523,19 @@ void HTMLLinkElement::AddExpectRenderBlockingLinkIfNeeded(
     return;
   }
 
+  UseCounter::CountWebDXFeature(&GetDocument(), WebDXFeature::kLinkRelExpect);
+
   bool media_matches = media_known_to_match || MediaQueryMatches();
-  bool is_blocking_render = blocking_attribute_->HasRenderToken();
-  if (!media_matches || !is_blocking_render || !isConnected()) {
+  RenderBlockingLevel blocking_level = blocking_attribute_->GetBlockingLevel();
+  if (!media_matches || blocking_level == RenderBlockingLevel::kNone ||
+      !isConnected()) {
     return;
   }
 
   if (auto* render_blocking_resource_manager =
           GetDocument().GetRenderBlockingResourceManager()) {
     render_blocking_resource_manager->AddPendingParsingElementLink(
-        ParseSameDocumentIdFromHref(href), this);
+        ParseSameDocumentIdFromHref(href), this, blocking_level);
   }
 }
 

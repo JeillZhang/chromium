@@ -26,11 +26,13 @@ WebAppFilter WebAppFilter::OpensInDedicatedWindow() {
 }
 
 // static
+#if !BUILDFLAG(IS_CHROMEOS)
 WebAppFilter WebAppFilter::CapturesLinksInScope() {
   WebAppFilter filter;
   filter.captures_links_in_scope_ = true;
   return filter;
 }
+#endif
 
 // static
 WebAppFilter WebAppFilter::IsIsolatedApp() {
@@ -79,6 +81,13 @@ WebAppFilter WebAppFilter::InstalledInOperatingSystemForTesting() {
   CHECK_IS_TEST();
   WebAppFilter filter;
   filter.installed_in_os_ = true;
+  return filter;
+}
+
+// static
+WebAppFilter WebAppFilter::IsDiyWithOsShortcut() {
+  WebAppFilter filter;
+  filter.is_diy_with_os_shortcut_ = true;
   return filter;
 }
 

@@ -9,19 +9,30 @@
 
 #include <map>
 #include <optional>
+#include <vector>
 
 #include "base/containers/circular_deque.h"
+#include "base/containers/flat_set.h"
+#include "base/containers/ring_buffer.h"
 #include "base/functional/callback.h"
+#include "base/observer_list.h"
+#include "base/observer_list_types.h"
 #include "cc/cc_export.h"
+#include "cc/metrics/frame_info.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 
 namespace cc {
 
-struct FrameInfo;
+// FrameSorterObserver class notifies registered
+// observers when frames are flushed by the FrameSorter.
+class FrameSorterObserver : public base::CheckedObserver {
+ public:
+  virtual void AddSortedFrame(const viz::BeginFrameArgs&, const FrameInfo&) = 0;
+};
 
 // This class is used to process the frames in order of initiation.
-// So regardless of which order frames are terminated, the  callback function
-// will frames sorter will br called on the frames in the order of initiation
+// So regardless of which order frames are terminated, the frames
+// sorter will be called on the frames in the order of initiation
 // (e.g. frame_time of that frame).
 class CC_EXPORT FrameSorter {
  public:
@@ -41,10 +52,9 @@ class CC_EXPORT FrameSorter {
     bool should_ignore_ = false;    // Flags if there was a reset prior to acks.
   };
 
-  using InOrderBeginFramesCallback =
-      base::RepeatingCallback<void(const viz::BeginFrameArgs&,
-                                   const FrameInfo&)>;
-  explicit FrameSorter(InOrderBeginFramesCallback callback);
+  FrameSorter();
+  void AddObserver(FrameSorterObserver* frame_sorter_observer);
+  void RemoveObserver(FrameSorterObserver* frame_sorter_observer);
   ~FrameSorter();
 
   FrameSorter(const FrameSorter&) = delete;
@@ -52,6 +62,9 @@ class CC_EXPORT FrameSorter {
 
   // The frames must be added in the correct order.
   void AddNewFrame(const viz::BeginFrameArgs& args);
+
+  // Called on all frames, including those before FirstContentfulPaint.
+  void AddFrameInfoToBuffer(const FrameInfo& frame_info);
 
   // The results can be added in any order. However, the frame must have been
   // added by an earlier call to |AddNewFrame()|.
@@ -61,6 +74,20 @@ class CC_EXPORT FrameSorter {
   // Check if a frame has been previously reported as dropped.
   bool IsAlreadyReportedDropped(const viz::BeginFrameId& id) const;
 
+  // Ring buffer which keeps a state shorthand of recently finished frames.
+  typedef base::RingBuffer<FrameInfo::FrameFinalState, 180> RingBufferType;
+  RingBufferType::Iterator Begin() const { return ring_buffer_.Begin(); }
+  // `End()` points to the last `FrameState`, not past it.
+  RingBufferType::Iterator End() const { return ring_buffer_.End(); }
+
+  // For requesting recent frame state information.
+  size_t frame_history_size() const { return ring_buffer_.BufferSize(); }
+  size_t total_frames() const { return total_frames_; }
+  size_t total_dropped() const { return total_dropped_; }
+  size_t total_partial() const { return total_partial_; }
+
+  uint32_t GetAverageThroughput() const;
+
   void Reset();
 
  private:
@@ -69,7 +96,7 @@ class CC_EXPORT FrameSorter {
   const uint64_t kPendingFramesMaxSize = 300u;
 
   // The callback to run for each flushed frame.
-  const InOrderBeginFramesCallback flush_callback_;
+  base::ObserverList<FrameSorterObserver> observers_;
 
   // Frames which are started.
   base::circular_deque<viz::BeginFrameArgs> pending_frames_;
@@ -77,6 +104,13 @@ class CC_EXPORT FrameSorter {
   // State of each frame in terms of ack expectation.
   std::map<viz::BeginFrameId, FrameState> frame_states_;
   std::map<viz::BeginFrameId, FrameInfo> frame_infos_;
+
+  // Ring buffer that stores the state of recently completed frames
+  // and the associated counters.
+  RingBufferType ring_buffer_;
+  size_t total_frames_ = 0;
+  size_t total_partial_ = 0;
+  size_t total_dropped_ = 0;
 
   std::optional<uint64_t> current_source_id_;
 };

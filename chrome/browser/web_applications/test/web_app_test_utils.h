@@ -11,7 +11,6 @@
 #include <optional>  // for optional, nullopt
 #include <string_view>
 
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_sub_manager.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_install_params.h"
@@ -51,10 +50,14 @@ struct CreateRandomWebAppParams {
   uint32_t seed = 0;
   bool non_zero = false;
   bool allow_system_source = true;
+  // External management types are often managed by systems that synchronize
+  // their installed apps, so if a test is writing apps and then starting the
+  // system, the external app managers will touch & modify apps that apply to
+  // them. Setting this to 'true' will prevent a generated app from having one
+  // of these management sources.
+  bool only_non_external_management_types = false;
 };
 std::unique_ptr<WebApp> CreateRandomWebApp(CreateRandomWebAppParams params);
-
-void MaybeEnsureShortcutAppsTreatedAsDiy(WebApp& app);
 
 void TestAcceptDialogCallback(
     base::WeakPtr<WebAppScreenshotFetcher>,
@@ -96,17 +99,6 @@ void SynchronizeOsIntegration(
 
 // Creates a few well-formed integrity block signatures.
 std::vector<web_package::SignedWebBundleSignatureInfo> CreateSignatures();
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-class ScopedSkipMainProfileCheck {
- public:
-  ScopedSkipMainProfileCheck();
-  ScopedSkipMainProfileCheck(const ScopedSkipMainProfileCheck&) = delete;
-  ScopedSkipMainProfileCheck& operator=(const ScopedSkipMainProfileCheck&) =
-      delete;
-  ~ScopedSkipMainProfileCheck();
-};
-#endif
 
 }  // namespace test
 }  // namespace web_app

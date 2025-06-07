@@ -4,8 +4,16 @@
 
 #include "ui/accessibility/ax_tree.h"
 
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
+
+#if BUILDFLAG(IS_LINUX)
+#include <atk/atk.h>
+#endif  // BUILDFLAG(IS_LINUX)
+
 #include "base/containers/contains.h"
 #include "base/scoped_observation.h"
+#include "base/strings/to_string.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -201,7 +209,7 @@ class TestAXTreeObserver final : public AXTreeObserver {
                         bool is_ignored_new_value) override {
     attribute_change_log_.push_back(
         base::StringPrintf("IsIgnored changed on node ID %d to %s", node->id(),
-                           is_ignored_new_value ? "true" : "false"));
+                           base::ToString(is_ignored_new_value)));
   }
 
   void OnStateChanged(AXTree* tree,
@@ -209,7 +217,7 @@ class TestAXTreeObserver final : public AXTreeObserver {
                       ax::mojom::State state,
                       bool new_value) override {
     attribute_change_log_.push_back(base::StringPrintf(
-        "%s changed to %s", ToString(state), new_value ? "true" : "false"));
+        "%s changed to %s", ToString(state), base::ToString(new_value)));
   }
 
   void OnStringAttributeChanged(AXTree* tree,
@@ -247,7 +255,7 @@ class TestAXTreeObserver final : public AXTreeObserver {
                               ax::mojom::BoolAttribute attr,
                               bool new_value) override {
     attribute_change_log_.push_back(base::StringPrintf(
-        "%s changed to %s", ToString(attr), new_value ? "true" : "false"));
+        "%s changed to %s", ToString(attr), base::ToString(new_value)));
   }
 
   void OnIntListAttributeChanged(
@@ -1420,6 +1428,85 @@ TEST(AXTreeTest, AttributeChangeCallbacks) {
   EXPECT_EQ("scrollX changed from 6 to 7", change_log2[8]);
   EXPECT_EQ("scrollXMin changed from 2 to 0", change_log2[9]);
   EXPECT_EQ("scrollXMax changed from 0 to 10", change_log2[10]);
+}
+
+TEST(AXTreeTest, BoolAttributeChangeCallbacks) {
+  AXTreeUpdate initial_state;
+  initial_state.root_id = 1;
+  initial_state.nodes.resize(1);
+  initial_state.nodes[0].id = 1;
+  initial_state.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kBusy,
+                                          false);
+  initial_state.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kModal,
+                                          true);
+  AXTree tree(initial_state);
+
+  // Scenario 1: Unset -> Explicitly False (should NOT trigger callback).
+  TestAXTreeObserver test_observer(&tree);
+  AXTreeUpdate update1;
+  update1.nodes.resize(1);
+  update1.nodes[0].id = 1;
+  // kLiveAtomic was unset, now set to false.
+  update1.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kLiveAtomic,
+                                    false);
+  // Keep others same for now.
+  update1.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kBusy, false);
+  update1.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kModal, true);
+  EXPECT_TRUE(tree.Unserialize(update1));
+
+  // kLiveAtomic: Unset (effective F) -> Explicit F. No change in effective
+  // value. Expect no change log entries.
+  EXPECT_EQ(0U, test_observer.attribute_change_log().size());
+
+  // Scenario 2: Explicitly False -> Unset (should NOT trigger callback).
+  // Current state: kLiveAtomic=F, kBusy=F, kModal=T.
+  TestAXTreeObserver test_observer2(&tree);
+  AXTreeUpdate update2;
+  update2.nodes.resize(1);
+  update2.nodes[0].id = 1;
+  // kBusy was F, now remove it (becomes unset, effective F).
+  // kLiveAtomic remains F, kModal remains T.
+  update2.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kLiveAtomic,
+                                    false);
+  update2.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kModal, true);
+  EXPECT_TRUE(tree.Unserialize(update2));
+
+  // kBusy: Explicit F -> Unset (effective F). No change in effective value.
+  // Expect no change log entries.
+  EXPECT_EQ(0U, test_observer2.attribute_change_log().size());
+
+  // Scenario 3: Unset -> Explicitly True (SHOULD trigger callback).
+  // Current state: kLiveAtomic=F, kBusy=Unset (effective F), kModal=T.
+  TestAXTreeObserver test_observer3(&tree);
+  AXTreeUpdate update3;
+  update3.nodes.resize(1);
+  update3.nodes[0].id = 1;
+  // kBusy was Unset (effective F), now set to True.
+  update3.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kLiveAtomic,
+                                    false);
+  update3.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kBusy, true);
+  update3.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kModal, true);
+  EXPECT_TRUE(tree.Unserialize(update3));
+
+  // kBusy: Unset (effective F) -> True. Change expected.
+  EXPECT_EQ(1U, test_observer3.attribute_change_log().size());
+  EXPECT_EQ("busy changed to true", test_observer3.attribute_change_log()[0]);
+
+  // Scenario 4: Explicitly True -> Unset (SHOULD trigger callback).
+  // Current state: kLiveAtomic=F, kBusy=T, kModal=T.
+  TestAXTreeObserver test_observer4(&tree);
+  AXTreeUpdate update4;
+  update4.nodes.resize(1);
+  update4.nodes[0].id = 1;
+  // kModal was True, now remove it (becomes Unset, effective F).
+  update4.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kLiveAtomic,
+                                    false);
+  update4.nodes[0].AddBoolAttribute(ax::mojom::BoolAttribute::kBusy, true);
+  EXPECT_TRUE(tree.Unserialize(update4));
+
+  // kModal: True -> Unset (effective F). Change expected.
+  EXPECT_EQ(1U, test_observer4.attribute_change_log().size());
+  EXPECT_EQ("modal changed to false", test_observer4.attribute_change_log()[0]);
 }
 
 TEST(AXTreeTest, IntListChangeCallbacks) {
@@ -5055,5 +5142,211 @@ TEST(AXTreeTest, UnserializeErrors) {
       AXTreeUnserializeError::kNotInTree, 1);
 #endif
 }
+
+#if BUILDFLAG(IS_LINUX)
+TEST(AXTreeTest, CreateAndClearLinuxExtraAnnouncementNodes) {
+  AXNodeData root;
+  root.id = 1;
+  root.role = ax::mojom::Role::kRootWebArea;
+  AXNodeData child1;
+  child1.id = 2;
+  child1.role = ax::mojom::Role::kGenericContainer;
+
+  root.child_ids = {child1.id};
+
+  AXTreeUpdate initial_state;
+  initial_state.root_id = root.id;
+  initial_state.nodes = {root, child1};
+
+  AXTree tree(initial_state);
+
+  EXPECT_EQ(2, tree.size());
+
+  tree.CreateExtraAnnouncementNodes();
+  ASSERT_TRUE(tree.extra_announcement_nodes());
+  EXPECT_EQ(2, tree.extra_announcement_nodes()->Count());
+
+  // The AXTree creates the extra Linux nodes but does not keep track of them,
+  // the BrowserAccessibility tree keeps track of them. Therefore, the size of
+  // the tree should remain 2.
+  EXPECT_EQ(2, tree.size());
+
+  tree.ClearExtraAnnouncementNodes();
+  EXPECT_FALSE(tree.extra_announcement_nodes());
+}
+
+TEST(AXTreeTest, LinuxExtraAnnouncementNodeIndices) {
+  AXNodeData root;
+  root.id = 1;
+  root.role = ax::mojom::Role::kRootWebArea;
+  AXNodeData child1;
+  child1.id = 2;
+  child1.role = ax::mojom::Role::kGenericContainer;
+
+  root.child_ids = {child1.id};
+
+  AXTreeUpdate initial_state;
+  initial_state.root_id = root.id;
+  initial_state.nodes = {root, child1};
+
+  AXTree tree(initial_state);
+
+  EXPECT_EQ(2, tree.size());
+
+  tree.CreateExtraAnnouncementNodes();
+  ASSERT_TRUE(tree.extra_announcement_nodes());
+  EXPECT_EQ(2, tree.extra_announcement_nodes()->Count());
+  {
+    AXNode& assertive_node = tree.extra_announcement_nodes()->AssertiveNode();
+    AXNode& polite_node = tree.extra_announcement_nodes()->PoliteNode();
+
+    EXPECT_EQ(1U, assertive_node.index_in_parent());
+    EXPECT_EQ(1U, assertive_node.GetUnignoredIndexInParent());
+    EXPECT_EQ(2U, polite_node.index_in_parent());
+    EXPECT_EQ(2U, polite_node.GetUnignoredIndexInParent());
+  }
+
+  AXNodeData child2;
+  child2.id = 3;
+  child2.role = ax::mojom::Role::kGenericContainer;
+
+  root.child_ids = {child1.id, child2.id};
+
+  AXTreeUpdate update;
+  update.root_id = root.id;
+  update.nodes = {root, child1, child2};
+  ASSERT_TRUE(tree.Unserialize(update));
+
+  EXPECT_EQ(3, tree.size());
+
+  // Adding a child to the root should clear the extra announcement nodes.
+  EXPECT_FALSE(tree.extra_announcement_nodes());
+
+  tree.CreateExtraAnnouncementNodes();
+  ASSERT_TRUE(tree.extra_announcement_nodes());
+  EXPECT_EQ(2, tree.extra_announcement_nodes()->Count());
+
+  {
+    AXNode& assertive_node = tree.extra_announcement_nodes()->AssertiveNode();
+    AXNode& polite_node = tree.extra_announcement_nodes()->PoliteNode();
+
+    EXPECT_EQ(2U, assertive_node.index_in_parent());
+    EXPECT_EQ(2U, assertive_node.GetUnignoredIndexInParent());
+    EXPECT_EQ(3U, polite_node.index_in_parent());
+    EXPECT_EQ(3U, polite_node.GetUnignoredIndexInParent());
+  }
+
+  // Remove the first child.
+  root.child_ids = {child2.id};
+  AXTreeUpdate update2;
+  update2.root_id = root.id;
+  update2.nodes = {root, child2};
+  ASSERT_TRUE(tree.Unserialize(update2));
+
+  EXPECT_EQ(2, tree.size());
+
+  // Changing the root's children should clear the extra announcement nodes.
+  EXPECT_FALSE(tree.extra_announcement_nodes());
+
+  tree.CreateExtraAnnouncementNodes();
+  ASSERT_TRUE(tree.extra_announcement_nodes());
+  EXPECT_EQ(2, tree.extra_announcement_nodes()->Count());
+
+  {
+    AXNode& assertive_node = tree.extra_announcement_nodes()->AssertiveNode();
+    AXNode& polite_node = tree.extra_announcement_nodes()->PoliteNode();
+
+    EXPECT_EQ(1U, assertive_node.index_in_parent());
+    EXPECT_EQ(1U, assertive_node.GetUnignoredIndexInParent());
+    EXPECT_EQ(2U, polite_node.index_in_parent());
+    EXPECT_EQ(2U, polite_node.GetUnignoredIndexInParent());
+  }
+
+  // Remove the only remaining child.
+  root.child_ids = {};
+  AXTreeUpdate update3;
+  update3.root_id = root.id;
+  update3.nodes = {root};
+  ASSERT_TRUE(tree.Unserialize(update3));
+
+  EXPECT_EQ(1, tree.size());
+
+  EXPECT_FALSE(tree.extra_announcement_nodes());
+
+  tree.CreateExtraAnnouncementNodes();
+  ASSERT_TRUE(tree.extra_announcement_nodes());
+  EXPECT_EQ(2, tree.extra_announcement_nodes()->Count());
+
+  {
+    AXNode& assertive_node = tree.extra_announcement_nodes()->AssertiveNode();
+    AXNode& polite_node = tree.extra_announcement_nodes()->PoliteNode();
+
+    EXPECT_EQ(0U, assertive_node.index_in_parent());
+    EXPECT_EQ(0U, assertive_node.GetUnignoredIndexInParent());
+    EXPECT_EQ(1U, polite_node.index_in_parent());
+    EXPECT_EQ(1U, polite_node.GetUnignoredIndexInParent());
+  }
+
+  AXNodeData ignored_child;
+  ignored_child.id = 4;
+  ignored_child.AddState(ax::mojom::State::kIgnored);
+
+  root.child_ids = {ignored_child.id};
+
+  AXTreeUpdate update4;
+  update4.root_id = root.id;
+  update4.nodes = {root, ignored_child};
+  ASSERT_TRUE(tree.Unserialize(update4));
+
+  EXPECT_EQ(2, tree.size());
+
+  // Adding a child to the root should clear the extra announcement nodes.
+  EXPECT_FALSE(tree.extra_announcement_nodes());
+
+  tree.CreateExtraAnnouncementNodes();
+  ASSERT_TRUE(tree.extra_announcement_nodes());
+  EXPECT_EQ(2, tree.extra_announcement_nodes()->Count());
+
+  {
+    AXNode& assertive_node = tree.extra_announcement_nodes()->AssertiveNode();
+    AXNode& polite_node = tree.extra_announcement_nodes()->PoliteNode();
+
+    EXPECT_EQ(1U, assertive_node.index_in_parent());
+    EXPECT_EQ(0U, assertive_node.GetUnignoredIndexInParent());
+    EXPECT_EQ(2U, polite_node.index_in_parent());
+    EXPECT_EQ(1U, polite_node.GetUnignoredIndexInParent());
+  }
+}
+#endif  // BUILDFLAG(IS_LINUX)
+
+#if AX_FAIL_FAST_BUILD()
+TEST(AXTreeTest, ReparentToNewRoot) {
+  AXTreeUpdate initial_state;
+  initial_state.nodes.resize(2);
+  AXNodeData& initial_document = initial_state.nodes[0];
+  initial_document.id = 1;
+  initial_document.role = ax::mojom::Role::kRootWebArea;
+  initial_state.root_id = initial_document.id;
+
+  AXNodeData& child = initial_state.nodes[1];
+  child.id = 2;
+  child.role = ax::mojom::Role::kButton;
+  initial_document.child_ids = {child.id};
+
+  AXTree tree(initial_state);
+
+  AXTreeUpdate tree_update;
+  tree_update.nodes.resize(1);
+  AXNodeData& document = tree_update.nodes[0];
+  document.id = 3;
+  document.role = ax::mojom::Role::kRootWebArea;
+  tree_update.root_id = document.id;
+  document.child_ids.push_back(initial_document.id);
+
+  EXPECT_DEATH_IF_SUPPORTED(tree.Unserialize(tree_update),
+                            "Invalid tree construction: a previous root or "
+                            "orphaned node is being reparented.");
+}
+#endif
 
 }  // namespace ui

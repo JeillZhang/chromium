@@ -48,6 +48,8 @@
 #include "ash/test_shell_delegate.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/command_line.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
@@ -864,7 +866,7 @@ TEST_P(UnifiedSystemTrayTest, BubbleViewSizeChangeWithBigMainPage) {
 
 // Tests that there's no bubble in the kiosk mode.
 TEST_P(UnifiedSystemTrayTest, NoBubbleAndNoDetailedViewInKioskMode) {
-  SimulateKioskMode(user_manager::UserType::kKioskApp);
+  SimulateKioskMode(user_manager::UserType::kKioskChromeApp);
 
   auto* tray = GetPrimaryUnifiedSystemTray();
   tray->ShowBubble();
@@ -1014,7 +1016,8 @@ class UnifiedSystemTrayAccessibilityTest : public AshTestBase {
     std::unique_ptr<TestShellDelegate> shell_delegate =
         std::make_unique<TestShellDelegate>();
     shell_delegate->set_channel(version_info::Channel::BETA);
-    AshTestBase::SetUp(std::move(shell_delegate));
+    set_shell_delegate(std::move(shell_delegate));
+    AshTestBase::SetUp();
 
     scoped_fake_power_status_ = std::make_unique<ScopedFakePowerStatus>();
 
@@ -1128,11 +1131,8 @@ class UnifiedSystemTrayAccessibilityTest : public AshTestBase {
   void RegisterUserWithUserPrefs(const AccountId& account_id,
                                  user_manager::UserType user_type) {
     // Create a fake user prefs map.
-    GetSessionControllerClient()->Reset();
-    GetSessionControllerClient()->AddUserSession(user_email, user_type);
-    GetSessionControllerClient()->SwitchActiveUser(account_id);
-    GetSessionControllerClient()->SetSessionState(
-        session_manager::SessionState::ACTIVE);
+    ClearLogin();
+    SimulateUserLogin({user_email, user_type}, account_id);
   }
 
  protected:

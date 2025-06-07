@@ -11,6 +11,7 @@
 #include "base/functional/bind.h"
 #include "base/json/json_writer.h"
 #include "base/strings/stringprintf.h"
+#include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/primary_account_access_token_fetcher.h"
 #include "components/signin/public/identity_manager/scope_set.h"
@@ -30,10 +31,12 @@ namespace {
 //   `query`: Current omnibox query text, passed as an argument.
 //   `suggestion_types`: Types of suggestions requested. Ex. [1,2] indicates
 //   Query and Person Suggestions respectively.
+//   `experiment_id`: Hardcoded experiment ID expected by the server.
 // The format of the request is:
 //     {
 //       query: "`query`",
-//       suggestionTypes: `suggestion_types`
+//       suggestionTypes: `suggestion_types`,
+//       experimentIds: ["`experiment_id`"]
 //     }
 std::string BuildRequestBody(std::u16string query,
                              std::vector<int>& suggestion_types) {
@@ -44,8 +47,12 @@ std::string BuildRequestBody(std::u16string query,
   for (const auto& item : suggestion_types) {
     suggestion_types_list.Append(item);
   }
-
   root.Set("suggestionTypes", std::move(suggestion_types_list));
+
+  base::Value::List experiment_ids_list;
+  experiment_ids_list.Append(kEnterpriseSearchAggregatorExperimentId);
+  root.Set("experimentIds", std::move(experiment_ids_list));
+
   std::string result;
   base::JSONWriter::Write(root, &result);
   return result;
@@ -70,19 +77,24 @@ void EnterpriseSearchAggregatorSuggestionsService::
         CreationCallback creation_callback,
         StartCallback start_callback,
         CompletionCallback completion_callback,
-        bool in_keyword_mode) {
+        std::vector<std::vector<int>> suggestion_types) {
   DCHECK(suggest_url.is_valid());
 
-  auto request = std::make_unique<network::ResourceRequest>();
-  request->url = suggest_url;
-  request->method = "POST";
-  request->load_flags = net::LOAD_DO_NOT_SAVE_COOKIES;
+  auto requests = std::vector<std::unique_ptr<network::ResourceRequest>>{};
+  for (size_t i = 0; i < suggestion_types.size(); ++i) {
+    requests.push_back(std::make_unique<network::ResourceRequest>());
+  }
+  for (size_t i = 0; i < suggestion_types.size(); i++) {
+    requests[i]->url = suggest_url;
+    requests[i]->method = "POST";
+    requests[i]->load_flags = net::LOAD_DO_NOT_SAVE_COOKIES;
 
-  request->site_for_cookies = net::SiteForCookies::FromUrl(suggest_url);
-  variations::AppendVariationsHeaderUnknownSignedIn(
-      request->url, variations::InIncognito::kNo, request.get());
+    requests[i]->site_for_cookies = net::SiteForCookies::FromUrl(suggest_url);
+    variations::AppendVariationsHeaderUnknownSignedIn(
+        requests[i]->url, variations::InIncognito::kNo, requests[i].get());
 
-  std::move(creation_callback).Run(request.get());
+    creation_callback.Run(requests[i].get());
+  }
 
   net::NetworkTrafficAnnotationTag traffic_annotation =
       net::DefineNetworkTrafficAnnotation("omnibox_search_aggregator_suggest",
@@ -121,36 +133,36 @@ void EnterpriseSearchAggregatorSuggestionsService::
         }
       })");
 
-  // For now, exclude recent suggestions (4) and, outside of keyword mode,
-  // search suggestions (1).
-  // TODO(crbug.com/393480150): Support recent suggestions.
-  auto suggestion_types_list = in_keyword_mode ? std::vector<int>{1, 2, 3, 5}
-                                               : std::vector<int>{2, 3, 5};
-
-  const std::string& request_body =
-      BuildRequestBody(query, suggestion_types_list);
-
   // Create and fetch an OAuth2 token.
   signin::ScopeSet scopes;
 
-  // TODO(crbug.com/380631529): This is a temporary scope used for testing.
-  //   Update once final scope is setup.
-  scopes.insert(GaiaConstants::kCloudSearchQueryOAuth2Scope);
+  if (omnibox_feature_configs::SearchAggregatorProvider::Get()
+          .use_discovery_engine_oauth_scope) {
+    scopes.insert(GaiaConstants::kDiscoveryEngineCompleteQueryOAuth2Scope);
+  } else {
+    scopes.insert(GaiaConstants::kCloudSearchQueryOAuth2Scope);
+  }
   token_fetcher_ = std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
       "enterprise_search_aggregator_suggestions_service", identity_manager_,
       scopes,
       base::BindOnce(
           &EnterpriseSearchAggregatorSuggestionsService::AccessTokenAvailable,
-          base::Unretained(this), std::move(request), std::move(request_body),
-          traffic_annotation, std::move(start_callback),
-          std::move(completion_callback)),
+          base::Unretained(this), std::move(requests), std::move(query),
+          std::move(suggestion_types), traffic_annotation,
+          std::move(start_callback), std::move(completion_callback)),
       signin::PrimaryAccountAccessTokenFetcher::Mode::kWaitUntilAvailable,
       signin::ConsentLevel::kSignin);
 }
 
+void EnterpriseSearchAggregatorSuggestionsService::
+    StopCreatingEnterpriseSearchAggregatorSuggestionsRequest() {
+  token_fetcher_.reset();
+}
+
 void EnterpriseSearchAggregatorSuggestionsService::AccessTokenAvailable(
-    std::unique_ptr<network::ResourceRequest> request,
-    std::string request_body,
+    std::vector<std::unique_ptr<network::ResourceRequest>> requests,
+    const std::u16string& query,
+    std::vector<std::vector<int>> suggestion_types,
     net::NetworkTrafficAnnotationTag traffic_annotation,
     StartCallback start_callback,
     CompletionCallback completion_callback,
@@ -158,18 +170,29 @@ void EnterpriseSearchAggregatorSuggestionsService::AccessTokenAvailable(
     signin::AccessTokenInfo access_token_info) {
   DCHECK(token_fetcher_);
   token_fetcher_.reset();
+
+  auto request_bodies = std::vector<std::string>{};
+  for (auto suggestion_type : suggestion_types) {
+    const std::string& request_body = BuildRequestBody(query, suggestion_type);
+    request_bodies.push_back(request_body);
+  }
+
   // If there were no errors obtaining the access token, append it to the
   // request as a header.
   if (error.state() == GoogleServiceAuthError::NONE) {
     DCHECK(!access_token_info.token.empty());
-    request->headers.SetHeader(
-        "Authorization",
-        base::StringPrintf("Bearer %s", access_token_info.token.c_str()));
+    for (const auto& request : requests) {
+      request->headers.SetHeader(
+          "Authorization",
+          base::StringPrintf("Bearer %s", access_token_info.token.c_str()));
+    }
   }
 
-  StartDownloadAndTransferLoader(std::move(request), std::move(request_body),
-                                 traffic_annotation, std::move(start_callback),
-                                 std::move(completion_callback));
+  for (size_t i = 0; i < requests.size(); ++i) {
+    StartDownloadAndTransferLoader(
+        std::move(requests[i]), std::move(request_bodies[i]),
+        traffic_annotation, start_callback, completion_callback, i);
+  }
 }
 
 // TODO(crbug.com/385756623): Factor out this method so it can be used across
@@ -181,7 +204,8 @@ void EnterpriseSearchAggregatorSuggestionsService::
         std::string request_body,
         net::NetworkTrafficAnnotationTag traffic_annotation,
         StartCallback start_callback,
-        CompletionCallback completion_callback) {
+        CompletionCallback completion_callback,
+        int request_index) {
   if (!url_loader_factory_) {
     return;
   }
@@ -193,7 +217,7 @@ void EnterpriseSearchAggregatorSuggestionsService::
   }
   loader->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
       url_loader_factory_.get(),
-      base::BindOnce(std::move(completion_callback), loader.get()));
+      base::BindOnce(completion_callback, loader.get(), request_index));
 
-  std::move(start_callback).Run(std::move(loader), request_body);
+  std::move(start_callback).Run(request_index, std::move(loader), request_body);
 }

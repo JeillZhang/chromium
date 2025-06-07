@@ -16,12 +16,14 @@ import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
@@ -30,7 +32,7 @@ import org.chromium.chrome.browser.commerce.CommerceBottomSheetContentController
 import org.chromium.chrome.browser.price_insights.PriceInsightsBottomSheetCoordinator.PriceInsightsDelegate;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.toolbar.ButtonData;
+import org.chromium.chrome.browser.toolbar.optional_button.ButtonData;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.SheetState;
@@ -44,6 +46,7 @@ import org.chromium.ui.modaldialog.ModalDialogManager;
 @RunWith(BaseRobolectricTestRunner.class)
 public class PriceInsightsButtonControllerTest {
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private Tab mMockTab;
     @Mock private Supplier<TabBookmarker> mMockTabBookmarkerSupplier;
     @Mock private Supplier<Tab> mMockTabSupplier;
@@ -62,7 +65,6 @@ public class PriceInsightsButtonControllerTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         CommerceFeatureUtilsJni.setInstanceForTesting(mCommerceFeatureUtilsJniMock);
 
         Context mockContext = mock(Context.class);

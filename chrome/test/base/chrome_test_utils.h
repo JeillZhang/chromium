@@ -7,7 +7,6 @@
 
 #include "build/build_config.h"
 #include "chrome/test/base/platform_browser_test.h"
-#include "url/gurl.h"
 
 namespace content {
 class WebContents;
@@ -34,6 +33,10 @@ Profile* GetProfile(const PlatformBrowserTest* browser_test);
 
 // Returns the test data path used by the embedded test server.
 base::FilePath GetChromeTestDataDir();
+
+// Overrides the path chrome::DIR_TEST_DATA. Used early in test startup so the
+// value is available in constructors and SetUp methods.
+void OverrideChromeTestDataDir();
 
 }  // namespace chrome_test_utils
 

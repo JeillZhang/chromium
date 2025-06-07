@@ -11,6 +11,7 @@ import android.content.Context;
 import org.chromium.base.ObserverList;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
@@ -29,6 +30,7 @@ import java.util.Set;
  *
  * <p>This class serves as a single chrome home modules setting logic gateway.
  */
+@NullMarked
 public class HomeModulesConfigManager {
     /** An interface to use for getting home modules related updates. */
     interface HomeModulesStateListener {
@@ -117,7 +119,7 @@ public class HomeModulesConfigManager {
      * @param moduleType {@link ModuleType} needed to be notified to the listeners.
      * @param enabled True is the module type is enabled.
      */
-    void setPrefModuleTypeEnabled(@ModuleType int moduleType, boolean enabled) {
+    public void setPrefModuleTypeEnabled(@ModuleType int moduleType, boolean enabled) {
         mSharedPreferencesManager.writeBoolean(getSettingsPreferenceKey(moduleType), enabled);
         notifyModuleTypeUpdated(moduleType, enabled);
     }
@@ -142,10 +144,20 @@ public class HomeModulesConfigManager {
     @ModuleType
     public List<Integer> getModuleListShownInSettings() {
         @ModuleType List<Integer> moduleListShownInSettings = new ArrayList<>();
+        boolean isEducationalTipModuleAdded = false;
+
         for (Entry<Integer, ModuleConfigChecker> entry : mModuleConfigCheckerMap.entrySet()) {
             ModuleConfigChecker configChecker = entry.getValue();
             if (configChecker.isEligible()) {
-                moduleListShownInSettings.add(entry.getKey());
+                int moduleType = entry.getKey();
+                if (HomeModulesUtils.belongsToEducationalTipModule(moduleType)) {
+                    // All the educational tip modules are controlled by the same preference.
+                    if (isEducationalTipModuleAdded) continue;
+
+                    isEducationalTipModuleAdded = true;
+                }
+
+                moduleListShownInSettings.add(moduleType);
             }
         }
         return moduleListShownInSettings;
@@ -164,12 +176,6 @@ public class HomeModulesConfigManager {
     /** Returns the preference key of the module type. */
     String getSettingsPreferenceKey(@ModuleType int moduleType) {
         assert 0 <= moduleType && moduleType < ModuleType.NUM_ENTRIES;
-
-        // SINGLE_TAB and TAB_RESUMPTION modules are controlled by the same preference key.
-        if (moduleType == ModuleType.SINGLE_TAB) {
-            return ChromePreferenceKeys.HOME_MODULES_MODULE_TYPE.createKey(
-                    String.valueOf(ModuleType.TAB_RESUMPTION));
-        }
 
         // All the educational tip modules are controlled by the same preference key.
         if (HomeModulesUtils.belongsToEducationalTipModule(moduleType)) {

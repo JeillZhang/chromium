@@ -215,7 +215,9 @@ void WebTestBrowserMainRunner::Initialize() {
     // only default to a software GL if the flag isn't already specified.
     if (!command_line.HasSwitch(switches::kUseGpuInTests) &&
         !command_line.HasSwitch(switches::kUseGL)) {
-      gl::SetSoftwareGLCommandLineSwitches(&command_line);
+      gl::SetGLImplementationCommandLineSwitches(
+          gl::GLImplementationParts(gl::ANGLEImplementation::kSwiftShader),
+          &command_line);
     }
   }
   command_line.AppendSwitchASCII(switches::kTouchEventFeatureDetection,
@@ -274,20 +276,11 @@ void WebTestBrowserMainRunner::Initialize() {
     command_line.AppendSwitch(switches::kDisableGpuRasterization);
 
 #if BUILDFLAG(IS_MAC) && defined(ARCH_CPU_ARM64)
-  if (base::mac::MacOSMajorVersion() == 14) {
-    // If Graphite is not explicitly disabled, enable it. This is to use
-    // Graphite as the renderer for web tests on all bots for this platform
-    // except those explicitly testing Ganesh.
-    if (!command_line.HasSwitch(switches::kDisableSkiaGraphite)) {
-      command_line.AppendSwitch(switches::kEnableSkiaGraphite);
-    }
-  } else {
-    // If Graphite is not explicitly enabled, disable it. This is to keep using
-    // Ganesh as renderer for web tests for now until we finish rebaselining all
-    // images for Graphite renderer.
-    if (!command_line.HasSwitch(switches::kEnableSkiaGraphite)) {
-      command_line.AppendSwitch(switches::kDisableSkiaGraphite);
-    }
+  // If Graphite is not explicitly disabled, enable it. This is to use
+  // Graphite as the renderer for web tests on all bots for this platform
+  // except those explicitly testing Ganesh.
+  if (!command_line.HasSwitch(switches::kDisableSkiaGraphite)) {
+    command_line.AppendSwitch(switches::kEnableSkiaGraphite);
   }
 #else
   // If Graphite is not explicitly enabled, disable it. This is to keep using

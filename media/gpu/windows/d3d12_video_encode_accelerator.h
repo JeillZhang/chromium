@@ -5,14 +5,17 @@
 #ifndef MEDIA_GPU_WINDOWS_D3D12_VIDEO_ENCODE_ACCELERATOR_H_
 #define MEDIA_GPU_WINDOWS_D3D12_VIDEO_ENCODE_ACCELERATOR_H_
 
-#include <d3d12.h>
-#include <d3d12video.h>
+#include "third_party/microsoft_dxheaders/src/include/directx/d3d12.h"
+#include "third_party/microsoft_dxheaders/src/include/directx/d3d12video.h"
+// Windows SDK headers should be included after DirectX headers.
+
 #include <wrl.h>
 
 #include <vector>
 
 #include "base/containers/queue.h"
 #include "media/base/bitstream_buffer.h"
+#include "media/base/encoder_status.h"
 #include "media/base/media_log.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_frame_converter.h"
@@ -44,10 +47,12 @@ class MEDIA_GPU_EXPORT D3D12VideoEncodeAccelerator
       std::unique_ptr<VideoEncodeDelegateFactoryInterface> encoder_factory);
 
   SupportedProfiles GetSupportedProfiles() override;
-  bool Initialize(const Config& config,
-                  Client* client,
-                  std::unique_ptr<MediaLog> media_log) override;
+  EncoderStatus Initialize(const Config& config,
+                           Client* client,
+                           std::unique_ptr<MediaLog> media_log) override;
   void Encode(scoped_refptr<VideoFrame> frame, bool force_keyframe) override;
+  void Encode(scoped_refptr<VideoFrame> frame,
+              const VideoEncoder::EncodeOptions& options) override;
   void UseOutputBitstreamBuffer(BitstreamBuffer buffer) override;
   void RequestEncodingParametersChange(
       const Bitrate& bitrate,
@@ -75,10 +80,11 @@ class MEDIA_GPU_EXPORT D3D12VideoEncodeAccelerator
   Microsoft::WRL::ComPtr<ID3D12Resource>
   CreateResourceForSharedMemoryVideoFrame(const VideoFrame& frame);
 
-  void EncodeTask(scoped_refptr<VideoFrame> frame, bool force_keyframe);
+  void EncodeTask(scoped_refptr<VideoFrame> frame,
+                  const VideoEncoder::EncodeOptions& options);
 
   void DoEncodeTask(scoped_refptr<VideoFrame> frame,
-                    bool force_keyframe,
+                    const VideoEncoder::EncodeOptions& options,
                     const BitstreamBuffer& bitstream_buffer);
 
   void DestroyTask();

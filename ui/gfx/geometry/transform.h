@@ -138,7 +138,6 @@ class COMPONENT_EXPORT(GEOMETRY_SKIA) Transform {
       return matrix_ == rhs.matrix_;
     return GetFullMatrix() == rhs.GetFullMatrix();
   }
-  bool operator!=(const Transform& rhs) const { return !(*this == rhs); }
 
   // Gets a value at |row|, |col| from the matrix.
   constexpr double rc(int row, int col) const {
@@ -543,6 +542,9 @@ class COMPONENT_EXPORT(GEOMETRY_SKIA) Transform {
 
   // Rounds 2d translation components rc(0, 3), rc(1, 3) to integers.
   void Round2dTranslationComponents();
+
+  // Makes rc(0, 3) and rc(1, 3) components integers by flooring.
+  void Floor2dTranslationComponents();
 
   // Rounds translation components to integers, and all other components to
   // identity. Normally this function is meaningful only if

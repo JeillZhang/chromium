@@ -6,6 +6,7 @@
 
 #include <optional>
 #include <string_view>
+#include <variant>
 
 #include "base/base64.h"
 #include "base/check_deref.h"
@@ -46,7 +47,6 @@
 #include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_builder.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/key_distribution/test_utils.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/test_signed_web_bundle_builder.h"
-#include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest.h"
 #include "chrome/browser/web_applications/test/web_app_icon_test_utils.h"
 #include "chrome/browser/web_applications/test/web_app_test_observers.h"
 #include "chrome/browser/web_applications/test/web_app_test_utils.h"
@@ -57,6 +57,7 @@
 #include "components/component_updater/component_updater_paths.h"
 #include "components/prefs/pref_service.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
+#include "components/webapps/isolated_web_apps/update_channel.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/service_worker_context.h"
 #include "content/public/browser/service_worker_context_observer.h"
@@ -992,8 +993,16 @@ IN_PROC_BROWSER_TEST_F(IsolatedWebAppUpdateManagerBrowserTest,
                                     /*expected_count=*/0);
 }
 
+// TODO(b/402650079) flaky on mac
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_SucceedsWithServiceWorkerWithFetchHandler \
+  DISABLED_SucceedsWithServiceWorkerWithFetchHandler
+#else
+#define MAYBE_SucceedsWithServiceWorkerWithFetchHandler \
+  SucceedsWithServiceWorkerWithFetchHandler
+#endif
 IN_PROC_BROWSER_TEST_F(IsolatedWebAppUpdateManagerBrowserTest,
-                       SucceedsWithServiceWorkerWithFetchHandler) {
+                       MAYBE_SucceedsWithServiceWorkerWithFetchHandler) {
   profile()->GetPrefs()->SetList(
       prefs::kIsolatedWebAppInstallForceList,
       base::Value::List().Append(
@@ -1139,11 +1148,11 @@ IN_PROC_BROWSER_TEST_F(IsolatedWebAppUpdateManagerBrowserTest,
 
   const auto& isolation_data = GetIsolatedWebApp(GetAppId())->isolation_data();
   const auto& app_location =
-      base::FilePath(absl::get_if<IsolatedWebAppStorageLocation::OwnedBundle>(
+      base::FilePath(std::get_if<IsolatedWebAppStorageLocation::OwnedBundle>(
                          &isolation_data->location().variant())
                          ->dir_name_ascii());
   const auto& app_update_location = base::FilePath(
-      absl::get_if<IsolatedWebAppStorageLocation::OwnedBundle>(
+      std::get_if<IsolatedWebAppStorageLocation::OwnedBundle>(
           &isolation_data->pending_update_info()->location.variant())
           ->dir_name_ascii());
 
@@ -1198,8 +1207,10 @@ class IsolatedWebAppUpdateManagerWithKeyRotationBrowserTest
   }
 
   IsolatedWebAppUpdateServerMixin update_server_mixin_{&mixin_host_};
-  base::test::ScopedFeatureList scoped_feature_list_{
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  base::test::ScopedFeatureList features_{
       component_updater::kIwaKeyDistributionComponent};
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 
   web_package::SignedWebBundleId web_bundle_id_ =
       test::GetDefaultEd25519WebBundleId();

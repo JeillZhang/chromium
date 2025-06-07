@@ -12,6 +12,7 @@ class Browser;
 @protocol AccountSettingsPresenter;
 @class SigninPromoViewConfigurator;
 @class SigninPromoViewMediator;
+@protocol SigninPromoViewMediatorDelegate;
 
 namespace syncer {
 class SyncService;
@@ -45,17 +46,21 @@ class SyncService;
 
 @property(nonatomic, readonly) SigninPromoViewMediator* signinPromoViewMediator;
 
+@property(nonatomic, readonly) BOOL signinInProgress;
+
 // See `-[BookmarkPromoController initWithBrowser:delegate:presenter:
 // baseViewController:]`.
 - (instancetype)init NS_UNAVAILABLE;
 // Designated initializer.
 // `baseViewController` is the view to present UI for sign-in.
 - (instancetype)initWithBrowser:(Browser*)browser
-                    syncService:(syncer::SyncService*)syncService
-                       delegate:(id<BookmarkPromoControllerDelegate>)delegate
-                signinPresenter:(id<SigninPresenter>)signinPresenter
-       accountSettingsPresenter:
-           (id<AccountSettingsPresenter>)accountSettingsPresenter
+                        syncService:(syncer::SyncService*)syncService
+                           delegate:
+                               (id<BookmarkPromoControllerDelegate>)delegate
+    signinPromoViewMediatorDelegate:
+        (id<SigninPromoViewMediatorDelegate>)signinPromoViewMediatorDelegate
+           accountSettingsPresenter:
+               (id<AccountSettingsPresenter>)accountSettingsPresenter
     NS_DESIGNATED_INITIALIZER;
 
 // Called before the instance is deallocated.

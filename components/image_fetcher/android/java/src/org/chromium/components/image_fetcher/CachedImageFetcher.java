@@ -72,7 +72,7 @@ public class CachedImageFetcher extends ImageFetcher {
         }
     }
 
-    private ImageLoader mImageLoader;
+    private final ImageLoader mImageLoader;
 
     /**
      * Creates a CachedImageFetcher with the given bridge.
@@ -92,7 +92,8 @@ public class CachedImageFetcher extends ImageFetcher {
 
     /** Tries to load the gif from disk, if not it falls back to the bridge. */
     @Override
-    public void fetchGif(final ImageFetcher.Params params, Callback<BaseGifImage> callback) {
+    public void fetchGif(
+            final ImageFetcher.Params params, Callback<@Nullable BaseGifImage> callback) {
         long startTimeMillis = System.currentTimeMillis();
         PostTask.postTask(
                 TaskTraits.USER_VISIBLE,
@@ -112,7 +113,7 @@ public class CachedImageFetcher extends ImageFetcher {
     @VisibleForTesting
     void continueFetchGifAfterDisk(
             final ImageFetcher.Params params,
-            Callback<BaseGifImage> callback,
+            Callback<@Nullable BaseGifImage> callback,
             @Nullable BaseGifImage cachedGif,
             long startTimeMillis) {
         if (cachedGif != null) {
@@ -124,7 +125,7 @@ public class CachedImageFetcher extends ImageFetcher {
                     .fetchGif(
                             getConfig(),
                             params,
-                            (BaseGifImage gifFromNative) -> {
+                            (@Nullable BaseGifImage gifFromNative) -> {
                                 callback.onResult(gifFromNative);
                                 getImageFetcherBridge()
                                         .reportTotalFetchTimeFromNative(
@@ -170,7 +171,7 @@ public class CachedImageFetcher extends ImageFetcher {
                     .fetchImage(
                             getConfig(),
                             params,
-                            (Bitmap bitmapFromNative) -> {
+                            (@Nullable Bitmap bitmapFromNative) -> {
                                 callback.onResult(bitmapFromNative);
                                 getImageFetcherBridge()
                                         .reportTotalFetchTimeFromNative(

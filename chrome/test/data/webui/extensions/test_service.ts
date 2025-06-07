@@ -172,6 +172,7 @@ export class TestService extends TestBrowserProxy implements ServiceInterface {
 
   setItemEnabled(id: string, isEnabled: boolean) {
     this.methodCalled('setItemEnabled', [id, isEnabled]);
+    return Promise.resolve();
   }
 
   setItemCollectsErrors(id: string, collectsErrors: boolean) {
@@ -415,6 +416,6 @@ export class TestService extends TestBrowserProxy implements ServiceInterface {
 
   uploadItemToAccount(id: string) {
     this.methodCalled('uploadItemToAccount', id);
-    return Promise.resolve();
+    return Promise.resolve(false);
   }
 }

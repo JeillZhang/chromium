@@ -95,13 +95,13 @@ class TestLayerTreeFrameSink : public LayerTreeFrameSink,
                              bool hit_test_data_changed) override;
   void DidNotProduceFrame(const viz::BeginFrameAck& ack,
                           FrameSkippedReason reason) override;
+  void NotifyNewLocalSurfaceIdExpectedWhilePaused() override {}
 
   // mojom::CompositorFrameSinkClient implementation.
   void DidReceiveCompositorFrameAck(
       std::vector<viz::ReturnedResource> resources) override;
   void OnBeginFrame(const viz::BeginFrameArgs& args,
                     const viz::FrameTimingDetailsMap& timing_details,
-                    bool frame_ack,
                     std::vector<viz::ReturnedResource> resources) override;
   void ReclaimResources(std::vector<viz::ReturnedResource> resources) override;
   void OnBeginFramePausedChanged(bool paused) override;
@@ -120,10 +120,6 @@ class TestLayerTreeFrameSink : public LayerTreeFrameSink,
   void DisplayDidCompleteSwapWithSize(const gfx::Size& pixel_size) override;
   void DisplayAddChildWindowToBrowser(gpu::SurfaceHandle child_window) override;
   void SetWideColorEnabled(bool enabled) override {}
-  void SetPreferredFrameInterval(base::TimeDelta interval) override {}
-  base::TimeDelta GetPreferredFrameIntervalForFrameSinkId(
-      const viz::FrameSinkId& id,
-      viz::mojom::CompositorFrameSinkType* type) override;
 
   gpu::SharedImageInterface* GetSharedImageInterface() {
     return shared_image_interface_provider_->GetSharedImageInterface();
@@ -143,10 +139,7 @@ class TestLayerTreeFrameSink : public LayerTreeFrameSink,
 
   viz::FrameSinkId frame_sink_id_;
   std::unique_ptr<viz::FrameSinkManagerImpl> frame_sink_manager_;
-  std::unique_ptr<viz::ParentLocalSurfaceIdAllocator>
-      parent_local_surface_id_allocator_;
-  gfx::Size display_size_;
-  float device_scale_factor_ = 0;
+  viz::LocalSurfaceId local_surface_id_;
   gfx::DisplayColorSpaces display_color_spaces_;
 
   // Uses surface_manager_.

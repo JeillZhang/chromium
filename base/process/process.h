@@ -222,7 +222,7 @@ class BASE_EXPORT Process {
   };
 
 #if (BUILDFLAG(IS_MAC) || (BUILDFLAG(IS_IOS) && BUILDFLAG(USE_BLINK))) && \
-    !BUILDFLAG(IS_TVOS)
+    !BUILDFLAG(IS_IOS_TVOS)
   // The Mac needs a Mach port in order to manipulate a process's priority,
   // and there's no good way to get that from base given the pid. These Mac
   // variants of the `GetPriority()` and `SetPriority()` API take a port
@@ -304,7 +304,9 @@ class BASE_EXPORT Process {
 #endif  // BUILDFLAG(IS_MAC)
 
 #if BUILDFLAG(IS_IOS) && BUILDFLAG(USE_BLINK)
-  using TerminateCallback = bool (*)(ProcessHandle handle);
+  using TerminateCallback = bool (*)(ProcessHandle handle,
+                                     int exit_code,
+                                     bool wait);
   using WaitForExitCallback = bool (*)(ProcessHandle handle,
                                        int* exit_code,
                                        base::TimeDelta timeout);

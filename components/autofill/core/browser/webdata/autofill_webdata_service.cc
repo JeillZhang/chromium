@@ -11,10 +11,10 @@
 #include "base/observer_list.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/uuid.h"
-#include "components/autofill/core/browser/data_model/autofill_offer_data.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
-#include "components/autofill/core/browser/data_model/entity_instance.h"
-#include "components/autofill/core/browser/data_model/iban.h"
+#include "components/autofill/core/browser/data_model/autofill_ai/entity_instance.h"
+#include "components/autofill/core/browser/data_model/payments/autofill_offer_data.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
+#include "components/autofill/core/browser/data_model/payments/iban.h"
 #include "components/autofill/core/browser/geo/autofill_country.h"
 #include "components/autofill/core/browser/webdata/autocomplete/autocomplete_entry.h"
 #include "components/autofill/core/browser/webdata/autofill_change.h"
@@ -101,11 +101,13 @@ void AutofillWebDataService::UpdateAutofillProfile(
 
 void AutofillWebDataService::RemoveAutofillProfile(
     const std::string& guid,
+    AutofillProfileChange::Type change_type,
     base::OnceCallback<void(const AutofillProfileChange&)> on_success) {
   wdbs_->ScheduleDBTask(
       FROM_HERE,
       base::BindOnce(&AutofillWebDataBackendImpl::RemoveAutofillProfile,
-                     autofill_backend_, guid, std::move(on_success)));
+                     autofill_backend_, guid, change_type,
+                     std::move(on_success)));
 }
 
 WebDataServiceBase::Handle AutofillWebDataService::GetAutofillProfiles(
@@ -152,6 +154,15 @@ WebDataServiceBase::Handle AutofillWebDataService::GetEntityInstances(
   return wdbs_->ScheduleDBTaskWithResult(
       FROM_HERE,
       base::BindOnce(&AutofillWebDataBackendImpl::GetEntityInstances,
+                     autofill_backend_),
+      std::move(consumer));
+}
+
+WebDataServiceBase::Handle AutofillWebDataService::GetLoyaltyCards(
+    WebDataServiceRequestCallback consumer) {
+  return wdbs_->ScheduleDBTaskWithResult(
+      FROM_HERE,
+      base::BindOnce(&AutofillWebDataBackendImpl::GetLoyaltyCards,
                      autofill_backend_),
       std::move(consumer));
 }
@@ -276,6 +287,13 @@ void AutofillWebDataService::ClearLocalCvcs() {
   wdbs_->ScheduleDBTask(
       FROM_HERE, base::BindOnce(&AutofillWebDataBackendImpl::ClearLocalCvcs,
                                 autofill_backend_));
+}
+
+void AutofillWebDataService::CleanupForCrbug411681430() {
+  wdbs_->ScheduleDBTask(
+      FROM_HERE,
+      base::BindOnce(&AutofillWebDataBackendImpl::CleanupForCrbug411681430,
+                     autofill_backend_));
 }
 
 WebDataServiceBase::Handle AutofillWebDataService::GetCreditCards(

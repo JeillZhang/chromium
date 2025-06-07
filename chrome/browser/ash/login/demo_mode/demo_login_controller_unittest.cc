@@ -10,21 +10,29 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/metrics/user_action_tester.h"
 #include "base/test/mock_callback.h"
 #include "base/test/mock_log.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ash/login/existing_user_controller.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
+#include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
+#include "chrome/browser/ash/settings/device_settings_service.h"
 #include "chrome/browser/ash/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
+#include "chrome/browser/browser_process.h"
+#include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/ui/ash/login/mock_login_display_host.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
+#include "chromeos/ash/components/dbus/dbus_thread_manager.h"
 #include "chromeos/ash/components/dbus/session_manager/fake_session_manager_client.h"
 #include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/ash/components/install_attributes/stub_install_attributes.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "chromeos/ash/components/system/fake_statistics_provider.h"
 #include "chromeos/dbus/power/fake_power_manager_client.h"
@@ -34,7 +42,6 @@
 #include "components/policy/core/common/cloud/mock_cloud_policy_manager.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_service.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_store.h"
-#include "components/policy/core/common/device_local_account_type.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/browser_task_environment.h"
@@ -73,6 +80,14 @@ constexpr char kServerError[] =
           }
     })";
 
+constexpr char kSetupDemoAccountFailedRetriableResponse[] =
+    R"({
+      "retryDetails":{},
+      "status":{
+        "code":8
+      }
+    })";
+
 constexpr char kSetupDemoAccountUrl[] =
     "https://demomode-pa.googleapis.com/v1/accounts";
 
@@ -85,11 +100,17 @@ constexpr char kPublicAccountUserId[] = "public_session_user@localhost";
 
 constexpr GaiaId::Literal kTestGaiaId("123");
 constexpr char kTestEmail[] = "example@gmail.com";
+constexpr char kSessionId[] = "session_id";
 
 constexpr char kSetupDemoAccountRequestResultHistogram[] =
     "DemoMode.SignedIn.Request.SetupResult";
 constexpr char kCleanupDemoAccountRequestResultHistogram[] =
     "DemoMode.SignedIn.Request.CleanupResult";
+
+constexpr base::TimeDelta kConnectPolicyManagerTimeout = base::Seconds(5);
+
+constexpr char kCloudPolicyConnectionTimeoutAction[] =
+    "DemoMode.CloudPolicyConnectionTimeout";
 
 }  // namespace
 
@@ -133,8 +154,6 @@ class DemoLoginControllerTest : public testing::Test {
         test_url_loader_factory_.GetSafeWeakWrapper());
     system::StatisticsProvider::SetTestProvider(&statistics_provider_);
 
-    SetUpPolicyClient();
-
     ExpectGetExistingController();
   }
 
@@ -147,7 +166,8 @@ class DemoLoginControllerTest : public testing::Test {
                                   0);
   }
 
-  void SetUpPolicyClient() {
+  void SetUpPolicyClient(std::string dm_token = "fake-dm-token",
+                         std::string client_id = "fake-client-id") {
     std::unique_ptr<policy::MockCloudPolicyStore> store =
         std::make_unique<policy::MockCloudPolicyStore>();
     std::unique_ptr<policy::MockCloudPolicyClient> cloud_policy_client =
@@ -156,8 +176,8 @@ class DemoLoginControllerTest : public testing::Test {
     auto service = std::make_unique<policy::MockCloudPolicyService>(
         client_ptr, store.get());
 
-    cloud_policy_client->SetDMToken("fake-dm-token");
-    cloud_policy_client->client_id_ = "fake-client-id";
+    cloud_policy_client->SetDMToken(dm_token);
+    cloud_policy_client->client_id_ = client_id;
 
     cloud_policy_manager_ = std::make_unique<policy::MockCloudPolicyManager>(
         std::move(store), task_environment_.GetMainThreadTaskRunner());
@@ -274,6 +294,7 @@ class DemoLoginControllerTest : public testing::Test {
 };
 
 TEST_F(DemoLoginControllerTest, OnSetupDemoAccountSuccessFirstTime) {
+  SetUpPolicyClient();
   const GaiaId gaia_id(kTestGaiaId);
   test_url_loader_factory_.AddResponse(
       GetSetupUrl().spec(),
@@ -293,6 +314,9 @@ TEST_F(DemoLoginControllerTest, OnSetupDemoAccountSuccessFirstTime) {
         EXPECT_EQ(GaiaId(g_browser_process->local_state()->GetString(
                       prefs::kDemoAccountGaiaId)),
                   gaia_id);
+        EXPECT_EQ(
+            DemoSessionMetricsRecorder::GetCurrentSessionTypeForTesting(),
+            DemoSessionMetricsRecorder::SessionType::kSignedInDemoSession);
         loop.Quit();
       }));
 
@@ -304,11 +328,12 @@ TEST_F(DemoLoginControllerTest, OnSetupDemoAccountSuccessFirstTime) {
 }
 
 TEST_F(DemoLoginControllerTest, InValidGaia) {
+  SetUpPolicyClient();
   test_url_loader_factory_.AddResponse(GetSetupUrl().spec(), kInValidGaiaCreds);
 
   EXPECT_CALL(login_display_host(), CompleteLogin).Times(0);
   base::RunLoop loop;
-  GetDemoLoginController()->SetSetupFailedCallbackForTest(
+  GetDemoLoginController()->SetSetupRequestCallbackForTesting(
       base::BindLambdaForTesting([&]() {
         // Expect the setup request to fail by checking metrics.
         histogram_tester_.ExpectTotalCount(
@@ -318,6 +343,8 @@ TEST_F(DemoLoginControllerTest, InValidGaia) {
             DemoSessionMetricsRecorder::DemoAccountRequestResultCode::
                 kInvalidCreds,
             1);
+        EXPECT_EQ(DemoSessionMetricsRecorder::GetCurrentSessionTypeForTesting(),
+                  DemoSessionMetricsRecorder::SessionType::kFallbackMGS);
         loop.Quit();
       }));
   // Verify demo account login gets triggered by `ExistingUserController`.
@@ -327,6 +354,7 @@ TEST_F(DemoLoginControllerTest, InValidGaia) {
 
 TEST_F(DemoLoginControllerTest,
        SetupDemoAccountCannotObtainDMTokenAndClientID) {
+  SetUpPolicyClient();
   // In unit tests, there is no real cloud policy manager and
   // `policy_connector_ash->GetDeviceCloudPolicyManager()` is null. We remove
   // the fake one here so `DemoLoginController::GetDeviceIntegrity()` cannot
@@ -343,16 +371,50 @@ TEST_F(DemoLoginControllerTest,
   histogram_tester_.ExpectBucketCount(
       kSetupDemoAccountRequestResultHistogram,
       DemoSessionMetricsRecorder::DemoAccountRequestResultCode::
-          kCannotObtainDMTokenAndClientID,
+          kCloudPolicyNotConnected,
       1);
 }
 
-TEST_F(DemoLoginControllerTest, ServerCleanUpSuccess) {
+TEST_F(DemoLoginControllerTest, SetupDemoAccountEmptyDMToken) {
+  // Set up the policy client again with an empty DM Token.
+  SetUpPolicyClient("", "fake-client-id");
+
+  // Verify demo account login gets triggered by `ExistingUserController`.
+  ConfigureAutoLoginSetting();
+
+  // Expect the setup request to fail by checking metrics.
+  histogram_tester_.ExpectTotalCount(kSetupDemoAccountRequestResultHistogram,
+                                     1);
+  histogram_tester_.ExpectBucketCount(
+      kSetupDemoAccountRequestResultHistogram,
+      DemoSessionMetricsRecorder::DemoAccountRequestResultCode::kEmptyDMToken,
+      1);
+}
+
+TEST_F(DemoLoginControllerTest, SetupDemoAccountEmptyClientID) {
+  // Set up the policy client again with an empty Client ID.
+  SetUpPolicyClient("fake-dm-token", "");
+
+  // Verify demo account login gets triggered by `ExistingUserController`.
+  ConfigureAutoLoginSetting();
+
+  // Expect the setup request to fail by checking metrics.
+  histogram_tester_.ExpectTotalCount(kSetupDemoAccountRequestResultHistogram,
+                                     1);
+  histogram_tester_.ExpectBucketCount(
+      kSetupDemoAccountRequestResultHistogram,
+      DemoSessionMetricsRecorder::DemoAccountRequestResultCode::kEmptyClientID,
+      1);
+  EXPECT_EQ(DemoSessionMetricsRecorder::GetCurrentSessionTypeForTesting(),
+            DemoSessionMetricsRecorder::SessionType::kFallbackMGS);
+}
+
+TEST_F(DemoLoginControllerTest, ServerCleanupSuccess) {
+  SetUpPolicyClient();
   AppendTestUserToUserList();
   auto* local_state = g_browser_process->local_state();
   local_state->SetString(prefs::kDemoAccountGaiaId, kTestGaiaId.ToString());
-  const std::string last_session_id = "device_id";
-  local_state->SetString(prefs::kDemoModeSessionIdentifier, last_session_id);
+  local_state->SetString(prefs::kDemoModeSessionIdentifier, kSessionId);
 
   // Verify demo account login gets triggered by `ExistingUserController`.
   ConfigureAutoLoginSetting();
@@ -361,10 +423,21 @@ TEST_F(DemoLoginControllerTest, ServerCleanUpSuccess) {
   ASSERT_TRUE(test_url_loader_factory_.IsPending(GetCleanUpUrl().spec()));
   test_url_loader_factory_.AddResponse(GetCleanUpUrl().spec(), "{}");
 
+  base::RunLoop loop;
+  GetDemoLoginController()->SetCleanupRequestCallbackForTesting(
+      base::BindLambdaForTesting([&]() {
+        // Expect the prefs to be cleared upon the cleanup success.
+        EXPECT_TRUE(local_state->GetString(prefs::kDemoAccountGaiaId).empty());
+        EXPECT_TRUE(
+            local_state->GetString(prefs::kDemoModeSessionIdentifier).empty());
+        loop.Quit();
+      }));
+  loop.Run();
+
   MockSuccessSetupResponseAndVerifyLogin(GaiaId("234"));
   const auto new_session_id =
       local_state->GetString(prefs::kDemoModeSessionIdentifier);
-  EXPECT_NE(new_session_id, last_session_id);
+  EXPECT_NE(new_session_id, kSessionId);
 
   // Expect the cleanup request to succeed by checking metrics.
   histogram_tester_.ExpectTotalCount(kCleanupDemoAccountRequestResultHistogram,
@@ -376,16 +449,16 @@ TEST_F(DemoLoginControllerTest, ServerCleanUpSuccess) {
   ExpectOnlyDeviceLocalAccountInUserList();
 }
 
-TEST_F(DemoLoginControllerTest, ServerCleanUpFailed) {
+TEST_F(DemoLoginControllerTest, ServerCleanupFailed) {
+  SetUpPolicyClient();
   AppendTestUserToUserList();
   auto* local_state = g_browser_process->local_state();
   local_state->SetString(prefs::kDemoAccountGaiaId, kTestGaiaId.ToString());
-  const std::string last_session_id = "device_id";
-  local_state->SetString(prefs::kDemoModeSessionIdentifier, last_session_id);
+  local_state->SetString(prefs::kDemoModeSessionIdentifier, kSessionId);
   test_url_loader_factory_.AddResponse(GetCleanUpUrl().spec(), "{}",
                                        net::HTTP_UNAUTHORIZED);
   base::RunLoop loop;
-  GetDemoLoginController()->SetCleanUpFailedCallbackForTest(
+  GetDemoLoginController()->SetCleanupRequestCallbackForTesting(
       base::BindLambdaForTesting([&]() {
         // Expect the cleanup request to fail by checking metrics.
         histogram_tester_.ExpectTotalCount(
@@ -395,6 +468,12 @@ TEST_F(DemoLoginControllerTest, ServerCleanUpFailed) {
             DemoSessionMetricsRecorder::DemoAccountRequestResultCode::
                 kRequestFailed,
             1);
+
+        // Expect the prefs to persist upon the cleanup failure.
+        EXPECT_EQ(local_state->GetString(prefs::kDemoAccountGaiaId),
+                  kTestGaiaId.ToString());
+        EXPECT_EQ(local_state->GetString(prefs::kDemoModeSessionIdentifier),
+                  kSessionId);
         loop.Quit();
       }));
   // Verify demo account login gets triggered by `ExistingUserController`.
@@ -406,15 +485,72 @@ TEST_F(DemoLoginControllerTest, ServerCleanUpFailed) {
 
   const auto new_session_id =
       local_state->GetString(prefs::kDemoModeSessionIdentifier);
-  EXPECT_NE(new_session_id, last_session_id);
+  EXPECT_NE(new_session_id, kSessionId);
 
   // Expect the test account to be removed from local even if the server cleanup
   // failed.
   ExpectOnlyDeviceLocalAccountInUserList();
 }
 
+TEST_F(DemoLoginControllerTest, CleanupSuccessSetupFailure) {
+  SetUpPolicyClient();
+  // Add the test account locally. We expect it to be removed at the end of the
+  // test.
+  AppendTestUserToUserList();
+
+  // Set the prefs. We expect them to be cleared upon the cleanup success at the
+  // end of the test.
+  auto* local_state = g_browser_process->local_state();
+  local_state->SetString(prefs::kDemoAccountGaiaId, kTestGaiaId.ToString());
+  local_state->SetString(prefs::kDemoModeSessionIdentifier, kSessionId);
+
+  // Verify that the demo account login gets triggered by
+  // `ExistingUserController`.
+  ConfigureAutoLoginSetting();
+
+  // Verify the cleanup request was sent.
+  ASSERT_TRUE(test_url_loader_factory_.IsPending(GetCleanUpUrl().spec()));
+  test_url_loader_factory_.AddResponse(GetCleanUpUrl().spec(), "{}");
+
+  // Customize the setup response so it will fail due to kInValidGaiaCreds.
+  test_url_loader_factory_.AddResponse(GetSetupUrl().spec(), kInValidGaiaCreds);
+  EXPECT_CALL(login_display_host(), CompleteLogin).Times(0);
+
+  base::RunLoop loop;
+  GetDemoLoginController()->SetSetupRequestCallbackForTesting(
+      base::BindLambdaForTesting([&]() { loop.Quit(); }));
+  loop.Run();
+
+  // Expect the previous cleanup request to succeed by checking metrics.
+  histogram_tester_.ExpectTotalCount(kCleanupDemoAccountRequestResultHistogram,
+                                     1);
+  histogram_tester_.ExpectBucketCount(
+      kCleanupDemoAccountRequestResultHistogram,
+      DemoSessionMetricsRecorder::DemoAccountRequestResultCode::kSuccess, 1);
+
+  // Expect the prefs to be cleared after the cleanup success followed by a
+  // setup request failure.
+  EXPECT_TRUE(local_state->GetString(prefs::kDemoAccountGaiaId).empty());
+  EXPECT_TRUE(
+      local_state->GetString(prefs::kDemoModeSessionIdentifier).empty());
+
+  // Expect the setup request failure by checking metrics.
+  histogram_tester_.ExpectTotalCount(kSetupDemoAccountRequestResultHistogram,
+                                     1);
+  histogram_tester_.ExpectBucketCount(
+      kSetupDemoAccountRequestResultHistogram,
+      DemoSessionMetricsRecorder::DemoAccountRequestResultCode::kInvalidCreds,
+      1);
+  EXPECT_EQ(DemoSessionMetricsRecorder::GetCurrentSessionTypeForTesting(),
+            DemoSessionMetricsRecorder::SessionType::kFallbackMGS);
+
+  // Expect the test account to be removed locally.
+  ExpectOnlyDeviceLocalAccountInUserList();
+}
+
 TEST_F(DemoLoginControllerTest,
        CleanupDemoAccountCannotObtainDMTokenAndClientID) {
+  SetUpPolicyClient();
   // In unit tests, there is no real cloud policy manager and
   // `policy_connector_ash->GetDeviceCloudPolicyManager()` is null. We remove
   // the fake one here so `DemoLoginController::GetDeviceIdentifier()` cannot
@@ -425,8 +561,7 @@ TEST_F(DemoLoginControllerTest,
   AppendTestUserToUserList();
   auto* local_state = g_browser_process->local_state();
   local_state->SetString(prefs::kDemoAccountGaiaId, kTestGaiaId.ToString());
-  const std::string last_session_id = "device_id";
-  local_state->SetString(prefs::kDemoModeSessionIdentifier, last_session_id);
+  local_state->SetString(prefs::kDemoModeSessionIdentifier, kSessionId);
 
   // Verify demo account login gets triggered by `ExistingUserController`.
   ConfigureAutoLoginSetting();
@@ -440,7 +575,7 @@ TEST_F(DemoLoginControllerTest,
   histogram_tester_.ExpectBucketCount(
       kCleanupDemoAccountRequestResultHistogram,
       DemoSessionMetricsRecorder::DemoAccountRequestResultCode::
-          kCannotObtainDMTokenAndClientID,
+          kCloudPolicyNotConnected,
       1);
 
   // Right after the account cleanup failed, it'll try to set up the demo
@@ -456,18 +591,97 @@ TEST_F(DemoLoginControllerTest,
   histogram_tester_.ExpectBucketCount(
       kSetupDemoAccountRequestResultHistogram,
       DemoSessionMetricsRecorder::DemoAccountRequestResultCode::
-          kCannotObtainDMTokenAndClientID,
+          kCloudPolicyNotConnected,
       1);
 }
 
+TEST_F(DemoLoginControllerTest, CleanupDemoAccountEmptyDMToken) {
+  // Set up the policy client again with an empty DM Token.
+  SetUpPolicyClient("", "fake-client-id");
+
+  AppendTestUserToUserList();
+  auto* local_state = g_browser_process->local_state();
+  local_state->SetString(prefs::kDemoAccountGaiaId, kTestGaiaId.ToString());
+  local_state->SetString(prefs::kDemoModeSessionIdentifier, kSessionId);
+
+  // Verify demo account login gets triggered by `ExistingUserController`.
+  ConfigureAutoLoginSetting();
+
+  // Expect the test account to be removed even if the cleanup failed.
+  ExpectOnlyDeviceLocalAccountInUserList();
+
+  // Expect the cleanup request to fail by checking metrics.
+  histogram_tester_.ExpectTotalCount(kCleanupDemoAccountRequestResultHistogram,
+                                     1);
+  histogram_tester_.ExpectBucketCount(
+      kCleanupDemoAccountRequestResultHistogram,
+      DemoSessionMetricsRecorder::DemoAccountRequestResultCode::kEmptyDMToken,
+      1);
+
+  // Right after the account cleanup failed, it'll try to set up the demo
+  // account regardless of the cleanup result. However, it'll get an empty DM
+  // Token again, so it will fail again and fall back to MGS. Therefore, we
+  // expect the auto login managed guest session to start.
+  EXPECT_TRUE(existing_user_controller()->IsAutoLoginTimerRunningForTesting());
+  // Also expect the setup request to fail for the same reason by checking
+  // metrics.
+  histogram_tester_.ExpectTotalCount(kSetupDemoAccountRequestResultHistogram,
+                                     1);
+  histogram_tester_.ExpectBucketCount(
+      kSetupDemoAccountRequestResultHistogram,
+      DemoSessionMetricsRecorder::DemoAccountRequestResultCode::kEmptyDMToken,
+      1);
+}
+
+TEST_F(DemoLoginControllerTest, CleanupDemoAccountEmptyClientID) {
+  // Set up the policy client again with an empty Client ID..
+  SetUpPolicyClient("fake-dm-token", "");
+
+  AppendTestUserToUserList();
+  auto* local_state = g_browser_process->local_state();
+  local_state->SetString(prefs::kDemoAccountGaiaId, kTestGaiaId.ToString());
+  local_state->SetString(prefs::kDemoModeSessionIdentifier, kSessionId);
+
+  // Verify demo account login gets triggered by `ExistingUserController`.
+  ConfigureAutoLoginSetting();
+
+  // Expect the test account to be removed even if the cleanup failed.
+  ExpectOnlyDeviceLocalAccountInUserList();
+
+  // Expect the cleanup request to fail by checking metrics.
+  histogram_tester_.ExpectTotalCount(kCleanupDemoAccountRequestResultHistogram,
+                                     1);
+  histogram_tester_.ExpectBucketCount(
+      kCleanupDemoAccountRequestResultHistogram,
+      DemoSessionMetricsRecorder::DemoAccountRequestResultCode::kEmptyClientID,
+      1);
+
+  // Right after the account cleanup failed, it'll try to set up the demo
+  // account regardless of the cleanup result. However, it'll get an empty
+  // Client ID again, so it will fail again and fall back to MGS. Therefore, we
+  // expect the auto login managed guest session to start.
+  EXPECT_TRUE(existing_user_controller()->IsAutoLoginTimerRunningForTesting());
+  // Also expect the setup request to fail for the same reason by checking
+  // metrics.
+  histogram_tester_.ExpectTotalCount(kSetupDemoAccountRequestResultHistogram,
+                                     1);
+  histogram_tester_.ExpectBucketCount(
+      kSetupDemoAccountRequestResultHistogram,
+      DemoSessionMetricsRecorder::DemoAccountRequestResultCode::kEmptyClientID,
+      1);
+  EXPECT_EQ(DemoSessionMetricsRecorder::GetCurrentSessionTypeForTesting(),
+            DemoSessionMetricsRecorder::SessionType::kFallbackMGS);
+}
+
 TEST_F(DemoLoginControllerTest, FallbackToMGS) {
+  SetUpPolicyClient();
   // Mock setup failed by returning invalid credential.
   test_url_loader_factory_.AddResponse(GetSetupUrl().spec(), kInValidGaiaCreds);
 
   EXPECT_CALL(login_display_host(), CompleteLogin).Times(0);
 
   base::RunLoop loop;
-  GetDemoLoginController()->SetSetupFailedCallbackForTest(
+  GetDemoLoginController()->SetSetupRequestCallbackForTesting(
       base::BindLambdaForTesting([&]() {
         // Expect the setup request to fail by checking metrics.
         histogram_tester_.ExpectTotalCount(
@@ -477,6 +691,8 @@ TEST_F(DemoLoginControllerTest, FallbackToMGS) {
             DemoSessionMetricsRecorder::DemoAccountRequestResultCode::
                 kInvalidCreds,
             1);
+        EXPECT_EQ(DemoSessionMetricsRecorder::GetCurrentSessionTypeForTesting(),
+                  DemoSessionMetricsRecorder::SessionType::kFallbackMGS);
         loop.Quit();
       }));
   // Verify demo account login gets triggered by `ExistingUserController`.
@@ -488,6 +704,7 @@ TEST_F(DemoLoginControllerTest, FallbackToMGS) {
 }
 
 TEST_F(DemoLoginControllerTest, LogServerError) {
+  SetUpPolicyClient();
   // Mock setup failed by returning server error.
   test_url_loader_factory_.AddResponse(GetSetupUrl().spec(), kServerError,
                                        net::HTTP_INTERNAL_SERVER_ERROR);
@@ -501,7 +718,7 @@ TEST_F(DemoLoginControllerTest, LogServerError) {
   EXPECT_CALL(login_display_host(), CompleteLogin).Times(0);
 
   base::RunLoop loop;
-  GetDemoLoginController()->SetSetupFailedCallbackForTest(
+  GetDemoLoginController()->SetSetupRequestCallbackForTesting(
       base::BindLambdaForTesting([&]() {
         // Expect the setup request to fail by checking metrics.
         histogram_tester_.ExpectTotalCount(
@@ -519,6 +736,97 @@ TEST_F(DemoLoginControllerTest, LogServerError) {
   loop.Run();
 }
 
+TEST_F(DemoLoginControllerTest, SetupDemoAccountErrorRetriable) {
+  SetUpPolicyClient();
+  test_url_loader_factory_.AddResponse(
+      GetSetupUrl().spec(), kSetupDemoAccountFailedRetriableResponse);
+
+  EXPECT_CALL(login_display_host(), CompleteLogin).Times(0);
+  base::RunLoop loop;
+  GetDemoLoginController()->SetSetupRequestCallbackForTesting(
+      base::BindLambdaForTesting([&]() {
+        // Expect the setup request to fail by checking metrics.
+        histogram_tester_.ExpectTotalCount(
+            kSetupDemoAccountRequestResultHistogram, 1);
+        histogram_tester_.ExpectBucketCount(
+            kSetupDemoAccountRequestResultHistogram,
+            DemoSessionMetricsRecorder::DemoAccountRequestResultCode::
+                kQuotaExhaustedRetriable,
+            1);
+        EXPECT_EQ(DemoSessionMetricsRecorder::GetCurrentSessionTypeForTesting(),
+                  DemoSessionMetricsRecorder::SessionType::kFallbackMGS);
+        loop.Quit();
+      }));
+  // Verify demo account login gets triggered by `ExistingUserController`.
+  ConfigureAutoLoginSetting();
+  loop.Run();
+  EXPECT_TRUE(demo_mode::GetShouldScheduleLogoutForMGS());
+}
+
 // TODO(crbug.com/372771485): Add more request fail test cases.
+
+class DemoLoginControllerCloudPolicyConnectionTest : public testing::Test {
+ public:
+  DemoLoginControllerCloudPolicyConnectionTest() {}
+  ~DemoLoginControllerCloudPolicyConnectionTest() override = default;
+
+  void SetUp() override {
+    features_.InitAndEnableFeature(features::kDemoModeSignIn);
+    DBusThreadManager::Initialize();
+    DeviceSettingsService::Initialize();
+    demo_login_controller_ = std::make_unique<
+        DemoLoginController>(base::BindRepeating(
+        &DemoLoginControllerCloudPolicyConnectionTest::MockConfigureAutoLogin,
+        base::Unretained(this)));
+  }
+
+  void TearDown() override {
+    // `BrowserPolicyConnectorAsh` is constructed in
+    // `TestingBrowserProcess::browser_policy_connector()`,
+    // which is called in the ctor of `DemoLoginController` The memory will be
+    // allocated in the scope of `DemoLoginController`.
+    //  `TestingBrowserProcess::ShutdownBrowserPolicyConnector` will get called
+    //  at the end of test, after destructing `DemoLoginController`. Release the
+    //  memory of `BrowserPolicyConnectorAsh` before destructing
+    //  `DemoLoginController` to avoid dangling pointer.
+    TestingBrowserProcess::GetGlobal()->ShutdownBrowserPolicyConnector();
+
+    demo_login_controller_.reset();
+    DeviceSettingsService::Shutdown();
+    DBusThreadManager::Shutdown();
+  }
+
+  void MockConfigureAutoLogin() { is_auto_login_trigger_ = true; }
+
+  base::test::ScopedFeatureList features_;
+  content::BrowserTaskEnvironment task_environment_{
+      base::test::TaskEnvironment::TimeSource::MOCK_TIME};
+  ScopedStubInstallAttributes test_install_attributes_;
+  std::unique_ptr<DemoLoginController> demo_login_controller_;
+  bool is_auto_login_trigger_ = false;
+  base::UserActionTester user_action_tester_;
+};
+
+TEST_F(DemoLoginControllerCloudPolicyConnectionTest,
+       ConnectPolicyManagerTimeout) {
+  EXPECT_EQ(demo_login_controller_->state(),
+            DemoLoginController::State::kLoadingAvailibility);
+  task_environment_.FastForwardBy(kConnectPolicyManagerTimeout +
+                                  base::Seconds(1));
+
+  // Expect cloud policy manager is disconnected:
+  auto* policy_manager = g_browser_process->platform_part()
+                             ->browser_policy_connector_ash()
+                             ->GetDeviceCloudPolicyManager();
+  EXPECT_FALSE(policy_manager->IsConnected());
+
+  // Expect fallback to MGS:
+  EXPECT_TRUE(is_auto_login_trigger_);
+  EXPECT_EQ(demo_login_controller_->state(),
+            DemoLoginController::State::kLoginToMGS);
+  EXPECT_EQ(
+      user_action_tester_.GetActionCount(kCloudPolicyConnectionTimeoutAction),
+      1);
+}
 
 }  // namespace ash

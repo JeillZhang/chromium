@@ -59,6 +59,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_ui.h"
 #include "ui/accessibility/ax_mode.h"
+#include "ui/accessibility/platform/ax_platform.h"
 #include "ui/aura/window.h"
 #include "ui/base/clipboard/clipboard_format_type.h"
 #include "ui/base/clipboard/custom_data_helper.h"
@@ -502,9 +503,7 @@ bool WebUITabStripContainerView::UseTouchableTabStrip(const Browser* browser) {
   // TODO(crbug.com/1136185, crbug.com/1136236): We currently do not switch to
   // touchable tabstrip in Screen Reader mode due to the touchable tabstrip
   // being less accessible than the traditional tabstrip.
-  if (content::BrowserAccessibilityState::GetInstance()
-          ->GetAccessibilityMode()
-          .has_mode(ui::AXMode::kScreenReader)) {
+  if (ui::AXPlatform::GetInstance().IsScreenReaderActive()) {
     return false;
   }
 
@@ -649,9 +648,6 @@ void WebUITabStripContainerView::EndDragToOpen(
 
   if (opening) {
     RecordTabStripUIOpenHistogram(TabStripUIOpenAction::kToolbarDrag);
-  } else {
-    browser_view_->AbortFeaturePromo(
-        feature_engagement::kIPHWebUITabStripFeature);
   }
 
   animation_.Reset(open_proportion);
@@ -709,10 +705,6 @@ void WebUITabStripContainerView::SetContainerTargetVisibility(
     web_view_->RequestFocus();
 
     time_at_open_ = base::TimeTicks::Now();
-
-    browser_view_->NotifyFeaturePromoFeatureUsed(
-        feature_engagement::kIPHWebUITabStripFeature,
-        FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
   } else {
     if (time_at_open_) {
       RecordTabStripUIOpenDurationHistogram(base::TimeTicks::Now() -

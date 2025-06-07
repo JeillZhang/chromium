@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/feature_list.h"
@@ -96,6 +97,9 @@ class POLICY_EXPORT CloudPolicyClient {
       const enterprise_management::ClientCertificateProvisioningResponse&
           response)>;
 
+  using PromotionEligibilityCallback = base::OnceCallback<void(
+      enterprise_management::GetUserEligiblePromotionsResponse)>;
+
   using MacAddress = std::array<uint8_t, 6>;
 
   // Observer interface for state and policy changes.
@@ -121,13 +125,17 @@ class POLICY_EXPORT CloudPolicyClient {
                                      const std::string& account_email) {}
   };
 
-  using NotRegistered = absl::monostate;
+  using NotRegistered = std::monostate;
 
   class POLICY_EXPORT Result {
    public:
     explicit Result(DeviceManagementStatus);
     explicit Result(DeviceManagementStatus, int);
+    explicit Result(DeviceManagementStatus, int, base::Value::Dict);
     explicit Result(NotRegistered);
+
+    Result(const Result& other);
+    Result& operator=(const Result& other);
 
     bool IsSuccess() const;
     bool IsClientNotRegisteredError() const;
@@ -135,14 +143,17 @@ class POLICY_EXPORT CloudPolicyClient {
 
     DeviceManagementStatus GetDMServerError() const;
     int GetNetError() const;
-
     bool operator==(const Result& other) const {
-      return this->result_ == other.result_ && net_error_ == other.net_error_;
+      return this->result_ == other.result_ && net_error_ == other.net_error_ &&
+             response_ == other.response_;
     }
 
+    const base::Value::Dict& GetResponse() const;
+
    private:
-    absl::variant<NotRegistered, DeviceManagementStatus> result_;
+    std::variant<NotRegistered, DeviceManagementStatus> result_;
     int net_error_ = 0;
+    base::Value::Dict response_;
   };
 
   // A callback which receives the operations result.
@@ -422,9 +433,12 @@ class POLICY_EXPORT CloudPolicyClient {
       ResultCallback callback);
 
   // Uploads Chrome profile report to the server. The user's DM token must be
-  // set. |chrome_profile_report| will be included in the upload request. The
-  // |callback| will be called when the operation completes.
+  // set. If |use_cookies| is true, the applicable user's cookies will be
+  // forwarded along with the request. |chrome_profile_report| will be included
+  // in the upload request. The |callback| will be called when the operation
+  // completes.
   virtual void UploadChromeProfileReport(
+      bool use_cookies,
       std::unique_ptr<enterprise_management::ChromeProfileReportRequest>
           chrome_profile_report,
       ResultCallback callback);
@@ -512,7 +526,8 @@ class POLICY_EXPORT CloudPolicyClient {
   // policy client and notify observers.
   void UpdateServiceAccount(const std::string& account_email);
 
-  virtual void DeterminePromotionEligibility(ResultCallback callback);
+  virtual void DeterminePromotionEligibility(
+      PromotionEligibilityCallback callback);
 
   // Adds an observer to be called back upon policy and state changes.
   void AddObserver(Observer* observer);
@@ -755,8 +770,8 @@ class POLICY_EXPORT CloudPolicyClient {
       ClientCertProvisioningRequestCallback callback,
       DMServerJobResult result);
 
-  void OnPromotionEligibilityDetermined(ResultCallback callback,
-                                       DMServerJobResult result);
+  void OnPromotionEligibilityDetermined(PromotionEligibilityCallback callback,
+                                        DMServerJobResult result);
 
   // Callback for `UploadFmRegistrationToken` request.
   void OnUploadFmRegistrationTokenResponse(ResultCallback callback,

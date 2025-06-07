@@ -38,12 +38,79 @@ AITestUtils::MockCreateLanguageModelClient::BindNewPipeAndPassRemote() {
   return receiver_.BindNewPipeAndPassRemote();
 }
 
+mojo::PendingRemote<blink::mojom::ModelDownloadProgressObserver>
+AITestUtils::FakeMonitor::BindNewPipeAndPassRemote() {
+  return mock_monitor_.BindNewPipeAndPassRemote();
+}
+
+void AITestUtils::FakeMonitor::ExpectReceivedUpdate(
+    uint64_t expected_downloaded_bytes,
+    uint64_t expected_total_bytes) {
+  base::RunLoop download_progress_run_loop;
+  EXPECT_CALL(mock_monitor_, OnDownloadProgressUpdate(testing::_, testing::_))
+      .WillOnce(
+          testing::Invoke([&](uint64_t downloaded_bytes, uint64_t total_bytes) {
+            EXPECT_EQ(downloaded_bytes, expected_downloaded_bytes);
+            EXPECT_EQ(total_bytes, expected_total_bytes);
+            download_progress_run_loop.Quit();
+          }));
+  download_progress_run_loop.Run();
+}
+
+void AITestUtils::FakeMonitor::ExpectReceivedNormalizedUpdate(
+    uint64_t expected_downloaded_bytes,
+    uint64_t expected_total_bytes) {
+  ExpectReceivedUpdate(AIUtils::NormalizeModelDownloadProgress(
+                           expected_downloaded_bytes, expected_total_bytes),
+                       AIUtils::kNormalizedDownloadProgressMax);
+}
+
+void AITestUtils::FakeMonitor::ExpectNoUpdate() {
+  EXPECT_CALL(mock_monitor_, OnDownloadProgressUpdate(testing::_, testing::_))
+      .Times(0);
+}
+
+AITestUtils::FakeComponent::FakeComponent(std::string id, uint64_t total_bytes)
+    : id_(std::move(id)), total_bytes_(total_bytes) {}
+
+component_updater::CrxUpdateItem AITestUtils::FakeComponent::CreateUpdateItem(
+    update_client::ComponentState state,
+    uint64_t downloaded_bytes) const {
+  component_updater::CrxUpdateItem update_item;
+  update_item.state = state;
+  update_item.id = id_;
+  update_item.downloaded_bytes = downloaded_bytes;
+  update_item.total_bytes = total_bytes_;
+  return update_item;
+}
+
+AITestUtils::MockComponentUpdateService::MockComponentUpdateService() = default;
+AITestUtils::MockComponentUpdateService::~MockComponentUpdateService() =
+    default;
+
+void AITestUtils::MockComponentUpdateService::AddObserver(Observer* observer) {
+  observer_list_.AddObserver(observer);
+}
+
+void AITestUtils::MockComponentUpdateService::RemoveObserver(
+    Observer* observer) {
+  observer_list_.RemoveObserver(observer);
+}
+
+void AITestUtils::MockComponentUpdateService::SendUpdate(
+    const component_updater::CrxUpdateItem& item) {
+  for (Observer& observer : observer_list_) {
+    observer.OnEvent(item);
+  }
+}
+
 AITestUtils::AITestBase::AITestBase() = default;
 AITestUtils::AITestBase::~AITestBase() = default;
 
 void AITestUtils::AITestBase::SetUp() {
   ChromeRenderViewHostTestHarness::SetUp();
-  ai_manager_ = std::make_unique<AIManager>(main_rfh()->GetBrowserContext());
+  ai_manager_ = std::make_unique<AIManager>(
+      main_rfh()->GetBrowserContext(), &component_update_service_, main_rfh());
 }
 
 void AITestUtils::AITestBase::TearDown() {
@@ -63,6 +130,12 @@ void AITestUtils::AITestBase::SetupMockOptimizationGuideKeyedService() {
                     return std::make_unique<
                         testing::NiceMock<MockOptimizationGuideKeyedService>>();
                   })));
+  ON_CALL(*mock_optimization_guide_keyed_service_,
+          GetOnDeviceModelEligibilityAsync(testing::_, testing::_, testing::_))
+      .WillByDefault([](auto feature, auto capabilities, auto callback) {
+        std::move(callback).Run(
+            optimization_guide::OnDeviceModelEligibilityReason::kSuccess);
+      });
 }
 
 void AITestUtils::AITestBase::SetupNullOptimizationGuideKeyedService() {
@@ -70,6 +143,23 @@ void AITestUtils::AITestBase::SetupNullOptimizationGuideKeyedService() {
       profile(), base::BindRepeating(
                      [](content::BrowserContext* context)
                          -> std::unique_ptr<KeyedService> { return nullptr; }));
+}
+
+void AITestUtils::AITestBase::SetupMockSession() {
+  ON_CALL(*mock_optimization_guide_keyed_service_,
+          StartSession(testing::_, testing::_))
+      .WillByDefault([&] {
+        return std::make_unique<
+            testing::NiceMock<optimization_guide::MockSession>>(&session_);
+      });
+  ON_CALL(session_, GetExecutionInputSizeInTokens(testing::_, testing::_))
+      .WillByDefault(
+          [&](optimization_guide::MultimodalMessageReadView request_metadata,
+              optimization_guide::OptimizationGuideModelSizeInTokenCallback
+                  callback) {
+            std::move(callback).Run(
+                blink::mojom::kWritingAssistanceMaxInputTokenSize);
+          });
 }
 
 blink::mojom::AIManager* AITestUtils::AITestBase::GetAIManagerInterface() {
@@ -91,13 +181,6 @@ size_t AITestUtils::AITestBase::GetAIManagerContextBoundObjectSetSize() {
   return ai_manager_->GetContextBoundObjectSetSizeForTesting();
 }
 
-void AITestUtils::AITestBase::MockDownloadProgressUpdate(
-    uint64_t downloaded_bytes,
-    uint64_t total_bytes) {
-  ai_manager_->SendDownloadProgressUpdateForTesting(downloaded_bytes,
-                                                    total_bytes);
-}
-
 // static
 const optimization_guide::TokenLimits& AITestUtils::GetFakeTokenLimits() {
   static const optimization_guide::TokenLimits limits{
@@ -113,28 +196,6 @@ const optimization_guide::TokenLimits& AITestUtils::GetFakeTokenLimits() {
 const optimization_guide::proto::Any& AITestUtils::GetFakeFeatureMetadata() {
   static base::NoDestructor<optimization_guide::proto::Any> data;
   return *data;
-}
-
-// static
-void AITestUtils::CheckWritingAssistanceApiRequest(
-    const google::protobuf::MessageLite& request_metadata,
-    const std::string& expected_shared_context,
-    const std::string& expected_context,
-    const optimization_guide::proto::WritingAssistanceApiOptions&
-        expected_options,
-    const std::string& expected_input) {
-  const optimization_guide::proto::WritingAssistanceApiRequest* request =
-      static_cast<
-          const optimization_guide::proto::WritingAssistanceApiRequest*>(
-          &request_metadata);
-  EXPECT_EQ(request->shared_context(), expected_shared_context);
-  EXPECT_EQ(request->context(), expected_context);
-  EXPECT_EQ(request->options().output_tone(), expected_options.output_tone());
-  EXPECT_EQ(request->options().output_format(),
-            expected_options.output_format());
-  EXPECT_EQ(request->options().output_length(),
-            expected_options.output_length());
-  EXPECT_EQ(request->rewrite_text(), expected_input);
 }
 
 // static

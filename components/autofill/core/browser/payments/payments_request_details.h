@@ -11,8 +11,8 @@
 #include <string>
 
 #include "base/values.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/payments/autofill_error_dialog_context.h"
 #include "components/autofill/core/browser/payments/card_unmask_challenge_option.h"
 #include "components/autofill/core/browser/payments/card_unmask_delegate.h"
@@ -300,6 +300,24 @@ struct GetDetailsForEnrollmentResponseDetails {
   LegalMessageLines issuer_legal_message;
 };
 
+// An enum set in the GetCardUploadDetailsRequest indicating the source of the
+// request when uploading a card to Google Payments. It should stay consistent
+// with the same enum in Google Payments server code.
+enum UploadCardSource {
+  // Source unknown.
+  UNKNOWN_UPLOAD_CARD_SOURCE,
+  // Single card is being uploaded from the normal credit card offer-to-save
+  // prompt during a checkout flow.
+  UPSTREAM_CHECKOUT_FLOW,
+  // Single card is being uploaded from chrome://settings/payments.
+  UPSTREAM_SETTINGS_PAGE,
+  // Single card is being uploaded after being scanned by OCR.
+  UPSTREAM_CARD_OCR,
+  // Single card is being uploaded from the Save and Fill dialog during a
+  // non-post-checkout flow.
+  UPSTREAM_SAVE_AND_FILL,
+};
+
 // A collection of the information required to make a credit card upload
 // request.
 struct UploadCardRequestDetails {
@@ -316,6 +334,8 @@ struct UploadCardRequestDetails {
   std::string risk_data;
   std::string app_locale;
   std::vector<ClientBehaviorConstants> client_behavior_signals;
+  UploadCardSource upload_card_source =
+      UploadCardSource::UNKNOWN_UPLOAD_CARD_SOURCE;
 };
 
 // A collection of information required to make an IBAN upload request.
@@ -330,27 +350,6 @@ struct UploadIbanRequestDetails {
   std::u16string value;
   std::u16string nickname;
   std::string risk_data;
-};
-
-// An enum set in the GetCardUploadDetailsRequest indicating the source of the
-// request when uploading a card to Google Payments. It should stay consistent
-// with the same enum in Google Payments server code.
-enum UploadCardSource {
-  // Source unknown.
-  UNKNOWN_UPLOAD_CARD_SOURCE,
-  // Single card is being uploaded from the normal credit card offer-to-save
-  // prompt during a checkout flow.
-  UPSTREAM_CHECKOUT_FLOW,
-  // Single card is being uploaded from chrome://settings/payments.
-  UPSTREAM_SETTINGS_PAGE,
-  // Single card is being uploaded after being scanned by OCR.
-  UPSTREAM_CARD_OCR,
-  // 1+ cards are being uploaded from a migration request that started during
-  // a checkout flow.
-  LOCAL_CARD_MIGRATION_CHECKOUT_FLOW,
-  // 1+ cards are being uploaded from a migration request that was initiated
-  // from chrome://settings/payments.
-  LOCAL_CARD_MIGRATION_SETTINGS_PAGE,
 };
 
 // A collection of information received in the response for an
@@ -436,7 +435,7 @@ struct CreateBnplPaymentInstrumentRequestDetails {
   // The ID of the BNPL partner to be linked. i.e. Affirm
   std::string issuer_id;
   // An opaque token used to chain consecutive payments requests together.
-  std::u16string context_token;
+  std::string context_token;
   // Client encoded risk data.
   std::string risk_data;
 };

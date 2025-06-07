@@ -7,6 +7,7 @@
 #import "base/check.h"
 #import "base/notreached.h"
 #import "base/test/ios/wait_util.h"
+#import "components/policy/core/browser/signin/profile_separation_policies.h"
 #import "components/prefs/pref_service.h"
 #import "components/signin/public/base/signin_metrics.h"
 #import "components/signin/public/base/signin_pref_names.h"
@@ -16,7 +17,11 @@
 #import "components/sync/service/sync_user_settings.h"
 #import "google_apis/gaia/gaia_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow.h"
+#import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_delegate.h"
+#import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_performer.h"
+#import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/test_authentication_flow_delegate.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view.h"
+#import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
 #import "ios/chrome/browser/authentication/ui_bundled/history_sync/history_sync_utils.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
@@ -154,19 +159,46 @@ void ResetSigninPromoPreferences() {
   prefs->SetBoolean(prefs::kSigninShouldPromptForSigninAgain, false);
 }
 
-void SignInWithoutSync(id<SystemIdentity> identity) {
+void SignIn(id<SystemIdentity> identity) {
   Browser* browser = GetMainBrowser();
   UIViewController* viewController = GetActiveViewController();
   __block AuthenticationFlow* authenticationFlow = [[AuthenticationFlow alloc]
                initWithBrowser:browser
                       identity:identity
                    accessPoint:signin_metrics::AccessPoint::kUnknown
+          precedingHistorySync:NO
              postSignInActions:PostSignInActionSet()
-      presentingViewController:viewController];
-  [authenticationFlow
-      startSignInWithCompletion:^(SigninCoordinatorResult result) {
-        authenticationFlow = nil;
-      }];
+      presentingViewController:viewController
+                    anchorView:nil
+                    anchorRect:CGRectNull];
+  // The delegate is retaining itself and the flow.
+  __block TestAuthenticationFlowDelegate* testRequestDelegate = nil;
+  // Unsetting those variables to ensure that they are not retained anymore.
+  // The authentication flow should retain them.
+  void (^unsetVariables)() = ^() {
+    authenticationFlow = nil;
+    testRequestDelegate = nil;
+  };
+  signin_ui::SigninCompletionCallback callback =
+      ^(SigninCoordinatorResult result) {
+        unsetVariables();
+      };
+  ChangeProfileContinuationProvider provider = base::BindRepeating(
+      [](void (^unsetVariables)()) {
+        return base::BindOnce(
+            [](void (^unsetVariables)(), SceneState*,
+               base::OnceClosure closure) {
+              unsetVariables();
+              std::move(closure).Run();
+            },
+            unsetVariables);
+      },
+      unsetVariables);
+  testRequestDelegate = [[TestAuthenticationFlowDelegate alloc]
+       initWithSigninCompletionCallback:callback
+      changeProfileContinuationProvider:provider];
+  authenticationFlow.delegate = testRequestDelegate;
+  [authenticationFlow startSignIn];
 }
 
 void ResetHistorySyncPreferencesForTesting() {
@@ -177,19 +209,25 @@ void ResetHistorySyncPreferencesForTesting() {
 
 void ResetSyncAccountSettingsPrefs() {
   ProfileIOS* profile = chrome_test_util::GetOriginalProfile();
-  // Clear the new per-account selected types and per-account passphrase.
+  // Clear the per-account selected types and per-account passphrase.
   SyncServiceFactory::GetForProfile(profile)
       ->GetUserSettings()
       ->KeepAccountSettingsPrefsOnlyForUsers({});
-  // And the old global selected types for syncing users. SyncUserSettings::
-  // SetSelectedTypes() CHECKs the user is signed-in, so go through SyncPrefs
-  // directly.
-  // TODO(crbug.com/40066949): Remove once sync-the-feature is gone on iOS.
-  syncer::SyncPrefs(profile->GetPrefs())
-      .SetSelectedTypesForSyncingUser(
-          /*sync_everything=*/true,
-          /*registered_types=*/syncer::UserSelectableTypeSet::All(),
-          /*selected_types=*/syncer::UserSelectableTypeSet::All());
+}
+
+void SetUseFakeResponsesForProfileSeparationPolicyRequests() {
+  [AuthenticationFlowPerformer setUseFakePolicyResponsesForTesting:YES];
+}
+
+void ClearUseFakeResponsesForProfileSeparationPolicyRequests() {
+  [AuthenticationFlowPerformer setUseFakePolicyResponsesForTesting:NO];
+}
+
+void SetPolicyResponseForNextProfileSeparationPolicyRequest(
+    policy::ProfileSeparationDataMigrationSettings
+        profileSeparationDataMigrationSettings) {
+  [AuthenticationFlowPerformer forcePolicyResponseForNextRequestForTesting:
+                                   profileSeparationDataMigrationSettings];
 }
 
 }  // namespace chrome_test_util

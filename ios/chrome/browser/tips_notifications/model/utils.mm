@@ -4,7 +4,11 @@
 
 #import "ios/chrome/browser/tips_notifications/model/utils.h"
 
+#import "base/strings/string_number_conversions.h"
+#import "base/strings/string_split.h"
+#import "base/strings/sys_string_conversions.h"
 #import "base/time/time.h"
+#import "components/prefs/pref_service.h"
 #import "ios/chrome/browser/push_notification/model/constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
@@ -54,6 +58,13 @@ ContentIDs ContentIDsForType(TipsNotificationType type) {
     case TipsNotificationType::kEnhancedSafeBrowsing:
       return {IDS_IOS_NOTIFICATIONS_TIPS_ENHANCED_SAFE_BROWSING_TITLE,
               IDS_IOS_NOTIFICATIONS_TIPS_ENHANCED_SAFE_BROWSING_BODY};
+    case TipsNotificationType::kCPE:
+      return {IDS_IOS_NOTIFICATIONS_TIPS_CPE_TITLE,
+              IDS_IOS_NOTIFICATIONS_TIPS_CPE_BODY};
+    case TipsNotificationType::kLensOverlay:
+      return {IDS_IOS_NOTIFICATIONS_TIPS_LENS_OVERLAY_TITLE,
+              IDS_IOS_NOTIFICATIONS_TIPS_LENS_OVERLAY_BODY};
+    case TipsNotificationType::kIncognitoLock:
     case TipsNotificationType::kError:
       NOTREACHED();
   }
@@ -76,6 +87,32 @@ base::TimeDelta DefaultTriggerDelta(bool for_reactivation,
   }
 }
 
+// Parses a field trial param as a comma separated list of integers, casts the
+// integers as type T, and returns a vector with elements of type T.
+template <typename T>
+std::vector<T> GetFieldTrialParamByFeatureAsVector(
+    const base::Feature& feature,
+    const std::string& param_name,
+    const std::vector<T> default_values) {
+  std::string param_string =
+      GetFieldTrialParamValueByFeature(feature, param_name);
+  if (param_string.length() == 0) {
+    return default_values;
+  }
+
+  std::vector<T> values;
+  const std::vector<std::string> items = base::SplitString(
+      param_string, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  for (std::string_view item : items) {
+    int value;
+    if (base::StringToInt(item, &value) && value >= 0 &&
+        value <= int(T::kMaxValue)) {
+      values.push_back(static_cast<T>(value));
+    }
+  }
+  return values;
+}
+
 // A bitfield with all notification types from the enum enabled.
 constexpr int kAllNotificationBits =
     (1 << (int(TipsNotificationType::kMaxValue) + 1)) - 1;
@@ -88,6 +125,7 @@ constexpr int kEnableAllNotifications =
 
 NSString* const kTipsNotificationId = @"kTipsNotificationId";
 NSString* const kTipsNotificationTypeKey = @"kTipsNotificationTypeKey";
+NSString* const kReactivationKey = @"kReactivationKey";
 const char kTipsNotificationsSentPref[] = "tips_notifications.sent_bitfield";
 const char kTipsNotificationsLastSent[] = "tips_notifiations.last_sent";
 const char kTipsNotificationsLastTriggered[] =
@@ -100,14 +138,29 @@ const char kTipsNotificationsDismissCount[] =
 const char kReactivationNotificationsCanceledCount[] =
     "reactivation_notifications.canceled_count";
 
+// User defaults key for the experimental setting to force a particular
+// notification type.
+NSString* const kForcedTipsNotificationType = @"ForcedTipsNotificationType";
+// User defaults key for the experimental setting to force a specified
+// trigger time in seconds.
+NSString* const kTipsNotificationTrigger = @"TipsNotificationTrigger";
+
 bool IsTipsNotification(UNNotificationRequest* request) {
   return [request.identifier isEqualToString:kTipsNotificationId];
 }
 
-NSDictionary* UserInfoForTipsNotificationType(TipsNotificationType type) {
+bool IsProactiveTipsNotification(UNNotificationRequest* request) {
+  return [request.content.userInfo[kReactivationKey] isEqual:@YES];
+}
+
+NSDictionary* UserInfoForTipsNotificationType(TipsNotificationType type,
+                                              bool for_reactivation,
+                                              std::string_view profile_name) {
   return @{
     kTipsNotificationId : @YES,
     kTipsNotificationTypeKey : @(static_cast<int>(type)),
+    kReactivationKey : for_reactivation ? @YES : @NO,
+    kOriginatingProfileNameKey : base::SysUTF8ToNSString(profile_name),
   };
 }
 
@@ -121,25 +174,17 @@ std::optional<TipsNotificationType> ParseTipsNotificationType(
   return static_cast<TipsNotificationType>(type.integerValue);
 }
 
-UNNotificationRequest* TipsNotificationRequest(
+UNNotificationContent* ContentForTipsNotificationType(
     TipsNotificationType type,
     bool for_reactivation,
-    TipsNotificationUserType user_type) {
-  return [UNNotificationRequest
-      requestWithIdentifier:kTipsNotificationId
-                    content:ContentForTipsNotificationType(type)
-                    trigger:TipsNotificationTrigger(for_reactivation,
-                                                    user_type)];
-}
-
-UNNotificationContent* ContentForTipsNotificationType(
-    TipsNotificationType type) {
+    std::string_view profile_name) {
   UNMutableNotificationContent* content =
       [[UNMutableNotificationContent alloc] init];
   ContentIDs content_ids = ContentIDsForType(type);
   content.title = l10n_util::GetNSString(content_ids.title);
   content.body = l10n_util::GetNSString(content_ids.body);
-  content.userInfo = UserInfoForTipsNotificationType(type);
+  content.userInfo =
+      UserInfoForTipsNotificationType(type, for_reactivation, profile_name);
   content.sound = UNNotificationSound.defaultSound;
   return content;
 }
@@ -154,110 +199,52 @@ base::TimeDelta TipsNotificationTriggerDelta(
         kIOSReactivationNotifications,
         kIOSReactivationNotificationsTriggerTimeParam, default_trigger);
   }
-  switch (user_type) {
-    case TipsNotificationUserType::kUnknown:
-      return GetFieldTrialParamByFeatureAsTimeDelta(
-          kIOSTipsNotifications, kIOSTipsNotificationsUnknownTriggerTimeParam,
-          default_trigger);
-    case TipsNotificationUserType::kLessEngaged:
-      return GetFieldTrialParamByFeatureAsTimeDelta(
-          kIOSTipsNotifications,
-          kIOSTipsNotificationsLessEngagedTriggerTimeParam, default_trigger);
-    case TipsNotificationUserType::kActiveSeeker:
-      return GetFieldTrialParamByFeatureAsTimeDelta(
-          kIOSTipsNotifications,
-          kIOSTipsNotificationsActiveSeekerTriggerTimeParam, default_trigger);
+  if (int setting = TipsNotificationTriggerExperimentalSetting()) {
+    return base::Seconds(setting);
   }
-}
-
-UNNotificationTrigger* TipsNotificationTrigger(
-    bool for_reactivation,
-    TipsNotificationUserType user_type) {
-  return [UNTimeIntervalNotificationTrigger
-      triggerWithTimeInterval:TipsNotificationTriggerDelta(for_reactivation,
-                                                           user_type)
-                                  .InSecondsF()
-                      repeats:NO];
+  return default_trigger;
 }
 
 int TipsNotificationsEnabledBitfield() {
-  return GetFieldTrialParamByFeatureAsInt(kIOSTipsNotifications,
-                                          kIOSTipsNotificationsEnabledParam,
-                                          kEnableAllNotifications);
+  return kEnableAllNotifications;
 }
 
 std::vector<TipsNotificationType> TipsNotificationsTypesOrder(
     bool for_reactivation) {
   if (for_reactivation) {
-    return {
-        TipsNotificationType::kLens,
-        TipsNotificationType::kWhatsNew,
-        TipsNotificationType::kEnhancedSafeBrowsing,
-    };
+    return GetFieldTrialParamByFeatureAsVector<TipsNotificationType>(
+        kIOSReactivationNotifications, kIOSReactivationNotificationsOrderParam,
+        {
+            TipsNotificationType::kLens,
+            TipsNotificationType::kEnhancedSafeBrowsing,
+            TipsNotificationType::kWhatsNew,
+        });
+  } else if (IsIOSExpandedTipsEnabled()) {
+    return GetFieldTrialParamByFeatureAsVector<TipsNotificationType>(
+        kIOSExpandedTips, kIOSExpandedTipsOrderParam,
+        {
+            TipsNotificationType::kEnhancedSafeBrowsing,
+            TipsNotificationType::kWhatsNew,
+            TipsNotificationType::kLens,
+            TipsNotificationType::kOmniboxPosition,
+            TipsNotificationType::kSetUpListContinuation,
+            TipsNotificationType::kDefaultBrowser,
+            TipsNotificationType::kDocking,
+            TipsNotificationType::kSignin,
+            TipsNotificationType::kLensOverlay,
+            TipsNotificationType::kCPE,
+        });
   }
-  int order_num = GetFieldTrialParamByFeatureAsInt(
-      kIOSTipsNotifications, kIOSTipsNotificationsOrderParam, 3);
-  switch (order_num) {
-    case 1:
-      // The default order.
-      return {
-          TipsNotificationType::kSetUpListContinuation,
-          TipsNotificationType::kWhatsNew,
-          TipsNotificationType::kLens,
-          TipsNotificationType::kOmniboxPosition,
-          TipsNotificationType::kEnhancedSafeBrowsing,
-          TipsNotificationType::kDefaultBrowser,
-          TipsNotificationType::kDocking,
-          TipsNotificationType::kSignin,
-      };
-
-    // Reordered with Lens first.
-    case 2:
-      return {
-          TipsNotificationType::kLens,
-          TipsNotificationType::kWhatsNew,
-          TipsNotificationType::kSetUpListContinuation,
-          TipsNotificationType::kOmniboxPosition,
-          TipsNotificationType::kEnhancedSafeBrowsing,
-          TipsNotificationType::kDefaultBrowser,
-          TipsNotificationType::kDocking,
-          TipsNotificationType::kSignin,
-      };
-
-    // Reordered with ESB first.
-    case 3:
-      return {
-          TipsNotificationType::kEnhancedSafeBrowsing,
-          TipsNotificationType::kWhatsNew,
-          TipsNotificationType::kLens,
-          TipsNotificationType::kOmniboxPosition,
-          TipsNotificationType::kSetUpListContinuation,
-          TipsNotificationType::kDefaultBrowser,
-          TipsNotificationType::kDocking,
-          TipsNotificationType::kSignin,
-      };
-
-    // Reordered with Lens, Omnibox position, and ESB first, and SetUpList
-    // removed.
-    case 4:
-      return {
-          TipsNotificationType::kLens,
-          TipsNotificationType::kOmniboxPosition,
-          TipsNotificationType::kEnhancedSafeBrowsing,
-          TipsNotificationType::kWhatsNew,
-          TipsNotificationType::kDefaultBrowser,
-          TipsNotificationType::kDocking,
-          TipsNotificationType::kSignin,
-      };
-
-    default:
-      NOTREACHED();
-  }
-}
-
-int TipsNotificationsDismissLimit() {
-  return GetFieldTrialParamByFeatureAsInt(
-      kIOSTipsNotifications, kIOSTipsNotificationsDismissLimitParam, 0);
+  return {
+      TipsNotificationType::kEnhancedSafeBrowsing,
+      TipsNotificationType::kWhatsNew,
+      TipsNotificationType::kLens,
+      TipsNotificationType::kOmniboxPosition,
+      TipsNotificationType::kSetUpListContinuation,
+      TipsNotificationType::kDefaultBrowser,
+      TipsNotificationType::kDocking,
+      TipsNotificationType::kSignin,
+  };
 }
 
 NotificationType NotificationTypeForTipsNotificationType(
@@ -279,7 +266,38 @@ NotificationType NotificationTypeForTipsNotificationType(
       return NotificationType::kTipsLens;
     case TipsNotificationType::kEnhancedSafeBrowsing:
       return NotificationType::kTipsEnhancedSafeBrowsing;
-    default:
+    case TipsNotificationType::kLensOverlay:
+      return NotificationType::kTipsLensOverlay;
+    case TipsNotificationType::kCPE:
+      return NotificationType::kTipsCPE;
+    case TipsNotificationType::kIncognitoLock:
+      return NotificationType::kTipsIncognitoLock;
+    case TipsNotificationType::kError:
       NOTREACHED();
   }
+}
+
+std::optional<TipsNotificationType> ForcedTipsNotificationType() {
+  int int_value = [[NSUserDefaults standardUserDefaults]
+                      integerForKey:kForcedTipsNotificationType] -
+                  1;
+  if (int_value < 0 || int_value > int(TipsNotificationType::kMaxValue)) {
+    return std::nullopt;
+  }
+  return static_cast<TipsNotificationType>(int_value);
+}
+
+int TipsNotificationTriggerExperimentalSetting() {
+  return [[NSUserDefaults standardUserDefaults]
+      integerForKey:kTipsNotificationTrigger];
+}
+
+TipsNotificationUserType GetTipsNotificationUserType(PrefService* local_state) {
+  return static_cast<TipsNotificationUserType>(
+      local_state->GetInteger(kTipsNotificationsUserType));
+}
+
+void SetTipsNotificationUserType(PrefService* local_state,
+                                 TipsNotificationUserType user_type) {
+  local_state->SetInteger(kTipsNotificationsUserType, int(user_type));
 }

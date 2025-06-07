@@ -20,7 +20,6 @@
 #import "components/password_manager/ios/shared_password_controller.h"
 #import "components/safe_browsing/ios/browser/safe_browsing_url_allow_list.h"
 #import "components/url_formatter/elide_url.h"
-#import "google_apis/google_api_keys.h"
 #import "ios/components/security_interstitials/lookalikes/lookalike_url_container.h"
 #import "ios/components/security_interstitials/lookalikes/lookalike_url_tab_allow_list.h"
 #import "ios/components/security_interstitials/lookalikes/lookalike_url_tab_helper.h"
@@ -52,6 +51,7 @@
 #import "ios/web_view/internal/cwv_back_forward_list_internal.h"
 #import "ios/web_view/internal/cwv_favicon_internal.h"
 #import "ios/web_view/internal/cwv_find_in_page_controller_internal.h"
+#import "ios/web_view/internal/cwv_global_state_internal.h"
 #import "ios/web_view/internal/cwv_html_element_internal.h"
 #import "ios/web_view/internal/cwv_navigation_action_internal.h"
 #import "ios/web_view/internal/cwv_ssl_status_internal.h"
@@ -63,7 +63,6 @@
 #import "ios/web_view/internal/translate/cwv_translation_controller_internal.h"
 #import "ios/web_view/internal/translate/web_view_translate_client.h"
 #import "ios/web_view/internal/web_view_browser_state.h"
-#import "ios/web_view/internal/web_view_global_state_util.h"
 #import "ios/web_view/internal/web_view_java_script_dialog_presenter.h"
 #import "ios/web_view/internal/web_view_message_handler_java_script_feature.h"
 #import "ios/web_view/internal/web_view_web_state_policy_decider.h"
@@ -77,8 +76,6 @@
 
 namespace {
 
-NSString* gCustomUserAgent = nil;
-NSString* gUserAgentProduct = nil;
 BOOL gChromeContextMenuEnabled = NO;
 BOOL gUseOptimizedSessionStorage = NO;
 BOOL gWebInspectorEnabled = NO;
@@ -162,10 +159,8 @@ class WebViewHolder : public web::WebStateUserData<WebViewHolder> {
   friend class web::WebStateUserData<WebViewHolder>;
 
   __weak CWVWebView* web_view_ = nil;
-  WEB_STATE_USER_DATA_KEY_DECL();
 };
 
-WEB_STATE_USER_DATA_KEY_IMPL(WebViewHolder)
 }  // namespace
 
 // Used to serialize the protobuf message and the WebStateID.
@@ -242,7 +237,7 @@ WEB_STATE_USER_DATA_KEY_IMPL(WebViewHolder)
     (web::BrowserState*)browserState {
   return web::WebState::CreateWithStorage(
       browserState, self.webStateID, _storage.metadata(),
-      base::ReturnValueOnce(std::move(_storage)),
+      base::ReturnValueOnce(std::make_optional(std::move(_storage))),
       base::ReturnValueOnce<NSData*>(nil));
 }
 
@@ -466,7 +461,8 @@ WEB_STATE_USER_DATA_KEY_IMPL(WebViewHolder)
     return;
   }
 
-  ios_web_view::InitializeGlobalState();
+  DCHECK([[CWVGlobalState sharedInstance] isStarted]);
+  [[CWVGlobalState sharedInstance] start];
 }
 
 + (BOOL)chromeContextMenuEnabled {
@@ -499,30 +495,6 @@ WEB_STATE_USER_DATA_KEY_IMPL(WebViewHolder)
 
 + (void)setSkipAccountStorageCheckEnabled:(BOOL)newValue {
   gSkipAccountStorageCheckEnabled = newValue;
-}
-
-+ (NSString*)customUserAgent {
-  return gCustomUserAgent;
-}
-
-+ (void)setCustomUserAgent:(NSString*)customUserAgent {
-  gCustomUserAgent = [customUserAgent copy];
-}
-
-+ (NSString*)userAgentProduct {
-  return gUserAgentProduct;
-}
-
-+ (void)setUserAgentProduct:(NSString*)product {
-  gUserAgentProduct = [product copy];
-}
-
-+ (void)setGoogleAPIKey:(NSString*)googleAPIKey
-               clientID:(NSString*)clientID
-           clientSecret:(NSString*)clientSecret {
-  google_apis::InitializeAndOverrideAPIKeyAndOAuthClient(
-      base::SysNSStringToUTF8(googleAPIKey), base::SysNSStringToUTF8(clientID),
-      base::SysNSStringToUTF8(clientSecret));
 }
 
 + (CWVWebView*)webViewForWebState:(web::WebState*)webState {

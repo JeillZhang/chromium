@@ -106,16 +106,6 @@ void ReportHardwareSecureCapabilityStatusUMA(
         base::UmaHistogramBoolean(
             uma_prefix + ".Support." + media::GetCodecNameForUMA(video_codec),
             is_supported);
-
-        // When the codec is supported for hardware security, report whether
-        // clear lead is supported or not.
-        if (is_supported) {
-          bool is_clear_lead_supported =
-              video_codecs.at(video_codec).supports_clear_lead;
-          base::UmaHistogramBoolean(uma_prefix + ".ClearLeadSupport." +
-                                        media::GetCodecNameForUMA(video_codec),
-                                    is_clear_lead_supported);
-        }
       }
     }
   }
@@ -435,12 +425,8 @@ CdmRegistryImpl::GetCapability(const std::string& key_system,
     }
 
 #if BUILDFLAG(IS_WIN)
-    // Check if the GPU is disabled from gpu/config/gpu_driver_bug_list.json and
-    // if the enable faulty GPU flag is disabled. If both are disabled, HW
-    // security should not be supported.
-    if (IsMediaFoundationHardwareSecurityDisabledByGpuFeature() &&
-        !base::FeatureList::IsEnabled(
-            media::kEnableFaultyGPUForMediaFoundation)) {
+    // Check if the GPU is disabled from gpu/config/gpu_driver_bug_list.json.
+    if (IsMediaFoundationHardwareSecurityDisabledByGpuFeature()) {
       DVLOG(1) << "Hardware security not supported: GPU workarounds";
       return {std::nullopt, Status::kGpuFeatureDisabled};
     }
@@ -583,9 +569,9 @@ void CdmRegistryImpl::LazyInitializeCapability(
     auto cdm_info =
         GetCdmInfo(key_system, CdmInfo::Robustness::kHardwareSecure);
     DCHECK(cdm_info && !cdm_info->capability);
-    GetMediaFoundationServiceCdmCapability(key_system, cdm_info->path,
-                                           /*is_hw_secure=*/true,
-                                           std::move(cdm_capability_cb));
+    GetMediaFoundationServiceCdmCapability(
+        key_system, cdm_info->type, cdm_info->path,
+        /*is_hw_secure=*/true, std::move(cdm_capability_cb));
   } else {
     // kSoftwareSecure should have been determined from the manifest.
     std::move(cdm_capability_cb)
@@ -605,7 +591,7 @@ void CdmRegistryImpl::OnCapabilityInitialized(
     media::CdmCapabilityOrStatus cdm_capability_or_status) {
   DVLOG(1) << __func__ << ": key_system=" << key_system
            << ", robustness=" << robustness << ", cdm_capability_or_status="
-           << (cdm_capability_or_status.has_value() ? "yes" : "no");
+           << cdm_capability_or_status.ToString();
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(pending_lazy_initializations_.count({key_system, robustness}));
 
@@ -663,13 +649,6 @@ void CdmRegistryImpl::FinalizeCapability(
     itr->capability = std::nullopt;
     itr->capability_query_status = std::move(cdm_capability_or_status).error();
   }
-#if BUILDFLAG(IS_ANDROID)
-  // Querying for the CDM version requires creating a MediaDrm object, so
-  // delaying it until the capability is determined.
-  // TODO(crbug.com/40280540): Once querying capabilities on Android is done in
-  // a separate process, include the version with the capabilities returned.
-  itr->version = media::MediaDrmBridge::GetVersion(key_system);
-#endif
 }
 
 void CdmRegistryImpl::UpdateAndNotifyKeySystemCapabilities() {

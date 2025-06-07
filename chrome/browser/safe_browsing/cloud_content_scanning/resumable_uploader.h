@@ -31,6 +31,9 @@ namespace safe_browsing {
 // resumable protocol. This class is neither movable nor copyable.
 class ResumableUploadRequest : public ConnectorUploadRequest {
  public:
+  using ContentUploadedCallback = base::OnceClosure;
+  using VerdictReceivedCallback = ConnectorUploadRequest::Callback;
+
   // Creates a ResumableUploadRequest, which will upload the `metadata` of the
   // file corresponding to the provided `path` to the given `base_url`, and then
   // the file content to the `path` if necessary.
@@ -48,7 +51,9 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
       bool is_obfuscated,
       const std::string& histogram_suffix,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
-      Callback callback);
+      VerdictReceivedCallback verdict_received_callback,
+      ContentUploadedCallback content_uploaded_callback,
+      bool force_sync_upload);
 
   // Creates a ResumableUploadRequest, which will upload the `metadata` of the
   // page to the given `base_url`, and then the content of `page_region` if
@@ -61,7 +66,9 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
       base::ReadOnlySharedMemoryRegion page_region,
       const std::string& histogram_suffix,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
-      Callback callback);
+      VerdictReceivedCallback verdict_received_callback,
+      ContentUploadedCallback content_uploaded_callback,
+      bool force_sync_upload);
 
   ResumableUploadRequest(const ResumableUploadRequest&) = delete;
   ResumableUploadRequest& operator=(const ResumableUploadRequest&) = delete;
@@ -80,7 +87,9 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
       bool is_obfuscated,
       const std::string& histogram_suffix,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
-      ResumableUploadRequest::Callback callback);
+      VerdictReceivedCallback verdict_received_callback,
+      ContentUploadedCallback content_uploaded_callback,
+      bool force_sync_upload);
 
   static std::unique_ptr<ConnectorUploadRequest> CreatePageRequest(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
@@ -90,7 +99,9 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
       base::ReadOnlySharedMemoryRegion page_region,
       const std::string& histogram_suffix,
       const net::NetworkTrafficAnnotationTag& traffic_annotation,
-      ResumableUploadRequest::Callback callback);
+      VerdictReceivedCallback verdict_received_callback,
+      ContentUploadedCallback content_uploaded_callback,
+      bool force_sync_upload);
 
   // Set the headers for the given metadata `request`.
   void SetMetadataRequestHeaders(network::ResourceRequest* request);
@@ -100,6 +111,20 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
   void Start() override;
 
   std::string GetUploadInfo() override;
+
+ protected:
+  // Called after a metadata request finishes successfully. Virtual for testing.
+  virtual void SendContentSoon(const std::string& upload_url);
+
+  // Called whenever a net request finishes (on success or failure). Protected
+  // for testing
+  void Finish(int net_error,
+              int response_code,
+              std::optional<std::string> response_body);
+
+  bool force_sync_upload() const { return force_sync_upload_; }
+
+  VerdictReceivedCallback verdict_received_callback_;
 
  private:
   // Send the metadata information about the file/page to the server.
@@ -113,14 +138,10 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
   void CreateDatapipe(std::unique_ptr<network::ResourceRequest> request,
                       file_access::ScopedFileAccess file_access);
 
-  // Called after `data_pipe_getter_` has been initialized.
+  // Called after `data_pipe_getter_` has be
   void OnDataPipeCreated(
       std::unique_ptr<network::ResourceRequest> request,
       std::unique_ptr<ConnectorDataPipeGetter> data_pipe_getter);
-
-  // Called after a metadata request finishes successfully and provides a
-  // `upload_url_`.
-  void SendContentSoon();
 
   // Called after `data_pipe_getter_` is known to be initialized to a correct
   // state.
@@ -134,12 +155,8 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
   //    1. The HTTP status is OK.
   //    2. The `headers` have `upload_status` and `upload_url`.
   //    3. The `upload_status` is "active".
+  // This method also has the side effect of setting upload_url_.
   bool CanUploadContent(const scoped_refptr<net::HttpResponseHeaders>& headers);
-
-  // Called whenever a net request finishes (on success or failure).
-  void Finish(int net_error,
-              int response_code,
-              std::optional<std::string> response_body);
 
   // Helper used by metrics logging code.
   std::string GetRequestType();
@@ -150,14 +167,17 @@ class ResumableUploadRequest : public ConnectorUploadRequest {
 
   bool is_obfuscated_ = false;
 
-  // Retrieved from metadata response to be used in upload content to the
-  // server.
-  std::string upload_url_;
   enum {
     PENDING = 0,
     METADATA_ONLY = 1,
-    FULL_CONTENT = 2
+    FULL_CONTENT = 2,
+    ASYNC = 3
   } scan_type_ = PENDING;
+
+  ContentUploadedCallback content_uploaded_callback_;
+
+  bool force_sync_upload_ = false;
+
   base::WeakPtrFactory<ResumableUploadRequest> weak_factory_{this};
 };
 }  // namespace safe_browsing

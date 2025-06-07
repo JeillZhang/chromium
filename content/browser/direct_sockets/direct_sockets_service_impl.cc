@@ -5,11 +5,11 @@
 #include "content/browser/direct_sockets/direct_sockets_service_impl.h"
 
 #include <optional>
+#include <variant>
 
 #include "base/check_deref.h"
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
-#include "base/functional/overloaded.h"
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
@@ -41,6 +41,7 @@
 #include "services/network/public/mojom/restricted_udp_socket.mojom.h"
 #include "services/network/public/mojom/tcp_socket.mojom.h"
 #include "services/network/public/mojom/udp_socket.mojom.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/mojom/direct_sockets/direct_sockets.mojom.h"
 
@@ -107,7 +108,7 @@ bool ValidateRequest(const Context& context,
     return true;
   }
   return std::visit(
-      base::Overloaded{
+      absl::Overload{
           [&](RenderFrameHost* rfh) {
             return delegate->ValidateRequest(*rfh, {address, port, protocol});
           },
@@ -170,7 +171,7 @@ void RequestPrivateNetworkAccess(const Context& context,
     return;
   }
   return std::visit(
-      base::Overloaded{
+      absl::Overload{
           [&](content::RenderFrameHost* rfh) {
             if (!rfh->IsFeatureEnabled(
                     network::mojom::PermissionsPolicyFeature::
@@ -668,7 +669,7 @@ network::mojom::NetworkContext* DirectSocketsServiceImpl::GetNetworkContext()
     return network_context;
   }
   return std::visit(
-      base::Overloaded{
+      absl::Overload{
           [](RenderFrameHost* rfh) {
             return rfh->GetStoragePartition()->GetNetworkContext();
           },

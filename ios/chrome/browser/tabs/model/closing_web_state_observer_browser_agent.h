@@ -15,9 +15,6 @@ namespace web::proto {
 class WebStateStorage;
 }
 
-// TODO(crbug.com/40715295): more cleanly separate the responsibilities of this
-// class: There should be a different object to be responsible for cleaning up
-// snapshots.
 // A browser agent that is responsible for handling WebStateList
 // events about closing WebState, like requesting deletion of the current page
 // snapshot from disk and memory. This class also records of history for
@@ -32,7 +29,6 @@ class ClosingWebStateObserverBrowserAgent
 
  private:
   friend class BrowserUserData<ClosingWebStateObserverBrowserAgent>;
-  BROWSER_USER_DATA_KEY_DECL();
 
   explicit ClosingWebStateObserverBrowserAgent(Browser* browser);
 
@@ -55,8 +51,6 @@ class ClosingWebStateObserverBrowserAgent
   void WebStateListDidChange(WebStateList* web_state_list,
                              const WebStateListChange& change,
                              const WebStateListStatus& status) override;
-
-  raw_ptr<Browser> browser_;
 
   base::WeakPtrFactory<ClosingWebStateObserverBrowserAgent> weak_ptr_factory_{
       this};

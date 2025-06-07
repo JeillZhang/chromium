@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <inttypes.h>
+
+#include "base/strings/to_string.h"
+
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
 #pragma allow_unsafe_buffers
@@ -75,12 +79,7 @@ int GetCaptureBufferSize(bool need_webrtc_processing,
 #endif
 }
 
-bool ApmNeedsPlayoutReference(const webrtc::AudioProcessing* apm,
-                              const AudioProcessingSettings& settings) {
-  if (!base::FeatureList::IsEnabled(
-          features::kWebRtcApmTellsIfPlayoutReferenceIsNeeded)) {
-    return settings.NeedPlayoutReference();
-  }
+bool ApmNeedsPlayoutReference(const webrtc::AudioProcessing* apm) {
   if (!apm) {
     // APM is not available; hence, observing the playout reference is not
     // needed.
@@ -114,7 +113,7 @@ class AudioProcessorCaptureBus {
 
   float* const* channel_ptrs() {
     for (int i = 0; i < bus_->channels(); ++i) {
-      channel_ptrs_[i] = bus_->channel(i);
+      channel_ptrs_[i] = bus_->channel_span(i).data();
     }
     return channel_ptrs_.get();
   }
@@ -245,15 +244,15 @@ std::unique_ptr<AudioProcessor> AudioProcessor::Create(
     const media::AudioParameters& output_format) {
   log_callback.Run(base::StringPrintf(
       "AudioProcessor::Create({multi_channel_capture_processing=%s})",
-      settings.multi_channel_capture_processing ? "true" : "false"));
+      base::ToString(settings.multi_channel_capture_processing)));
 
-  rtc::scoped_refptr<webrtc::AudioProcessing> webrtc_audio_processing =
+  webrtc::scoped_refptr<webrtc::AudioProcessing> webrtc_audio_processing =
       media::CreateWebRtcAudioProcessingModule(settings);
 
   return std::make_unique<AudioProcessor>(
       std::move(deliver_processed_audio_callback), std::move(log_callback),
       input_format, output_format, std::move(webrtc_audio_processing),
-      ApmNeedsPlayoutReference(webrtc_audio_processing.get(), settings));
+      ApmNeedsPlayoutReference(webrtc_audio_processing.get()));
 }
 
 AudioProcessor::AudioProcessor(
@@ -261,7 +260,7 @@ AudioProcessor::AudioProcessor(
     LogCallback log_callback,
     const media::AudioParameters& input_format,
     const media::AudioParameters& output_format,
-    rtc::scoped_refptr<webrtc::AudioProcessing> webrtc_audio_processing,
+    webrtc::scoped_refptr<webrtc::AudioProcessing> webrtc_audio_processing,
     bool needs_playout_reference)
     : webrtc_audio_processing_(webrtc_audio_processing),
       needs_playout_reference_(needs_playout_reference),
@@ -366,7 +365,7 @@ void AudioProcessor::ProcessCapturedAudio(const media::AudioBus& audio_source,
 void AudioProcessor::SetOutputWillBeMuted(bool muted) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(owning_sequence_);
   SendLogMessage(
-      base::StringPrintf("%s({muted=%s})", __func__, muted ? "true" : "false"));
+      base::StringPrintf("%s({muted=%s})", __func__, base::ToString(muted)));
   if (webrtc_audio_processing_) {
     webrtc_audio_processing_->set_output_will_be_muted(muted);
   }
@@ -446,8 +445,9 @@ void AudioProcessor::AnalyzePlayoutData(const AudioBus& audio_bus,
   webrtc::StreamConfig input_stream_config(*playout_sample_rate_hz_,
                                            audio_bus.channels());
   std::array<const float*, media::limits::kMaxChannels> input_ptrs;
-  for (int i = 0; i < audio_bus.channels(); ++i)
-    input_ptrs[i] = audio_bus.channel(i);
+  for (int i = 0; i < audio_bus.channels(); ++i) {
+    input_ptrs[i] = audio_bus.channel_span(i).data();
+  }
 
   const int apm_error = webrtc_audio_processing_->AnalyzeReverseStream(
       input_ptrs.data(), input_stream_config);

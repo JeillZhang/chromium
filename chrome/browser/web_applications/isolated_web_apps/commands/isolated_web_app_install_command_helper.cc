@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "base/base64.h"
@@ -16,9 +17,9 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_forward.h"
-#include "base/functional/overloaded.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
 #include "base/types/expected.h"
@@ -35,7 +36,6 @@
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_validator.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_version.h"
-#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/iwa_key_distribution_info_provider.h"
 #include "chrome/browser/web_applications/isolated_web_apps/pending_install_info.h"
 #include "chrome/browser/web_applications/web_app_icon_operations.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
@@ -47,11 +47,13 @@
 #include "components/webapps/browser/installable/installable_logging.h"
 #include "components/webapps/browser/installable/installable_manager.h"
 #include "components/webapps/browser/web_contents/web_app_url_loader.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/reload_type.h"
 #include "content/public/browser/storage_partition_config.h"
 #include "content/public/browser/web_contents.h"
 #include "crypto/random.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/manifest/manifest_util.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
 #include "url/gurl.h"
@@ -153,8 +155,8 @@ bool IntegrityBlockDataHasRotatedKey(
 void CleanupLocationIfOwned(const base::FilePath& profile_dir,
                             const IsolatedWebAppStorageLocation& location,
                             base::OnceClosure closure) {
-  absl::visit(
-      base::Overloaded{
+  std::visit(
+      absl::Overload{
           [&](const IwaStorageOwnedBundle& location) {
             base::ThreadPool::PostTaskAndReply(
                 FROM_HERE,
@@ -188,32 +190,32 @@ void UpdateBundlePathAndCreateStorageLocation(
         std::move(callback));
   };
 
-  absl::visit(base::Overloaded{
-                  [&](const IwaSourceBundleWithModeAndFileOp& bundle) {
-                    switch (bundle.mode_and_file_op()) {
-                      case IwaSourceBundleModeAndFileOp::kDevModeCopy:
-                        copy_or_move(bundle.path(), /*dev_mode=*/true,
-                                     Operation::kCopy);
-                        break;
-                      case IwaSourceBundleModeAndFileOp::kDevModeMove:
-                        copy_or_move(bundle.path(), /*dev_mode=*/true,
-                                     Operation::kMove);
-                        break;
-                      case IwaSourceBundleModeAndFileOp::kProdModeCopy:
-                        copy_or_move(bundle.path(), /*dev_mode=*/false,
-                                     Operation::kCopy);
-                        break;
-                      case IwaSourceBundleModeAndFileOp::kProdModeMove:
-                        copy_or_move(bundle.path(), /*dev_mode=*/false,
-                                     Operation::kMove);
-                        break;
-                    }
-                  },
-                  [&](const IwaSourceProxy& proxy) {
-                    std::move(callback).Run(IwaStorageProxy(proxy.proxy_url()));
-                  },
-              },
-              source.variant());
+  std::visit(absl::Overload{
+                 [&](const IwaSourceBundleWithModeAndFileOp& bundle) {
+                   switch (bundle.mode_and_file_op()) {
+                     case IwaSourceBundleModeAndFileOp::kDevModeCopy:
+                       copy_or_move(bundle.path(), /*dev_mode=*/true,
+                                    Operation::kCopy);
+                       break;
+                     case IwaSourceBundleModeAndFileOp::kDevModeMove:
+                       copy_or_move(bundle.path(), /*dev_mode=*/true,
+                                    Operation::kMove);
+                       break;
+                     case IwaSourceBundleModeAndFileOp::kProdModeCopy:
+                       copy_or_move(bundle.path(), /*dev_mode=*/false,
+                                    Operation::kCopy);
+                       break;
+                     case IwaSourceBundleModeAndFileOp::kProdModeMove:
+                       copy_or_move(bundle.path(), /*dev_mode=*/false,
+                                    Operation::kMove);
+                       break;
+                   }
+                 },
+                 [&](const IwaSourceProxy& proxy) {
+                   std::move(callback).Run(IwaStorageProxy(proxy.proxy_url()));
+                 },
+             },
+             source.variant());
 }
 
 base::expected<std::reference_wrapper<const WebApp>, std::string>
@@ -262,7 +264,7 @@ KeyRotationLookupResult LookupRotatedKey(
   };
 
   const auto* kr_info =
-      IwaKeyDistributionInfoProvider::GetInstance()->GetKeyRotationInfo(
+      IwaKeyDistributionInfoProvider::GetInstance().GetKeyRotationInfo(
           web_bundle_id.id());
   if (!kr_info) {
     return KeyRotationLookupResult::kNoKeyRotation;
@@ -280,7 +282,7 @@ KeyRotationData GetKeyRotationData(
     const web_package::SignedWebBundleId& web_bundle_id,
     const IsolationData& isolation_data) {
   const auto* kr_info =
-      IwaKeyDistributionInfoProvider::GetInstance()->GetKeyRotationInfo(
+      IwaKeyDistributionInfoProvider::GetInstance().GetKeyRotationInfo(
           web_bundle_id.id());
   CHECK(kr_info && kr_info->public_key)
       << "`GetKeyRotationData()` must only be called if `LookupRotatedKey()` "
@@ -337,10 +339,7 @@ IsolatedWebAppInstallCommandHelper::CreateIsolatedWebAppWebContents(
 std::unique_ptr<IsolatedWebAppResponseReaderFactory>
 IsolatedWebAppInstallCommandHelper::CreateDefaultResponseReaderFactory(
     Profile& profile) {
-  auto validator = std::make_unique<IsolatedWebAppValidator>();
-
-  return std::make_unique<IsolatedWebAppResponseReaderFactory>(
-      profile, std::move(validator));
+  return std::make_unique<IsolatedWebAppResponseReaderFactory>(profile);
 }
 
 IsolatedWebAppInstallCommandHelper::IsolatedWebAppInstallCommandHelper(
@@ -362,8 +361,8 @@ void IsolatedWebAppInstallCommandHelper::CheckTrustAndSignatures(
         void(base::expected<
              std::optional<web_package::SignedWebBundleIntegrityBlock>,
              std::string>)> callback) {
-  absl::visit(
-      base::Overloaded{
+  std::visit(
+      absl::Overload{
           [&](const IwaSourceBundleWithMode& location) {
             CHECK(!url_info_.web_bundle_id().is_for_proxy_mode());
             if (location.dev_mode() && !IsIwaDevModeEnabled(profile)) {

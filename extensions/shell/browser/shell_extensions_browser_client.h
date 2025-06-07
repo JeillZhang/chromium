@@ -39,6 +39,7 @@ class ShellExtensionsBrowserClient : public ExtensionsBrowserClient {
   ~ShellExtensionsBrowserClient() override;
 
   // ExtensionsBrowserClient overrides:
+  void Init() override {}
   bool IsShuttingDown() override;
   bool AreExtensionsDisabled(const base::CommandLine& command_line,
                              content::BrowserContext* context) override;
@@ -133,10 +134,9 @@ class ShellExtensionsBrowserClient : public ExtensionsBrowserClient {
       content::WebContents* web_contents) override;
   KioskDelegate* GetKioskDelegate() override;
   std::string GetApplicationLocale() override;
-  std::string GetUserAgent() const override;
 
-  // |context| is the single BrowserContext used for IsValidContext().
-  // |pref_service| is used for GetPrefServiceForContext().
+  // `context` is the single BrowserContext used for IsValidContext().
+  // `pref_service` is used for GetPrefServiceForContext().
   void InitWithBrowserContext(content::BrowserContext* context,
                               PrefService* pref_service);
 
@@ -149,7 +149,7 @@ class ShellExtensionsBrowserClient : public ExtensionsBrowserClient {
   raw_ptr<content::BrowserContext, DanglingUntriaged> browser_context_ =
       nullptr;
 
-  // The PrefService for |browser_context_|. Not owned. Must be initialized when
+  // The PrefService for `browser_context_`. Not owned. Must be initialized when
   // ready by calling InitWithBrowserContext().
   raw_ptr<PrefService, DanglingUntriaged> pref_service_ = nullptr;
 

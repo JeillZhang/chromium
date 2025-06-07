@@ -75,7 +75,8 @@ void DataSharingServiceHooks(
 std::unique_ptr<ShareKitService> CreateShareKitService(
     data_sharing::DataSharingService* data_sharing_service,
     collaboration::CollaborationService* collaboration_service,
-    tab_groups::TabGroupSyncService* sync_service) {
+    tab_groups::TabGroupSyncService* sync_service,
+    TabGroupService* tab_group_service) {
   return nullptr;
 }
 std::unique_ptr<password_manager::BulkLeakCheckServiceInterface>
@@ -121,6 +122,11 @@ feature_engagement::FeatureActivation FETDemoModeOverride() {
 
 void WipeProfileIfRequested(int argc, char* argv[]) {
   // Do nothing.
+}
+
+base::TimeDelta
+GetOverriddenDelayForRequestingTurningOnCredentialProviderExtension() {
+  return base::Seconds(0);
 }
 
 }  // namespace tests_hook

@@ -36,6 +36,8 @@ static_library("core") {
     "ssl_error_ui.h",
     "urls.cc",
     "urls.h",
+    "utils.cc",
+    "utils.h",
   ]
 
   if (!is_ios) {
@@ -99,6 +101,7 @@ source_set("unit_tests") {
   testonly = true
   sources = [
     "insecure_form_util_unittest.cc",
+    "metrics_helper_unittest.cc",
     "ssl_error_options_mask_unittest.cc",
   ]
 
@@ -106,6 +109,7 @@ source_set("unit_tests") {
     ":core",
     ":insecure_form_util",
     "//base",
+    "//base/test:test_support",
     "//net",
     "//testing/gtest",
   ]

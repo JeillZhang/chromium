@@ -16,6 +16,7 @@
 #include "ui/views/controls/webview/webview.h"
 
 class StatusBubbleViews;
+class WebContentsCloseHandler;
 
 namespace ui {
 class LayerTreeOwner;
@@ -34,10 +35,8 @@ class ContentsWebView : public views::WebView,
   ContentsWebView& operator=(const ContentsWebView&) = delete;
   ~ContentsWebView() override;
 
-  // Sets the status bubble, which should be repositioned every time
-  // this view changes visible bounds.
-  void SetStatusBubble(StatusBubbleViews* status_bubble);
   StatusBubbleViews* GetStatusBubble() const;
+  WebContentsCloseHandler* GetWebContentsCloseHandler() const;
 
   // Toggles whether the background is visible.
   void SetBackgroundVisible(bool background_visible);
@@ -51,6 +50,7 @@ class ContentsWebView : public views::WebView,
   void OnThemeChanged() override;
   void RenderViewReady() override;
   void OnLetterboxingChanged() override;
+  void SetWebContents(content::WebContents* web_contents) override;
 
   // ui::View overrides:
   std::unique_ptr<ui::Layer> RecreateLayer() override;
@@ -61,7 +61,9 @@ class ContentsWebView : public views::WebView,
 
  private:
   void UpdateBackgroundColor();
-  raw_ptr<StatusBubbleViews> status_bubble_;
+  std::unique_ptr<StatusBubbleViews> status_bubble_ = nullptr;
+  std::unique_ptr<WebContentsCloseHandler> web_contents_close_handler_ =
+      nullptr;
 
   bool background_visible_ = true;
 

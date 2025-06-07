@@ -11,7 +11,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_management_internal.h"
-#include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/external_provider_manager.h"
 #include "chrome/browser/extensions/mv2_experiment_stage.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/profiles/profile.h"
@@ -23,6 +23,7 @@
 #include "components/ukm/test_ukm_recorder.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/mock_external_provider.h"
@@ -277,9 +278,9 @@ class ManifestV2ExperimentManagerBrowserTest : public ExtensionBrowserTest {
   void UninstallExtension(const ExtensionId& extension_id,
                           UninstallReason uninstall_reason) {
     base::RunLoop run_loop;
-    extension_service()->UninstallExtension(extension_id, uninstall_reason,
-                                            /*error=*/nullptr,
-                                            run_loop.QuitWhenIdleClosure());
+    extension_registrar()->UninstallExtension(extension_id, uninstall_reason,
+                                              /*error=*/nullptr,
+                                              run_loop.QuitWhenIdleClosure());
     run_loop.Run();
   }
 
@@ -436,7 +437,7 @@ IN_PROC_BROWSER_TEST_F(ManifestV2ExperimentManagerBrowserTest,
   EXPECT_TRUE(GetUkmEntries().empty());
 
   // Re-enable the disabled extension.
-  extension_service()->EnableExtension(extension_id);
+  extension_registrar()->EnableExtension(extension_id);
 
   // The extension should be properly re-enabled, the disable reasons cleared,
   // and the extension should be marked as explicitly re-enabled.
@@ -743,12 +744,14 @@ IN_PROC_BROWSER_TEST_F(ManifestV2ExperimentManagerBrowserTest,
   base::FilePath crx_path = test_data_dir_.AppendASCII("good.crx");
 
   // Install a new external extension.
+  ExternalProviderManager* external_provider_manager =
+      ExternalProviderManager::Get(profile());
   TestExtensionRegistryObserver observer(extension_registry());
   auto provider = std::make_unique<MockExternalProvider>(
-      extension_service(), mojom::ManifestLocation::kExternalPref);
+      external_provider_manager, mojom::ManifestLocation::kExternalPref);
   provider->UpdateOrAddExtension(kExtensionId, "1.0.0.0", crx_path);
-  extension_service()->AddProviderForTesting(std::move(provider));
-  extension_service()->CheckForExternalUpdates();
+  external_provider_manager->AddProviderForTesting(std::move(provider));
+  external_provider_manager->CheckForExternalUpdates();
 
   auto extension = observer.WaitForExtensionInstalled();
   EXPECT_EQ(extension->id(), kExtensionId);
@@ -895,7 +898,7 @@ IN_PROC_BROWSER_TEST_F(ManifestV2ExperimentManagerBrowserTest,
   }
 
   // Re-enable the first MV2 extension (this is allowed in this phase).
-  extension_service()->EnableExtension(extension_id1);
+  extension_registrar()->EnableExtension(extension_id1);
 
   // The first extension should be properly re-enabled, the disable reasons
   // cleared, and the extension should be marked as explicitly re-enabled.
@@ -978,7 +981,7 @@ IN_PROC_BROWSER_TEST_F(ManifestV2ExperimentManagerBrowserTest,
   base::RunLoop run_loop;
   std::string id;
   scoped_refptr<UnpackedInstaller> installer =
-      UnpackedInstaller::Create(extension_service());
+      UnpackedInstaller::Create(profile());
   auto on_complete = [&run_loop, &id](const Extension* extension,
                                       const base::FilePath& file_path,
                                       const std::string& error) {
@@ -1014,7 +1017,7 @@ IN_PROC_BROWSER_TEST_F(ManifestV2ExperimentManagerBrowserTest,
   base::RunLoop run_loop;
   std::string install_error;
   scoped_refptr<UnpackedInstaller> installer =
-      UnpackedInstaller::Create(extension_service());
+      UnpackedInstaller::Create(profile());
   auto on_complete = [&run_loop, &install_error](
                          const Extension* extension,
                          const base::FilePath& file_path,

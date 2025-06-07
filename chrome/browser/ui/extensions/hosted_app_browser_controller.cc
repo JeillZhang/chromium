@@ -7,8 +7,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
+#include "chrome/browser/extensions/app_tab_helper.h"
 #include "chrome/browser/extensions/extension_util.h"
-#include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -35,6 +35,7 @@
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/native_widget_types.h"
 #include "url/gurl.h"
 
 namespace extensions {
@@ -91,8 +92,8 @@ ui::ImageModel HostedAppBrowserController::GetWindowAppIcon() const {
     return GetFallbackAppIcon();
   }
 
-  extensions::TabHelper* extensions_tab_helper =
-      extensions::TabHelper::FromWebContents(contents);
+  extensions::AppTabHelper* extensions_tab_helper =
+      extensions::AppTabHelper::FromWebContents(contents);
   if (!extensions_tab_helper) {
     return GetFallbackAppIcon();
   }
@@ -141,15 +142,7 @@ bool HostedAppBrowserController::IsUrlInAppScope(const GURL& url) const {
     return false;
   }
 
-  const std::vector<UrlHandlerInfo>* url_handlers =
-      UrlHandlers::GetUrlHandlers(extension);
-
-  // We don't have a scope, fall back to same origin check.
-  if (!url_handlers) {
-    return IsSameHostAndPort(GetAppStartUrl(), url);
-  }
-
-  return UrlHandlers::CanBookmarkAppHandleUrl(extension, url);
+  return IsSameHostAndPort(GetAppStartUrl(), url);
 }
 
 const Extension* HostedAppBrowserController::GetExtension() const {
@@ -194,7 +187,8 @@ void HostedAppBrowserController::Uninstall(
   DCHECK(!uninstall_dialog_);
   uninstall_dialog_ = ExtensionUninstallDialog::Create(
       browser()->profile(),
-      browser()->window() ? browser()->window()->GetNativeWindow() : nullptr,
+      browser()->window() ? browser()->window()->GetNativeWindow()
+                          : gfx::NativeWindow(),
       this);
 
   // The dialog can be closed by UI system whenever it likes, but
@@ -222,13 +216,14 @@ void HostedAppBrowserController::OnTabInserted(content::WebContents* contents) {
   AppBrowserController::OnTabInserted(contents);
 
   const Extension* extension = GetExtension();
-  extensions::TabHelper::FromWebContents(contents)->SetExtensionApp(extension);
+  extensions::AppTabHelper::FromWebContents(contents)->SetExtensionApp(
+      extension);
 }
 
 void HostedAppBrowserController::OnTabRemoved(content::WebContents* contents) {
   AppBrowserController::OnTabRemoved(contents);
 
-  extensions::TabHelper::FromWebContents(contents)->SetExtensionApp(nullptr);
+  extensions::AppTabHelper::FromWebContents(contents)->SetExtensionApp(nullptr);
 }
 
 void HostedAppBrowserController::LoadAppIcon(

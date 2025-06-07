@@ -114,7 +114,7 @@ class CORE_EXPORT HTMLElement : public Element {
     return HasLocalName(name.LocalName());
   }
 
-  const char* NameInHeapSnapshot() const override;
+  const char* GetHumanReadableName() const override;
 
   String title() const final;
 
@@ -158,6 +158,7 @@ class CORE_EXPORT HTMLElement : public Element {
   bool ShouldSerializeEndTag() const;
 
   virtual HTMLFormElement* formOwner() const;
+  virtual HTMLElement* formForBinding() const;
 
   HTMLFormElement* FindFormAncestor() const;
 
@@ -244,9 +245,6 @@ class CORE_EXPORT HTMLElement : public Element {
   // Popover API related functions.
   void UpdatePopoverAttribute(const AtomicString&);
   bool HasPopoverAttribute() const;
-  // The IDL reflections:
-  AtomicString popover() const;
-  void setPopover(const AtomicString& value);
   PopoverValueType PopoverType() const;
   bool popoverOpen() const;
   // IsPopoverReady returns true if the popover is in a state where it can be
@@ -272,7 +270,8 @@ class CORE_EXPORT HTMLElement : public Element {
   // response to clicking a button with popovershowtarget.
   virtual void ShowPopoverInternal(Element* invoker,
                                    ExceptionState* exception_state);
-  virtual void HidePopoverInternal(HidePopoverFocusBehavior focus_behavior,
+  virtual void HidePopoverInternal(Element* invoker,
+                                   HidePopoverFocusBehavior focus_behavior,
                                    HidePopoverTransitionBehavior event_firing,
                                    ExceptionState* exception_state);
   void PopoverHideFinishIfNeeded(bool immediate);
@@ -401,6 +400,8 @@ class CORE_EXPORT HTMLElement : public Element {
 
   void HandleKeypressEvent(KeyboardEvent&);
 
+  void SetPopoverInvoker(Element* invoker);
+
   static void CloseEntirePopoverStack(
       HeapVector<Member<HTMLElement>>& stack,
       HidePopoverFocusBehavior focus_behavior,
@@ -414,6 +415,9 @@ class CORE_EXPORT HTMLElement : public Element {
   void OnLangAttrChanged(const AttributeModificationParams&);
   void OnNonceAttrChanged(const AttributeModificationParams&);
   void OnPopoverChanged(const AttributeModificationParams&);
+  void OnContainerTimingAttrChanged(const AttributeModificationParams&);
+  void OnContainerTimingIgnoreAttrChanged(const AttributeModificationParams&);
+  void OnRoleAttrChanged(const AttributeModificationParams&);
 
   int AdjustedOffsetForZoom(LayoutUnit);
   int OffsetTopOrLeft(bool top);

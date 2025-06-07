@@ -9,6 +9,7 @@
 
 #include "base/check_op.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/profiles/profile.h"
@@ -124,6 +125,13 @@ class PaymentHandlerCloseButton : public views::ImageButton {
     views::SetImageFromVectorIconWithColor(this, vector_icons::kCloseIcon,
                                            enabled_color, disabled_color);
   }
+
+  base::WeakPtr<PaymentHandlerCloseButton> GetWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
+ private:
+  base::WeakPtrFactory<PaymentHandlerCloseButton> weak_ptr_factory_{this};
 };
 
 BEGIN_METADATA(PaymentHandlerCloseButton)
@@ -343,9 +351,16 @@ void PaymentHandlerWebFlowViewController::PopulateSheetHeaderView(
   origin_label->SetElideBehavior(gfx::ELIDE_HEAD);
   origin_label->SetID(static_cast<int>(DialogViewID::SHEET_TITLE));
   origin_label->SetFocusBehavior(views::View::FocusBehavior::ACCESSIBLE_ONLY);
-  // Turn off autoreadability because the computed foreground color takes
+
+  // Turn off auto-readability because the computed foreground color takes
   // contrast into account.
-  SkColor background_color = container->background()->get_color();
+  SkColor background_color = gfx::kPlaceholderColor;
+  if (container->GetWidget()) {
+    const auto* background = container->background();
+    background_color =
+        background->color().ResolveToSkColor(container->GetColorProvider());
+  }
+
   // Get the closest label color to kColorPrimaryForeground, with a minimum
   // readable contrast ratio.
   SkColor foreground = GetContrastingGoogleColor(
@@ -385,10 +400,18 @@ void PaymentHandlerWebFlowViewController::PopulateSheetHeaderView(
       color_utils::kMinimumVisibleContrastRatio);
   const SkColor close_icon_disabled_color = color_utils::AlphaBlend(
       close_icon_color, background_color, gfx::kDisabledControlAlpha);
-  container->AddChildView(std::make_unique<PaymentHandlerCloseButton>(
+  auto close_button = std::make_unique<PaymentHandlerCloseButton>(
       base::BindRepeating(&PaymentRequestSheetController::CloseButtonPressed,
                           GetWeakPtr()),
-      close_icon_color, close_icon_disabled_color));
+      close_icon_color, close_icon_disabled_color);
+  close_button_ = close_button->GetWeakPtr();
+  container->AddChildView(std::move(close_button));
+}
+
+views::View* PaymentHandlerWebFlowViewController::GetFirstFocusedView() {
+  // Prevent focusing the hidden "Cancel" button (https://crbug.com/415275892).
+  return close_button_ ? close_button_.get()
+                       : PaymentRequestSheetController::GetFirstFocusedView();
 }
 
 bool PaymentHandlerWebFlowViewController::GetSheetId(DialogViewID* sheet_id) {
@@ -522,13 +545,12 @@ PaymentHandlerWebFlowViewController::GetHeaderBackground(
     views::View* header_view) {
   DCHECK(header_view);
   auto default_header_background =
-      views::CreateThemedSolidBackground(ui::kColorDialogBackground);
+      views::CreateSolidBackground(ui::kColorDialogBackground);
   if (web_contents() && header_view->GetWidget()) {
-    // Make sure the color is actually set before using it.
-    default_header_background->OnViewThemeChanged(header_view);
+    auto* color_provider = header_view->GetColorProvider();
     return views::CreateSolidBackground(color_utils::GetResultingPaintColor(
         web_contents()->GetThemeColor().value_or(SK_ColorTRANSPARENT),
-        default_header_background->get_color()));
+        color_provider->GetColor(ui::kColorDialogBackground)));
   }
   return default_header_background;
 }

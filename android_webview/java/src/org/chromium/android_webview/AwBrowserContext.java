@@ -10,6 +10,7 @@ import android.util.LruCache;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.UiThread;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
@@ -17,6 +18,7 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.android_webview.common.AwFeatureMap;
 import org.chromium.android_webview.common.Lifetime;
 import org.chromium.android_webview.common.MediaIntegrityApiStatus;
 import org.chromium.android_webview.common.MediaIntegrityProvider;
@@ -385,9 +387,15 @@ public class AwBrowserContext implements BrowserContextHandle {
                 .setServiceWorkerIoThreadClient(mNativeAwBrowserContext, ioThreadClient);
     }
 
+    @UiThread
     public void setMaxPrerenders(int maxPrerenders) {
         AwBrowserContextJni.get()
                 .setAllowedPrerenderingCount(mNativeAwBrowserContext, maxPrerenders);
+    }
+
+    @UiThread
+    public void warmUpSpareRenderer() {
+        AwBrowserContextJni.get().warmUpSpareRenderer(mNativeAwBrowserContext);
     }
 
     private static SharedPreferences createSharedPrefs(String relativePath) {
@@ -453,5 +461,7 @@ public class AwBrowserContext implements BrowserContextHandle {
                 long nativeAwBrowserContext, AwContentsIoThreadClient ioThreadClient);
 
         void setAllowedPrerenderingCount(long nativeAwBrowserContext, int maxPrerenders);
+
+        void warmUpSpareRenderer(long nativeAwBrowserContext);
     }
 }

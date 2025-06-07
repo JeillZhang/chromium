@@ -448,7 +448,7 @@ export class SettingsInputMethodOptionsPageElement extends
     }
     // Safety: `updatedSettings[engineId]` is guaranteed to be defined as we
     // defined it above.
-    updatedSettings[engineId]![optionName] = newValue;
+    updatedSettings[engineId][optionName] = newValue;
 
     this.setPrefValue(PREFS_PATH, updatedSettings);
   }
@@ -505,6 +505,13 @@ export class SettingsInputMethodOptionsPageElement extends
    */
   private shouldShowTitle(section: Section): boolean {
     return section.title.length > 0;
+  }
+
+  /**
+   * @return true if |item| needs label to be shown.
+   */
+  private shouldShowLabel_(item: UiType) {
+    return !this.isSubmenuButton_(item) && !this.isLink_(item);
   }
 
   /**

@@ -16,9 +16,12 @@
 #include "components/permissions/test/permission_test_util.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/permissions_test_utils.h"
 #include "extensions/buildflags/buildflags.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 class ChromePermissionManagerTest : public ChromeRenderViewHostTestHarness {
@@ -47,7 +50,7 @@ class ChromePermissionManagerTest : public ChromeRenderViewHostTestHarness {
       const GURL& origin,
       network::mojom::PermissionsPolicyFeature feature =
           network::mojom::PermissionsPolicyFeature::kNotFound) {
-    blink::ParsedPermissionsPolicy frame_policy = {};
+    network::ParsedPermissionsPolicy frame_policy = {};
     if (feature != network::mojom::PermissionsPolicyFeature::kNotFound) {
       frame_policy.emplace_back(
           feature,
@@ -163,6 +166,9 @@ TEST_F(ChromePermissionManagerTest, SubscribeWithPermissionDelegation) {
   const char* kOrigin2 = "https://google.com";
   const GURL url1 = GURL(kOrigin1);
   const GURL url2 = GURL(kOrigin2);
+  const auto geolocation_permission_descriptor = content::
+      PermissionDescriptorUtil::CreatePermissionDescriptorForPermissionType(
+          blink::PermissionType::GEOLOCATION);
 
   NavigateAndCommit(url1);
   content::RenderFrameHost* parent = main_rfh();
@@ -182,7 +188,7 @@ TEST_F(ChromePermissionManagerTest, SubscribeWithPermissionDelegation) {
   // Location should be blocked for the child because it's not delegated.
   EXPECT_EQ(PermissionStatus::DENIED,
             permission_controller->GetPermissionStatusForCurrentDocument(
-                blink::PermissionType::GEOLOCATION, child));
+                geolocation_permission_descriptor, child));
 
   // Allow access for the top level origin.
   SetPermission(url1, blink::PermissionType::GEOLOCATION,
@@ -190,12 +196,12 @@ TEST_F(ChromePermissionManagerTest, SubscribeWithPermissionDelegation) {
 
   EXPECT_EQ(PermissionStatus::GRANTED,
             permission_controller->GetPermissionStatusForCurrentDocument(
-                blink::PermissionType::GEOLOCATION, parent));
+                geolocation_permission_descriptor, parent));
 
   // The child's permission should still be block and no callback should be run.
   EXPECT_EQ(PermissionStatus::DENIED,
             permission_controller->GetPermissionStatusForCurrentDocument(
-                blink::PermissionType::GEOLOCATION, child));
+                geolocation_permission_descriptor, child));
 
   EXPECT_FALSE(callback_called());
 
@@ -205,7 +211,7 @@ TEST_F(ChromePermissionManagerTest, SubscribeWithPermissionDelegation) {
 
   EXPECT_EQ(PermissionStatus::GRANTED,
             permission_controller->GetPermissionStatusForCurrentDocument(
-                blink::PermissionType::GEOLOCATION, child));
+                geolocation_permission_descriptor, child));
 
   permission_controller->UnsubscribeFromPermissionStatusChange(subscription_id);
 }

@@ -12,7 +12,6 @@
 #include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/performance_manager/test_support/test_user_performance_tuning_manager_environment.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_observer.h"
@@ -150,9 +149,9 @@ class BrowserWithTestWindowTest : public testing::Test, public ProfileObserver {
   void set_browser(Browser* browser) { browser_.reset(browser); }
   std::unique_ptr<Browser> release_browser() { return std::move(browser_); }
 
-  TestingProfile* profile() const { return profile_; }
+  TestingProfile* profile() const { return profile_.get(); }
 
-  TestingProfile* GetProfile() { return profile_; }
+  TestingProfile* GetProfile() { return profile_.get(); }
 
   TestingProfileManager* profile_manager() { return profile_manager_.get(); }
 
@@ -276,6 +275,8 @@ class BrowserWithTestWindowTest : public testing::Test, public ProfileObserver {
   std::unique_ptr<content::BrowserTaskEnvironment> task_environment_;
 
 #if BUILDFLAG(IS_CHROMEOS)
+  ash::TestSessionControllerClient* GetSessionControllerClient();
+
   // A template method (in Design Pattern) that execute post profile creation
   // steps.
   void PostUserProfileCreation(const std::string& email, Profile* profile);
@@ -290,7 +291,7 @@ class BrowserWithTestWindowTest : public testing::Test, public ProfileObserver {
   std::unique_ptr<ash::KioskChromeAppManager> kiosk_chrome_app_manager_;
 #endif
 
-  raw_ptr<TestingProfile, AcrossTasksDanglingUntriaged> profile_ = nullptr;
+  base::WeakPtr<TestingProfile> profile_ = nullptr;
 
   // test_url_loader_factory_ is declared before profile_manager_
   // to guarantee it outlives any profiles that might use it.

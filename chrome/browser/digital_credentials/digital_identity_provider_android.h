@@ -16,6 +16,7 @@
 
 namespace content {
 class WebContents;
+class RenderFrameHost;
 }
 
 // Android specific implementation of `DigitalIdentityProvider`. It
@@ -33,9 +34,13 @@ class DigitalIdentityProviderAndroid : public content::DigitalIdentityProvider {
 
   // Implementation of corresponding JNI methods in
   // DigitalIdentityProviderAndroid.Natives.*
-  void OnReceive(JNIEnv*, jstring j_result, jint j_status_for_metrics);
+  void OnReceive(JNIEnv*,
+                 std::optional<std::string> protocol,
+                 std::string result,
+                 jint j_status_for_metrics);
 
-  bool IsLowRiskOrigin(const url::Origin& to_check) const override;
+  bool IsLastCommittedOriginLowRisk(
+      content::RenderFrameHost& render_frame_host) const override;
   DigitalIdentityInterstitialAbortCallback ShowDigitalIdentityInterstitial(
       content::WebContents& web_contents,
       const url::Origin& origin,

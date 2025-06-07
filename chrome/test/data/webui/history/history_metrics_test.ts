@@ -11,6 +11,7 @@ import {webUIListenerCallback} from 'chrome://resources/js/cr.js';
 import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {assertEquals, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {flushTasks, waitAfterNextRender} from 'chrome://webui-test/polymer_test_util.js';
+import {microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {TestBrowserService} from './test_browser_service.js';
 import {createHistoryEntry, createHistoryInfo, createSession, createWindow, disableLinkClicks, navigateTo} from './test_util.js';
@@ -27,6 +28,8 @@ suite('Metrics', function() {
 
   setup(() => {
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
+    // Make viewport tall enough to render all items.
+    document.body.style.height = '1000px';
 
     testService = new TestBrowserService();
     BrowserServiceImpl.setInstance(testService);
@@ -67,6 +70,7 @@ suite('Metrics', function() {
     assertEquals(1, histogram[HistoryPageViewHistogram.HISTORY]);
 
     navigateTo('/syncedTabs', app);
+    await microtasksFinished();
     assertEquals(1, histogram[HistoryPageViewHistogram.SIGNIN_PROMO]);
     await testService.whenCalled('otherDevicesInitialized');
 
@@ -76,6 +80,7 @@ suite('Metrics', function() {
 
     assertEquals(1, histogram[HistoryPageViewHistogram.SYNCED_TABS]);
     navigateTo('/history', app);
+    await microtasksFinished();
     assertEquals(2, histogram[HistoryPageViewHistogram.HISTORY]);
   });
 
@@ -94,10 +99,11 @@ suite('Metrics', function() {
       historyEntry,
     ]);
     await flushTasks();
+    await microtasksFinished();
 
-    let items = app.$.history.shadowRoot!.querySelectorAll('history-item');
+    let items = app.$.history.shadowRoot.querySelectorAll('history-item');
     assertTrue(!!items[1]);
-    items[1].shadowRoot!.querySelector<HTMLElement>('#bookmark-star')!.click();
+    items[1].shadowRoot.querySelector<HTMLElement>('#bookmark-star')!.click();
     assertEquals(1, actionMap['BookmarkStarClicked']);
     items[1].$.link.click();
     assertEquals(1, actionMap['EntryLinkClick']);
@@ -118,17 +124,18 @@ suite('Metrics', function() {
         'change-query',
         {bubbles: true, composed: true, detail: {search: 'goog'}}));
     assertEquals(1, actionMap['Search']);
-    app.set('queryState_.incremental', true);
+    const queryManager = app.shadowRoot!.querySelector('history-query-manager');
+    assertTrue(!!queryManager);
+    queryManager.queryState = {...queryManager.queryState, incremental: true};
     await Promise.all([
       testService.handler.whenCalled('queryHistory'),
       flushTasks(),
     ]);
 
-    app.$.history.shadowRoot!.querySelector('iron-list')!.fire('iron-resize');
     await waitAfterNextRender(app.$.history);
     flush();
 
-    items = app.$.history.shadowRoot!.querySelectorAll('history-item');
+    items = app.$.history.shadowRoot.querySelectorAll('history-item');
     assertTrue(!!items[0]);
     assertTrue(!!items[4]);
     items[0].$.link.click();
@@ -141,25 +148,25 @@ suite('Metrics', function() {
     assertEquals(1, actionMap['RemoveSelected']);
     await flushTasks();
 
-    app.$.history.shadowRoot!.querySelector<HTMLElement>(
-                                 '.cancel-button')!.click();
+    app.$.history.shadowRoot.querySelector<HTMLElement>(
+                                '.cancel-button')!.click();
     assertEquals(1, actionMap['CancelRemoveSelected']);
     app.$.toolbar.deleteSelectedItems();
     await flushTasks();
 
     testService.handler.setResultFor('removeVisits', Promise.resolve());
-    app.$.history.shadowRoot!.querySelector<HTMLElement>(
-                                 '.action-button')!.click();
+    app.$.history.shadowRoot.querySelector<HTMLElement>(
+                                '.action-button')!.click();
     assertEquals(1, actionMap['ConfirmRemoveSelected']);
     await flushTasks();
 
-    items = app.$.history.shadowRoot!.querySelectorAll('history-item');
+    items = app.$.history.shadowRoot.querySelectorAll('history-item');
     assertTrue(!!items[0]);
     items[0].$['menu-button'].click();
     await flushTasks();
 
-    app.$.history.shadowRoot!.querySelector<HTMLElement>(
-                                 '#menuRemoveButton')!.click();
+    app.$.history.shadowRoot.querySelector<HTMLElement>(
+                                '#menuRemoveButton')!.click();
     await Promise.all([
       testService.handler.whenCalled('removeVisits'),
       flushTasks(),
@@ -180,47 +187,47 @@ suite('Metrics', function() {
     ];
     testService.setForeignSessions(sessionList);
     await finishSetup([]);
+    await microtasksFinished();
 
     navigateTo('/syncedTabs', app);
-    await flushTasks();
+    await microtasksFinished();
 
     const histogram = histogramMap[SYNCED_TABS_HISTOGRAM_NAME];
     assertTrue(!!histogram);
     assertEquals(1, histogram[SyncedTabsHistogram.INITIALIZED]);
 
     await testService.whenCalled('getForeignSessions');
-    await flushTasks();
+    await microtasksFinished();
 
     assertEquals(1, histogram[SyncedTabsHistogram.HAS_FOREIGN_DATA]);
-    await flushTasks();
 
     const syncedDeviceManager =
         app.shadowRoot!.querySelector('history-synced-device-manager');
     assertTrue(!!syncedDeviceManager);
 
-    const cards = syncedDeviceManager.shadowRoot!.querySelectorAll(
+    const cards = syncedDeviceManager.shadowRoot.querySelectorAll(
         'history-synced-device-card');
     assertTrue(!!cards[0]);
     cards[0].$['card-heading'].click();
     assertEquals(1, histogram[SyncedTabsHistogram.COLLAPSE_SESSION]);
     cards[0].$['card-heading'].click();
     assertEquals(1, histogram[SyncedTabsHistogram.EXPAND_SESSION]);
-    cards[0].shadowRoot!.querySelectorAll<HTMLElement>(
-                            '.website-link')[0]!.click();
+    cards[0].shadowRoot.querySelectorAll<HTMLElement>(
+                           '.website-link')[0]!.click();
     assertEquals(1, histogram[SyncedTabsHistogram.LINK_CLICKED]);
 
     const menuButton = cards[0].$['menu-button'];
     menuButton.click();
-    await flushTasks();
+    await microtasksFinished();
 
-    syncedDeviceManager.shadowRoot!
+    syncedDeviceManager.shadowRoot
         .querySelector<HTMLElement>('#menuOpenButton')!.click();
     assertEquals(1, histogram[SyncedTabsHistogram.OPEN_ALL]);
 
     menuButton.click();
-    await flushTasks();
+    await microtasksFinished();
 
-    syncedDeviceManager!.shadowRoot!
+    syncedDeviceManager.shadowRoot
         .querySelector<HTMLElement>('#menuDeleteButton')!.click();
     assertEquals(1, histogram[SyncedTabsHistogram.HIDE_FOR_NOW]);
   });

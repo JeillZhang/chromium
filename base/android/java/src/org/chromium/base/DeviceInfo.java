@@ -33,31 +33,9 @@ import org.chromium.build.annotations.Nullable;
 public final class DeviceInfo {
     private static final String TAG = "DeviceInfo";
 
-    private @Nullable String mGmsVersionCodeForTesting;
+    private static @Nullable String sGmsVersionCodeForTesting;
     private static boolean sInitialized;
-
-    /** The versionCode of Play Services. Can be overridden in tests. */
-    private String mGmsVersionCode;
-
-    /** Whether we're running on Android TV or not */
-    private final boolean mIsTv;
-
-    /** Whether we're running on an Android Automotive OS device or not. */
-    private final boolean mIsAutomotive;
-
-    /** Whether we're running on an Android Foldable OS device or not. */
-    private final boolean mIsFoldable;
-
-    /** Whether we're running on an Android Desktop OS device or not. */
-    private final boolean mIsDesktop;
-
-    /** Whether or not the device has apps installed for using custom themes. */
-    private final String mCustomThemes;
-
-    /**
-     * version of the FEATURE_VULKAN_DEQP_LEVEL, if available. Queried only on Android T or above
-     */
-    private final int mVulkanDeqpLevel;
+    private final IDeviceInfo mIDeviceInfo;
 
     @GuardedBy("CREATION_LOCK")
     private static @Nullable DeviceInfo sInstance;
@@ -71,50 +49,54 @@ public final class DeviceInfo {
     // function.
     @CalledByNative
     private static void nativeReadyForFields() {
+        sendToNative(getInstance().mIDeviceInfo);
+    }
+
+    public static void sendToNative(IDeviceInfo info) {
         DeviceInfoJni.get()
                 .fillFields(
-                        /* gmsVersionCode= */ getGmsVersionCode(),
-                        /* customThemes= */ getCustomThemes(),
-                        /* isTV= */ isTV(),
-                        /* isAutomotive= */ isAutomotive(),
-                        /* isFoldable= */ isFoldable(),
-                        /* isDesktop= */ isDesktop(),
-                        /* vulkanDeqpLevel= */ getVulkanDeqpLevel());
+                        /* gmsVersionCode= */ info.gmsVersionCode,
+                        /* isTV= */ info.isTv,
+                        /* isAutomotive= */ info.isAutomotive,
+                        /* isFoldable= */ info.isFoldable,
+                        /* isDesktop= */ info.isDesktop,
+                        /* vulkanDeqpLevel= */ info.vulkanDeqpLevel);
+    }
+
+    public static IDeviceInfo getAidlInfo() {
+        return getInstance().mIDeviceInfo;
     }
 
     public static String getGmsVersionCode() {
-        return getInstance().mGmsVersionCodeForTesting == null
-                ? getInstance().mGmsVersionCode
-                : getInstance().mGmsVersionCodeForTesting;
+        return getInstance().mIDeviceInfo.gmsVersionCode;
     }
 
     @CalledByNativeForTesting
     public static void setGmsVersionCodeForTest(@JniType("std::string") String gmsVersionCode) {
-        getInstance().mGmsVersionCodeForTesting = gmsVersionCode;
+        sGmsVersionCodeForTesting = gmsVersionCode;
+        // Every time we call getInstance in a test we reconstruct the mIDeviceInfo object, so we
+        // don't need to set mIDeviceInfo's copy here as it'll just get reconstructed.
+        ResettersForTesting.register(() -> sGmsVersionCodeForTesting = null);
     }
 
     public static boolean isTV() {
-        return getInstance().mIsTv;
+        return getInstance().mIDeviceInfo.isTv;
     }
 
     public static boolean isAutomotive() {
-        return getInstance().mIsAutomotive;
+        return getInstance().mIDeviceInfo.isAutomotive;
     }
 
     public static boolean isFoldable() {
-        return getInstance().mIsFoldable;
+        return getInstance().mIDeviceInfo.isFoldable;
     }
 
     public static boolean isDesktop() {
-        return getInstance().mIsDesktop;
-    }
-
-    public static String getCustomThemes() {
-        return getInstance().mCustomThemes;
+        return getInstance().mIDeviceInfo.isDesktop;
     }
 
     public static int getVulkanDeqpLevel() {
-        return getInstance().mVulkanDeqpLevel;
+        return getInstance().mIDeviceInfo.vulkanDeqpLevel;
     }
 
     public static boolean isInitializedForTesting() {
@@ -149,18 +131,22 @@ public final class DeviceInfo {
     }
 
     private DeviceInfo() {
+        mIDeviceInfo = new IDeviceInfo();
         sInitialized = true;
         PackageInfo gmsPackageInfo = PackageUtils.getPackageInfo("com.google.android.gms", 0);
-        mGmsVersionCode =
+        mIDeviceInfo.gmsVersionCode =
                 gmsPackageInfo != null
                         ? String.valueOf(packageVersionCode(gmsPackageInfo))
                         : "gms versionCode not available.";
+        if (sGmsVersionCodeForTesting != null) {
+            mIDeviceInfo.gmsVersionCode = sGmsVersionCodeForTesting;
+        }
 
         Context appContext = ContextUtils.getApplicationContext();
         PackageManager pm = appContext.getPackageManager();
         // See https://developer.android.com/training/tv/start/hardware.html#runtime-check.
         UiModeManager uiModeManager = (UiModeManager) appContext.getSystemService(UI_MODE_SERVICE);
-        mIsTv =
+        mIDeviceInfo.isTv =
                 uiModeManager != null
                         && uiModeManager.getCurrentModeType()
                                 == Configuration.UI_MODE_TYPE_TELEVISION;
@@ -176,14 +162,14 @@ public final class DeviceInfo {
             // should not have such a modification.
             isAutomotive = false;
         }
-        mIsAutomotive = isAutomotive;
+        mIDeviceInfo.isAutomotive = isAutomotive;
 
         // Detect whether device is foldable.
-        mIsFoldable =
+        mIDeviceInfo.isFoldable =
                 Build.VERSION.SDK_INT >= VERSION_CODES.R
                         && pm.hasSystemFeature(PackageManager.FEATURE_SENSOR_HINGE_ANGLE);
 
-        mIsDesktop = pm.hasSystemFeature(PackageManager.FEATURE_PC);
+        mIDeviceInfo.isDesktop = pm.hasSystemFeature(PackageManager.FEATURE_PC);
 
         int vulkanLevel = 0;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -197,20 +183,13 @@ public final class DeviceInfo {
                 }
             }
         }
-        mVulkanDeqpLevel = vulkanLevel;
-
-        // Substratum is a theme engine that enables users to use custom themes provided
-        // by theme apps. Sometimes these can cause crashs if not installed correctly.
-        // These crashes can be difficult to debug, so knowing if the theme manager is
-        // present on the device is useful (http://crbug.com/820591).
-        mCustomThemes = String.valueOf(PackageUtils.isPackageInstalled("projekt.substratum"));
+        mIDeviceInfo.vulkanDeqpLevel = vulkanLevel;
     }
 
     @NativeMethods
     interface Natives {
         void fillFields(
-                String gmsVersionCode,
-                String customThemes,
+                @JniType("std::string") String gmsVersionCode,
                 boolean isTV,
                 boolean isAutomotive,
                 boolean isFoldable,

@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/dom/subscriber.h"
 
 #include "base/containers/adapters.h"
+#include "base/containers/contains.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_observer.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_observer_callback.h"
@@ -65,12 +66,10 @@ class Subscriber::ConsumerAbortSubscriptionAlgorithm final
 };
 
 Subscriber::Subscriber(base::PassKey<Observable>,
-                       Observable* owning_observable,
                        ScriptState* script_state,
                        ObservableInternalObserver* internal_observer,
                        SubscribeOptions* options)
     : ExecutionContextClient(ExecutionContext::From(script_state)),
-      owning_observable_(owning_observable),
       subscription_controller_(AbortController::Create(script_state)) {
   internal_observers_.push_back(internal_observer);
 
@@ -104,7 +103,15 @@ void Subscriber::next(ScriptValue value) {
     return;
   }
 
-  for (auto& observer : internal_observers_) {
+  // Call `Next()` on all observers. Do this by iterating over a *copy* of the
+  // list of observers, because `Next()` can actually complete one of the
+  // observers' subscriptions, thus removing `observer` from
+  // `internal_observers_`. That means `internal_observers_` can be mutated
+  // throughout this process, and we cannot iterate over it while it is
+  // mutating.
+  HeapVector<Member<ObservableInternalObserver>> internal_observers =
+      internal_observers_;
+  for (auto& observer : internal_observers) {
     observer->Next(value);
   }
 }
@@ -119,7 +126,10 @@ void Subscriber::complete(ScriptState* script_state) {
   // `internal_observer` out before calling this.
   CloseSubscription(script_state, /*abort_reason=*/std::nullopt);
 
-  for (auto& observer : internal_observers_) {
+  // See the documentation in `Subscriber::next()`.
+  HeapVector<Member<ObservableInternalObserver>> internal_observers =
+      internal_observers_;
+  for (auto& observer : internal_observers) {
     observer->Complete();
   }
 }
@@ -149,7 +159,10 @@ void Subscriber::error(ScriptState* script_state, ScriptValue error_value) {
   // `internal_observer` out before calling this.
   CloseSubscription(script_state, error_value);
 
-  for (auto& observer : internal_observers_) {
+  // See the documentation in `Subscriber::next()`.
+  HeapVector<Member<ObservableInternalObserver>> internal_observers =
+      internal_observers_;
+  for (auto& observer : internal_observers) {
     observer->Error(script_state, error_value);
   }
 }
@@ -220,8 +233,6 @@ void Subscriber::CloseSubscription(ScriptState* script_state,
   //     any more values to downstream `Observer`-provided callbacks.
   active_ = false;
 
-  owning_observable_->ClearSubscriber(PassKey());
-
   // 2. Abort `subscription_controller_`. This actually does two things:
   //    (a) Immediately aborts any "upstream" subscriptions, i.e., any
   //        observables that the observable associated with `this` had
@@ -276,7 +287,6 @@ void Subscriber::Trace(Visitor* visitor) const {
   visitor->Trace(subscription_controller_);
   visitor->Trace(consumer_abort_algorithms_);
   visitor->Trace(teardown_callbacks_);
-  visitor->Trace(owning_observable_);
   visitor->Trace(internal_observers_);
 
   ScriptWrappable::Trace(visitor);

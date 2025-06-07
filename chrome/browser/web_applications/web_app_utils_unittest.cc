@@ -9,7 +9,7 @@
 #include "ash/constants/web_app_id_constants.h"
 #include "base/containers/adapters.h"
 #include "base/files/file_path.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/test/web_app_test.h"
@@ -25,6 +25,7 @@
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "components/user_manager/test_helper.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 namespace web_app {
@@ -49,159 +50,6 @@ TEST(WebAppTest, SortedSizesPxIsAscending) {
   std::vector<SquareSizePx> base_reversed(base::Reversed(sorted).begin(),
                                           base::Reversed(sorted).end());
   ASSERT_THAT(base_reversed, ElementsAre(512, 256, 64, 32, 16));
-}
-
-TEST(WebAppTest, ResolveEffectiveDisplayMode) {
-  // When user_display_mode indicates a user preference for opening in
-  // a browser tab, we open in a browser tab.
-  EXPECT_EQ(DisplayMode::kBrowser,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kBrowser, std::vector<DisplayMode>(),
-                mojom::UserDisplayMode::kBrowser, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kBrowser,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kMinimalUi, std::vector<DisplayMode>(),
-                mojom::UserDisplayMode::kBrowser, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kBrowser,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kStandalone, std::vector<DisplayMode>(),
-                mojom::UserDisplayMode::kBrowser, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kBrowser,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kFullscreen, std::vector<DisplayMode>(),
-                mojom::UserDisplayMode::kBrowser, /*is_isolated=*/false));
-
-  // When user_display_mode indicates a user preference for opening in
-  // a standalone window, we open in a minimal-ui window (for app_display_mode
-  // 'browser' or 'minimal-ui') or a standalone window (for app_display_mode
-  // 'standalone' or 'fullscreen').
-  EXPECT_EQ(DisplayMode::kMinimalUi,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kBrowser, std::vector<DisplayMode>(),
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kMinimalUi,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kMinimalUi, std::vector<DisplayMode>(),
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kStandalone,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kStandalone, std::vector<DisplayMode>(),
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kStandalone,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kFullscreen, std::vector<DisplayMode>(),
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-}
-
-TEST(WebAppTest,
-     ResolveEffectiveDisplayModeWithDisplayOverridesPreferUserMode) {
-  // When user_display_mode indicates a user preference for opening in
-  // a browser tab, we open in a browser tab even if display_overrides
-  // are specified
-  std::vector<DisplayMode> app_display_mode_overrides;
-  app_display_mode_overrides.push_back(DisplayMode::kStandalone);
-
-  EXPECT_EQ(DisplayMode::kBrowser,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kBrowser, app_display_mode_overrides,
-                mojom::UserDisplayMode::kBrowser, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kBrowser,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kMinimalUi, app_display_mode_overrides,
-                mojom::UserDisplayMode::kBrowser, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kBrowser,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kStandalone, app_display_mode_overrides,
-                mojom::UserDisplayMode::kBrowser, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kBrowser,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kFullscreen, app_display_mode_overrides,
-                mojom::UserDisplayMode::kBrowser, /*is_isolated=*/false));
-}
-
-TEST(WebAppTest,
-     ResolveEffectiveDisplayModeWithDisplayOverridesFallbackToDisplayMode) {
-  // When user_display_mode indicates a user preference for opening in
-  // a standalone window, and the only display modes provided for
-  // display_overrides contain only 'fullscreen' or 'browser',  open in a
-  // minimal-ui window (for app_display_mode 'browser' or 'minimal-ui') or a
-  // standalone window (for app_display_mode 'standalone' or 'fullscreen').
-  std::vector<DisplayMode> app_display_mode_overrides;
-  app_display_mode_overrides.push_back(DisplayMode::kFullscreen);
-
-  EXPECT_EQ(DisplayMode::kMinimalUi,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kBrowser, app_display_mode_overrides,
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kMinimalUi,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kMinimalUi, app_display_mode_overrides,
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kStandalone,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kStandalone, app_display_mode_overrides,
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kStandalone,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kFullscreen, app_display_mode_overrides,
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-}
-
-TEST(WebAppTest, ResolveEffectiveDisplayModeWithDisplayOverrides) {
-  // When user_display_mode indicates a user preference for opening in
-  // a standalone window, and return the first entry that is either
-  // 'standalone' or 'minimal-ui' in display_override
-  std::vector<DisplayMode> app_display_mode_overrides;
-  app_display_mode_overrides.push_back(DisplayMode::kFullscreen);
-  app_display_mode_overrides.push_back(DisplayMode::kBrowser);
-  app_display_mode_overrides.push_back(DisplayMode::kStandalone);
-
-  EXPECT_EQ(DisplayMode::kStandalone,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kBrowser, app_display_mode_overrides,
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kStandalone,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kMinimalUi, app_display_mode_overrides,
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kStandalone,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kStandalone, app_display_mode_overrides,
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-  EXPECT_EQ(DisplayMode::kStandalone,
-            ResolveEffectiveDisplayMode(
-                DisplayMode::kFullscreen, app_display_mode_overrides,
-                mojom::UserDisplayMode::kStandalone, /*is_isolated=*/false));
-}
-
-TEST(WebAppTest, ResolveEffectiveDisplayModeWithIsolatedWebApp) {
-  EXPECT_EQ(DisplayMode::kStandalone,
-            ResolveEffectiveDisplayMode(
-                /*app_display_mode=*/DisplayMode::kBrowser,
-                /*app_display_mode_overrides=*/{DisplayMode::kBrowser},
-                /*user_display_mode=*/mojom::UserDisplayMode::kStandalone,
-                /*is_isolated=*/true));
-
-  EXPECT_EQ(DisplayMode::kStandalone,
-            ResolveEffectiveDisplayMode(
-                /*app_display_mode=*/DisplayMode::kMinimalUi,
-                /*app_display_mode_overrides=*/{},
-                /*user_display_mode=*/mojom::UserDisplayMode::kStandalone,
-                /*is_isolated=*/true));
-
-  EXPECT_EQ(DisplayMode::kStandalone,
-            ResolveEffectiveDisplayMode(
-                /*app_display_mode=*/DisplayMode::kFullscreen,
-                /*app_display_mode_overrides=*/{},
-                /*user_display_mode=*/mojom::UserDisplayMode::kStandalone,
-                /*is_isolated=*/true));
-
-  EXPECT_EQ(DisplayMode::kBorderless,
-            ResolveEffectiveDisplayMode(
-                /*app_display_mode=*/DisplayMode::kStandalone,
-                /*app_display_mode_overrides=*/{DisplayMode::kBorderless},
-                /*user_display_mode=*/mojom::UserDisplayMode::kStandalone,
-                /*is_isolated=*/true));
 }
 
 TEST_F(WebAppUtilsTest, AreWebAppsEnabled) {
@@ -244,16 +92,18 @@ TEST_F(WebAppUtilsTest, AreWebAppsEnabled) {
   {
     auto user_manager = std::make_unique<ash::FakeChromeUserManager>();
     auto* user = user_manager->AddKioskAppUser(account_id);
-    user_manager->UserLoggedIn(user->GetAccountId(), user->username_hash(),
-                               /*browser_restart=*/false, /*is_child=*/false);
+    user_manager->UserLoggedIn(
+        user->GetAccountId(),
+        user_manager::TestHelper::GetFakeUsernameHash(user->GetAccountId()));
     user_manager::ScopedUserManager enabler(std::move(user_manager));
     EXPECT_FALSE(AreWebAppsEnabled(regular_profile));
   }
   {
     auto user_manager = std::make_unique<ash::FakeChromeUserManager>();
     auto* user = user_manager->AddWebKioskAppUser(account_id);
-    user_manager->UserLoggedIn(user->GetAccountId(), user->username_hash(),
-                               /*browser_restart=*/false, /*is_child=*/false);
+    user_manager->UserLoggedIn(
+        user->GetAccountId(),
+        user_manager::TestHelper::GetFakeUsernameHash(user->GetAccountId()));
     user_manager::ScopedUserManager enabler(std::move(user_manager));
     EXPECT_TRUE(AreWebAppsEnabled(regular_profile));
   }

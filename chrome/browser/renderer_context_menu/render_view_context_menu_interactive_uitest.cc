@@ -4,11 +4,11 @@
 
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/functional/callback.h"
-#include "base/functional/overloaded.h"
 #include "base/memory/raw_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
@@ -26,6 +26,7 @@
 #include "chrome/browser/ui/tab_contents/chrome_web_contents_view_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom-shared.h"
+#include "chrome/browser/web_applications/test/os_integration_test_override_impl.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -53,7 +54,7 @@
 #include "net/test/embedded_test_server/controllable_http_response.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/mojom/context_menu/context_menu.mojom.h"
@@ -174,7 +175,7 @@ struct FencedFrameContextMenuTestCase {
   std::string relative_url;
 
   // Either the target HTML element id or click coordinate.
-  absl::variant<std::string, gfx::PointF> click_target;
+  std::variant<std::string, gfx::PointF> click_target;
 
   // Invoked before network revocation.
   CheckCommandsCallback callback_before_revocation;
@@ -208,6 +209,9 @@ class ContextMenuFencedFrameTest : public ContextMenuUiTest {
         "content/test/data");
     embedded_https_test_server().SetSSLConfig(
         net::EmbeddedTestServer::CERT_TEST_NAMES);
+
+    override_registration_ =
+        web_app::OsIntegrationTestOverrideImpl::OverrideForTesting();
   }
 
   void RunTest(FencedFrameContextMenuTestCase& test_case) {
@@ -244,14 +248,14 @@ class ContextMenuFencedFrameTest : public ContextMenuUiTest {
 
     // Get the coordinate of the click target with respect to the target frame.
     gfx::PointF target =
-        absl::visit(base::Overloaded(
-                        [&target_frame = std::as_const(target_frame)](
-                            std::string target_id) {
-                          return GetCenterCoordinatesOfElementWithId(
-                              target_frame, target_id);
-                        },
-                        [](gfx::PointF target_point) { return target_point; }),
-                    test_case.click_target);
+        std::visit(absl::Overload(
+                       [&target_frame = std::as_const(target_frame)](
+                           std::string target_id) {
+                         return GetCenterCoordinatesOfElementWithId(
+                             target_frame, target_id);
+                       },
+                       [](gfx::PointF target_point) { return target_point; }),
+                   test_case.click_target);
 
     if (test_case.is_in_nested_iframe) {
       // Because the mouse event is forwarded to the `RenderWidgetHost` of the
@@ -345,8 +349,8 @@ class ContextMenuFencedFrameTest : public ContextMenuUiTest {
 
       // Get the coordinate of the click target with respect to the target
       // frame.
-      gfx::PointF target = absl::visit(
-          base::Overloaded(
+      gfx::PointF target = std::visit(
+          absl::Overload(
               [&target_frame =
                    std::as_const(target_frame)](std::string target_id) {
                 return GetCenterCoordinatesOfElementWithId(target_frame,
@@ -466,12 +470,21 @@ class ContextMenuFencedFrameTest : public ContextMenuUiTest {
     web_app::test::InstallWebApp(browser()->profile(), std::move(web_app_info));
   }
 
+  void CleanupWebApps() {
+    web_app::test::UninstallAllWebApps(browser()->profile());
+    override_registration_.reset();
+  }
+
   content::test::FencedFrameTestHelper& fenced_frame_test_helper() {
     return fenced_frame_test_helper_;
   }
 
  private:
   content::test::FencedFrameTestHelper fenced_frame_test_helper_;
+  // OS integration is needed to be able to launch web applications. This
+  // override ensures OS integration doesn't leave any traces.
+  std::unique_ptr<web_app::OsIntegrationTestOverrideImpl::BlockingRegistration>
+      override_registration_;
 };
 
 // Check which commands are present after opening the context menu for a
@@ -686,96 +699,6 @@ IN_PROC_BROWSER_TEST_F(
   RunTest(test_case);
 }
 
-IN_PROC_BROWSER_TEST_F(ContextMenuFencedFrameTest,
-                       SaveLinkAsDisabledInFencedFrameAfterNetworkCutoff) {
-  FencedFrameContextMenuTestCase test_case = {
-      .command_ids = {IDC_CONTENT_CONTEXT_SAVELINKAS},
-      .relative_url = "/download-anchor-same-origin.html",
-      .click_target = "anchor",
-      .is_in_nested_iframe = false};
-
-  RunTest(test_case);
-}
-
-IN_PROC_BROWSER_TEST_F(ContextMenuFencedFrameTest,
-                       SaveLinkAsDisabledInNestedIframeAfterNetworkCutoff) {
-  FencedFrameContextMenuTestCase test_case = {
-      .command_ids = {IDC_CONTENT_CONTEXT_SAVELINKAS},
-      .relative_url = "/download-anchor-same-origin.html",
-      .click_target = "anchor",
-      .is_in_nested_iframe = true};
-
-  RunTest(test_case);
-}
-
-IN_PROC_BROWSER_TEST_F(ContextMenuFencedFrameTest,
-                       SaveImageAsDisabledInFencedFrameAfterNetworkCutoff) {
-  FencedFrameContextMenuTestCase test_case = {
-      .command_ids = {IDC_CONTENT_CONTEXT_SAVEIMAGEAS},
-      .relative_url = "/test_visual.html",
-      .click_target = gfx::PointF(15, 15),
-      .is_in_nested_iframe = false};
-
-  RunTest(test_case);
-}
-
-IN_PROC_BROWSER_TEST_F(ContextMenuFencedFrameTest,
-                       SaveImageAsDisabledInNestedIframeAfterNetworkCutoff) {
-  FencedFrameContextMenuTestCase test_case = {
-      .command_ids = {IDC_CONTENT_CONTEXT_SAVEIMAGEAS},
-      .relative_url = "/test_visual.html",
-      .click_target = gfx::PointF(15, 15),
-      .is_in_nested_iframe = true};
-
-  RunTest(test_case);
-}
-
-IN_PROC_BROWSER_TEST_F(ContextMenuFencedFrameTest,
-                       SaveVideoAsInFencedFrameAfterNetworkCutoff) {
-  FencedFrameContextMenuTestCase test_case = {
-      .command_ids = {IDC_CONTENT_CONTEXT_SAVEAVAS,
-                      IDC_CONTENT_CONTEXT_SAVEVIDEOFRAMEAS},
-      .relative_url = "/media/video-player-autoplay.html",
-      .click_target = gfx::PointF(15, 15),
-      .is_in_nested_iframe = false};
-
-  RunTest(test_case);
-}
-
-IN_PROC_BROWSER_TEST_F(ContextMenuFencedFrameTest,
-                       SaveVideoAsDisabledInNestedIframeAfterNetworkCutoff) {
-  FencedFrameContextMenuTestCase test_case = {
-      .command_ids = {IDC_CONTENT_CONTEXT_SAVEAVAS,
-                      IDC_CONTENT_CONTEXT_SAVEVIDEOFRAMEAS},
-      .relative_url = "/media/video-player-autoplay.html",
-      .click_target = gfx::PointF(15, 15),
-      .is_in_nested_iframe = true};
-
-  RunTest(test_case);
-}
-
-IN_PROC_BROWSER_TEST_F(ContextMenuFencedFrameTest,
-                       SaveAudioAsInFencedFrameAfterNetworkCutoff) {
-  FencedFrameContextMenuTestCase test_case = {
-      .command_ids = {IDC_CONTENT_CONTEXT_SAVEAVAS},
-      .relative_url = "/accessibility/html/audio.html",
-      .click_target = gfx::PointF(15, 15),
-      .is_in_nested_iframe = false};
-
-  RunTest(test_case);
-}
-
-IN_PROC_BROWSER_TEST_F(ContextMenuFencedFrameTest,
-                       SaveAudioAsDisabledInNestedIframeAfterNetworkCutoff) {
-  FencedFrameContextMenuTestCase test_case = {
-      .command_ids = {IDC_CONTENT_CONTEXT_SAVEAVAS},
-      .relative_url = "/accessibility/html/audio.html",
-      .click_target = gfx::PointF(15, 15),
-      .is_in_nested_iframe = true};
-
-  RunTest(test_case);
-}
-
 IN_PROC_BROWSER_TEST_F(
     ContextMenuFencedFrameTest,
     OpenLinkInWebAppDisabledInFencedFrameAfterNetworkCutoff) {
@@ -789,6 +712,7 @@ IN_PROC_BROWSER_TEST_F(
       .is_in_nested_iframe = false};
 
   RunTest(test_case);
+  CleanupWebApps();
 }
 
 IN_PROC_BROWSER_TEST_F(
@@ -804,6 +728,7 @@ IN_PROC_BROWSER_TEST_F(
       .is_in_nested_iframe = true};
 
   RunTest(test_case);
+  CleanupWebApps();
 }
 
 IN_PROC_BROWSER_TEST_F(

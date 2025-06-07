@@ -15,6 +15,8 @@
 #import "components/segmentation_platform/embedder/home_modules/tips_manager/signal_constants.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
+#import "ios/chrome/browser/first_run/public/best_features_item.h"
+#import "ios/chrome/browser/first_run/public/features.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_account_password_store_factory.h"
 #import "ios/chrome/browser/passwords/model/ios_chrome_profile_password_store_factory.h"
 #import "ios/chrome/browser/passwords/model/password_controller_delegate.h"
@@ -102,7 +104,7 @@ using PasswordSuggestionBottomSheetExitReason::kUsePasswordSuggestion;
           accountPasswordStore:accountPasswordStore
         sharedURLLoaderFactory:profile->GetSharedURLLoaderFactory()
              engagementTracker:feature_engagement::TrackerFactory::
-                                   GetForProfile(self.browser->GetProfile())
+                                   GetForProfile(self.profile)
                      presenter:self];
     self.viewController.delegate = self.mediator;
     self.mediator.consumer = self.viewController;
@@ -234,10 +236,16 @@ using PasswordSuggestionBottomSheetExitReason::kUsePasswordSuggestion;
   // which may trigger tips or guidance related to password management features.
   if (IsSegmentationTipsManagerEnabled()) {
     TipsManagerIOS* tipsManager =
-        TipsManagerIOSFactory::GetForProfile(self.browser->GetProfile());
+        TipsManagerIOSFactory::GetForProfile(self.profile);
 
     tipsManager->NotifySignal(
         segmentation_platform::tips_manager::signals::kUsedPasswordAutofill);
+  }
+
+  // Notify Welcome Back to remove Save and Autofill Passwords from the eligible
+  // features.
+  if (IsWelcomeBackInFirstRunEnabled()) {
+    MarkWelcomeBackFeatureUsed(BestFeaturesItemType::kSaveAndAutofillPasswords);
   }
 }
 
@@ -310,7 +318,7 @@ using PasswordSuggestionBottomSheetExitReason::kUsePasswordSuggestion;
 - (void)dismissSoftKeyboard {
   web::WebState* activeWebState =
       self.browser->GetWebStateList()->GetActiveWebState();
-  CHECK(activeWebState, base::NotFatalUntil::M135);
+  CHECK(activeWebState);
   if (activeWebState) {
     [activeWebState->GetView() endEditing:NO];
   }

@@ -19,8 +19,9 @@ import org.jni_zero.NativeMethods;
 
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeStringConstants;
-import org.chromium.chrome.browser.autofill.AutofillUiUtils;
+import org.chromium.chrome.browser.autofill.AutofillUiUtils.IconSpecs;
 import org.chromium.components.autofill.ImageSize;
+import org.chromium.components.autofill.ImageType;
 import org.chromium.components.autofill.VirtualCardEnrollmentLinkType;
 import org.chromium.components.autofill.payments.LegalMessageLine;
 import org.chromium.components.infobars.ConfirmInfoBar;
@@ -37,19 +38,17 @@ public class AutofillVirtualCardEnrollmentInfoBar extends ConfirmInfoBar {
     private Bitmap mIssuerIcon;
     private String mCardLabel;
     private int mIconDrawableId = -1;
-    private String mTitleText;
+    private final String mTitleText;
     private String mDescriptionText;
     private String mLearnMoreLinkText;
-    private final LinkedList<LegalMessageLine> mGoogleLegalMessageLines =
-            new LinkedList<LegalMessageLine>();
-    private final LinkedList<LegalMessageLine> mIssuerLegalMessageLines =
-            new LinkedList<LegalMessageLine>();
+    private final LinkedList<LegalMessageLine> mGoogleLegalMessageLines = new LinkedList<>();
+    private final LinkedList<LegalMessageLine> mIssuerLegalMessageLines = new LinkedList<>();
 
     /**
      * Creates a new instance of the infobar.
      *
      * @param nativeAutofillVirtualCardEnrollmentInfoBar The pointer to the native object for
-     *         callbacks.
+     *     callbacks.
      * @param iconId ID corresponding to the icon that will be shown for the InfoBar.
      * @param iconBitmap Bitmap to use if there is no equivalent Java resource for iconId.
      * @param message Title of the infobar to display along the icon.
@@ -253,11 +252,15 @@ public class AutofillVirtualCardEnrollmentInfoBar extends ConfirmInfoBar {
                 Spanned.SPAN_INCLUSIVE_EXCLUSIVE);
 
         // Get and resize the issuer icon.
-        AutofillUiUtils.CardIconSpecs cardIconSpecs =
-                AutofillUiUtils.CardIconSpecs.create(layout.getContext(), ImageSize.LARGE);
+        IconSpecs iconSpecs =
+                IconSpecs.create(
+                        layout.getContext(), ImageType.CREDIT_CARD_ART_IMAGE, ImageSize.LARGE);
         Bitmap scaledIssuerIcon =
                 Bitmap.createScaledBitmap(
-                        mIssuerIcon, cardIconSpecs.getWidth(), cardIconSpecs.getHeight(), true);
+                        mIssuerIcon,
+                        iconSpecs.getWidth(),
+                        iconSpecs.getHeight(),
+                        /* filter= */ true);
 
         // Add the issuer icon and the card container text.
         control.addIcon(

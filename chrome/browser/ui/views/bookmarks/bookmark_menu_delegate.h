@@ -13,6 +13,7 @@
 #include "base/scoped_observation.h"
 #include "chrome/browser/bookmarks/bookmark_merged_surface_service.h"
 #include "chrome/browser/bookmarks/bookmark_merged_surface_service_observer.h"
+#include "chrome/browser/bookmarks/bookmark_parent_folder.h"
 #include "chrome/browser/ui/bookmarks/bookmark_stats.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/browser/ui/views/bookmarks/bookmark_context_menu.h"
@@ -23,6 +24,7 @@
 #include "ui/views/controls/menu/menu_delegate.h"
 #include "ui/views/view.h"
 
+class BookmarkMergedSurfaceService;
 class Browser;
 class Profile;
 
@@ -221,6 +223,9 @@ class BookmarkMenuDelegate : public BookmarkMergedSurfaceServiceObserver,
   // Creates a menu. This uses BuildMenu() to recursively populate the menu.
   views::MenuItemView* CreateMenu(const BookmarkParentFolder& parent,
                                   size_t start_child_index);
+
+  // Returns true if `folder` has child nodes.
+  bool ShouldBuildPermanentNode(const BookmarkParentFolder& folder) const;
 
   // Builds menus for the 'other' and 'mobile' nodes if they're not empty,
   // adding them to `parent_menu_item_`.

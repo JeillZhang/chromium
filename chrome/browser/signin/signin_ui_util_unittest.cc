@@ -6,6 +6,8 @@
 
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/metrics/user_action_tester.h"
 #include "base/test/task_environment.h"
@@ -49,8 +51,6 @@ namespace signin_ui_util {
 namespace {
 const char kMainEmail[] = "main_email@example.com";
 const GaiaId::Literal kMainGaiaID("main_gaia_id");
-const char kSecondaryEmail[] = "secondary_email@example.com";
-const GaiaId::Literal kSecondaryGaiaID("secondary_gaia_id");
 }  // namespace
 
 using testing::_;
@@ -93,7 +93,8 @@ class MockSigninUiDelegate : public SigninUiDelegateImplDice {
                signin_metrics::PromoAction promo_action,
                const CoreAccountId& account_id,
                TurnSyncOnHelper::SigninAbortedMode signin_aborted_mode,
-               bool is_sync_promo),
+               bool is_sync_promo,
+               bool turn_sync_on_signed_profile),
               ());
 };
 
@@ -131,11 +132,12 @@ class SigninUiUtilTest : public BrowserWithTestWindowTest {
                         signin_metrics::PromoAction promo_action,
                         const CoreAccountId& account_id,
                         TurnSyncOnHelper::SigninAbortedMode signin_aborted_mode,
-                        bool is_sync_promo) {
-    EXPECT_CALL(
-        mock_delegate_,
-        ShowTurnSyncOnUI(profile(), access_point, promo_action, account_id,
-                         signin_aborted_mode, is_sync_promo));
+                        bool is_sync_promo,
+                        bool turn_sync_on_signed_profile) {
+    EXPECT_CALL(mock_delegate_,
+                ShowTurnSyncOnUI(profile(), access_point, promo_action,
+                                 account_id, signin_aborted_mode, is_sync_promo,
+                                 turn_sync_on_signed_profile));
   }
 
   void ExpectNoSigninStartedHistograms(
@@ -228,7 +230,7 @@ class SigninUiUtilTest : public BrowserWithTestWindowTest {
     ExpectTurnSyncOn(
         access_point_, signin_metrics::PromoAction::PROMO_ACTION_WITH_DEFAULT,
         account_id, TurnSyncOnHelper::SigninAbortedMode::KEEP_ACCOUNT,
-        /*is_sync_promo=*/true);
+        /*is_sync_promo=*/true, /*turn_sync_on_signed_profile=*/false);
     EnableSync(
         GetIdentityManager()->FindExtendedAccountInfoByAccountId(account_id),
         /*is_default_promo_account=*/true);
@@ -267,10 +269,10 @@ TEST_F(SigninUiUtilTest, EnableSyncWithExistingAccount) {
         is_default_promo_account
             ? signin_metrics::PromoAction::PROMO_ACTION_WITH_DEFAULT
             : signin_metrics::PromoAction::PROMO_ACTION_NOT_DEFAULT;
-    ExpectTurnSyncOn(signin_metrics::AccessPoint::kBookmarkBubble,
-                     expected_promo_action, account_id,
-                     TurnSyncOnHelper::SigninAbortedMode::KEEP_ACCOUNT,
-                     /*is_sync_promo=*/false);
+    ExpectTurnSyncOn(
+        signin_metrics::AccessPoint::kBookmarkBubble, expected_promo_action,
+        account_id, TurnSyncOnHelper::SigninAbortedMode::KEEP_ACCOUNT,
+        /*is_sync_promo=*/false, /*turn_sync_on_signed_profile=*/true);
     EnableSync(
         GetIdentityManager()->FindExtendedAccountInfoByAccountId(account_id),
         is_default_promo_account);
@@ -615,55 +617,6 @@ TEST_F(SigninUiUtilTest, ShowReauthTab) {
       testing::StartsWith(GaiaUrls::GetInstance()->add_account_url().spec()));
 }
 
-TEST_F(SigninUiUtilTest,
-       ShouldShowAnimatedIdentityOnOpeningWindow_ReturnsTrueForMultiProfiles) {
-  const char kSecondProfile[] = "SecondProfile";
-  const char16_t kSecondProfile16[] = u"SecondProfile";
-  const base::FilePath profile_path =
-      profile_manager()->profiles_dir().AppendASCII(kSecondProfile);
-  ProfileAttributesInitParams params;
-  params.profile_path = profile_path;
-  params.profile_name = kSecondProfile16;
-  profile_manager()->profile_attributes_storage()->AddProfile(
-      std::move(params));
-
-  EXPECT_TRUE(ShouldShowAnimatedIdentityOnOpeningWindow(
-      *profile_manager()->profile_attributes_storage(), profile()));
-}
-
-TEST_F(SigninUiUtilTest,
-       ShouldShowAnimatedIdentityOnOpeningWindow_ReturnsTrueForMultiSignin) {
-  GetIdentityManager()->GetAccountsMutator()->AddOrUpdateAccount(
-      kMainGaiaID, kMainEmail, "refresh_token", false,
-      signin_metrics::AccessPoint::kUnknown,
-      signin_metrics::SourceForRefreshTokenOperation::kUnknown);
-  GetIdentityManager()->GetAccountsMutator()->AddOrUpdateAccount(
-      kSecondaryGaiaID, kSecondaryEmail, "refresh_token", false,
-      signin_metrics::AccessPoint::kUnknown,
-      signin_metrics::SourceForRefreshTokenOperation::kUnknown);
-
-  EXPECT_TRUE(ShouldShowAnimatedIdentityOnOpeningWindow(
-      *profile_manager()->profile_attributes_storage(), profile()));
-
-  // The identity can be shown again immediately (which is what happens if there
-  // is multiple windows at startup).
-  RecordAnimatedIdentityTriggered(profile());
-  EXPECT_TRUE(ShouldShowAnimatedIdentityOnOpeningWindow(
-      *profile_manager()->profile_attributes_storage(), profile()));
-}
-
-TEST_F(
-    SigninUiUtilTest,
-    ShouldShowAnimatedIdentityOnOpeningWindow_ReturnsFalseForSingleProfileSingleSignin) {
-  GetIdentityManager()->GetAccountsMutator()->AddOrUpdateAccount(
-      kMainGaiaID, kMainEmail, "refresh_token", false,
-      signin_metrics::AccessPoint::kUnknown,
-      signin_metrics::SourceForRefreshTokenOperation::kUnknown);
-
-  EXPECT_FALSE(ShouldShowAnimatedIdentityOnOpeningWindow(
-      *profile_manager()->profile_attributes_storage(), profile()));
-}
-
 TEST_F(SigninUiUtilTest, ShowExtensionSigninPrompt) {
   const GURL add_account_url = GaiaUrls::GetInstance()->add_account_url();
   const GURL sync_url = GaiaUrls::GetInstance()->signin_chrome_sync_dice();
@@ -809,7 +762,7 @@ TEST_F(SigninUiUtilTest, EnableSyncWithExistingWebOnlyAccount) {
         signin_metrics::AccessPoint::kBookmarkBubble, expected_promo_action,
         account_id,
         TurnSyncOnHelper::SigninAbortedMode::KEEP_ACCOUNT_ON_WEB_ONLY,
-        /*is_sync_promo=*/false);
+        /*is_sync_promo=*/false, /*turn_sync_on_signed_profile=*/false);
     EnableSync(
         GetIdentityManager()->FindExtendedAccountInfoByAccountId(account_id),
         is_default_promo_account);
@@ -829,8 +782,6 @@ TEST_F(SigninUiUtilTest,
 
 // Checks that sync is treated as a promo for kSettings.
 TEST_F(SigninUiUtilTest, EnableSyncPromoWithExistingWebOnlyAccountSettings) {
-  base::test::ScopedFeatureList feature_list{
-      switches::kImprovedSettingsUIOnDesktop};
   access_point_ = signin_metrics::AccessPoint::kSettings;
 
   TestEnableSyncPromoWithExistingWebOnlyAccount();
@@ -882,6 +833,16 @@ TEST_F(SigninUiUtilTest, ShowExtensionSigninPromptReauth) {
 
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
+TEST_F(SigninUiUtilTest,
+       ShouldShowAnimatedIdentityOnOpeningWindowIfMultipleWindowsAtStartup) {
+  EXPECT_TRUE(ShouldShowAnimatedIdentityOnOpeningWindow(*profile()));
+  // Record that the identity was shown.
+  RecordAnimatedIdentityTriggered(profile());
+  // The identity can be shown again immediately (which is what happens if there
+  // is multiple windows at startup).
+  EXPECT_TRUE(ShouldShowAnimatedIdentityOnOpeningWindow(*profile()));
+}
+
 // This test does not use the SigninUiUtilTest test fixture, because it
 // needs a mock time environment, and BrowserWithTestWindowTest may be flaky
 // when used with mock time (see https://crbug.com/1014790).
@@ -900,19 +861,7 @@ TEST(ShouldShowAnimatedIdentityOnOpeningWindow, ReturnsFalseForNewWindow) {
       IdentityTestEnvironmentProfileAdaptor::
           GetIdentityTestEnvironmentFactories());
 
-  // Setup accounts.
-  signin::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfile(profile);
-  identity_manager->GetAccountsMutator()->AddOrUpdateAccount(
-      kMainGaiaID, kMainEmail, "refresh_token", false,
-      signin_metrics::AccessPoint::kUnknown,
-      signin_metrics::SourceForRefreshTokenOperation::kUnknown);
-  identity_manager->GetAccountsMutator()->AddOrUpdateAccount(
-      kSecondaryGaiaID, kSecondaryEmail, "refresh_token", false,
-      signin_metrics::AccessPoint::kUnknown,
-      signin_metrics::SourceForRefreshTokenOperation::kUnknown);
-  EXPECT_TRUE(ShouldShowAnimatedIdentityOnOpeningWindow(
-      *profile_manager.profile_attributes_storage(), profile));
+  EXPECT_TRUE(ShouldShowAnimatedIdentityOnOpeningWindow(*profile));
 
   // Animation is shown once.
   RecordAnimatedIdentityTriggered(profile);
@@ -921,8 +870,7 @@ TEST(ShouldShowAnimatedIdentityOnOpeningWindow, ReturnsFalseForNewWindow) {
   task_environment.FastForwardBy(base::Seconds(6));
 
   // Animation is not shown again in a new window.
-  EXPECT_FALSE(ShouldShowAnimatedIdentityOnOpeningWindow(
-      *profile_manager.profile_attributes_storage(), profile));
+  EXPECT_FALSE(ShouldShowAnimatedIdentityOnOpeningWindow(*profile));
 }
 
 }  // namespace signin_ui_util

@@ -382,6 +382,12 @@ void AddNewTabPageColorMixer(ui::ColorProvider* provider,
     mixer[kColorNewTabPageText] = {dark_mode ? gfx::kGoogleGrey200
                                              : SK_ColorBLACK};
   }
+
+  /* NewTabFooter */
+  mixer[kColorNewTabFooterBackground] = {kColorToolbar};
+  mixer[kColorNewTabFooterText] =
+      ui::GetColorWithMaxContrast({kColorNewTabFooterBackground});
+  mixer[kColorNewTabFooterLogoBackground] = {SK_ColorWHITE};
 }
 
 void AddWebThemeNewTabPageColors(ui::ColorMixer& mixer, bool dark_mode) {
@@ -470,9 +476,8 @@ void AddWebThemeNewTabPageColors(ui::ColorMixer& mixer, bool dark_mode) {
     mixer[kColorNewTabPageHistoryClustersModuleItemBackground] = {
         gfx::kGoogleGrey100};
   }
-  mixer[kColorNewTabPageModuleIconBackground] =
-      ui::SetAlpha(accent_color,
-                   /* 24% opacity */ 0.24 * SK_AlphaOPAQUE);
+  mixer[kColorNewTabPageModuleIconBackground] = {
+      kColorNewTabPageModuleBackground};
   mixer[kColorNewTabPageModuleScrollButtonBackground] = {
       dark_mode ? gfx::kGoogleGrey700 : gfx::kGoogleGrey100};
   mixer[kColorNewTabPageModuleScrollButtonBackgroundHovered] = {

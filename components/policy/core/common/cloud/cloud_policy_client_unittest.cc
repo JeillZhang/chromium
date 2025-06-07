@@ -44,6 +44,7 @@
 #include "components/policy/core/common/cloud/mock_signing_service.h"
 #include "components/policy/core/common/cloud/realtime_reporting_job_configuration.h"
 #include "components/policy/core/common/cloud/reporting_job_configuration_base.h"
+#include "components/policy/core/common/features.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/core/common/remote_commands/remote_commands_fetch_reason.h"
 #include "components/policy/proto/device_management_backend.pb.h"
@@ -575,6 +576,7 @@ class CloudPolicyClientTest : public testing::Test {
                         service_.CaptureQueryParams(&query_params_),
                         service_.CaptureTimeout(&timeout_),
                         service_.CaptureRequest(&job_request_),
+                        service_.CaptureSendsCookies(&sends_cookies_),
                         service_.SendJobOKAsync(response)));
   }
 
@@ -622,6 +624,7 @@ class CloudPolicyClientTest : public testing::Test {
   std::string job_payload_;
   std::string client_id_;
   std::string policy_type_;
+  bool sends_cookies_;
   StrictMock<MockJobCreationHandler> job_creation_handler_;
   FakeDeviceManagementService service_{&job_creation_handler_};
   StrictMock<MockDeviceDMTokenCallbackObserver>
@@ -2355,7 +2358,8 @@ TEST_F(CloudPolicyClientTest, UploadChromeProfile) {
       std::make_unique<em::ChromeProfileReportRequest>();
   chrome_profile_report->mutable_os_report()->set_name(kOsName);
   base::test::TestFuture<CloudPolicyClient::Result> result_future;
-  client_->UploadChromeProfileReport(std::move(chrome_profile_report),
+  client_->UploadChromeProfileReport(/*use_cookies=*/false,
+                                     std::move(chrome_profile_report),
                                      result_future.GetCallback());
 
   const CloudPolicyClient::Result result = result_future.Get();
@@ -2364,6 +2368,37 @@ TEST_F(CloudPolicyClientTest, UploadChromeProfile) {
       DeviceManagementService::JobConfiguration::TYPE_CHROME_PROFILE_REPORT,
       job_type_);
   EXPECT_EQ(auth_data_, DMAuth::FromDMToken(kDMToken));
+  EXPECT_FALSE(sends_cookies_);
+  EXPECT_EQ(job_request_.SerializePartialAsString(),
+            device_managment_request.SerializePartialAsString());
+  EXPECT_EQ(DM_STATUS_SUCCESS, client_->last_dm_status());
+}
+
+TEST_F(CloudPolicyClientTest, UploadChromeProfileWithCookies) {
+  RegisterClient();
+
+  em::DeviceManagementRequest device_managment_request;
+  device_managment_request.mutable_chrome_profile_report_request()
+      ->mutable_os_report()
+      ->set_name(kOsName);
+
+  ExpectAndCaptureJob(GetEmptyResponse());
+
+  auto chrome_profile_report =
+      std::make_unique<em::ChromeProfileReportRequest>();
+  chrome_profile_report->mutable_os_report()->set_name(kOsName);
+  base::test::TestFuture<CloudPolicyClient::Result> result_future;
+  client_->UploadChromeProfileReport(/*use_cookies=*/true,
+                                     std::move(chrome_profile_report),
+                                     result_future.GetCallback());
+
+  const CloudPolicyClient::Result result = result_future.Get();
+  EXPECT_TRUE(result.IsSuccess());
+  EXPECT_EQ(
+      DeviceManagementService::JobConfiguration::TYPE_CHROME_PROFILE_REPORT,
+      job_type_);
+  EXPECT_EQ(auth_data_, DMAuth::FromDMToken(kDMToken));
+  EXPECT_TRUE(sends_cookies_);
   EXPECT_EQ(job_request_.SerializePartialAsString(),
             device_managment_request.SerializePartialAsString());
   EXPECT_EQ(DM_STATUS_SUCCESS, client_->last_dm_status());
@@ -2373,7 +2408,8 @@ TEST_F(CloudPolicyClientTest, UploadChromeProfileNotRegistered) {
   base::test::TestFuture<CloudPolicyClient::Result> result_future;
   auto chrome_profile_report =
       std::make_unique<em::ChromeProfileReportRequest>();
-  client_->UploadChromeProfileReport(std::move(chrome_profile_report),
+  client_->UploadChromeProfileReport(/*use_cookies=*/false,
+                                     std::move(chrome_profile_report),
                                      result_future.GetCallback());
 
   const CloudPolicyClient::Result result = result_future.Get();
@@ -2484,7 +2520,14 @@ class CloudPolicyClientUploadSecurityEventReportDeprecatedTest
     : public CloudPolicyClientTest,
       public testing::WithParamInterface<bool> {
  public:
+  CloudPolicyClientUploadSecurityEventReportDeprecatedTest() {
+    scoped_feature_list_.InitAndEnableFeature(
+        policy::features::kEnhancedSecurityEventFields);
+  }
   bool include_device_info() const { return GetParam(); }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 INSTANTIATE_TEST_SUITE_P(
@@ -2544,6 +2587,14 @@ TEST_P(CloudPolicyClientUploadSecurityEventReportDeprecatedTest,
               *payload_dict.FindStringByDottedPath(
                   ReportingJobConfigurationBase::DeviceDictionaryBuilder::
                       GetNamePath()));
+    EXPECT_EQ(policy::GetDeviceFqdn(),
+              *payload_dict.FindStringByDottedPath(
+                  ReportingJobConfigurationBase::DeviceDictionaryBuilder::
+                      GetDeviceFqdnPath()));
+    EXPECT_EQ(policy::GetNetworkName(),
+              *payload_dict.FindStringByDottedPath(
+                  ReportingJobConfigurationBase::DeviceDictionaryBuilder::
+                      GetNetworkNamePath()));
   } else {
     EXPECT_FALSE(payload_dict.FindStringByDottedPath(
         ReportingJobConfigurationBase::DeviceDictionaryBuilder::
@@ -2562,6 +2613,12 @@ TEST_P(CloudPolicyClientUploadSecurityEventReportDeprecatedTest,
             GetOSVersionPath()));
     EXPECT_FALSE(payload_dict.FindStringByDottedPath(
         ReportingJobConfigurationBase::DeviceDictionaryBuilder::GetNamePath()));
+    EXPECT_FALSE(payload_dict.FindStringByDottedPath(
+        ReportingJobConfigurationBase::DeviceDictionaryBuilder::
+            GetDeviceFqdnPath()));
+    EXPECT_FALSE(payload_dict.FindStringByDottedPath(
+        ReportingJobConfigurationBase::DeviceDictionaryBuilder::
+            GetNetworkNamePath()));
   }
 
   const base::Value* events =
@@ -2570,11 +2627,50 @@ TEST_P(CloudPolicyClientUploadSecurityEventReportDeprecatedTest,
   EXPECT_EQ(1u, events->GetList().size());
 }
 
+TEST_F(CloudPolicyClientTest, UploadSecurityEventReportNoResponse) {
+  RegisterClient();
+
+  ExpectAndCaptureJSONJob(/*response=*/"");
+
+  base::test::TestFuture<CloudPolicyClient::Result> result_future;
+
+  client_->UploadSecurityEventReport(/*include_device_info=*/false,
+                                     MakeDefaultRealtimeReport(),
+                                     result_future.GetCallback());
+
+  const CloudPolicyClient::Result result = result_future.Get();
+  EXPECT_TRUE(result.IsSuccess());
+  EXPECT_EQ(
+      DeviceManagementService::JobConfiguration::TYPE_UPLOAD_REAL_TIME_REPORT,
+      job_type_);
+  EXPECT_EQ(auth_data_, DMAuth::FromDMToken(kDMToken));
+  EXPECT_EQ(DM_STATUS_SUCCESS, client_->last_dm_status());
+
+  std::optional<base::Value> payload = base::JSONReader::Read(job_payload_);
+  ASSERT_TRUE(payload);
+  const base::Value::Dict& payload_dict = payload->GetDict();
+
+  ASSERT_FALSE(policy::GetDeviceName().empty());
+  EXPECT_EQ(version_info::GetVersionNumber(),
+            *payload_dict.FindStringByDottedPath(
+                ReportingJobConfigurationBase::BrowserDictionaryBuilder::
+                    GetChromeVersionPath()));
+}
+
 class CloudPolicyClientUploadSecurityEventTest
     : public CloudPolicyClientTest,
       public testing::WithParamInterface<bool> {
  public:
+  CloudPolicyClientUploadSecurityEventTest() {
+    scoped_feature_list_.InitWithFeatures(
+        {policy::kUploadRealtimeReportingEventsUsingProto,
+         policy::features::kEnhancedSecurityEventFields},
+        {});
+  }
   bool include_device_info() const { return GetParam(); }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 INSTANTIATE_TEST_SUITE_P(,
@@ -2582,10 +2678,6 @@ INSTANTIATE_TEST_SUITE_P(,
                          testing::Bool());
 
 TEST_P(CloudPolicyClientUploadSecurityEventTest, TestWithProtoFormat) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      policy::kUploadRealtimeReportingEventsUsingProto);
-
   RegisterClient();
 
   ExpectAndCaptureJSONJob(/*response=*/"{}");
@@ -2618,6 +2710,8 @@ TEST_P(CloudPolicyClientUploadSecurityEventTest, TestWithProtoFormat) {
     EXPECT_EQ(GetOSPlatform(), request.device().os_platform());
     EXPECT_EQ(GetOSVersion(), request.device().os_version());
     EXPECT_EQ(policy::GetDeviceName(), request.device().name());
+    EXPECT_EQ(policy::GetDeviceFqdn(), request.device().device_fqdn());
+    EXPECT_EQ(policy::GetNetworkName(), request.device().network_name());
   } else {
     EXPECT_EQ(request.device().dm_token(), "");
     EXPECT_EQ(request.device().client_id(), "");
@@ -2625,6 +2719,8 @@ TEST_P(CloudPolicyClientUploadSecurityEventTest, TestWithProtoFormat) {
     EXPECT_EQ(request.device().os_platform(), "");
     EXPECT_EQ(request.device().os_version(), "");
     EXPECT_EQ(request.device().name(), "");
+    EXPECT_EQ(request.device().device_fqdn(), "");
+    EXPECT_EQ(request.device().network_name(), "");
   }
 
   EXPECT_EQ(1, request.events_size());
@@ -3284,6 +3380,20 @@ TEST_F(CloudPolicyClientTest, PolicyReregistrationFailsWithNonMatchingDMToken) {
             client_->last_dm_status());
 }
 
+TEST_F(CloudPolicyClientTest, ResultCopyAssignment) {
+  CloudPolicyClient::Result result1 =
+      CloudPolicyClient::Result(DM_STATUS_SUCCESS, 400, base::Value::Dict());
+  CloudPolicyClient::Result result2 =
+      CloudPolicyClient::Result(DM_STATUS_REQUEST_FAILED);
+
+  result2 = result1;
+
+  ASSERT_TRUE(result2.IsSuccess());
+  EXPECT_EQ(DM_STATUS_SUCCESS, result2.GetDMServerError());
+  EXPECT_EQ(400, result2.GetNetError());
+  EXPECT_EQ(result1.GetResponse(), result2.GetResponse());
+}
+
 #if !BUILDFLAG(IS_CHROMEOS)
 TEST_F(CloudPolicyClientTest, PolicyReregistrationAfterDMTokenDeletion) {
   RegisterClient();
@@ -3445,25 +3555,25 @@ TEST_F(CloudPolicyClientTest, DeterminePromotionEligibilityRequest) {
   em::DeviceManagementRequest expected_request;
   expected_request.mutable_determine_promotion_eligibility_request();
 
-  em::DeviceManagementResponse fake_response;
-  em::GetUserEligiblePromotionsResponse* inner_response =
-      fake_response.mutable_get_user_eligible_promotions_response();
+  em::DeviceManagementResponse outer_response;
+  em::GetUserEligiblePromotionsResponse* fake_response =
+      outer_response.mutable_get_user_eligible_promotions_response();
+
   em::PromotionEligibilityList* promotion_eligibility_list =
-      inner_response->mutable_promotions();
+      fake_response->mutable_promotions();
+
   promotion_eligibility_list->set_policy_page_promotion(
       em::PromotionType::CHROME_ENTERPRISE_CORE);
 
-  ExpectAndCaptureJob(fake_response);
+  ExpectAndCaptureJob(outer_response);
 
-  base::test::TestFuture<
-      CloudPolicyClient::Result>
+  base::test::TestFuture<const em::GetUserEligiblePromotionsResponse>
       result_future;
-
 
   base::RunLoop run_loop;
   client_->DeterminePromotionEligibility(
-      result_future.GetCallback().Then(run_loop.QuitClosure())
-      );
+      result_future.GetCallback().Then(run_loop.QuitClosure()));
+
   client_->SetOAuthTokenAsAdditionalAuth(kOAuthToken);
   run_loop.Run();
 

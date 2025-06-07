@@ -6,6 +6,8 @@
 
 #include "base/hash/hash.h"
 #include "base/metrics/histogram_functions.h"
+#include "chrome/browser/privacy_sandbox/notice/desktop_entrypoint_handlers_helper.h"
+#include "chrome/browser/privacy_sandbox/privacy_sandbox_queue_manager.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_service.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -15,22 +17,23 @@
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/privacy_sandbox/privacy_sandbox_prompt.h"
 #include "chrome/browser/ui/profiles/profile_customization_bubble_sync_controller.h"
 #include "chrome/common/extensions/chrome_manifest_url_handlers.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/sync/service/sync_service.h"
+#include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/extension_registry.h"
 
 namespace {
-using NoticeQueueState = ::PrivacySandboxService::NoticeQueueState;
-
 constexpr char kPrivacySandboxPromptHelperEventHistogram[] =
-    "Settings.PrivacySandbox.PromptHelperEvent";
+    "Settings.PrivacySandbox.PromptHelperEvent2";
+constexpr int kMinRequiredDialogHeight = 100;
 
 // Gets the type of prompt that should be displayed for |profile|, this includes
 // the possibility of no prompt being required.
@@ -109,8 +112,7 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
 #if BUILDFLAG(IS_CHROMEOS)
   // TODO(crbug.com/1315580, crbug.com/1315579): When navigating to a NTP that
   // isn't Chrome-controlled on ChromeOS, open an about blank tab to display the
-  // prompt. On other platforms, it's being handled during the startup. This
-  // logic can be removed when Lacros is ready.
+  // prompt. On other platforms, it's being handled during the startup.
   if (web_contents()->GetLastCommittedURL() == chrome::kChromeUINewTabURL) {
     const bool has_extention_override =
         HasExtensionNtpOverride(extensions::ExtensionRegistry::Get(profile()));
@@ -138,8 +140,7 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
   // Check whether the navigation target is a suitable prompt location. The
   // navigation URL, rather than the visible or committed URL, is required to
   // distinguish between different types of NTPs.
-  if (!PrivacySandboxService::IsUrlSuitableForPrompt(
-          navigation_handle->GetURL())) {
+  if (!privacy_sandbox::IsUrlSuitableForPrompt(navigation_handle->GetURL())) {
     base::UmaHistogramEnumeration(
         kPrivacySandboxPromptHelperEventHistogram,
         SettingsPrivacySandboxPromptHelperEvent::kUrlNotSuitable);
@@ -154,30 +155,6 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
           SettingsPrivacySandboxPromptHelperEvent::kSyncSetupInProgress);
       return;
     }
-  }
-
-  // `SearchEngineChoiceDialogService` may need to suppress this dialog to avoid
-  // dialog conflicts and too frequent promos.
-  // TODO(crbug.com/370804492): When we add DMA notice to queue, put this behind
-  // flag / remove.
-  SearchEngineChoiceDialogService* search_engine_choice_dialog_service =
-      SearchEngineChoiceDialogServiceFactory::GetForProfile(profile());
-  if (search_engine_choice_dialog_service &&
-      search_engine_choice_dialog_service->CanSuppressPrivacySandboxPromo()) {
-    base::UmaHistogramEnumeration(kPrivacySandboxPromptHelperEventHistogram,
-                                  SettingsPrivacySandboxPromptHelperEvent::
-                                      kSearchEngineChoiceDialogShown);
-#if !BUILDFLAG(IS_ANDROID)
-    if (auto* privacy_sandbox_service =
-            PrivacySandboxServiceFactory::GetForProfile(profile())) {
-      privacy_sandbox_service->MaybeUnqueueNotice(
-          NoticeQueueState::kReleaseOnDMA);
-      // Set suppress queue to prevent queue operations after DMA notice is
-      // shown.
-      privacy_sandbox_service->SetSuppressQueue(true);
-    }
-#endif  // !BUILDFLAG(IS_ANDROID)
-    return;
   }
 
   auto* browser =
@@ -203,7 +180,6 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
 
   // If a Privacy Sandbox prompt already exists for this browser, do not attempt
   // to open another one.
-  // Or if the handle is not being held, do not attempt to show the prompt.
   if (auto* privacy_sandbox_service =
           PrivacySandboxServiceFactory::GetForProfile(profile())) {
     if (privacy_sandbox_service->IsPromptOpenForBrowser(browser)) {
@@ -212,21 +188,16 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
                                         kPromptAlreadyExistsForBrowser);
       return;
     }
-
-#if !BUILDFLAG(IS_ANDROID)
-    if (base::FeatureList::IsEnabled(
-            privacy_sandbox::kPrivacySandboxNoticeQueue) &&
-        !privacy_sandbox_service->IsHoldingHandle()) {
-      return;
-    }
-#endif  // !BUILDFLAG(IS_ANDROID)
   }
 
   // The PrivacySandbox prompt can always fit inside a normal tabbed window due
   // to its minimum width, so checking the height is enough here. Other non
   // normal tabbed browsers will be exlcuded in a later check.
   const bool is_window_height_too_small =
-      !CanWindowHeightFitPrivacySandboxPrompt(browser);
+      browser->window()
+          ->GetWebContentsModalDialogHost()
+          ->GetMaximumDialogSize()
+          .height() < kMinRequiredDialogHeight;
   // If the windows height is too small, it is difficult to read or interact
   // with the dialog. The dialog is blocking modal, that is why we want to
   // prevent it from showing if there isn't enough space.
@@ -246,6 +217,21 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
     return;
   }
 
+  // If the handle is not being held, do not attempt to show the prompt.
+  // We want to check this constraint at the very end for histogram emitting
+  // reasons.
+  if (auto* privacy_sandbox_service =
+          PrivacySandboxServiceFactory::GetForProfile(profile())) {
+    privacy_sandbox::PrivacySandboxQueueManager& queue_manager =
+        privacy_sandbox_service->GetPrivacySandboxNoticeQueueManager();
+    if (base::FeatureList::IsEnabled(
+            privacy_sandbox::kPrivacySandboxNoticeQueue) &&
+        !queue_manager.IsHoldingHandle()) {
+      queue_manager.MaybeEmitQueueStateMetrics();
+      return;
+    }
+  }
+
   // Record the URL that the prompt was displayed over.
   uint32_t host_hash = base::Hash(navigation_handle->GetURL().IsAboutBlank()
                                       ? "about:blank"
@@ -258,10 +244,18 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
       browser->tab_strip_model()->GetIndexOfWebContents(
           navigation_handle->GetWebContents()));
 
-  ShowPrivacySandboxPrompt(browser, GetRequiredPromptType(profile()));
+  PrivacySandboxDialog::Show(browser, GetRequiredPromptType(profile()));
   base::UmaHistogramEnumeration(
       kPrivacySandboxPromptHelperEventHistogram,
       SettingsPrivacySandboxPromptHelperEvent::kPromptShown);
+
+  if (auto* privacy_sandbox_service =
+          PrivacySandboxServiceFactory::GetForProfile(profile())) {
+    privacy_sandbox::PrivacySandboxQueueManager& queue_manager =
+        privacy_sandbox_service->GetPrivacySandboxNoticeQueueManager();
+
+    queue_manager.SetQueueHandleShown();
+  }
 }
 
 // static
@@ -269,23 +263,30 @@ bool PrivacySandboxPromptHelper::ProfileRequiresPrompt(Profile* profile) {
   bool eligible = GetRequiredPromptType(profile) !=
                   PrivacySandboxService::PromptType::kNone;
 
-#if !BUILDFLAG(IS_ANDROID)
+  // TODO(crbug.com/370804492): When we add DMA notice to queue, put this behind
+  // flag / remove.
+  SearchEngineChoiceDialogService* search_engine_choice_dialog_service =
+      SearchEngineChoiceDialogServiceFactory::GetForProfile(profile);
+  if (search_engine_choice_dialog_service &&
+      search_engine_choice_dialog_service->CanSuppressPrivacySandboxPromo()) {
+    base::UmaHistogramEnumeration(kPrivacySandboxPromptHelperEventHistogram,
+                                  SettingsPrivacySandboxPromptHelperEvent::
+                                      kSearchEngineChoiceDialogShown);
+    eligible = false;
+  }
+
   if (auto* privacy_sandbox_service =
           PrivacySandboxServiceFactory::GetForProfile(profile)) {
+    privacy_sandbox::PrivacySandboxQueueManager& queue_manager =
+        privacy_sandbox_service->GetPrivacySandboxNoticeQueueManager();
     // When checking profile eligibility also update the queue.
     // Case 1: Profile is eligible, but not in the queue. Add to queue.
     // Case 2: Profile is ineligible, but we are queued, so we must unqueue. OR
     //         We are holding the handle, so we must release the handle and
     //         prevent showing.
-    if (eligible) {
-      privacy_sandbox_service->MaybeQueueNotice(
-          NoticeQueueState::kQueueOnThOrNav);
-    } else {
-      privacy_sandbox_service->MaybeUnqueueNotice(
-          NoticeQueueState::kReleaseOnThOrNav);
-    }
+    eligible ? queue_manager.MaybeQueueNotice()
+             : queue_manager.MaybeUnqueueNotice();
   }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
   return eligible;
 }

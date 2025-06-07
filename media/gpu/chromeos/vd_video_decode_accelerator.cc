@@ -14,7 +14,6 @@
 #include "base/not_fatal_until.h"
 #include "base/task/sequenced_task_runner.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
-#include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "media/base/format_utils.h"
 #include "media/base/media_util.h"
 #include "media/base/video_color_space.h"
@@ -31,7 +30,7 @@
 #include "media/gpu/macros.h"
 #include "media/media_buildflags.h"
 #include "ui/gfx/buffer_format_util.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gl/gl_bindings.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -62,8 +61,9 @@ int32_t FakeTimestampToBitstreamId(base::TimeDelta timestamp) {
 std::vector<ColorPlaneLayout> ExtractColorPlaneLayout(
     const gfx::GpuMemoryBufferHandle& gmb_handle) {
   std::vector<ColorPlaneLayout> planes;
-  for (const auto& plane : gmb_handle.native_pixmap_handle.planes)
+  for (const auto& plane : gmb_handle.native_pixmap_handle().planes) {
     planes.emplace_back(plane.stride, plane.offset, plane.size);
+  }
   return planes;
 }
 
@@ -514,7 +514,7 @@ void VdVideoDecodeAccelerator::ImportBufferForPicture(
     CHECK(media::VerifyGpuMemoryBufferHandle(pixel_format, coded_size_,
                                              gmb_handle));
     const uint64_t modifier = gmb_handle.type == gfx::NATIVE_PIXMAP
-                                  ? gmb_handle.native_pixmap_handle.modifier
+                                  ? gmb_handle.native_pixmap_handle().modifier
                                   : gfx::NativePixmapHandle::kNoModifier;
 
     std::vector<ColorPlaneLayout> planes = ExtractColorPlaneLayout(gmb_handle);
@@ -569,7 +569,7 @@ void VdVideoDecodeAccelerator::ImportBufferForPicture(
           base::TimeDelta(), gfx::BufferUsage::SCANOUT_CPU_READ_WRITE,
           base::MakeRefCounted<gfx::NativePixmapDmaBuf>(
               layout_->coded_size(), *buffer_format,
-              std::move(gmb_handle.native_pixmap_handle)));
+              std::move(gmb_handle).native_pixmap_handle()));
 
   // Ensures that the tracking token is unique for frames in the frame pool.
   frame_tracking_token_helper_.SetUniqueTrackingToken(origin_frame->metadata());
@@ -640,7 +640,7 @@ void VdVideoDecodeAccelerator::OnFrameReleased(
   DCHECK_CALLED_ON_VALID_SEQUENCE(client_sequence_checker_);
 
   auto it = frame_token_to_picture_id_.find(origin_frame->tracking_token());
-  CHECK(it != frame_token_to_picture_id_.end(), base::NotFatalUntil::M130);
+  CHECK(it != frame_token_to_picture_id_.end());
   int32_t picture_buffer_id = it->second;
   frame_token_to_picture_id_.erase(it);
 

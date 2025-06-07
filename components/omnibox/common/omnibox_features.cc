@@ -82,18 +82,17 @@ BASE_FEATURE(kDisambiguateTabMatchingForEntitySuggestions,
              "DisambiguateTabMatchingForEntitySuggestions",
              ENABLED);
 
-// Used to adjust the relevance for the local history zero-prefix suggestions.
-// If enabled, the relevance is determined by this feature's companion
-// parameter, OmniboxFieldTrial::kLocalHistoryZeroSuggestRelevanceScore.
-BASE_FEATURE(kAdjustLocalHistoryZeroSuggestRelevanceScore,
-             "AdjustLocalHistoryZeroSuggestRelevanceScore",
-             DISABLED);
-
 // Enables omnibox focus as a trigger for zero-prefix suggestions on web and
 // SRP, subject to the same requirements and conditions as on-clobber
 // suggestions.
 BASE_FEATURE(kFocusTriggersWebAndSRPZeroSuggest,
              "OmniboxFocusTriggersWebAndSRPZeroSuggest",
+             DISABLED);
+
+// If enabled, suggestion group headers in the Omnibox popup will be hidden
+// (e.g. in order to minimize visual clutter in the zero-prefix state).
+BASE_FEATURE(kHideSuggestionGroupHeaders,
+             "OmniboxHideSuggestionGroupHeaders",
              DISABLED);
 
 // Enables local history zero-prefix suggestions in every context in which the
@@ -143,9 +142,9 @@ BASE_FEATURE(kOnDeviceHeadProviderKorean,
              "OmniboxOnDeviceHeadProviderKorean",
              DISABLED);
 BASE_FEATURE(kOnDeviceTailModel, "OmniboxOnDeviceTailModel", DISABLED);
-BASE_FEATURE(kDisableOnDeviceTailEnglishModel,
-             "OmniboxDisableOnDeviceTailEnglishModel",
-             DISABLED);
+BASE_FEATURE(kOnDeviceTailEnableEnglishModel,
+             "OmniboxOnDeviceTailEnableEnglishModel",
+             ENABLED);
 
 // If enabled, the relevant AutocompleteProviders will store "title" data in
 // AutocompleteMatch::contents and "URL" data in AutocompleteMatch::description
@@ -165,13 +164,13 @@ BASE_FEATURE(kDocumentProvider,
 // cookie jar.
 BASE_FEATURE(kDocumentProviderPrimaryAccountRequirement,
              "OmniboxDocumentProviderPrimaryAccountRequirement",
-             DISABLED);
+             ENABLED);
 
 // If enabled, the primary account must be subject to enterprise policies in
 // order to receive Drive suggestions.
 BASE_FEATURE(kDocumentProviderEnterpriseEligibility,
              "OmniboxDocumentProviderEnterpriseEligibility",
-             DISABLED);
+             ENABLED);
 
 // If enabled, the enterprise eligibility requirement for Drive suggestions
 // is considered met even when the account capability is unknown. Has no effect
@@ -185,18 +184,18 @@ BASE_FEATURE(kDocumentProviderEnterpriseEligibilityWhenUnknown,
 // requirements.
 BASE_FEATURE(kDocumentProviderNoSyncRequirement,
              "OmniboxDocumentProviderNoSyncRequirement",
-             DISABLED);
+             ENABLED);
 
 // Feature to determine if the HQP should double as a domain provider by
 // suggesting up to the provider limit for each of the user's highly visited
 // domains.
 BASE_FEATURE(kDomainSuggestions, "OmniboxDomainSuggestions", DISABLED);
 
-// If enabled, clipboard suggestion will not show the clipboard content until
-// the user clicks the reveal button.
-BASE_FEATURE(kClipboardSuggestionContentHidden,
-             "ClipboardSuggestionContentHidden",
-             enable_if(IS_ANDROID));
+// If enabled, the omnibox popup is not presented until the mouse button is
+// released.
+BASE_FEATURE(kShowPopupOnMouseReleased,
+             "OmniboxShowPopupOnMouseReleased",
+             DISABLED);
 
 // If enabled, makes Most Visited Tiles a Horizontal render group.
 // Horizontal render group decomposes aggregate suggestions (such as old Most
@@ -227,11 +226,11 @@ BASE_FEATURE(kOmniboxAssistantVoiceSearch,
 // loads http://example.com. When this feature is enabled, it should load
 // https://example.com instead, with fallback to http://example.com if
 // necessary.
-// TODO(crbug.com/375004882): This feature is now superseded by HTTPS-Upgrades
-// and will be removed in the near future.
+// TODO(crbug.com/375004882): On non-iOS platforms, this feature is now
+// superseded by HTTPS-Upgrades and will be removed in the near future.
 BASE_FEATURE(kDefaultTypedNavigationsToHttps,
              "OmniboxDefaultTypedNavigationsToHttps",
-             DISABLED);
+             enable_if(IS_IOS));
 
 // Override the delay to create a spare renderer when the omnibox is focused
 // on Android.
@@ -309,7 +308,7 @@ BASE_FEATURE(kMergeSubtypes, "MergeSubtypes", ENABLED);
 // are enabled.
 BASE_FEATURE(kOmniboxTouchDownTriggerForPrefetch,
              "OmniboxTouchDownTriggerForPrefetch",
-             DISABLED);
+             enable_if(IS_ANDROID));
 
 // Enables additional site search providers for the Site search Starter Pack.
 BASE_FEATURE(kStarterPackExpansion,
@@ -340,7 +339,38 @@ BASE_FEATURE(kUseFusedLocationProvider, "UseFusedLocationProvider", ENABLED);
 BASE_FEATURE(kOmniboxShortcutsAndroid, "OmniboxShortcutsAndroid", ENABLED);
 
 // When enabled, it increases ipad's zps matches limit on web,srp and ntp.
-BASE_FEATURE(kIpadZeroSuggestMatches, "IpadZeroSuggestMatches", DISABLED);
+BASE_FEATURE(kIpadZeroSuggestMatches,
+             "IpadZeroSuggestMatches",
+             enable_if(IS_IOS));
+
+// Updates various NTP/Omnibox assets and descriptions for visual alignment on
+// Android and iOS.
+BASE_FEATURE(kOmniboxMobileParityUpdate, "OmniboxMobileParityUpdate", DISABLED);
+
+// The features below allow tuning number of suggestions offered to users in
+// specific contexts. These features are default enabled and are used to control
+// related fieldtrial parameters.
+BASE_FEATURE(kNumNtpZpsRecentSearches,
+             "OmniboxNumNtpZpsRecentSearches",
+             ENABLED);
+BASE_FEATURE(kNumNtpZpsTrendingSearches,
+             "OmniboxNumNtpZpsTrendingSearches",
+             ENABLED);
+BASE_FEATURE(kNumWebZpsRecentSearches,
+             "OmniboxNumWebZpsRecentSearches",
+             ENABLED);
+BASE_FEATURE(kNumWebZpsRelatedSearches,
+             "OmniboxNumWebZpsRelatedSearches",
+             ENABLED);
+BASE_FEATURE(kNumWebZpsMostVisitedUrls,
+             "OmniboxNumWebZpsMostVisitedUrls",
+             ENABLED);
+BASE_FEATURE(kNumSrpZpsRecentSearches,
+             "OmniboxNumSrpZpsRecentSearches",
+             ENABLED);
+BASE_FEATURE(kNumSrpZpsRelatedSearches,
+             "OmniboxNumSrpZpsRelatedSearches",
+             ENABLED);
 
 #if BUILDFLAG(IS_ANDROID)
 // Enable the Elegant Text Height attribute on the UrlBar.
@@ -354,7 +384,7 @@ BASE_FEATURE(kOmniboxElegantTextHeight, "OmniboxElegantTextHeight", ENABLED);
 // selected so as to allow for easy replacement by the user. Note that even with
 // this feature flag enabled, only large screen devices with an attached
 // keyboard and precision pointer will exhibit a change in behavior.
-BASE_FEATURE(kRetainOmniboxOnFocus, "RetainOmniboxOnFocus", DISABLED);
+BASE_FEATURE(kRetainOmniboxOnFocus, "RetainOmniboxOnFocus", ENABLED);
 
 // Accelerates time from cold start to focused Omnibox on low-end devices,
 // prioritizing Omnibox focus and background initialization.
@@ -368,10 +398,8 @@ BASE_FEATURE(kSuppressIntermediateACUpdatesOnLowEndDevices,
              "SuppressIntermediateACUpdatesOnLowEndDevices",
              DISABLED);
 
-// (Android only) Show the search feature in the hub.
-BASE_FEATURE(kAndroidHubSearch,
-             "AndroidHubSearch",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+// (Android only) Show tab groups via the search feature in the hub.
+BASE_FEATURE(kAndroidHubSearchTabGroups, "AndroidHubSearchTabGroups", DISABLED);
 
 // When enabled, delay focusTab to prioritize navigation
 // (https://crbug.com/374852568).
@@ -393,8 +421,9 @@ static jlong JNI_OmniboxFeatureMap_GetNativeMap(JNIEnv* env) {
       &kOmniboxElegantTextHeight,
       &kRetainOmniboxOnFocus,
       &kJumpStartOmnibox,
-      &kAndroidHubSearch,
-      &kPostDelayedTaskFocusTab};
+      &kAndroidHubSearchTabGroups,
+      &kPostDelayedTaskFocusTab,
+      &kOmniboxMobileParityUpdate};
   static base::NoDestructor<base::android::FeatureMap> kFeatureMap(
       kFeaturesExposedToJava);
   return reinterpret_cast<jlong>(kFeatureMap.get());
@@ -408,6 +437,19 @@ static jlong JNI_OmniboxFeatureMap_GetNativeMap(JNIEnv* env) {
 // the Settings page.
 BASE_FEATURE(kEnableSearchAggregatorPolicy,
              "EnableSearchAggregatorPolicy",
+             ENABLED);
+
+// If enabled, site search engines, defined by the `SiteSearchSettings` policy,
+// can be marked as user-overridable by administrators using an
+// `allow_user_override` field. This setting is stored in preferences and
+// determines if the engine can be overridden on the Settings page.
+BASE_FEATURE(kEnableSiteSearchAllowUserOverridePolicy,
+             "EnableSiteSearchAllowUserOverridePolicy",
+             DISABLED);
+
+// Enables preconnecting to omnibox suggestions that are not only Search types.
+BASE_FEATURE(kPreconnectNonSearchOmniboxSuggestions,
+             "PreconnectNonSearchOmniboxSuggestions",
              DISABLED);
 
 }  // namespace omnibox

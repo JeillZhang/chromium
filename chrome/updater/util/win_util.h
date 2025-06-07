@@ -32,11 +32,13 @@
 #include "base/scoped_generic.h"
 #include "base/time/time.h"
 #include "base/types/expected.h"
+#include "base/version.h"
 #include "base/win/atl.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/win_util.h"
 #include "base/win/windows_types.h"
 #include "chrome/updater/updater_scope.h"
+#include "chrome/updater/updater_version.h"
 #include "chrome/updater/win/scoped_handle.h"
 
 namespace base {
@@ -224,6 +226,11 @@ std::wstring GetAppClientStateKey(const std::string& app_id);
 std::wstring GetAppClientStateKey(const std::wstring& app_id);
 
 // Returns the registry path
+// `Software\{CompanyName}\Update\ClientStateMedium\{app_id}`.
+std::wstring GetAppClientStateMediumKey(const std::string& app_id);
+std::wstring GetAppClientStateMediumKey(const std::wstring& app_id);
+
+// Returns the registry path
 // `Software\{CompanyName}\Update\ClientState\{app_id}\cohort`.
 std::wstring GetAppCohortKey(const std::string& app_id);
 std::wstring GetAppCohortKey(const std::wstring& app_id);
@@ -283,7 +290,9 @@ std::string GetUACState();
 // Returns the versioned service name in the following format:
 // "{ProductName}{InternalService/Service}{UpdaterVersion}".
 // For instance: "ChromiumUpdaterInternalService92.0.0.1".
-std::wstring GetServiceName(bool is_internal_service);
+std::wstring GetServiceName(
+    bool is_internal_service,
+    const base::Version& version = base::Version(kUpdaterVersion));
 
 // Returns `KEY_WOW64_32KEY | access`. All registry access under the Updater key
 // should use `Wow6432(access)` as the `REGSAM`.
@@ -457,10 +466,11 @@ bool IsOemInstalling();
 // Stores the runtime enrollment token to the persistent storage.
 bool StoreRunTimeEnrollmentToken(const std::string& enrollment_token);
 
-// Returns a unique temp file path of the form
-// `%TMP%\{name}{guid}.{fileextension}`, where `name` and `extension` are the
-// name and extension of `file`.
-std::optional<base::FilePath> GetUniqueTempFilePath(base::FilePath file);
+// Returns `true` if the service exists and has not been marked for deletion.
+[[nodiscard]] bool IsServicePresent(const std::wstring& service_name);
+
+// Returns `true` if the service exists and is not deleted or disabled.
+[[nodiscard]] bool IsServiceEnabled(const std::wstring& service_name);
 
 }  // namespace updater
 

@@ -75,15 +75,15 @@ enum class RateLimitResult : int;
 class CONTENT_EXPORT AttributionStorageSql {
  public:
   // Version number of the database.
-  static constexpr int kCurrentVersionNumber = 68;
+  static constexpr int kCurrentVersionNumber = 69;
 
   // Earliest version which can use a `kCurrentVersionNumber` database
   // without failing.
-  static constexpr int kCompatibleVersionNumber = 68;
+  static constexpr int kCompatibleVersionNumber = 69;
 
   // Latest version of the database that cannot be upgraded to
   // `kCurrentVersionNumber` without razing the database.
-  static constexpr int kDeprecatedVersionNumber = 53;
+  static constexpr int kDeprecatedVersionNumber = 55;
 
   static_assert(kCompatibleVersionNumber <= kCurrentVersionNumber);
   static_assert(kDeprecatedVersionNumber < kCompatibleVersionNumber);
@@ -164,13 +164,13 @@ class CONTENT_EXPORT AttributionStorageSql {
     kSourceInvalidFilterData = 20,
     kSourceInvalidActiveState = 21,
     kSourceInvalidReadOnlySourceData = 22,
-    // Obsolete: kSourceInvalidEventReportWindows = 23,
+    kSourceInvalidEventReportWindows = 23,
     kSourceInvalidMaxEventLevelReports = 24,
     kSourceInvalidEventLevelEpsilon = 25,
     kSourceDestinationSitesQueryFailed = 26,
     kSourceInvalidDestinationSites = 27,
     kStoredSourceConstructionFailed = 28,
-    kSourceInvalidTriggerSpecs = 29,
+    kSourceInvalidTriggerData = 29,
     kSourceDedupKeyQueryFailed = 30,
     kSourceInvalidRandomizedResponseRate = 31,
     kSourceInvalidAttributionScopesData = 32,
@@ -223,10 +223,12 @@ class CONTENT_EXPORT AttributionStorageSql {
   bool AdjustOfflineReportTimes(base::TimeDelta min_delay,
                                 base::TimeDelta max_delay);
   void ClearAllDataAllTime(bool delete_rate_limit_data);
-  void ClearDataWithFilter(base::Time delete_begin,
-                           base::Time delete_end,
-                           StoragePartition::StorageKeyMatcherFunction filter,
-                           bool delete_rate_limit_data);
+  void ClearDataWithFilter(
+      base::Time delete_begin,
+      base::Time delete_end,
+      std::variant<StoragePartition::StorageKeyMatcherFunction, url::Origin>
+          filter_or_origin,
+      bool delete_rate_limit_data);
   [[nodiscard]] std::optional<AggregatableDebugSourceData>
       GetAggregatableDebugSourceData(StoredSource::Id);
   [[nodiscard]] AggregatableDebugRateLimitTable::Result
@@ -377,6 +379,16 @@ class CONTENT_EXPORT AttributionStorageSql {
   // Returns a negative value on failure.
   int64_t CountAggregatableReportsWithDestinationSite(
       const net::SchemefulSite& destination);
+  // Returns a negative value on failure.
+  int64_t CountUniqueDailyReportingOriginsPerReportingSiteForSource(
+      const net::SchemefulSite& reporting_site,
+      base::Time source_time);
+  // Returns a negative value on failure.
+  int64_t
+  CountUniqueDailyReportingOriginsPerDestinationAndReportingSiteForSource(
+      const net::SchemefulSite& destination_site,
+      const net::SchemefulSite& reporting_site,
+      base::Time source_time);
 
   // Stores the data associated with the aggregatable report, e.g. budget
   // consumed and dedup keys. The report itself will be stored in

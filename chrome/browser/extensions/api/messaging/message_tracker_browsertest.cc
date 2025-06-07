@@ -4,6 +4,7 @@
 
 #include "extensions/browser/message_tracker.h"
 
+#include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "chrome/browser/extensions/browsertest_util.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -370,7 +371,7 @@ IN_PROC_BROWSER_TEST_F(MessageTrackerMessagingTest, SendMessageToTabAndWorker) {
     ASSERT_TRUE(StartEmbeddedTestServer());
 
     // Load the extension tab (and it's script).
-    GURL ext_url = extension->GetResourceURL("test_ext_tab.html");
+    GURL ext_url = extension->ResolveExtensionURL("test_ext_tab.html");
     ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(ext_url)));
     content::WebContents* new_ext_tab_web_contents =
         browser()->tab_strip_model()->GetActiveWebContents();

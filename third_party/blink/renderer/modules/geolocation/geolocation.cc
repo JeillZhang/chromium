@@ -56,7 +56,7 @@ const char kFeaturePolicyErrorMessage[] =
     "Geolocation has been disabled in this document by permissions policy.";
 const char kFeaturePolicyConsoleWarning[] =
     "Geolocation access has been blocked because of a permissions policy "
-    "applied to the current document. See https://goo.gl/EuHzyv for more "
+    "applied to the current document. See https://crbug.com/414348233 for more "
     "details.";
 
 Geoposition* CreateGeoposition(
@@ -218,16 +218,18 @@ void Geolocation::getCurrentPosition(V8PositionCallback* success_callback,
   if (!GetFrame())
     return;
 
-  if (GetFrame()->IsAdScriptInStack()) {
-    UseCounter::Count(GetExecutionContext(),
-                      WebFeature::kAdScriptInStackOnGeoLocation);
-  }
 
   probe::BreakableLocation(GetExecutionContext(),
                            "Geolocation.getCurrentPosition");
 
   auto* notifier = MakeGarbageCollected<GeoNotifier>(this, success_callback,
                                                      error_callback, options);
+
+  if (GetFrame()->IsAdScriptInStack()) {
+    notifier->SetCalledWithAdScriptInStack();
+    UseCounter::Count(GetExecutionContext(),
+                      WebFeature::kAdScriptInStackOnGeoLocation);
+  }
 
   one_shots_->insert(notifier);
 
@@ -249,6 +251,12 @@ int Geolocation::watchPosition(V8PositionCallback* success_callback,
 
   auto* notifier = MakeGarbageCollected<GeoNotifier>(this, success_callback,
                                                      error_callback, options);
+
+  if (GetFrame()->IsAdScriptInStack()) {
+    notifier->SetCalledWithAdScriptInStack();
+    UseCounter::Count(GetExecutionContext(),
+                      WebFeature::kAdScriptInStackOnWatchGeoLocation);
+  }
 
   int watch_id;
   // Keep asking for the next id until we're given one that we don't already

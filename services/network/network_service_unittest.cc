@@ -61,6 +61,7 @@
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
 #include "net/test/test_data_directory.h"
+#include "net/test/test_net_log_manager.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context.h"
 #include "services/network/network_context.h"
@@ -180,8 +181,9 @@ TEST_F(NetworkServiceTest, CreateContextWithoutChannelID) {
 
 TEST_F(NetworkServiceTest, CreateContextWithMaskedDomainListProxyConfig) {
   base::test::ScopedFeatureList scoped_feature_list_;
-  scoped_feature_list_.InitAndEnableFeature(
-      net::features::kEnableIpProtectionProxy);
+  scoped_feature_list_.InitWithFeatures(
+      {net::features::kEnableIpProtectionProxy},
+      {network::features::kMaskedDomainListFlatbufferImpl});
 
   masked_domain_list::MaskedDomainList mdl;
   auto* resourceOwner = mdl.add_resource_owners();
@@ -207,8 +209,9 @@ TEST_F(NetworkServiceTest, CreateContextWithMaskedDomainListProxyConfig) {
 TEST_F(NetworkServiceTest,
        CreateContextWithCustomProxyConfig_MdlConfigIsNotUsed) {
   base::test::ScopedFeatureList scoped_feature_list_;
-  scoped_feature_list_.InitAndEnableFeature(
-      net::features::kEnableIpProtectionProxy);
+  scoped_feature_list_.InitWithFeatures(
+      {net::features::kEnableIpProtectionProxy},
+      {network::features::kMaskedDomainListFlatbufferImpl});
 
   masked_domain_list::MaskedDomainList mdl;
   auto* resourceOwner = mdl.add_resource_owners();
@@ -632,7 +635,8 @@ TEST_F(NetworkServiceTest, DnsClientEnableDisable) {
       std::move(dns_client));
 
   service()->ConfigureStubHostResolver(
-      /*insecure_dns_client_enabled=*/true, net::SecureDnsMode::kOff,
+      /*insecure_dns_client_enabled=*/true, /*happy_eyeballs_v3_enabled=*/false,
+      net::SecureDnsMode::kOff,
       /*dns_over_https_config=*/{},
       /*additional_dns_types_enabled=*/true);
   EXPECT_TRUE(dns_client_ptr->CanUseInsecureDnsTransactions());
@@ -640,7 +644,8 @@ TEST_F(NetworkServiceTest, DnsClientEnableDisable) {
             dns_client_ptr->GetEffectiveConfig()->secure_dns_mode);
 
   service()->ConfigureStubHostResolver(
-      /*insecure_dns_client_enabled=*/false, net::SecureDnsMode::kOff,
+      /*insecure_dns_client_enabled=*/false,
+      /*happy_eyeballs_v3_enabled=*/false, net::SecureDnsMode::kOff,
       /*dns_over_https_config=*/{},
       /*additional_dns_types_enabled=*/true);
   EXPECT_FALSE(dns_client_ptr->CanUseInsecureDnsTransactions());
@@ -648,7 +653,8 @@ TEST_F(NetworkServiceTest, DnsClientEnableDisable) {
             dns_client_ptr->GetEffectiveConfig()->secure_dns_mode);
 
   service()->ConfigureStubHostResolver(
-      /*insecure_dns_client_enabled=*/false, net::SecureDnsMode::kAutomatic,
+      /*insecure_dns_client_enabled=*/false,
+      /*happy_eyeballs_v3_enabled=*/false, net::SecureDnsMode::kAutomatic,
       /*dns_over_https_config=*/{},
       /*additional_dns_types_enabled=*/true);
   EXPECT_FALSE(dns_client_ptr->CanUseInsecureDnsTransactions());
@@ -656,7 +662,8 @@ TEST_F(NetworkServiceTest, DnsClientEnableDisable) {
             dns_client_ptr->GetEffectiveConfig()->secure_dns_mode);
 
   service()->ConfigureStubHostResolver(
-      /*insecure_dns_client_enabled=*/false, net::SecureDnsMode::kAutomatic,
+      /*insecure_dns_client_enabled=*/false,
+      /*happy_eyeballs_v3_enabled=*/false, net::SecureDnsMode::kAutomatic,
       *net::DnsOverHttpsConfig::FromString("https://foo/"),
       /*additional_dns_types_enabled=*/true);
   EXPECT_FALSE(dns_client_ptr->CanUseInsecureDnsTransactions());
@@ -676,16 +683,43 @@ TEST_F(NetworkServiceTest, HandlesAdditionalDnsQueryTypesEnableDisable) {
       std::move(dns_client));
 
   service()->ConfigureStubHostResolver(
-      /*insecure_dns_client_enabled=*/true, net::SecureDnsMode::kOff,
+      /*insecure_dns_client_enabled=*/true, /*happy_eyeballs_v3_enabled=*/false,
+      net::SecureDnsMode::kOff,
       /*dns_over_https_config=*/{},
       /*additional_dns_types_enabled=*/true);
   EXPECT_TRUE(dns_client_ptr->CanQueryAdditionalTypesViaInsecureDns());
 
   service()->ConfigureStubHostResolver(
-      /*insecure_dns_client_enabled=*/true, net::SecureDnsMode::kOff,
+      /*insecure_dns_client_enabled=*/true, /*happy_eyeballs_v3_enabled=*/false,
+      net::SecureDnsMode::kOff,
       /*dns_over_https_config=*/{},
       /*additional_dns_types_enabled=*/false);
   EXPECT_FALSE(dns_client_ptr->CanQueryAdditionalTypesViaInsecureDns());
+}
+
+TEST_F(NetworkServiceTest, HappyEyeballsV3EnableDisable) {
+  // Create valid DnsConfig.
+  net::DnsConfig config;
+  config.nameservers.emplace_back();
+  auto dns_client = std::make_unique<net::MockDnsClient>(
+      std::move(config), net::MockDnsClientRuleList());
+  dns_client->set_ignore_system_config_changes(true);
+  service()->host_resolver_manager()->SetDnsClientForTesting(
+      std::move(dns_client));
+
+  service()->ConfigureStubHostResolver(
+      /*insecure_dns_client_enabled=*/true, /*happy_eyeballs_v3_enabled=*/true,
+      net::SecureDnsMode::kOff,
+      /*dns_over_https_config=*/{},
+      /*additional_dns_types_enabled=*/true);
+  EXPECT_TRUE(service()->host_resolver_manager()->IsHappyEyeballsV3Enabled());
+
+  service()->ConfigureStubHostResolver(
+      /*insecure_dns_client_enabled=*/true, /*happy_eyeballs_v3_enabled=*/false,
+      net::SecureDnsMode::kOff,
+      /*dns_over_https_config=*/{},
+      /*additional_dns_types_enabled=*/false);
+  EXPECT_FALSE(service()->host_resolver_manager()->IsHappyEyeballsV3Enabled());
 }
 
 TEST_F(NetworkServiceTest, DnsOverHttpsEnableDisable) {
@@ -706,7 +740,8 @@ TEST_F(NetworkServiceTest, DnsOverHttpsEnableDisable) {
   // Enable DNS over HTTPS for one server.
 
   service()->ConfigureStubHostResolver(
-      /*insecure_dns_client_enabled=*/false, net::SecureDnsMode::kAutomatic,
+      /*insecure_dns_client_enabled=*/false,
+      /*happy_eyeballs_v3_enabled=*/false, net::SecureDnsMode::kAutomatic,
       kConfig1,
       /*additional_dns_types_enabled=*/true);
   EXPECT_EQ(kConfig1, dns_client_ptr->GetEffectiveConfig()->doh_config);
@@ -714,8 +749,8 @@ TEST_F(NetworkServiceTest, DnsOverHttpsEnableDisable) {
   // Enable DNS over HTTPS for two servers.
 
   service()->ConfigureStubHostResolver(
-      /*insecure_dns_client_enabled=*/true, net::SecureDnsMode::kSecure,
-      kConfig2,
+      /*insecure_dns_client_enabled=*/true, /*happy_eyeballs_v3_enabled=*/false,
+      net::SecureDnsMode::kSecure, kConfig2,
       /*additional_dns_types_enabled=*/true);
   EXPECT_EQ(kConfig2, dns_client_ptr->GetEffectiveConfig()->doh_config);
 }
@@ -739,7 +774,8 @@ TEST_F(NetworkServiceTest, DisableDohUpgradeProviders) {
                              FindProviderFeature("Cloudflare")});
 
   service()->ConfigureStubHostResolver(
-      /*insecure_dns_client_enabled=*/true, net::SecureDnsMode::kAutomatic,
+      /*insecure_dns_client_enabled=*/true, /*happy_eyeballs_v3_enabled=*/false,
+      net::SecureDnsMode::kAutomatic,
       /*dns_over_https_config=*/{},
       /*additional_dns_types_enabled=*/true);
 
@@ -1079,7 +1115,7 @@ TEST_F(NetworkServiceTest, SetMaskedDomainList) {
   scoped_feature_list_.InitWithFeatures(
       {net::features::kEnableIpProtectionProxy,
        network::features::kMaskedDomainList},
-      {});
+      {network::features::kMaskedDomainListFlatbufferImpl});
 
   masked_domain_list::MaskedDomainList mdl;
   auto* resourceOwner = mdl.add_resource_owners();
@@ -1231,8 +1267,11 @@ INSTANTIATE_TEST_SUITE_P(/*no prefix*/,
 
 class NetworkServiceTestWithService : public testing::Test {
  public:
-  NetworkServiceTestWithService()
-      : task_environment_(base::test::TaskEnvironment::MainThreadType::IO) {}
+  explicit NetworkServiceTestWithService(
+      base::test::TaskEnvironment::TimeSource time_source =
+          base::test::TaskEnvironment::TimeSource::SYSTEM_TIME)
+      : task_environment_(base::test::TaskEnvironment::MainThreadType::IO,
+                          time_source) {}
 
   NetworkServiceTestWithService(const NetworkServiceTestWithService&) = delete;
   NetworkServiceTestWithService& operator=(
@@ -1295,6 +1334,10 @@ class NetworkServiceTestWithService : public testing::Test {
         net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS));
   }
 
+  // Start dumping NetLog events forcibly for debugging. Expected to be called
+  // at the beginning of a test.
+  void ForceNetLog() { net_log_manager_.ForceStart(); }
+
   void Shutdown() { service_.reset(); }
 
   net::EmbeddedTestServer* test_server() { return &test_server_; }
@@ -1312,6 +1355,8 @@ class NetworkServiceTestWithService : public testing::Test {
   mojo::Remote<mojom::NetworkService> network_service_;
   mojo::Remote<mojom::NetworkContext> network_context_;
   mojo::Remote<mojom::URLLoader> loader_;
+
+  net::TestNetLogManager net_log_manager_;
 
   base::test::ScopedFeatureList scoped_features_;
 };
@@ -1337,7 +1382,7 @@ TEST_F(NetworkServiceTestWithService, StartsNetLog) {
   network_service_->StartNetLog(
       std::move(log_file), net::FileNetLogObserver::kNoLimit,
       net::NetLogCaptureMode::kDefault,
-      base::Value::Dict().Set("amiatest", "iamatest"));
+      base::Value::Dict().Set("amiatest", "iamatest"), std::nullopt);
   CreateNetworkContext();
   LoadURL(test_server()->GetURL("/echo"));
   EXPECT_EQ(net::OK, client()->completion_status().error_code);
@@ -1371,7 +1416,7 @@ TEST_F(NetworkServiceTestWithService, StartsNetLogBounded) {
                       base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
   network_service_->StartNetLog(std::move(log_file), kMaxSizeBytes,
                                 net::NetLogCaptureMode::kEverything,
-                                base::Value::Dict());
+                                base::Value::Dict(), std::nullopt);
   CreateNetworkContext();
 
   // Through trial and error it was found that this looping navigation results
@@ -1418,6 +1463,43 @@ TEST_F(NetworkServiceTestWithService, RawRequestHeadersAbsent) {
   EXPECT_TRUE(client()->has_received_redirect());
   loader()->FollowRedirect({}, {}, {}, std::nullopt);
   client()->RunUntilComplete();
+}
+
+class NetworkServiceTestWithServiceMockTime
+    : public NetworkServiceTestWithService {
+ public:
+  NetworkServiceTestWithServiceMockTime()
+      : NetworkServiceTestWithService(
+            base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
+};
+
+TEST_F(NetworkServiceTestWithServiceMockTime, StartsNetLogWithDuration) {
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  base::FilePath log_dir = temp_dir.GetPath();
+  base::FilePath log_path = log_dir.Append(FILE_PATH_LITERAL("test_log.json"));
+  base::TimeDelta log_duration = base::Seconds(20);
+
+  base::File log_file(log_path,
+                      base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
+  network_service_->StartNetLog(
+      std::move(log_file), net::FileNetLogObserver::kNoLimit,
+      net::NetLogCaptureMode::kDefault,
+      base::Value::Dict().Set("amiatest", "iamatest"), log_duration);
+  CreateNetworkContext();
+  LoadURL(test_server()->GetURL("/echo"));
+  EXPECT_EQ(net::OK, client()->completion_status().error_code);
+  task_environment_.FastForwardBy(log_duration);
+
+  base::Value::Dict log_dict = base::test::ParseJsonDictFromFile(log_path);
+  ASSERT_EQ(*log_dict.FindStringByDottedPath("constants.amiatest"), "iamatest");
+
+  // The log should have a "polledData" list.
+  ASSERT_TRUE(log_dict.FindList("polledData"));
+
+  // Tear down the network context we created above.
+  Shutdown();
+  task_environment_.RunUntilIdle();
 }
 
 class NetworkServiceTestWithResolverMap : public NetworkServiceTestWithService {
@@ -1542,6 +1624,33 @@ TEST_F(NetworkServiceTestWithService, GetNetworkList) {
           }));
   run_loop.Run();
 }
+
+// DnsClient isn't supported on iOS.
+#if !BUILDFLAG(IS_IOS)
+
+// Ensures that network requests succeed after enabling/disabling
+// HappyEyeballsV3.
+TEST_F(NetworkServiceTestWithService, EnableDisableHappyEyeballsV3AndLoad) {
+  CreateNetworkContext();
+
+  service()->ConfigureStubHostResolver(
+      /*insecure_dns_client_enabled=*/true, /*happy_eyeballs_v3_enabled=*/true,
+      net::SecureDnsMode::kOff,
+      /*dns_over_https_config=*/{},
+      /*additional_dns_types_enabled=*/false);
+  LoadURL(test_server()->GetURL("/echo"));
+  EXPECT_EQ(net::OK, client()->completion_status().error_code);
+
+  service()->ConfigureStubHostResolver(
+      /*insecure_dns_client_enabled=*/true, /*happy_eyeballs_v3_enabled=*/false,
+      net::SecureDnsMode::kOff,
+      /*dns_over_https_config=*/{},
+      /*additional_dns_types_enabled=*/false);
+  LoadURL(test_server()->GetURL("/echo"));
+  EXPECT_EQ(net::OK, client()->completion_status().error_code);
+}
+
+#endif  // !BUILDFLAG(IS_IOS)
 
 class TestNetworkChangeManagerClient
     : public mojom::NetworkChangeManagerClient {

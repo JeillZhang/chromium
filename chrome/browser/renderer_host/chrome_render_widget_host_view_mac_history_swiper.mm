@@ -6,7 +6,6 @@
 
 #import "chrome/browser/ui/cocoa/history_overlay_controller.h"
 #include "third_party/blink/public/common/input/web_gesture_event.h"
-#include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
 #include "ui/events/blink/did_overscroll_params.h"
 
 namespace {
@@ -165,14 +164,6 @@ BOOL forceMagicMouse = NO;
   return [self handleScrollWheelEvent:event];
 }
 
-- (void)rendererHandledWheelEvent:(const blink::WebMouseWheelEvent&)event
-                         consumed:(BOOL)consumed {
-  if (event.phase != blink::WebMouseWheelEvent::kPhaseBegan) {
-    return;
-  }
-  _firstScrollUnconsumed = !consumed;
-}
-
 - (void)rendererHandledGestureScrollEvent:(const blink::WebGestureEvent&)event
                                  consumed:(BOOL)consumed {
   switch (event.GetType()) {
@@ -198,17 +189,6 @@ BOOL forceMagicMouse = NO;
 - (void)onOverscrolled:(const ui::DidOverscrollParams&)params {
   _overscrollTriggeredByRenderer =
       params.overscroll_behavior.x == cc::OverscrollBehavior::Type::kAuto;
-}
-
-- (void)beginGestureWithEvent:(NSEvent*)event {
-  _inGesture = YES;
-
-  // Reset state pertaining to Magic Mouse swipe gestures.
-  _mouseScrollDelta = NSZeroSize;
-}
-
-- (void)endGestureWithEvent:(NSEvent*)event {
-  _inGesture = NO;
 }
 
 // This method assumes that there is at least 1 touch in the event.
@@ -301,12 +281,6 @@ BOOL forceMagicMouse = NO;
 }
 
 - (BOOL)processTouchEventForHistorySwiping:(NSEvent*)event {
-  NSEventType type = event.type;
-  if (type != NSEventTypeBeginGesture && type != NSEventTypeEndGesture &&
-      type != NSEventTypeGesture) {
-    return NO;
-  }
-
   switch (_recognitionState) {
     case history_swiper::kCancelled:
     case history_swiper::kCompleted:
@@ -546,6 +520,27 @@ BOOL forceMagicMouse = NO;
 }
 
 - (BOOL)handleScrollWheelEvent:(NSEvent*)theEvent {
+  // If the swipe began, then reset state.
+  if (theEvent.phase == NSEventPhaseBegan) {
+    _inGesture = YES;
+
+    // Reset state pertaining to Magic Mouse swipe gestures.
+    _mouseScrollDelta = NSZeroSize;
+
+    // Since this might or might not be a history swipe, allow propagation by
+    // falling through to the eventual `return NO`.
+  }
+
+  // If the swipe ended, then reset state.
+  if (theEvent.phase == NSEventPhaseEnded ||
+      theEvent.phase == NSEventPhaseCancelled) {
+    _inGesture = NO;
+
+    // Since the caller may need to tear down its own state, and since the
+    // beginning of the swipe was propagated, allow propagation for the
+    // end/cancellation by falling through to the eventual `return NO`.
+  }
+
   // The only events that this class consumes have type NSEventPhaseChanged.
   // This simultaneously weeds our regular mouse wheel scroll events, and
   // gesture events with incorrect phase.

@@ -22,7 +22,7 @@ class FakeSafeBrowsingClient : public SafeBrowsingClient {
   base::WeakPtr<SafeBrowsingClient> AsWeakPtr() override;
   PrefService* GetPrefs() override;
   SafeBrowsingService* GetSafeBrowsingService() override;
-  safe_browsing::RealTimeUrlLookupService* GetRealTimeUrlLookupService()
+  safe_browsing::RealTimeUrlLookupServiceBase* GetRealTimeUrlLookupService()
       override;
   safe_browsing::HashRealTimeService* GetHashRealTimeService() override;
   variations::VariationsService* GetVariationsService() override;
@@ -30,6 +30,8 @@ class FakeSafeBrowsingClient : public SafeBrowsingClient {
       const security_interstitials::UnsafeResource& resource) const override;
   bool OnMainFrameUrlQueryCancellationDecided(web::WebState* web_state,
                                               const GURL& url) override;
+  bool ShouldForceSyncRealTimeUrlChecks() const override;
+
   // Controls the return value of `ShouldBlockUnsafeResource`.
   void set_should_block_unsafe_resource(bool should_block_unsafe_resource) {
     should_block_unsafe_resource_ = should_block_unsafe_resource;
@@ -37,8 +39,15 @@ class FakeSafeBrowsingClient : public SafeBrowsingClient {
 
   // Controls the return value of `GetRealTimeUrlLookupService`.
   void set_real_time_url_lookup_service(
-      safe_browsing::RealTimeUrlLookupService* lookup_service) {
+      safe_browsing::RealTimeUrlLookupServiceBase* lookup_service) {
     lookup_service_ = lookup_service;
+  }
+
+  // Controls the return value of `ShouldForceSyncRealTimeUrlChecks`.
+  void set_should_force_sync_real_time_url_checks(
+      bool should_force_sync_real_time_url_checks) {
+    should_force_sync_real_time_url_checks_ =
+        should_force_sync_real_time_url_checks;
   }
 
   // Whether `OnMainFrameUrlQueryCancellationDecided` was called.
@@ -82,10 +91,11 @@ class FakeSafeBrowsingClient : public SafeBrowsingClient {
  private:
   scoped_refptr<FakeSafeBrowsingService> safe_browsing_service_;
   raw_ptr<PrefService> pref_service_;
-  raw_ptr<safe_browsing::RealTimeUrlLookupService> lookup_service_;
+  raw_ptr<safe_browsing::RealTimeUrlLookupServiceBase> lookup_service_;
 
   bool should_block_unsafe_resource_ = false;
   bool main_frame_cancellation_decided_called_ = false;
+  bool should_force_sync_real_time_url_checks_ = false;
 
   // Must be last.
   base::WeakPtrFactory<FakeSafeBrowsingClient> weak_factory_{this};

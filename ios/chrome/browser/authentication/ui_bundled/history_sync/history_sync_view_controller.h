@@ -8,9 +8,18 @@
 #import "ios/chrome/browser/authentication/ui_bundled/history_sync/history_sync_consumer.h"
 #import "ios/chrome/common/ui/promo_style/promo_style_view_controller.h"
 
+enum class SigninContextStyle;
+
 // View controller for history sync.
 @interface HistorySyncViewController
     : PromoStyleViewController <HistorySyncConsumer>
+
+// Designated initializer.
+// The `contextStyle` is used to customize content on screen.
+- (instancetype)initWithContextStyle:(SigninContextStyle)contextStyle
+    NS_DESIGNATED_INITIALIZER;
+
+- (instancetype)init NS_UNAVAILABLE;
 
 @end
 

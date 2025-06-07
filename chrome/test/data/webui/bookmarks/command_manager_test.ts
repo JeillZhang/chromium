@@ -4,12 +4,12 @@
 
 import type {BookmarksFolderNodeElement, BookmarksItemElement, BookmarksListElement, SelectFolderAction, SelectItemsAction} from 'chrome://bookmarks/bookmarks.js';
 import {BookmarkManagerApiProxyImpl, BookmarksApiProxyImpl, BookmarksCommandManagerElement, Command, createBookmark, DialogFocusManager, getDisplayedList, MenuSource, selectFolder, setDebouncerForTesting} from 'chrome://bookmarks/bookmarks.js';
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {isMac} from 'chrome://resources/js/platform.js';
-import {flush} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 import {assertDeepEquals, assertEquals, assertFalse, assertTrue} from 'chrome://webui-test/chai_assert.js';
 import {pressAndReleaseKeyOn} from 'chrome://webui-test/keyboard_mock_interactions.js';
 import type {ModifiersParam} from 'chrome://webui-test/keyboard_mock_interactions.js';
-import {microtasksFinished} from 'chrome://webui-test/test_util.js';
+import {eventToPromise, microtasksFinished} from 'chrome://webui-test/test_util.js';
 
 import {TestBookmarkManagerApiProxy} from './test_bookmark_manager_api_proxy.js';
 import {TestBookmarksApiProxy} from './test_bookmarks_api_proxy.js';
@@ -24,6 +24,10 @@ suite('<bookmarks-command-manager>', function() {
   let bookmarkManagerProxy: TestBookmarkManagerApiProxy;
 
   setup(function() {
+    loadTimeData.overrideValues({
+      splitViewEnabled: true,
+    });
+
     const bulkChildren = [];
     for (let i = 1; i <= 20; i++) {
       const id = '3' + i;
@@ -92,7 +96,7 @@ suite('<bookmarks-command-manager>', function() {
     await microtasksFinished();
 
     const commandHidden: {[key: string]: boolean} = {};
-    commandManager.shadowRoot!.querySelectorAll<HTMLElement>('.dropdown-item')
+    commandManager.shadowRoot.querySelectorAll<HTMLElement>('.dropdown-item')
         .forEach(element => {
           commandHidden[element.dataset['command']!] = element.hidden;
         });
@@ -208,8 +212,9 @@ suite('<bookmarks-command-manager>', function() {
     await microtasksFinished();
 
     commandManager.openCommandMenuAtPosition(0, 0, MenuSource.ITEM);
+    await microtasksFinished();
     const showInFolderItem =
-        commandManager.shadowRoot!.querySelector<HTMLElement>(
+        commandManager.shadowRoot.querySelector<HTMLElement>(
             `[data-command='${Command.SHOW_IN_FOLDER}']`);
 
     // Show in folder hidden when search is inactive.
@@ -309,6 +314,31 @@ suite('<bookmarks-command-manager>', function() {
     assertEquals(20, ids.length);
   });
 
+  test('"Open in Split View" passes correct args', async function() {
+    const items = new Set(['141']);
+    assertTrue(commandManager.canExecute(Command.OPEN_SPLIT_VIEW, items));
+
+    commandManager.handle(Command.OPEN_SPLIT_VIEW, items);
+    await microtasksFinished();
+
+    const [id, {active, split}] =
+        await bookmarkManagerProxy.whenCalled('openInNewTab');
+
+    assertEquals('141', id);
+    assertFalse(active);
+    assertTrue(split);
+  });
+
+  test('"Open in New Tab Group" does not expand nodes', async function() {
+    const items = new Set(['1']);
+    assertTrue(commandManager.canExecute(Command.OPEN_NEW_GROUP, items));
+    commandManager.handle(Command.OPEN_NEW_GROUP, items);
+    await microtasksFinished();
+
+    const [ids] = await bookmarkManagerProxy.whenCalled('openInNewTabGroup');
+    assertDeepEquals(['1'], ids);
+  });
+
   test(
       'cannot execute "Open in New Tab" on folders with no items', async () => {
         const items = new Set(['2']);
@@ -320,7 +350,7 @@ suite('<bookmarks-command-manager>', function() {
         await microtasksFinished();
 
         const commandItem: {[key: string]: HTMLButtonElement} = {};
-        commandManager.shadowRoot!
+        commandManager.shadowRoot
             .querySelectorAll<HTMLButtonElement>('.dropdown-item')
             .forEach(element => {
               commandItem[element.dataset['command']!] = element;
@@ -337,6 +367,14 @@ suite('<bookmarks-command-manager>', function() {
         assertTrue(!!commandItem[Command.OPEN_INCOGNITO]);
         assertTrue(commandItem[Command.OPEN_INCOGNITO].disabled);
         assertFalse(commandItem[Command.OPEN_INCOGNITO].hidden);
+
+        assertTrue(!!commandItem[Command.OPEN_SPLIT_VIEW]);
+        assertTrue(commandItem[Command.OPEN_SPLIT_VIEW].disabled);
+        assertFalse(commandItem[Command.OPEN_SPLIT_VIEW].hidden);
+
+        assertTrue(!!commandItem[Command.OPEN_NEW_GROUP]);
+        assertTrue(commandItem[Command.OPEN_NEW_GROUP].disabled);
+        assertFalse(commandItem[Command.OPEN_NEW_GROUP].hidden);
       });
 
   test('cannot execute editing commands when editing is disabled', async () => {
@@ -355,25 +393,28 @@ suite('<bookmarks-command-manager>', function() {
     // No divider line should be visible when only 'Open' commands are enabled.
     commandManager.openCommandMenuAtPosition(0, 0, MenuSource.ITEM);
     await microtasksFinished();
-    commandManager.shadowRoot!.querySelectorAll('hr').forEach(element => {
+    commandManager.shadowRoot.querySelectorAll('hr').forEach(element => {
       assertTrue(element.hidden);
     });
   });
 
-  test('cannot edit unmodifiable nodes', function() {
+  test('cannot edit unmodifiable nodes', async () => {
     // Cannot edit root folders.
     let items = new Set(['1']);
     store.data.selection.items = items;
     assertFalse(commandManager.canExecute(Command.EDIT, items));
     assertFalse(commandManager.canExecute(Command.DELETE, items));
+    assertFalse(commandManager.canExecute(Command.CUT, items));
 
     items = new Set(['4']);
     assertFalse(commandManager.canExecute(Command.EDIT, items));
     assertFalse(commandManager.canExecute(Command.DELETE, items));
+    assertFalse(commandManager.canExecute(Command.CUT, items));
 
     commandManager.openCommandMenuAtPosition(0, 0, MenuSource.ITEM);
+    await microtasksFinished();
     const commandItem: {[key: string]: HTMLElement} = {};
-    commandManager.shadowRoot!.querySelectorAll<HTMLElement>('.dropdown-item')
+    commandManager.shadowRoot.querySelectorAll<HTMLElement>('.dropdown-item')
         .forEach(element => {
           commandItem[element.dataset['command']!] = element;
         });
@@ -406,6 +447,7 @@ suite('<bookmarks-command-manager>', function() {
     await microtasksFinished();
 
     commandManager.openCommandMenuAtPosition(0, 0, MenuSource.TOOLBAR);
+    await microtasksFinished();
     assertTrue(commandManager.canExecute(Command.SORT, new Set()));
     assertTrue(commandManager.canExecute(Command.ADD_BOOKMARK, new Set()));
     assertTrue(commandManager.canExecute(Command.ADD_FOLDER, new Set()));
@@ -436,6 +478,7 @@ suite('<bookmarks-command-manager>', function() {
     await microtasksFinished();
 
     commandManager.openCommandMenuAtPosition(0, 0, MenuSource.TOOLBAR);
+    await microtasksFinished();
     assertTrue(commandManager.canExecute(Command.SORT, new Set()));
 
     store.data.selectedFolder = '21';
@@ -476,7 +519,7 @@ suite('<bookmarks-item> CommandManager integration', function() {
   let store: TestStore;
   let bookmarkManagerProxy: TestBookmarkManagerApiProxy;
 
-  setup(function() {
+  setup(async function() {
     store = new TestStore({
       nodes: testTree(createFolder(
           '1',
@@ -506,13 +549,13 @@ suite('<bookmarks-item> CommandManager integration', function() {
     rootNode.itemId = '1';
     rootNode.depth = 0;
     document.body.appendChild(rootNode);
-    flush();
     document.body.appendChild(document.createElement('cr-toast-manager'));
+    await eventToPromise('viewport-filled', list.$.list);
 
-    items = list.shadowRoot!.querySelectorAll<BookmarksItemElement>(
+    items = list.shadowRoot.querySelectorAll<BookmarksItemElement>(
         'bookmarks-item');
     // Wait for the flushed properties to propagate to the item elements' DOMs.
-    return microtasksFinished();
+    await microtasksFinished();
   });
 
   function simulateDoubleClick(element: HTMLElement, config?: MouseEventInit) {
@@ -536,10 +579,12 @@ suite('<bookmarks-item> CommandManager integration', function() {
   test('double click opens items in foreground tab', async function() {
     simulateDoubleClick(items[1]!);
 
-    const [id, active] = await bookmarkManagerProxy.whenCalled('openInNewTab');
+    const [id, {active, split}] =
+        await bookmarkManagerProxy.whenCalled('openInNewTab');
 
     assertEquals('12', id);
     assertTrue(active);
+    assertFalse(split);
   });
 
   test('shift-double click opens full selection', function() {
@@ -590,10 +635,12 @@ suite('<bookmarks-item> CommandManager integration', function() {
     // Only the middle-clicked item is opened.
     simulateMiddleClick(item2);
 
-    const [id, active] = await bookmarkManagerProxy.whenCalled('openInNewTab');
+    const [id, {active, split}] =
+        await bookmarkManagerProxy.whenCalled('openInNewTab');
 
     assertEquals('13', id);
     assertFalse(active);
+    assertFalse(split);
   });
 
   test('middle-click does not open folders', function() {
@@ -611,10 +658,12 @@ suite('<bookmarks-item> CommandManager integration', function() {
     assertTrue(!!item);
 
     simulateMiddleClick(item, {shiftKey: true});
-    const [id, active] = await bookmarkManagerProxy.whenCalled('openInNewTab');
+    const [id, {active, split}] =
+        await bookmarkManagerProxy.whenCalled('openInNewTab');
 
     assertEquals('12', id);
     assertTrue(active);
+    assertFalse(split);
   });
 
   test(
@@ -623,6 +672,7 @@ suite('<bookmarks-item> CommandManager integration', function() {
         const modifier = isMac ? 'meta' : 'ctrl';
 
         store.data.selection.items = new Set(['12', '13']);
+        store.data.folderOpenState.set('1', true);
         store.notifyObservers();
         await microtasksFinished();
         const targetNode = findFolderNode(rootNode, '11');
@@ -658,8 +708,8 @@ suite('<bookmarks-item> CommandManager integration', function() {
     // Ensure the dialog is the target even when clicking outside it, and send
     // a context menu event which should immediately dismiss the dialog,
     // allowing subsequent events to bubble through to elements below.
-    assertEquals(dropdown, commandManager.shadowRoot!.elementFromPoint(x, y));
-    assertEquals(dialog, dropdown.shadowRoot!.elementFromPoint(x, y));
+    assertEquals(dropdown, commandManager.shadowRoot.elementFromPoint(x, y));
+    assertEquals(dialog, dropdown.shadowRoot.elementFromPoint(x, y));
     customClick(dialog, {clientX: x, clientY: y, button: 1}, 'contextmenu');
     assertFalse(dropdown.open);
   });

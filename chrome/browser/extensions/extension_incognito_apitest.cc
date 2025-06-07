@@ -2,22 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/test/run_until.h"
 #include "build/build_config.h"
+#include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/extensions/extension_action_test_helper.h"
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
+#include "extensions/browser/event_router.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
+#include "extensions/test/test_extension_dir.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/extensions/extension_platform_apitest.h"
-#else
-#include "chrome/browser/extensions/extension_apitest.h"
+#if !BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -30,16 +31,10 @@ using extensions::ResultCatcher;
 
 namespace extensions {
 
-#if BUILDFLAG(IS_ANDROID)
-using IncognitoApiTestBase = ExtensionPlatformApiTest;
-#else
-using IncognitoApiTestBase = ExtensionApiTest;
-#endif
-
-class IncognitoApiTest : public IncognitoApiTestBase {
+class IncognitoApiTest : public ExtensionApiTest {
  public:
   void SetUpOnMainThread() override {
-    IncognitoApiTestBase::SetUpOnMainThread();
+    ExtensionApiTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(StartEmbeddedTestServer());
   }
@@ -91,6 +86,66 @@ IN_PROC_BROWSER_TEST_F(IncognitoApiTest, NoCrashWithMultipleExtensions) {
                                 .AppendASCII("css_injection")));
 
   // No crash.
+}
+
+// Tests that when listeners in the `incognito` service worker are not removed
+// when the `regular` service worker stops.
+IN_PROC_BROWSER_TEST_F(IncognitoApiTest, IncognitoSplitKeepListener) {
+  constexpr char kEvent[] = "tabs.onCreated";
+
+  // Prepare a test extension.
+  TestExtensionDir test_dir;
+  constexpr char kManifest[] =
+      R"({
+           "name": "Test Extension",
+           "version": "0.1",
+           "manifest_version": 3,
+           "background": {
+             "service_worker": "background.js"
+           },
+           "incognito": "split",
+           "permissions": ["tabs"]
+         })";
+  test_dir.WriteManifest(kManifest);
+  constexpr char kBackgroundJs[] =
+      R"(
+        chrome.tabs.onCreated.addListener(() => {});
+
+        self.addEventListener('install', e => e.waitUntil(skipWaiting()));
+        self.addEventListener('activate', e => {
+          chrome.test.sendMessage(
+              chrome.extension.inIncognitoContext ? "waiting_incognito"
+                                                  : "waiting");
+        });
+      )";
+  test_dir.WriteFile(FILE_PATH_LITERAL("background.js"), kBackgroundJs);
+
+  ExtensionTestMessageListener listener("waiting", ReplyBehavior::kWontReply);
+  ExtensionTestMessageListener listener_incognito("waiting_incognito",
+                                                  ReplyBehavior::kWontReply);
+
+  PlatformOpenURLOffTheRecord(
+      profile(), embedded_test_server()->GetURL("/extensions/test_file.html"));
+
+  const Extension* extension = LoadExtension(
+      test_dir.UnpackedPath(),
+      {.allow_in_incognito = true, .wait_for_registration_stored = true});
+  ASSERT_TRUE(extension);
+
+  // Waits for both `regular` and `incognito` instances.
+  EXPECT_TRUE(listener.WaitUntilSatisfied());
+  EXPECT_TRUE(listener_incognito.WaitUntilSatisfied());
+
+  EventRouter* event_router = EventRouter::Get(profile());
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return event_router->ExtensionHasEventListener(extension->id(), kEvent);
+  }));
+
+  // Stops the `regular` service worker.
+  browsertest_util::StopServiceWorkerForExtensionGlobalScope(profile(),
+                                                             extension->id());
+  // The `incognito` service worker should have active listeners.
+  EXPECT_TRUE(event_router->HasNonLazyEventListenerForTesting(kEvent));
 }
 
 #if !BUILDFLAG(IS_ANDROID)

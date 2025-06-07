@@ -86,7 +86,8 @@ InfoBarView::InfoBarView(std::unique_ptr<infobars::InfoBarDelegate> delegate)
               gfx::AnimationDelegateNotifier<views::AnimationDelegateViews>>(
       this, this));
 
-  set_owned_by_client();  // InfoBar deletes itself at the appropriate time.
+  set_owned_by_client(OwnedByClientPassKey());  // InfoBar deletes itself at the
+                                                // appropriate time.
 
   // Clip child layers; without this, buttons won't look correct during
   // animation.
@@ -103,7 +104,7 @@ InfoBarView::InfoBarView(std::unique_ptr<infobars::InfoBarDelegate> delegate)
         gfx::Insets::VH(ChromeLayoutProvider::Get()->GetDistanceMetric(
                             DISTANCE_TOAST_LABEL_VERTICAL),
                         0));
-    AddChildView(icon_.get());
+    AddChildViewRaw(icon_.get());
   }
 
   if (this->delegate()->IsCloseable()) {

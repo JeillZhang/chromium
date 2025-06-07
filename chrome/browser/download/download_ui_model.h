@@ -52,8 +52,8 @@ class DownloadUIModel {
     kNoTailoredWarning = 0,
     // Base cookie theft warning.
     kCookieTheft = 1,
-    // Cookie theft warning with account info.
-    kCookieTheftWithAccountInfo = 2,
+    // Deprecated. Cookie theft warning with account info.
+    // kCookieTheftWithAccountInfo = 2,
     // Suspicious archive warning.
     kSuspiciousArchive = 3,
     kMaxValue = kSuspiciousArchive
@@ -489,14 +489,14 @@ class DownloadUIModel {
   // Returns the UI pattern to be used for the download, e.g. dangerous or
   // suspicious. Returns kNoWarning if the download has no warning.
   virtual DangerUiPattern GetDangerUiPattern() const;
+#endif
 
-  // Ephemeral warnings are ones that are quickly removed from the bubble if the
+  // Ephemeral warnings are ones that are quickly removed from the UI if the
   // user has not acted on them, and later deleted altogether. Is this that kind
   // of warning?
   virtual bool IsEphemeralWarning() const;
-#endif
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
   // Complete the Safe Browsing scan early.
   virtual void CompleteSafeBrowsingScan();
 

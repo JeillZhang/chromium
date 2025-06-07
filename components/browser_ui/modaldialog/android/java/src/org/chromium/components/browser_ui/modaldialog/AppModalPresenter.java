@@ -21,6 +21,7 @@ import androidx.annotation.VisibleForTesting;
 import androidx.core.graphics.Insets;
 import androidx.core.view.OnApplyWindowInsetsListener;
 import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import org.chromium.base.Callback;
@@ -28,9 +29,9 @@ import org.chromium.base.StrictModeContext;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
-import org.chromium.ui.InsetObserver;
 import org.chromium.ui.LayoutInflaterUtils;
 import org.chromium.ui.base.ViewUtils;
+import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogProperties;
@@ -143,6 +144,9 @@ public class AppModalPresenter extends ModalDialogManager.Presenter {
             buttonIndex = 2;
         }
         mDialog = new ComponentDialog(mContext, styles[buttonIndex][dialogIndex]);
+        if (mIsEdgeToEdgeEverywhereEnabled) {
+            drawDialogWindowEdgeToEdge();
+        }
         mDialog.setOnCancelListener(
                 dialogInterface -> {
                     dismissCurrentDialog(DialogDismissalCause.NAVIGATE_BACK_OR_TOUCH_OUTSIDE);
@@ -232,8 +236,34 @@ public class AppModalPresenter extends ModalDialogManager.Presenter {
         if (!ModalDialogFeatureMap.sModalDialogLayoutWithSystemInsets.isEnabled()) return;
         mEdgeToEdgeStateSupplier = edgeToEdgeStateSupplier;
         mIsEdgeToEdgeEverywhereEnabled = isEdgeToEdgeEverywhereEnabled;
-        mEdgeToEdgeStateObserver = isEdgeToEdgeActive -> applyWindowInsets();
+        if (mIsEdgeToEdgeEverywhereEnabled) {
+            drawDialogWindowEdgeToEdge();
+        }
+        mEdgeToEdgeStateObserver =
+                isEdgeToEdgeActive -> {
+                    drawDialogWindowEdgeToEdge();
+                    applyWindowInsets();
+                };
         mEdgeToEdgeStateSupplier.addObserver(mEdgeToEdgeStateObserver);
+    }
+
+    /**
+     * Set decorFitsSystemWindows explicitly to ensure that the dialog window is drawing
+     * edge-to-edge if edge-to-edge is active, ensuring that no double-padding is applied to account
+     * for edge-to-edge status. On some devices, padding is applied to some of the parent views to
+     * the content view if this is not set explicitly, regardless of whether the caller has set this
+     * already.
+     */
+    private void drawDialogWindowEdgeToEdge() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return;
+        }
+        if (mDialog != null) {
+            Window window = mDialog.getWindow();
+            if (window != null) {
+                WindowCompat.setDecorFitsSystemWindows(window, !isEdgeToEdgeActive());
+            }
+        }
     }
 
     /**

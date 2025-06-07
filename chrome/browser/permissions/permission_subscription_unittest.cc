@@ -14,11 +14,13 @@
 #include "components/permissions/test/permission_test_util.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/permissions_test_utils.h"
 #include "services/network/public/cpp/permissions_policy/origin_with_possible_wildcards.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
 #include "third_party/blink/public/common/permissions/permission_utils.h"
 #include "url/origin.h"
@@ -61,7 +63,10 @@ class PermissionSubscriptionTest : public ChromeRenderViewHostTestHarness {
                              PermissionStatus expected) {
     EXPECT_EQ(expected,
               GetPermissionController()
-                  ->GetPermissionResultForOriginWithoutContext(type, url_, url_)
+                  ->GetPermissionResultForOriginWithoutContext(
+                      content::PermissionDescriptorUtil::
+                          CreatePermissionDescriptorForPermissionType(type),
+                      url_, url_)
                   .status);
   }
 
@@ -91,7 +96,9 @@ class PermissionSubscriptionTest : public ChromeRenderViewHostTestHarness {
       blink::PermissionType permission,
       content::RenderFrameHost* render_frame_host) {
     return GetPermissionController()->GetPermissionStatusForCurrentDocument(
-        permission, render_frame_host);
+        content::PermissionDescriptorUtil::
+            CreatePermissionDescriptorForPermissionType(permission),
+        render_frame_host);
   }
 
   const GURL url() const { return url_.GetURL(); }
@@ -114,7 +121,7 @@ class PermissionSubscriptionTest : public ChromeRenderViewHostTestHarness {
       content::RenderFrameHost* parent,
       const GURL& origin,
       PermissionsPolicyFeature feature = PermissionsPolicyFeature::kNotFound) {
-    blink::ParsedPermissionsPolicy frame_policy = {};
+    network::ParsedPermissionsPolicy frame_policy = {};
     if (feature != PermissionsPolicyFeature::kNotFound) {
       frame_policy.emplace_back(
           feature,

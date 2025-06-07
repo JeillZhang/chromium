@@ -13,7 +13,6 @@
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -90,6 +89,30 @@ TEST_F(TextAutosizerTest, SimpleParagraph) {
   // (window width = 320px) = 40px.
   EXPECT_FLOAT_EQ(40.f,
                   autosized->GetLayoutObject()->StyleRef().ComputedFontSize());
+}
+
+TEST_F(TextAutosizerTest, NoEffectForFlexItems) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      html { font-size: 16px; }
+      body { width: 800px; margin: 0; overflow-y: hidden; }
+    </style>
+    <div id='autosized' style="display: flex;">
+      Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
+      eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim
+      ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut
+      aliquip ex ea commodo consequat. Duis aute irure dolor in
+      reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
+      pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
+      culpa qui officia deserunt mollit anim id est laborum.
+    </div>
+  )HTML");
+  Element* autosized = GetElementById("autosized");
+  EXPECT_FLOAT_EQ(16.f,
+                  autosized->GetLayoutObject()->StyleRef().SpecifiedFontSize());
+  EXPECT_FLOAT_EQ(16.f,
+                  autosized->GetLayoutObject()->StyleRef().ComputedFontSize())
+      << "Same test case as SimpleParagraph except in a flexbox.";
 }
 
 TEST_F(TextAutosizerTest, TextSizeAdjustDisablesAutosizing) {
@@ -1142,10 +1165,6 @@ TEST_F(TextAutosizerSimTest, CrossSiteUseCounter) {
 }
 
 TEST_F(TextAutosizerSimTest, ViewportChangesUpdateAutosizing) {
-  if (!RuntimeEnabledFeatures::ViewportChangesUpdateTextAutosizingEnabled()) {
-    GTEST_SKIP();
-  }
-
   SimRequest main_resource("https://example.com/", "text/html");
   LoadURL("https://example.com/");
   main_resource.Complete(R"HTML(

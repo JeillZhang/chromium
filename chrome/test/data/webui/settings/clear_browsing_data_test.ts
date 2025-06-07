@@ -126,18 +126,40 @@ suite('ClearBrowsingDataDesktop', function() {
     element.remove();
   });
 
+  // <if expr="not is_chromeos">
   test('ClearBrowsingDataSyncAccountInfoDesktop', function() {
-    // Not syncing: the footer is hidden.
+    // Signed out: the footer is hidden.
     webUIListenerCallback('sync-status-changed', {
-      signedInState: SignedInState.SIGNED_IN,
+      signedInState: SignedInState.SIGNED_OUT,
       hasError: false,
     });
     flush();
     assertFalse(!!element.shadowRoot!.querySelector(
         '#clearBrowsingDataDialog [slot=footer]'));
 
-    // The footer is never shown on Lacros.
-    // <if expr="not is_chromeos">
+    // Signin pending: the footer is hidden.
+    webUIListenerCallback('sync-status-changed', {
+      signedInState: SignedInState.SIGNED_IN_PAUSED,
+      hasError: false,
+    });
+    flush();
+    assertFalse(!!element.shadowRoot!.querySelector(
+        '#clearBrowsingDataDialog [slot=footer]'));
+
+    // Signed in: the footer is shown, with the signin info.
+    webUIListenerCallback('sync-status-changed', {
+      signedInState: SignedInState.SIGNED_IN,
+      hasError: false,
+    });
+    flush();
+    assertTrue(!!element.shadowRoot!.querySelector(
+        '#clearBrowsingDataDialog [slot=footer]'));
+    assertTrue(isChildVisible(element, '#signin-info'));
+    assertFalse(isChildVisible(element, '#sync-info'));
+    assertFalse(isChildVisible(element, '#sync-paused-info'));
+    assertFalse(isChildVisible(element, '#sync-passphrase-error-info'));
+    assertFalse(isChildVisible(element, '#sync-other-error-info'));
+
     // Syncing: the footer is shown, with the normal sync info.
     webUIListenerCallback('sync-status-changed', {
       signedInState: SignedInState.SYNCING,
@@ -150,6 +172,7 @@ suite('ClearBrowsingDataDesktop', function() {
     assertFalse(isChildVisible(element, '#sync-paused-info'));
     assertFalse(isChildVisible(element, '#sync-passphrase-error-info'));
     assertFalse(isChildVisible(element, '#sync-other-error-info'));
+    assertFalse(isChildVisible(element, '#signin-info'));
 
     // Sync is paused.
     webUIListenerCallback('sync-status-changed', {
@@ -162,6 +185,7 @@ suite('ClearBrowsingDataDesktop', function() {
     assertTrue(isChildVisible(element, '#sync-paused-info'));
     assertFalse(isChildVisible(element, '#sync-passphrase-error-info'));
     assertFalse(isChildVisible(element, '#sync-other-error-info'));
+    assertFalse(isChildVisible(element, '#signin-info'));
 
     // Sync passphrase error.
     webUIListenerCallback('sync-status-changed', {
@@ -174,6 +198,7 @@ suite('ClearBrowsingDataDesktop', function() {
     assertFalse(isChildVisible(element, '#sync-paused-info'));
     assertTrue(isChildVisible(element, '#sync-passphrase-error-info'));
     assertFalse(isChildVisible(element, '#sync-other-error-info'));
+    assertFalse(isChildVisible(element, '#signin-info'));
 
     // Other sync error.
     webUIListenerCallback('sync-status-changed', {
@@ -186,11 +211,9 @@ suite('ClearBrowsingDataDesktop', function() {
     assertFalse(isChildVisible(element, '#sync-paused-info'));
     assertFalse(isChildVisible(element, '#sync-passphrase-error-info'));
     assertTrue(isChildVisible(element, '#sync-other-error-info'));
-    // </if>
+    assertFalse(isChildVisible(element, '#signin-info'));
   });
 
-  // The footer is never shown on Lacros.
-  // <if expr="not is_chromeos">
   test('ClearBrowsingDataPauseSyncDesktop', function() {
     webUIListenerCallback('sync-status-changed', {
       signedInState: SignedInState.SYNCING,
@@ -252,9 +275,12 @@ suite('ClearBrowsingDataDesktop', function() {
     for (const signedIn of [false, true]) {
       for (const isNonGoogleDse of [false, true]) {
         webUIListenerCallback('update-sync-state', {
-          signedIn: signedIn,
           isNonGoogleDse: isNonGoogleDse,
           nonGoogleSearchHistoryString: 'Some test string',
+        });
+        webUIListenerCallback('sync-status-changed', {
+          signedInState: signedIn ? SignedInState.SIGNED_IN :
+                                    SignedInState.SIGNED_OUT,
         });
         flush();
         // Test Google search history label visibility and string.
@@ -543,7 +569,7 @@ suite('ClearBrowsingDataAllPlatforms', function() {
     assertFalse(element.$.clearBrowsingDataDialog.open);
     assertTrue(notice1.$.dialog.open);
 
-    const whenNoticeClosed = eventToPromise('close', notice1!);
+    const whenNoticeClosed = eventToPromise('close', notice1);
 
     // Tapping the action button will close the notice.
     noticeActionButton.click();
@@ -591,7 +617,7 @@ suite('ClearBrowsingDataAllPlatforms', function() {
     assertFalse(element.$.clearBrowsingDataDialog.open);
     assertTrue(notice1.$.dialog.open);
 
-    const whenNoticeClosed = eventToPromise('close', notice1!);
+    const whenNoticeClosed = eventToPromise('close', notice1);
 
     // Tapping the action button will close the notice.
     noticeActionButton.click();
@@ -642,7 +668,7 @@ suite('ClearBrowsingDataAllPlatforms', function() {
     assertFalse(element.$.clearBrowsingDataDialog.open);
     assertTrue(notice1.$.dialog.open);
 
-    const whenNoticeClosed1 = eventToPromise('close', notice1!);
+    const whenNoticeClosed1 = eventToPromise('close', notice1);
 
     // Tapping the action button will close the history notice, and
     // display the passwords notice instead.
@@ -668,7 +694,7 @@ suite('ClearBrowsingDataAllPlatforms', function() {
     assertFalse(element.$.clearBrowsingDataDialog.open);
     assertTrue(notice2.$.dialog.open);
 
-    const whenNoticeClosed2 = eventToPromise('close', notice2!);
+    const whenNoticeClosed2 = eventToPromise('close', notice2);
 
     // Tapping the action button will close the notice.
     noticeActionButton2.click();
@@ -724,7 +750,8 @@ suite('ClearBrowsingDataAllPlatforms', function() {
 
     // Simulate a browsing data counter result for history. This checkbox's
     // sublabel should be updated.
-    webUIListenerCallback('update-counter-text', checkbox.pref!.key, 'result');
+    webUIListenerCallback(
+        'browsing-data-counter-text-update', checkbox.pref!.key, 'result');
     assertEquals('result', checkbox.subLabel);
   });
 

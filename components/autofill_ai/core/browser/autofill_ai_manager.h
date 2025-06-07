@@ -8,19 +8,28 @@
 #include "base/containers/flat_map.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
-#include "components/autofill/core/browser/integrators/autofill_ai_delegate.h"
-#include "components/autofill/core/browser/strike_databases/strike_database.h"
+#include "base/uuid.h"
+#include "components/autofill/core/browser/data_model/autofill_ai/entity_instance.h"
+#include "components/autofill/core/browser/integrators/autofill_ai/autofill_ai_delegate.h"
+#include "components/autofill/core/browser/strike_databases/autofill_ai/autofill_ai_save_strike_database_by_attribute.h"
+#include "components/autofill/core/browser/strike_databases/autofill_ai/autofill_ai_save_strike_database_by_host.h"
+#include "components/autofill/core/browser/strike_databases/autofill_ai/autofill_ai_update_strike_database.h"
 #include "components/autofill/core/common/aliases.h"
-#include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/unique_ids.h"
-#include "components/autofill_ai/core/browser/autofill_ai_annotation_prompt_strike_database.h"
 #include "components/autofill_ai/core/browser/autofill_ai_client.h"
-#include "components/autofill_ai/core/browser/autofill_ai_logger.h"
+#include "components/autofill_ai/core/browser/metrics/autofill_ai_logger.h"
 
 namespace autofill {
+class FormData;
+class FormFieldData;
 class FormStructure;
 class LogManager;
+class StrikeDatabase;
 }  // namespace autofill
+
+namespace base {
+class Uuid;
+}  // namespace base
 
 namespace autofill_ai {
 
@@ -35,56 +44,59 @@ class AutofillAiManager : public autofill::AutofillAiDelegate {
   ~AutofillAiManager() override;
 
   // autofill::AutofillAiDelegate:
-  void GetSuggestions(autofill::FormGlobalId form_global_id,
-                      autofill::FieldGlobalId field_global_id,
-                      bool is_manual_fallback,
-                      GetSuggestionsCallback callback) override;
-  bool IsEligibleForAutofillAi(
-      const autofill::FormStructure& form,
-      const autofill::AutofillField& field) const override;
-  bool IsUserEligible() const override;
-  void MaybeImportForm(
-      std::unique_ptr<autofill::FormStructure> form,
-      base::OnceCallback<void(std::unique_ptr<autofill::FormStructure> form,
-                              bool autofill_ai_shows_bubble)> callback)
-      override;
-  bool ShouldDisplayIph(const autofill::AutofillField& field) const override;
-  void OnSuggestionsShown(
-      const autofill::DenseSet<autofill::SuggestionType>&
-          shown_suggestion_types,
-      const autofill::FormData& form,
-      const autofill::FormFieldData& trigger_field,
-      UpdateSuggestionsCallback update_suggestions_callback) override;
+  std::vector<autofill::Suggestion> GetSuggestions(
+      autofill::FormGlobalId form_global_id,
+      const autofill::FormFieldData& trigger_field) override;
+  bool OnFormSubmitted(const autofill::FormStructure& form,
+                       ukm::SourceId ukm_source_id) override;
+  bool ShouldDisplayIph(autofill::FormGlobalId form,
+                        autofill::FieldGlobalId field) const override;
+  void OnSuggestionsShown(const autofill::FormStructure& form,
+                          const autofill::AutofillField& field,
+                          ukm::SourceId ukm_source_id) override;
   void OnFormSeen(const autofill::FormStructure& form) override;
-  void OnDidFillSuggestion(autofill::FormGlobalId form_id) override;
-  void OnEditedAutofilledField(autofill::FormGlobalId form_id) override;
-
-  // Methods for strike counting of rejected forms.
-  bool IsFormBlockedForImport(const autofill::FormStructure& form) const;
-  void AddStrikeForImportFromForm(const autofill::FormStructure& form);
-  void RemoveStrikesForImportFromForm(const autofill::FormStructure& form);
-
-  base::flat_map<autofill::FieldGlobalId, bool> GetFieldValueSensitivityMap(
-      const autofill::FormData& form_data);
+  void OnDidFillSuggestion(
+      const base::Uuid& guid,
+      const autofill::FormStructure& form,
+      const autofill::AutofillField& trigger_field,
+      base::span<const autofill::AutofillField* const> filled_fields,
+      ukm::SourceId ukm_source_id) override;
+  void OnEditedAutofilledField(const autofill::FormStructure& form,
+                               const autofill::AutofillField& field,
+                               ukm::SourceId ukm_source_id) override;
 
   base::WeakPtr<AutofillAiManager> GetWeakPtr();
 
  private:
   friend class AutofillAiManagerTestApi;
 
-  // Run after the user has either accepted, decline or ignored a save prompt.
-  void OnSavePromptAcceptance(
-      AutofillAiClient::SavePromptAcceptanceResult result);
+  // Strike database related methods:
+  void AddStrikeForSaveAttempt(const GURL& url,
+                               const autofill::EntityInstance& entity);
+  void AddStrikeForUpdateAttempt(const base::Uuid& entity_uuid);
+  void ClearStrikesForSave(const GURL& url,
+                           const autofill::EntityInstance& entity);
+  void ClearStrikesForUpdate(const base::Uuid& entity_uuid);
+  bool IsSaveBlockedByStrikeDatabase(
+      const GURL& url,
+      const autofill::EntityInstance& entity) const;
+  bool IsUpdateBlockedByStrikeDatabase(const base::Uuid& entity_uuid) const;
 
-  void OnReceivedAXTree(const autofill::FormData& form,
-                        const autofill::FormFieldData& trigger_field,
-                        optimization_guide::proto::AXTreeUpdate);
+  // Attempts to display an import bubble for `form` if Autofill AI is
+  // interested in the form. Returns whether an import bubble will be shown.
+  bool MaybeImportForm(const autofill::FormStructure& form);
 
-  // Returns values to fill based on the `cache_`.
-  base::flat_map<autofill::FieldGlobalId, std::u16string> GetValuesToFill();
-
-  // Logger that records various Autofill AI metrics.
-  AutofillAiLogger logger_;
+  // Updates the `EntityDataManager` and the save strike database depending on
+  // the prompt `result`.
+  void HandleSavePromptResult(
+      const GURL& form_url,
+      const autofill::EntityInstance& entity,
+      AutofillAiClient::SaveOrUpdatePromptResult result);
+  // Updates the `EntityDataManager` and the update strike database depending on
+  // the prompt `result`.
+  void HandleUpdatePromptResult(
+      const base::Uuid& entity_uuid,
+      AutofillAiClient::SaveOrUpdatePromptResult result);
 
   autofill::LogManager* GetCurrentLogManager();
 
@@ -92,10 +104,21 @@ class AutofillAiManager : public autofill::AutofillAiDelegate {
   // it.
   const raw_ref<AutofillAiClient> client_;
 
-  // A strike data base used blocking save prompt for specific form signatures
-  // to prevent over prompting.
-  std::unique_ptr<AutofillPrectionImprovementsAnnotationPromptStrikeDatabase>
-      user_annotation_prompt_strike_database_;
+  // Logger that records various Autofill AI metrics.
+  AutofillAiLogger logger_{&*client_};
+
+  // A strike database for save prompts keyed by (entity_type_name, host).
+  std::unique_ptr<autofill::AutofillAiSaveStrikeDatabaseByHost>
+      save_strike_db_by_host_;
+
+  // A strike database for save prompts keyed by (entity_type_name,
+  // attribute_type_name_1, attribute_value_1, ...).
+  std::unique_ptr<autofill::AutofillAiSaveStrikeDatabaseByAttribute>
+      save_strike_db_by_attribute_;
+
+  // A strike database for update prompts keyed by the guid of the entity that
+  // is to be updated.
+  std::unique_ptr<autofill::AutofillAiUpdateStrikeDatabase> update_strike_db_;
 
   base::WeakPtrFactory<AutofillAiManager> weak_ptr_factory_{this};
 };

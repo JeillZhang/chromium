@@ -22,6 +22,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/resource_request_body_android.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "third_party/blink/public/mojom/frame/blocked_navigation_types.mojom.h"
 #include "third_party/blink/public/mojom/frame/fullscreen.mojom.h"
@@ -45,6 +46,15 @@ using content::ColorChooser;
 using content::RenderWidgetHostView;
 using content::WebContents;
 using content::WebContentsDelegate;
+
+namespace {
+
+// The amount of time to disallow repeated pointer lock calls after the user
+// successfully escapes from one lock request.
+constexpr base::TimeDelta kEffectiveUserEscapeDuration =
+    base::Milliseconds(1250);
+
+}  // namespace
 
 namespace web_contents_delegate_android {
 
@@ -185,6 +195,7 @@ void WebContentsDelegateAndroid::RendererResponsive(
 }
 
 bool WebContentsDelegateAndroid::IsWebContentsCreationOverridden(
+    content::RenderFrameHost* opener,
     content::SiteInstance* source_site_instance,
     content::mojom::WindowContainerType window_container_type,
     const GURL& opener_url,
@@ -234,11 +245,6 @@ void WebContentsDelegateAndroid::CloseContents(WebContents* source) {
   if (obj.is_null())
     return;
   Java_WebContentsDelegateAndroid_closeContents(env, obj);
-}
-
-void WebContentsDelegateAndroid::SetContentsBounds(WebContents* source,
-                                                   const gfx::Rect& bounds) {
-  // Do nothing.
 }
 
 bool WebContentsDelegateAndroid::DidAddMessageToConsole(
@@ -291,6 +297,22 @@ void WebContentsDelegateAndroid::UpdateTargetURL(WebContents* source,
     return;
   Java_WebContentsDelegateAndroid_onUpdateUrl(
       env, obj, url::GURLAndroid::FromNativeGURL(env, source->GetVisibleURL()));
+}
+
+content::KeyboardEventProcessingResult
+WebContentsDelegateAndroid::PreHandleKeyboardEvent(
+    WebContents* source,
+    const input::NativeWebKeyboardEvent& event) {
+  if (event.native_key_code == AKEYCODE_ESCAPE) {
+    auto* rwhva = source->GetTopLevelRenderWidgetHostView();
+    if (rwhva && rwhva->IsPointerLocked()) {
+      rwhva->UnlockPointer();
+      pointer_lock_last_user_escape_time_ = base::TimeTicks::Now();
+      return content::KeyboardEventProcessingResult::HANDLED;
+    }
+  }
+
+  return content::KeyboardEventProcessingResult::NOT_HANDLED;
 }
 
 bool WebContentsDelegateAndroid::HandleKeyboardEvent(
@@ -364,6 +386,38 @@ void WebContentsDelegateAndroid::ExitFullscreenModeForTab(
   if (obj.is_null())
     return;
   Java_WebContentsDelegateAndroid_exitFullscreenModeForTab(env, obj);
+}
+
+void WebContentsDelegateAndroid::RequestPointerLock(
+    WebContents* web_contents,
+    bool user_gesture,
+    bool last_unlocked_by_target) {
+  if (!base::FeatureList::IsEnabled(blink::features::kPointerLockOnAndroid)) {
+    // WebContentsDelegate call would reject the lock request with a
+    // kUnknownError
+    return WebContentsDelegate::RequestPointerLock(web_contents, user_gesture,
+                                                   last_unlocked_by_target);
+  }
+
+  // TODO(https://crbug.com/415732870): reuse the ExclusiveAccessManager
+  // This part is taken from PointerLockController, See
+  // `PointerLockController::RequestToLockPointer()` for more info.
+  if (!last_unlocked_by_target && !web_contents->IsFullscreen()) {
+    if (!user_gesture) {
+      web_contents->GotResponseToPointerLockRequest(
+          blink::mojom::PointerLockResult::kRequiresUserGesture);
+      return;
+    }
+    if (base::TimeTicks::Now() <
+        pointer_lock_last_user_escape_time_ + kEffectiveUserEscapeDuration) {
+      web_contents->GotResponseToPointerLockRequest(
+          blink::mojom::PointerLockResult::kUserRejected);
+      return;
+    }
+  }
+
+  web_contents->GotResponseToPointerLockRequest(
+      blink::mojom::PointerLockResult::kSuccess);
 }
 
 bool WebContentsDelegateAndroid::IsFullscreenForTabOrPending(

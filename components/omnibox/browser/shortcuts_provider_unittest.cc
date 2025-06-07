@@ -281,18 +281,7 @@ ShortcutsProviderTest::ShortcutsProviderTest() {
   // `scoped_feature_list_` needs to be initialized as early as possible, to
   // avoid data races caused by tasks on other threads accessing it.
   scoped_feature_list_.Reset();
-  scoped_feature_list_.InitWithFeaturesAndParameters(
-      // Even though these are enabled by default on desktop, they aren't
-      // enabled by default on mobile. To avoid having 2 sets of tests around,
-      // explicitly enable them for all platforms for tests.
-      {{omnibox::kRichAutocompletion,
-        {{"RichAutocompletionAutocompleteTitlesShortcutProvider", "true"},
-         {"RichAutocompletionAutocompleteTitlesMinChar", "3"},
-         {"RichAutocompletionAutocompleteShortcutText", "true"},
-         {"RichAutocompletionAutocompleteShortcutTextMinChar", "3"}}},
-       {omnibox::kLogUrlScoringSignals, {}}},
-      {});
-  RichAutocompletionParams::ClearParamsForTesting();
+  scoped_feature_list_.InitAndEnableFeature(omnibox::kLogUrlScoringSignals);
 }
 
 void ShortcutsProviderTest::SetUp() {
@@ -530,6 +519,10 @@ TEST_F(ShortcutsProviderTest, SimpleSingleMatchKeyword) {
                               "https://google.com/navigation", false, false),
       create_keyword_shortcut("yahoo.com search on google.com", "google.com",
                               "https://google.com/q=yahoo.com", true, true),
+      create_keyword_shortcut("search on yahoo.com", "yahoo.com",
+                              "https://yahoo.com/q=search", false, true),
+      create_keyword_shortcut("search on google.com", "google.com",
+                              "https://google.com/q=search", false, true),
   };
   PopulateShortcutsBackendWithTestData(client_->GetShortcutsBackend(),
                                        shortcuts, std::size(shortcuts));
@@ -578,6 +571,20 @@ TEST_F(ShortcutsProviderTest, SimpleSingleMatchKeyword) {
   // default.
   test(u"google.com non-ex", false, "https://google.com/non-explicit-keyword",
        true, u"plicit keyword");
+
+  // When the input is NOT in keyword mode, a match without a keyword can be
+  // default.
+  test(u"google.com navigat", false, "https://google.com/navigation", true,
+       u"ion");
+
+  // When the input is NOT in keyword mode, a match from a keyword other than
+  // default search provider can not be default.
+  test(u"search on y", false, "https://yahoo.com/q=search", false, u"");
+
+  // When the input is NOT in keyword mode, a match from the default search
+  // provider can be default.
+  test(u"search on g", false, "https://google.com/q=search", true,
+       u"oogle.com");
 }
 
 TEST_F(ShortcutsProviderTest, MultiMatch) {

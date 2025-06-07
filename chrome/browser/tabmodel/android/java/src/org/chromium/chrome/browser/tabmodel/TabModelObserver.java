@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
@@ -17,6 +18,7 @@ import java.util.List;
  * <p>NOTE: Any changes to this interface including the addition of new methods should be applied to
  * {@link TabGroupModelFilter} and {@link TabModelObserverJniBridge}.
  */
+@NullMarked
 public interface TabModelObserver {
     /**
      * Called when a tab is selected. This may not be called in some cases if this model is not the
@@ -112,12 +114,6 @@ public interface TabModelObserver {
      * @param tab The tab that has been reopened.
      */
     default void tabClosureUndone(Tab tab) {}
-
-    /**
-     * Called after all tabs closed from a close all tabs action have been successfully restored by
-     * an undo action.
-     */
-    default void allTabsClosureUndone() {}
 
     /**
      * Called when a tab closure is committed and can't be undone anymore.

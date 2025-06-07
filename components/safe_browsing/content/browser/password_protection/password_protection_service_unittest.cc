@@ -1050,18 +1050,15 @@ TEST_P(PasswordProtectionServiceBaseTest,
        TestPasswordOnFocusRequestEnhancedProtectionShouldHaveToken) {
   histograms_.ExpectTotalCount(kPasswordOnFocusRequestWithTokenHistogram, 0);
   SetEnhancedProtectionPrefForTests(&test_pref_service_, true);
-  SetFeatures(
-      /*enable_features*/ {kSafeBrowsingRemoveCookiesInAuthRequests},
-      /*disable_features*/ {});
   std::string access_token = "fake access token";
   test_url_loader_factory_.SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
         EXPECT_THAT(
             request.headers.GetHeader(net::HttpRequestHeaders::kAuthorization),
             testing::Optional("Bearer " + access_token));
-        // Cookies should be removed when token is set.
+        // Cookies should still be included when token is set.
         EXPECT_EQ(request.credentials_mode,
-                  network::mojom::CredentialsMode::kOmit);
+                  network::mojom::CredentialsMode::kInclude);
       }));
   // Set up mock call to token fetcher.
   SafeBrowsingTokenFetcher::Callback cb;
@@ -1122,7 +1119,7 @@ TEST_P(PasswordProtectionServiceBaseTest,
 
   // Initiate a saved password entry request (w/ no sync password).
   AccountInfo account_info;
-  account_info.account_id = CoreAccountId::FromGaiaId("gaia");
+  account_info.account_id = CoreAccountId::FromGaiaId(GaiaId("gaia"));
   account_info.email = "email";
   account_info.gaia = GaiaId("gaia");
   account_info.hosted_domain = "example.com";
@@ -1349,7 +1346,7 @@ TEST_P(PasswordProtectionServiceBaseTest, VerifyShouldShowModalWarning) {
   EXPECT_CALL(*password_protection_service_, IsPrimaryAccountSignedIn())
       .WillRepeatedly(Return(true));
   AccountInfo account_info;
-  account_info.account_id = CoreAccountId::FromGaiaId("gaia");
+  account_info.account_id = CoreAccountId::FromGaiaId(GaiaId("gaia"));
   account_info.email = "email";
   account_info.gaia = GaiaId("gaia");
   EXPECT_CALL(*password_protection_service_, GetAccountInfoForUsername(_))
@@ -1494,7 +1491,7 @@ TEST_P(PasswordProtectionServiceBaseTest,
   EXPECT_CALL(*password_protection_service_, IsPrimaryAccountSignedIn())
       .WillRepeatedly(Return(true));
   AccountInfo account_info;
-  account_info.account_id = CoreAccountId::FromGaiaId("gaia");
+  account_info.account_id = CoreAccountId::FromGaiaId(GaiaId("gaia"));
   account_info.email = "email";
   account_info.gaia = GaiaId("gaia");
   EXPECT_CALL(*password_protection_service_, GetAccountInfoForUsername(_))

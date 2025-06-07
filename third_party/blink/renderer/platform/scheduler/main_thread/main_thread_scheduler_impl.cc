@@ -14,6 +14,7 @@
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "base/message_loop/message_pump.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_functions.h"
@@ -26,10 +27,12 @@
 #include "base/task/common/task_annotator.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "base/trace_event/common/trace_event_common.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "build/build_config.h"
+#include "components/performance_manager/scenario_api/performance_scenarios.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
@@ -65,7 +68,7 @@
 #include "v8/include/v8.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/pre_freeze_background_memory_trimmer.h"
+#include "base/android/self_compaction_manager.h"
 #endif
 
 namespace base {
@@ -86,7 +89,7 @@ const double kShortIdlePeriodDurationPercentile = 50;
 // which main thread compositing can be considered fast.
 const double kFastCompositingIdleTimeThreshold = .2;
 
-const char* AudioPlayingStateToString(bool is_audio_playing) {
+perfetto::StaticString AudioPlayingStateToString(bool is_audio_playing) {
   if (is_audio_playing) {
     return "playing";
   } else {
@@ -94,17 +97,7 @@ const char* AudioPlayingStateToString(bool is_audio_playing) {
   }
 }
 
-const char* RendererProcessTypeToString(WebRendererProcessType process_type) {
-  switch (process_type) {
-    case WebRendererProcessType::kRenderer:
-      return "normal";
-    case WebRendererProcessType::kExtensionRenderer:
-      return "extension";
-  }
-  NOTREACHED();
-}
-
-const char* OptionalTaskDescriptionToString(
+perfetto::StaticString OptionalTaskDescriptionToString(
     std::optional<MainThreadSchedulerImpl::TaskDescriptionForTracing> desc) {
   if (!desc)
     return nullptr;
@@ -112,14 +105,20 @@ const char* OptionalTaskDescriptionToString(
     return TaskTypeNames::TaskTypeToString(desc->task_type);
   if (!desc->queue_type)
     return "detached_tq";
-  return perfetto::protos::pbzero::SequenceManagerTask::QueueName_Name(
-      MainThreadTaskQueue::NameForQueueType(desc->queue_type.value()));
+  return perfetto::StaticString(
+      perfetto::protos::pbzero::SequenceManagerTask::QueueName_Name(
+          MainThreadTaskQueue::NameForQueueType(desc->queue_type.value())));
 }
 
-const char* OptionalTaskPriorityToString(std::optional<TaskPriority> priority) {
+perfetto::StaticString TaskPriorityToStaticString(TaskPriority priority) {
+  return perfetto::StaticString(TaskPriorityToString(priority));
+}
+
+perfetto::StaticString OptionalTaskPriorityToString(
+    std::optional<TaskPriority> priority) {
   if (!priority)
-    return nullptr;
-  return TaskPriorityToString(*priority);
+    return "Unknown";
+  return TaskPriorityToStaticString(*priority);
 }
 
 bool IsBlockingEvent(const blink::WebInputEvent& web_input_event) {
@@ -140,7 +139,7 @@ bool IsBlockingEvent(const blink::WebInputEvent& web_input_event) {
          blink::WebInputEvent::DispatchType::kBlocking;
 }
 
-const char* InputEventStateToString(
+perfetto::StaticString InputEventStateToString(
     WidgetScheduler::InputEventState input_event_state) {
   switch (input_event_state) {
     case WidgetScheduler::InputEventState::EVENT_CONSUMED_BY_COMPOSITOR:
@@ -152,7 +151,7 @@ const char* InputEventStateToString(
   }
 }
 
-const char* RenderingPrioritizationStateToString(
+perfetto::StaticString RenderingPrioritizationStateToString(
     MainThreadSchedulerImpl::RenderingPrioritizationState state) {
   using RenderingPrioritizationState =
       MainThreadSchedulerImpl::RenderingPrioritizationState;
@@ -168,12 +167,34 @@ const char* RenderingPrioritizationStateToString(
   }
 }
 
+BASE_FEATURE(kBusyLoopOnRendererMain,
+             "BusyLoopOnMainThread",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kBusyLoopTime,
+                   &kBusyLoopOnRendererMain,
+                   "busy_loop_for",
+                   base::Milliseconds(2));
+
+void MaybeSetBusyLoop(raw_ptr<base::MessagePump> message_pump,
+                      bool backgrounded) {
+  if (!message_pump || !base::FeatureList::IsEnabled(kBusyLoopOnRendererMain)) {
+    return;
+  }
+
+  base::TimeDelta busy_loop_duration =
+      backgrounded ? base::Microseconds(0) : kBusyLoopTime.Get();
+  message_pump->SetBusyLoop(busy_loop_duration);
+}
+
 }  // namespace
 
 MainThreadSchedulerImpl::MainThreadSchedulerImpl(
     std::unique_ptr<base::sequence_manager::SequenceManager> sequence_manager)
     : MainThreadSchedulerImpl(sequence_manager.get()) {
   owned_sequence_manager_ = std::move(sequence_manager);
+  MaybeSetBusyLoop(main_thread_only().message_pump,
+                   main_thread_only().renderer_backgrounded);
 }
 
 MainThreadSchedulerImpl::MainThreadSchedulerImpl(
@@ -335,69 +356,71 @@ MainThreadSchedulerImpl::MainThreadOnly::MainThreadOnly(
                           kShortIdlePeriodDurationSampleCount,
                           kShortIdlePeriodDurationPercentile),
       current_use_case(UseCase::kNone,
-                       "Scheduler.UseCase",
+                       MakeNamedTrack("Scheduler.UseCase", this),
                        &main_thread_scheduler_impl->tracing_controller_,
                        UseCaseToString),
       renderer_pause_count(0,
-                           "Scheduler.PauseCount",
+                           MakeCounterTrack("Scheduler.PauseCount", this),
                            &main_thread_scheduler_impl->tracing_controller_),
       blocking_input_expected_soon(
           false,
-          "Scheduler.BlockingInputExpectedSoon",
+          MakeNamedTrack("Scheduler.BlockingInputExpectedSoon", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       in_idle_period_for_testing(
           false,
-          "Scheduler.InIdlePeriod",
+          MakeNamedTrack("Scheduler.InIdlePeriod", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       is_audio_playing(false,
-                       "RendererAudioState",
+                       MakeNamedTrack("Renderer audible", this),
                        &main_thread_scheduler_impl->tracing_controller_,
                        AudioPlayingStateToString),
       compositor_will_send_main_frame_not_expected(
           false,
-          "Scheduler.CompositorWillSendMainFrameNotExpected",
+          MakeNamedTrack("Scheduler.CompositorWillSendMainFrameNotExpected",
+                         this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       has_navigated(false,
-                    "Scheduler.HasNavigated",
+                    MakeNamedTrack("Scheduler.HasNavigated", this),
                     &main_thread_scheduler_impl->tracing_controller_,
                     YesNoStateToString),
-      pause_timers_for_webview(false,
-                               "Scheduler.PauseTimersForWebview",
-                               &main_thread_scheduler_impl->tracing_controller_,
-                               YesNoStateToString),
+      pause_timers_for_webview(
+          false,
+          MakeNamedTrack("Scheduler.PauseTimersForWebview", this),
+          &main_thread_scheduler_impl->tracing_controller_,
+          YesNoStateToString),
       background_status_changed_at(now),
-      metrics_helper(main_thread_scheduler_impl, now),
-      process_type(WebRendererProcessType::kRenderer,
-                   "RendererProcessType",
-                   &main_thread_scheduler_impl->tracing_controller_,
-                   RendererProcessTypeToString),
+      metrics_helper(main_thread_scheduler_impl,
+                     now,
+                     kLaunchingProcessIsBackgrounded),
       task_description_for_tracing(
           std::nullopt,
-          "Scheduler.MainThreadTask",
+          MakeNamedTrack("Scheduler.MainThreadTask", this),
           &main_thread_scheduler_impl->tracing_controller_,
           OptionalTaskDescriptionToString),
       task_priority_for_tracing(
           std::nullopt,
-          "Scheduler.TaskPriority",
+          MakeNamedTrack("Scheduler.TaskPriority", this),
           &main_thread_scheduler_impl->tracing_controller_,
           OptionalTaskPriorityToString),
       main_thread_compositing_is_fast(false),
       compositor_priority(TaskPriority::kNormalPriority,
-                          "Scheduler.CompositorPriority",
+                          MakeNamedTrack("Scheduler.CompositorPriority", this),
                           &main_thread_scheduler_impl->tracing_controller_,
-                          TaskPriorityToString),
+                          TaskPriorityToStaticString),
       main_frame_prioritization_state(
           RenderingPrioritizationState::kNone,
-          "RenderingPrioritizationState",
+          MakeNamedTrack("RenderingPrioritizationState", this),
           &main_thread_scheduler_impl->tracing_controller_,
           RenderingPrioritizationStateToString),
       last_frame_time(now),
       agent_group_schedulers(
           MakeGarbageCollected<
-              HeapHashSet<WeakMember<AgentGroupSchedulerImpl>>>()) {}
+              GCedHeapHashSet<WeakMember<AgentGroupSchedulerImpl>>>()),
+      message_pump(
+          main_thread_scheduler_impl->sequence_manager_->GetMessagePump()) {}
 
 MainThreadSchedulerImpl::MainThreadOnly::~MainThreadOnly() = default;
 
@@ -405,65 +428,67 @@ MainThreadSchedulerImpl::AnyThread::AnyThread(
     MainThreadSchedulerImpl* main_thread_scheduler_impl)
     : awaiting_touch_start_response(
           false,
-          "Scheduler.AwaitingTouchstartResponse",
+          MakeNamedTrack("Scheduler.AwaitingTouchstartResponse", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       awaiting_discrete_input_response(
           false,
-          "Scheduler.AwaitingDiscreteInputResponse",
+          MakeNamedTrack("Scheduler.AwaitingDiscreteInputResponse", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       begin_main_frame_on_critical_path(
           false,
-          "Scheduler.BeginMainFrameOnCriticalPath",
+          MakeNamedTrack("Scheduler.BeginMainFrameOnCriticalPath", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       last_gesture_was_compositor_driven(
           false,
-          "Scheduler.LastGestureWasCompositorDriven",
+          MakeNamedTrack("Scheduler.LastGestureWasCompositorDriven", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       default_gesture_prevented(
           true,
-          "Scheduler.DefaultGesturePrevented",
+          MakeNamedTrack("Scheduler.DefaultGesturePrevented", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       have_seen_a_blocking_gesture(
           false,
-          "Scheduler.HaveSeenBlockingGesture",
+          MakeNamedTrack("Scheduler.HaveSeenBlockingGesture", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       waiting_for_any_main_frame_contentful_paint(
           false,
-          "Scheduler.WaitingForMainFrameContentfulPaint",
+          MakeNamedTrack("Scheduler.WaitingForMainFrameContentfulPaint", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       waiting_for_any_main_frame_meaningful_paint(
           false,
-          "Scheduler.WaitingForMeaningfulPaint",
+          MakeNamedTrack("Scheduler.WaitingForMeaningfulPaint", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       is_any_main_frame_loading(
           false,
-          "Scheduler.IsAnyMainFrameLoading",
+          MakeNamedTrack("Scheduler.IsAnyMainFrameLoading", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       have_seen_input_since_navigation(
           false,
-          "Scheduler.HaveSeenInputSinceNavigation",
+          MakeNamedTrack("Scheduler.HaveSeenInputSinceNavigation", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString) {}
 
 MainThreadSchedulerImpl::SchedulingSettings::SchedulingSettings()
     : mbi_override_task_runner_handle(
           base::FeatureList::IsEnabled(kMbiOverrideTaskRunnerHandle)),
-      compositor_gesture_rendering_starvation_threshold(
-          GetThreadedScrollRenderingStarvationThreshold()),
       discrete_input_task_deferral_policy(
           base::FeatureList::IsEnabled(features::kDeferRendererTasksAfterInput)
               ? std::optional<features::TaskDeferralPolicy>(
                     features::kTaskDeferralPolicyParam.Get())
-              : std::nullopt) {}
+              : std::nullopt),
+      input_scenario_priority_boost_enabled(
+          base::FeatureList::IsEnabled(features::kInputScenarioPriorityBoost)),
+      input_scenario_priority_boost_includes_loading(
+          features::kInputScenarioPriorityBoostIncludesLoading.Get()) {}
 
 MainThreadSchedulerImpl::AnyThread::~AnyThread() = default;
 
@@ -541,6 +566,7 @@ void MainThreadSchedulerImpl::Shutdown() {
   // from |idle_helper_| early-outs and doesn't do anything.
   helper_.Shutdown();
   idle_helper_.Shutdown();
+  main_thread_only().message_pump = nullptr;
   sequence_manager_ = nullptr;
   owned_sequence_manager_.reset();
   main_thread_only().rail_mode_observers.Clear();
@@ -551,10 +577,33 @@ std::unique_ptr<MainThread> MainThreadSchedulerImpl::CreateMainThread() {
   return std::make_unique<MainThreadImpl>(this);
 }
 
-scoped_refptr<WidgetScheduler>
-MainThreadSchedulerImpl::CreateWidgetScheduler() {
-  return base::MakeRefCounted<WidgetSchedulerImpl>(
-      this, &render_widget_scheduler_signals_);
+scoped_refptr<WidgetScheduler> MainThreadSchedulerImpl::CreateWidgetScheduler(
+    WidgetScheduler::Delegate* delegate) {
+  auto widget_scheduler = base::MakeRefCounted<WidgetSchedulerImpl>(
+      this, &render_widget_scheduler_signals_, delegate);
+  if (base::FeatureList::IsEnabled(kUseWidgetSchedulerForIdlePeriodSignals)) {
+    CHECK(delegate);
+    main_thread_only().widget_schedulers.insert(widget_scheduler);
+    // If we're already receiving BeginMainFrameNotExpectedUntil signals from
+    // the other `WidgetScheduler`s, we need to receive these signals from this
+    // new one as well, otherwise idle periods might unexpectedly stop once
+    // frames stop being produced.
+    //
+    // Note: by default `widget_scheduler` will not receive these signals, so
+    // initialization is only needed if the signals are needed. If that changes,
+    // as a result of idle tasks being posted, the signals will be requested in
+    // `DispatchRequestBeginMainFrameNotExpected()`.
+    if (main_thread_only().compositor_will_send_main_frame_not_expected) {
+      // Defer this until after the current task to allow `delegate` to complete
+      // initialization.
+      control_task_queue_->GetTaskRunnerWithDefaultTaskType()->PostTask(
+          FROM_HERE,
+          base::BindOnce(&MainThreadSchedulerImpl::
+                             InitializeRequestBeginMainFrameNotExpected,
+                         weak_factory_.GetWeakPtr(), widget_scheduler));
+    }
+  }
+  return widget_scheduler;
 }
 
 scoped_refptr<base::SingleThreadTaskRunner>
@@ -816,6 +865,11 @@ void MainThreadSchedulerImpl::DidCommitFrameToCompositor() {
 
   base::TimeTicks now(helper_.NowTicks());
   if (now < main_thread_only().estimated_next_frame_begin) {
+    // TODO(crbug.com/394906646): The main thread can be hosting multiple
+    // widgets producing frames at the same time (e.g. multiple monitors). We
+    // should account for this when setting the idle period duration rather than
+    // using the most recent value, in case this is running at a different rate.
+    //
     // TODO(rmcilroy): Consider reducing the idle period based on the runtime of
     // the next pending delayed tasks (as currently done in for long idle times)
     idle_helper_.StartShortIdlePeriod(
@@ -833,6 +887,10 @@ void MainThreadSchedulerImpl::BeginFrameNotExpectedSoon() {
   if (helper_.IsShutdown())
     return;
 
+  // TODO(crbug.com/394906646): The main thread can be hosting multiple widgets
+  // producing frames at the same time, e.g. multiple monitors or popup windows.
+  // We should coordinate between this and the other rendering signals so this
+  // doesn't clobber a short idle period.
   idle_helper_.EnableLongIdlePeriod();
   {
     base::AutoLock lock(any_thread_lock_);
@@ -855,6 +913,11 @@ void MainThreadSchedulerImpl::BeginMainFrameNotExpectedUntil(
     // End any previous idle period.
     EndIdlePeriod();
 
+    // TODO(crbug.com/394906646): The main thread can be hosting multiple
+    // widgets producing frames at the same time (e.g. multiple monitors). We
+    // should account for this when setting the idle period duration rather than
+    // using the most recent value, in case this is running at a different rate.
+    //
     // TODO(rmcilroy): Consider reducing the idle period based on the runtime of
     // the next pending delayed tasks (as currently done in for long idle times)
     idle_helper_.StartShortIdlePeriod(now, time);
@@ -928,7 +991,10 @@ void MainThreadSchedulerImpl::SetRendererBackgrounded(bool backgrounded) {
   main_thread_only().renderer_backgrounded = backgrounded;
   internal::ProcessState::Get()->is_process_backgrounded = backgrounded;
 
-  main_thread_only().background_status_changed_at = NowTicks();
+  base::TimeTicks now = NowTicks();
+  main_thread_only().background_status_changed_at = now;
+  main_thread_only().metrics_helper.SetRendererBackgrounded(backgrounded, now);
+  MaybeSetBusyLoop(main_thread_only().message_pump, backgrounded);
 
   UpdatePolicy();
 
@@ -1282,7 +1348,7 @@ bool MainThreadSchedulerImpl::ShouldYieldForHighPriorityWork() {
 
 base::TimeTicks MainThreadSchedulerImpl::CurrentIdleTaskDeadlineForTesting()
     const {
-  return idle_helper_.CurrentIdleTaskDeadline();
+  return idle_helper_.CurrentIdleTaskDeadlineForTesting();
 }
 
 void MainThreadSchedulerImpl::StartIdlePeriodForTesting() {
@@ -1711,8 +1777,7 @@ void MainThreadSchedulerImpl::WriteIntoTraceLocked(
            main_thread_only().compositor_will_send_main_frame_not_expected);
   dict.Add("blocking_input_expected_soon",
            main_thread_only().blocking_input_expected_soon);
-  dict.Add("idle_period_state", IdleHelper::IdlePeriodStateToString(
-                                    idle_helper_.SchedulerIdlePeriodState()));
+  dict.Add("idle_period_state", idle_helper_.IdlePeriodStateForTracing());
   dict.Add("renderer_hidden", main_thread_only().renderer_hidden);
   dict.Add("waiting_for_any_main_frame_contentful_paint",
            any_thread().waiting_for_any_main_frame_contentful_paint);
@@ -1824,7 +1889,7 @@ void MainThreadSchedulerImpl::OnPendingTasksChanged(bool has_tasks) {
   // This is needed because idle task can be posted (and OnPendingTasksChanged
   // called) at any moment, including in the middle of allocating an object,
   // when state is not consistent. Posting a task to dispatch notifications
-  // minimizes the amount of code that runs and sees an inconsistent state .
+  // minimizes the amount of code that runs and sees an inconsistent state.
   control_task_queue_->GetTaskRunnerWithDefaultTaskType()->PostTask(
       FROM_HERE,
       base::BindOnce(
@@ -1843,11 +1908,30 @@ void MainThreadSchedulerImpl::DispatchRequestBeginMainFrameNotExpected(
       "MainThreadSchedulerImpl::DispatchRequestBeginMainFrameNotExpected",
       "has_tasks", has_tasks);
   bool success = false;
-  for (PageSchedulerImpl* page_scheduler : main_thread_only().page_schedulers) {
-    success |= page_scheduler->RequestBeginMainFrameNotExpected(has_tasks);
+  if (base::FeatureList::IsEnabled(kUseWidgetSchedulerForIdlePeriodSignals)) {
+    // If idle tasks are posted before compositing is initialized, the scheduler
+    // will request these signals as soon as it is.
+    for (auto& widget_scheduler : main_thread_only().widget_schedulers) {
+      widget_scheduler->RequestBeginMainFrameNotExpected(has_tasks);
+    }
+    success = true;
+  } else {
+    for (PageSchedulerImpl* page_scheduler :
+         main_thread_only().page_schedulers) {
+      success |= page_scheduler->RequestBeginMainFrameNotExpected(has_tasks);
+    }
   }
   main_thread_only().compositor_will_send_main_frame_not_expected =
       success && has_tasks;
+}
+
+void MainThreadSchedulerImpl::InitializeRequestBeginMainFrameNotExpected(
+    scoped_refptr<WidgetSchedulerImpl> widget_scheduler) {
+  CHECK(base::FeatureList::IsEnabled(kUseWidgetSchedulerForIdlePeriodSignals));
+  if (main_thread_only().widget_schedulers.Contains(widget_scheduler)) {
+    widget_scheduler->RequestBeginMainFrameNotExpected(
+        main_thread_only().compositor_will_send_main_frame_not_expected);
+  }
 }
 
 void MainThreadSchedulerImpl::DidStartProvisionalLoad(
@@ -1939,11 +2023,6 @@ void MainThreadSchedulerImpl::ForEachMainThreadIsolate(
   }
 }
 
-void MainThreadSchedulerImpl::SetRendererProcessType(
-    WebRendererProcessType type) {
-  main_thread_only().process_type = type;
-}
-
 Vector<WebInputEventAttribution>
 MainThreadSchedulerImpl::GetPendingUserInputInfo(
     bool include_continuous) const {
@@ -1965,12 +2044,6 @@ void MainThreadSchedulerImpl::PostDelayedIdleTask(
     base::TimeDelta delay,
     Thread::IdleTask task) {
   IdleTaskRunner()->PostDelayedIdleTask(location, delay, std::move(task));
-}
-
-void MainThreadSchedulerImpl::PostNonNestableIdleTask(
-    const base::Location& location,
-    Thread::IdleTask task) {
-  IdleTaskRunner()->PostNonNestableIdleTask(location, std::move(task));
 }
 
 void MainThreadSchedulerImpl::RemoveCancelledIdleTasks() {
@@ -2196,8 +2269,8 @@ void MainThreadSchedulerImpl::RemovePageScheduler(
 void MainThreadSchedulerImpl::OnPageFrozen(
     base::MemoryReductionTaskContext called_from) {
 #if BUILDFLAG(IS_ANDROID)
-  base::android::PreFreezeBackgroundMemoryTrimmer::
-      SetOnStartSelfCompactionCallback(base::BindRepeating(
+  base::android::SelfCompactionManager::SetOnStartSelfCompactionCallback(
+      base::BindRepeating(
           [](scoped_refptr<base::SequencedTaskRunner> task_runner,
              base::WeakPtr<MainThreadSchedulerImpl> s) {
             task_runner->PostTask(
@@ -2258,6 +2331,26 @@ void MainThreadSchedulerImpl::OnTaskStarted(
   main_thread_only().task_priority_for_tracing =
       queue ? std::optional<TaskPriority>(queue->GetQueuePriority())
             : std::nullopt;
+
+  if (scheduling_settings().input_scenario_priority_boost_enabled) {
+    // Check if the input scenario has changed and update the main thread
+    // priority boost accordingly.
+    performance_scenarios::ScenarioPattern idle_pattern{
+        .input = {performance_scenarios::InputScenario::kNoInput},
+    };
+    if (scheduling_settings().input_scenario_priority_boost_includes_loading) {
+      idle_pattern.loading = {
+          performance_scenarios::LoadingScenario::kNoPageLoading};
+    }
+    if (performance_scenarios::CurrentScenariosMatch(
+            performance_scenarios::ScenarioScope::kCurrentProcess,
+            idle_pattern)) {
+      main_thread_only().main_thread_priority_boost.reset();
+    } else if (!main_thread_only().main_thread_priority_boost.has_value()) {
+      main_thread_only().main_thread_priority_boost.emplace(
+          base::ThreadType::kDisplayCritical);
+    }
+  }
 }
 
 void MainThreadSchedulerImpl::OnTaskCompleted(
@@ -2279,6 +2372,11 @@ void MainThreadSchedulerImpl::OnTaskCompleted(
   if (task_timing->has_wall_time() && queue && queue->GetFrameScheduler())
     queue->GetFrameScheduler()->AddTaskTime(task_timing->wall_duration());
   main_thread_only().running_queues.pop();
+
+  // Note: Thread time is already subsampled in sequence manager by a factor of
+  // |kTaskSamplingRateForRecordingCPUTime|. So renderer main can piggy back on
+  // that subsampling to record histograms without fear of oversampling.
+  task_timing->RecordUmaOnCpuMetrics("RendererScheduler.RendererMain");
 
   // The overriding TaskRunnerHandle scope ends here.
   if (scheduling_settings().mbi_override_task_runner_handle)
@@ -2420,30 +2518,14 @@ TaskPriority MainThreadSchedulerImpl::ComputeCompositorPriority() const {
     return TaskPriority::kHighestPriority;
   }
   // Otherwise, this must be a combination of UseCase::kCompositorGesture and
-  // rendering starvation since all other states set the priority to highest.
+  // rendering starvation since all other use cases set the priority to highest.
   CHECK(current_use_case() == UseCase::kCompositorGesture &&
         (main_thread_only().main_frame_prioritization_state ==
              RenderingPrioritizationState::kRenderingStarved ||
          main_thread_only().main_frame_prioritization_state ==
              RenderingPrioritizationState::kRenderingStarvedByRenderBlocking));
-
-  // The default behavior for compositor gestures like compositor-driven
-  // scrolling is to deprioritize compositor TQ tasks (low priority) and not
-  // apply delay-based anti-starvation. This can lead to degraded user
-  // experience due to increased checkerboarding or scrolling blank content.
-  // When `features::kThreadedScrollPreventRenderingStarvation` is enabled, we
-  // use a configurable value to control the delay-based anti-starvation to
-  // mitigate these issues.
-  //
-  // Note: for other use cases, the computed priority is higher, so they are
-  // not prone to rendering starvation in the same way.
-  if (!base::FeatureList::IsEnabled(
-          features::kThreadedScrollPreventRenderingStarvation)) {
-    return *use_case_priority;
-  } else {
-    CHECK_LE(*targeted_main_frame_priority, *use_case_priority);
-    return *targeted_main_frame_priority;
-  }
+  CHECK_LE(*targeted_main_frame_priority, *use_case_priority);
+  return *targeted_main_frame_priority;
 }
 
 void MainThreadSchedulerImpl::UpdateCompositorTaskQueuePriority() {
@@ -2522,20 +2604,6 @@ void MainThreadSchedulerImpl::UpdateRenderingPrioritizationStateOnTaskCompleted(
         task_timing.wall_duration();
   }
 
-  // With `features::kThreadedScrollPreventRenderingStarvation` enabled, no
-  // rendering anti-starvation policy should kick in until the configurable
-  // threshold is reached when in `UseCase::kCompositorGesture`.
-  base::TimeDelta render_blocking_starvation_threshold =
-      base::FeatureList::IsEnabled(
-          features::kThreadedScrollPreventRenderingStarvation) &&
-              current_use_case() == UseCase::kCompositorGesture &&
-              kRenderBlockingStarvationThreshold <
-                  scheduling_settings_
-                      .compositor_gesture_rendering_starvation_threshold
-          ? scheduling_settings_
-                .compositor_gesture_rendering_starvation_threshold
-          : kRenderBlockingStarvationThreshold;
-
   // A main frame task resets the rendering prioritization state. Otherwise if
   // the scheduler is waiting for a frame because of discrete input, the state
   // will only change once a main frame happens. Otherwise, compute the state in
@@ -2558,17 +2626,12 @@ void MainThreadSchedulerImpl::UpdateRenderingPrioritizationStateOnTaskCompleted(
           RenderingPrioritizationState::kWaitingForInputResponse;
     } else if (main_thread_only()
                    .rendering_blocking_duration_since_last_frame >=
-               render_blocking_starvation_threshold) {
+               kRenderBlockingStarvationThreshold) {
       main_thread_only().main_frame_prioritization_state =
           RenderingPrioritizationState::kRenderingStarvedByRenderBlocking;
     } else {
-      base::TimeDelta threshold =
-          current_use_case() == UseCase::kCompositorGesture
-              ? scheduling_settings_
-                    .compositor_gesture_rendering_starvation_threshold
-              : kDefaultRenderingStarvationThreshold;
       if (task_timing.end_time() - main_thread_only().last_frame_time >=
-          threshold) {
+          kDefaultRenderingStarvationThreshold) {
         main_thread_only().main_frame_prioritization_state =
             RenderingPrioritizationState::kRenderingStarved;
       }
@@ -2582,18 +2645,10 @@ MainThreadSchedulerImpl::ComputeCompositorPriorityFromUseCase() const {
     case UseCase::kCompositorGesture:
       if (main_thread_only().blocking_input_expected_soon)
         return TaskPriority::kHighestPriority;
-      // What we really want to do is priorize loading tasks, but that doesn't
-      // seem to be safe. Instead we do that by proxy by deprioritizing
-      // compositor tasks. This should be safe since we've already gone to the
-      // pain of fixing ordering issues with them.
-      //
-      // During periods of main-thread contention, e.g. scrolling while loading
-      // new content, rendering can be indefinitely starved, leading user
-      // experience issues like scrolling blank/stale content and
-      // checkerboarding. We adjust the compositor TQ priority and enable
-      // delay-based rendering anti-starvation when the
-      // `kThreadedScrollPreventRenderingStarvation` experiment is enabled to
-      // mitigate these issues.
+      // Deprioritizing compositor tasks can improve smoothness, but this can
+      // also can increase checkerboarding. This tradeoff is balanced by
+      // increasing priority if rendering is being starved, which is controlled
+      // with `kDefaultRenderingStarvationThreshold`.
       return TaskPriority::kLowPriority;
 
     case UseCase::kSynchronizedGesture:
@@ -2717,6 +2772,38 @@ void MainThreadSchedulerImpl::OnWebSchedulingTaskQueuePriorityChanged(
     CHECK(voter);
     voter->SetVoteToEnable(main_thread_only().current_policy.IsQueueEnabled(
         queue, scheduling_settings()));
+  }
+}
+
+const IdleHelper& MainThreadSchedulerImpl::GetIdleHelperForTesting() const {
+  return idle_helper_;
+}
+
+void MainThreadSchedulerImpl::OnWidgetSchedulerWillShutdown(
+    WidgetSchedulerImpl* scheduler) {
+  if (!base::FeatureList::IsEnabled(kUseWidgetSchedulerForIdlePeriodSignals)) {
+    return;
+  }
+
+  auto iter = main_thread_only().widget_schedulers.find(scheduler);
+  CHECK_NE(iter, main_thread_only().widget_schedulers.end());
+  main_thread_only().widget_schedulers.erase(iter);
+
+  // If the thread is hosting multiple widgets, `widget_scheduler` was
+  // producing frames, and `widget_scheduler` had not received a
+  // `BeginFrameNotExpectedSoon` signal, idle periods won't restart until the
+  // next frame, which could cause idle periods to unexpectedly stop. This can
+  // happen, for example, when showing a date picker (popup window).
+  if (main_thread_only().renderer_hidden || idle_helper_.IsInLongIdlePeriod()) {
+    return;
+  }
+  bool no_widgets_expecting_frame = std::ranges::all_of(
+      main_thread_only().widget_schedulers,
+      [](const scoped_refptr<WidgetSchedulerImpl>& widget_scheduler) {
+        return widget_scheduler->IsBeginFrameNotExpectedSoon();
+      });
+  if (no_widgets_expecting_frame) {
+    idle_helper_.EnableLongIdlePeriod();
   }
 }
 

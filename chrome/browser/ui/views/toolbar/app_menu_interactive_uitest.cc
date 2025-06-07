@@ -7,14 +7,17 @@
 #include "base/test/bind.h"
 #include "build/buildflag.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
+#include "chrome/browser/lifetime/application_lifetime_desktop.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/toolbar/bookmark_sub_menu_model.h"
 #include "chrome/browser/ui/views/toolbar/browser_app_menu_button.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_model_observer.h"
+#include "components/commerce/core/commerce_feature_list.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -76,7 +79,12 @@ class AppMenuDragAndDropInteractiveTest : public InteractiveBrowserTest {
   using DragObserver =
       views::test::PollingViewObserver<bool, views::MenuItemView>;
 
-  AppMenuDragAndDropInteractiveTest() = default;
+  AppMenuDragAndDropInteractiveTest() {
+    // Disabled to hide the comparison tables submenu.
+    scoped_feature_list_.InitAndDisableFeature(
+        commerce::kProductSpecifications);
+  }
+
   ~AppMenuDragAndDropInteractiveTest() override = default;
   AppMenuDragAndDropInteractiveTest(const AppMenuDragAndDropInteractiveTest&) =
       delete;
@@ -169,6 +177,7 @@ class AppMenuDragAndDropInteractiveTest : public InteractiveBrowserTest {
 
  private:
   std::unique_ptr<DragWaiter> drag_waiter_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // TODO(crbug.com/375959961): For X11, the menu is always closed on drag
@@ -181,19 +190,8 @@ class AppMenuDragAndDropInteractiveTest : public InteractiveBrowserTest {
 #define MAYBE_DISABLED(test_name) test_name
 #endif
 
-void SkipIfMac11() {
-#if BUILDFLAG(IS_MAC)
-  if (base::mac::MacOSMajorVersion() == 11) {
-    // TODO(crbug.com/391735476) Deflake on Mac11.
-    GTEST_SKIP() << "Test is flaky on Mac11 (crbug.com/391735476)";
-  }
-#endif
-}
-
 IN_PROC_BROWSER_TEST_F(AppMenuDragAndDropInteractiveTest,
                        MAYBE_DISABLED(BookmarksDragAndDrop)) {
-  SkipIfMac11();
-
   // Add two bookmarks nodes to the bookmarks bar.
   bookmarks::BookmarkModel* const model =
       BookmarkModelFactory::GetForBrowserContext(browser()->profile());
@@ -221,13 +219,11 @@ IN_PROC_BROWSER_TEST_F(AppMenuDragAndDropInteractiveTest,
       NameSubmenuChild(AppMenuModel::kBookmarksMenuItem, kANodeMenuId, 9u),
       CheckViewProperty(kANodeMenuId, &views::MenuItemView::title, u"a"),
       NameSubmenuChild(AppMenuModel::kBookmarksMenuItem, kBNodeMenuId, 8u),
-      CheckViewProperty(kBNodeMenuId, &views::MenuItemView::title, u"b"), );
+      CheckViewProperty(kBNodeMenuId, &views::MenuItemView::title, u"b"));
 }
 
 IN_PROC_BROWSER_TEST_F(AppMenuDragAndDropInteractiveTest,
                        MAYBE_DISABLED(BookmarksDragAndDropToNestedFolder)) {
-  SkipIfMac11();
-
   // Add two bookmarks nodes to the bookmarks bar.
   bookmarks::BookmarkModel* const model =
       BookmarkModelFactory::GetForBrowserContext(browser()->profile());
@@ -256,13 +252,11 @@ IN_PROC_BROWSER_TEST_F(AppMenuDragAndDropInteractiveTest,
       NameSubmenuChild(AppMenuModel::kBookmarksMenuItem, kANodeMenuId, 8u),
       CheckViewProperty(kANodeMenuId, &views::MenuItemView::title, u"a"),
       NameSubmenuChild(kANodeMenuId, kBNodeMenuId, 0u),
-      CheckViewProperty(kBNodeMenuId, &views::MenuItemView::title, u"b"), );
+      CheckViewProperty(kBNodeMenuId, &views::MenuItemView::title, u"b"));
 }
 
 IN_PROC_BROWSER_TEST_F(AppMenuDragAndDropInteractiveTest,
                        MAYBE_DISABLED(BookmarksDragAndDropFromNestedFolder)) {
-  SkipIfMac11();
-
   // Add one bookmark folder to the bookmarks bar, and add a bookmark node to
   // the new folder.
   bookmarks::BookmarkModel* const model =
@@ -294,4 +288,17 @@ IN_PROC_BROWSER_TEST_F(AppMenuDragAndDropInteractiveTest,
       CheckViewProperty(kBNodeMenuId, &views::MenuItemView::title, u"b"),
       NameSubmenuChild(AppMenuModel::kBookmarksMenuItem, kBNodeMenuId, 9u),
       CheckViewProperty(kBNodeMenuId, &views::MenuItemView::title, u"a"));
+}
+
+using AppMenuInteractiveTest = InteractiveBrowserTest;
+
+IN_PROC_BROWSER_TEST_F(AppMenuInteractiveTest, DoNotCrashOnBrowserClose) {
+  RunTestSequence(
+      // Open the App menu.
+      PressButton(kToolbarAppMenuButtonElementId),
+      // Close all browsers, ensure the browser process does not crash.
+      Do([]() {
+        chrome::CloseAllBrowsers();
+        ui_test_utils::WaitForBrowserToClose();
+      }));
 }

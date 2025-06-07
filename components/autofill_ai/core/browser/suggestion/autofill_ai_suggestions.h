@@ -11,6 +11,7 @@
 namespace autofill {
 
 class EntityInstance;
+class FormFieldData;
 class FormStructure;
 struct Suggestion;
 
@@ -18,14 +19,12 @@ struct Suggestion;
 
 namespace autofill_ai {
 
-// Creates the animated suggestion shown while improved predictions are loaded.
-std::vector<autofill::Suggestion> CreateLoadingSuggestions();
-
 // Creates filling suggestions using `autofill::EntityInstance`s.
 std::vector<autofill::Suggestion> CreateFillingSuggestions(
     const autofill::FormStructure& form,
-    autofill::FieldGlobalId field_global_id,
-    base::span<const autofill::EntityInstance> entities);
+    const autofill::FormFieldData& trigger_field,
+    base::span<const autofill::EntityInstance> entities,
+    const std::string& app_locale);
 
 }  // namespace autofill_ai
 

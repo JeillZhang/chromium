@@ -3,10 +3,12 @@
 // found in the LICENSE file.
 
 #include "android_webview/browser/prefetch/aw_prefetch_manager.h"
+
 #include "android_webview/browser/aw_browser_context.h"
 #include "android_webview/browser/aw_browser_context_store.h"
 #include "android_webview/common/aw_features.h"
 #include "base/android/jni_android.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/task_environment.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/test/browser_task_environment.h"
@@ -77,14 +79,14 @@ TEST_F(AwPrefetchManagerTest, MaxPrefetchReachesLimit) {
   }
 
   // Check the number of prefetches after exceeding the limit.
-  EXPECT_EQ(prefetch_manager.GetAllPrefetchesForTesting().size(), 3u);
+  EXPECT_EQ(prefetch_manager.GetAllPrefetchKeysForTesting().size(), 3u);
 
   // Add one more to trigger a removal
   prefetch_manager.StartPrefetchRequest(
       base::android::AttachCurrentThread(), "https://example.com/last",
       /*prefetch_params=*/nullptr, /*callback=*/nullptr,
       /*callback_executor=*/nullptr);
-  EXPECT_EQ(prefetch_manager.GetAllPrefetchesForTesting().size(),
+  EXPECT_EQ(prefetch_manager.GetAllPrefetchKeysForTesting().size(),
             3u);  // Should still be at the limit
 }
 
@@ -109,8 +111,8 @@ TEST_F(AwPrefetchManagerTest, RemoveOldestPrefetchHandle) {
       /*callback_executor=*/nullptr);
 
   // 2. Capture the initial prefetches.
-  std::vector<content::PrefetchHandle*> initial_prefetches =
-      prefetch_manager.GetAllPrefetchesForTesting();
+  std::vector<int32_t> initial_prefetches =
+      prefetch_manager.GetAllPrefetchKeysForTesting();
   EXPECT_EQ(initial_prefetches.size(), 2u);
 
   // 3. Do the third request.
@@ -119,8 +121,8 @@ TEST_F(AwPrefetchManagerTest, RemoveOldestPrefetchHandle) {
       /*prefetch_params=*/nullptr, /*callback=*/nullptr,
       /*callback_executor=*/nullptr);
 
-  std::vector<content::PrefetchHandle*> current_prefetches =
-      prefetch_manager.GetAllPrefetchesForTesting();
+  std::vector<int32_t> current_prefetches =
+      prefetch_manager.GetAllPrefetchKeysForTesting();
   EXPECT_EQ(current_prefetches.size(), 2u);
 
   // Verify that the oldest prefetch is removed.
@@ -134,6 +136,67 @@ TEST_F(AwPrefetchManagerTest, RemoveOldestPrefetchHandle) {
   EXPECT_EQ(it1, initial_prefetches.cend());
 
   EXPECT_EQ(current_prefetches.at(0), initial_prefetches.at(1));
+}
+
+TEST_F(AwPrefetchManagerTest, UpdateMaxPrefetchesIsRespected) {
+  AwPrefetchManager prefetch_manager(browser_context_.get());
+
+  prefetch_manager.SetTtlInSec(base::android::AttachCurrentThread(),
+                               /*ttl_in_sec=*/60 * 10);
+
+  // set MaxPrefetches to a big number, 5.
+  prefetch_manager.SetMaxPrefetches(base::android::AttachCurrentThread(),
+                                    /* max_prefetches=*/5);
+
+  // Make five requests.
+  for (int i = 0; i < 5; ++i) {
+    prefetch_manager.StartPrefetchRequest(
+        base::android::AttachCurrentThread(),
+        "https://example.com/" + base::NumberToString(i),
+        /*prefetch_params=*/nullptr, /*callback=*/nullptr,
+        /*callback_executor=*/nullptr);
+  }
+  EXPECT_EQ(prefetch_manager.GetAllPrefetchKeysForTesting().size(), 5u);
+
+  // Now, let's lower that number with more than 1. Let's say 2.
+  prefetch_manager.SetMaxPrefetches(base::android::AttachCurrentThread(),
+                                    /* max_prefetches=*/2);
+
+  // Adding another request.
+  prefetch_manager.StartPrefetchRequest(
+      base::android::AttachCurrentThread(), "https://example.com/6",
+      /*prefetch_params=*/nullptr, /*callback=*/nullptr,
+      /*callback_executor=*/nullptr);
+
+  // Should be on the latest setting, 2.
+  EXPECT_EQ(prefetch_manager.GetAllPrefetchKeysForTesting().size(), 2u);
+}
+
+TEST_F(AwPrefetchManagerTest, PrefetchHandleKeysAlwaysIncrement) {
+  AwPrefetchManager prefetch_manager(browser_context_.get());
+
+  prefetch_manager.SetTtlInSec(base::android::AttachCurrentThread(),
+                               /*ttl_in_sec=*/60 * 10);
+  prefetch_manager.SetMaxPrefetches(base::android::AttachCurrentThread(),
+                                    /* max_prefetches=*/5);
+
+  // Confirm the initial values.
+  int last_prefetch_key = prefetch_manager.GetLastPrefetchKeyForTesting();
+  EXPECT_EQ(last_prefetch_key, -1);
+
+  // Add more than the max allowed prefetches (triggering evictions) while
+  // ensuring that the prefetch handle keys always increment confirming that the
+  // prefetches are both sorted in the order they were added and that their keys
+  // are never reused.
+  for (int i = 0; i < 10; ++i) {
+    int prefetch_key = prefetch_manager.StartPrefetchRequest(
+        base::android::AttachCurrentThread(),
+        "https://example.com/" + base::NumberToString(i),
+        /*prefetch_params=*/nullptr, /*callback=*/nullptr,
+        /*callback_executor=*/nullptr);
+    EXPECT_EQ(prefetch_key, last_prefetch_key + 1);
+    last_prefetch_key = prefetch_key;
+  }
 }
 
 }  // namespace android_webview

@@ -42,12 +42,12 @@
                                    browser:(Browser*)browser
                                promoReason:(NonModalDefaultBrowserPromoReason)
                                                promoReason {
-  self = [super initWithInfoBarDelegate:nil
-                           badgeSupport:YES
-                                   type:InfobarType::kInfobarTypeConfirm];
+  self = [super initWithBaseViewController:viewController
+                                   browser:browser
+                                      type:InfobarType::kInfobarTypeConfirm];
   if (self) {
-    self.baseViewController = viewController;
-    self.browser = browser;
+    CHECK(viewController, base::NotFatalUntil::M145);
+    CHECK(browser, base::NotFatalUntil::M145);
     self.shouldUseDefaultDismissal = NO;
     _promoReason = promoReason;
   }
@@ -134,10 +134,8 @@
 
   if (IsNonModalPromoMigrationEnabled()) {
     feature_engagement::Tracker* tracker =
-        feature_engagement::TrackerFactory::GetForProfile(
-            self.browser->GetProfile());
-    tracker->Dismissed(
-        feature_engagement::kIPHiOSPromoNonModalUrlPasteDefaultBrowserFeature);
+        feature_engagement::TrackerFactory::GetForProfile(self.profile);
+    tracker->Dismissed(GetFeatureForPromoReason(_promoReason));
   }
 
   id<DefaultBrowserPromoNonModalCommands> handler =
@@ -155,9 +153,8 @@
 
 // Records that a default browser promo has been shown.
 - (void)recordDefaultBrowserPromoShown {
-  ProfileIOS* profile = self.browser->GetProfile();
   LogToFETDefaultBrowserPromoShown(
-      feature_engagement::TrackerFactory::GetForProfile(profile));
+      feature_engagement::TrackerFactory::GetForProfile(self.profile));
 }
 
 // Returns the default subtitle for the browser's non-modal window based on the
@@ -172,7 +169,7 @@
     case NonModalDefaultBrowserPromoReason::PromoReasonOmniboxPaste:
       return l10n_util::GetNSString(
           IDS_IOS_DEFAULT_BROWSER_NON_MODAL_OMNIBOX_NAVIGATION_DESCRIPTION);
-    case NonModalDefaultBrowserPromoReason::PromoReasonExternalLink:
+    case NonModalDefaultBrowserPromoReason::PromoReasonAppSwitcher:
       return l10n_util::GetNSString(
           IDS_IOS_DEFAULT_BROWSER_NON_MODAL_1P_APP_DESCRIPTION);
     case NonModalDefaultBrowserPromoReason::PromoReasonShare:
@@ -195,7 +192,7 @@
     case NonModalDefaultBrowserPromoReason::PromoReasonOmniboxPaste:
       return l10n_util::GetNSString(
           IDS_IOS_DEFAULT_BROWSER_NON_MODAL_OMNIBOX_NAVIGATION_TITLE);
-    case NonModalDefaultBrowserPromoReason::PromoReasonExternalLink:
+    case NonModalDefaultBrowserPromoReason::PromoReasonAppSwitcher:
       return l10n_util::GetNSString(
           IDS_IOS_DEFAULT_BROWSER_NON_MODAL_1P_APP_TITLE);
     case NonModalDefaultBrowserPromoReason::PromoReasonShare:

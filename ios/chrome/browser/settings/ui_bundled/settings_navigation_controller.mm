@@ -59,7 +59,6 @@
 #import "ios/chrome/browser/shared/ui/table_view/table_view_utils.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/sync/model/enterprise_utils.h"
-#import "ios/chrome/browser/tabs/model/inactive_tabs/features.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/reauthentication/reauthentication_module.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
@@ -305,14 +304,13 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 + (instancetype)
     savePasswordsControllerForBrowser:(Browser*)browser
                              delegate:(id<SettingsNavigationControllerDelegate>)
-                                          delegate
-                     showCancelButton:(BOOL)showCancelButton {
+                                          delegate {
   SettingsNavigationController* navigationController =
       [[SettingsNavigationController alloc]
           initWithRootViewController:nil
                              browser:browser
                             delegate:delegate];
-  [navigationController showSavedPasswordsAndShowCancelButton:showCancelButton];
+  [navigationController showSavedPasswords];
 
   return navigationController;
 }
@@ -544,7 +542,6 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
     inactiveTabsControllerForBrowser:(Browser*)browser
                             delegate:(id<SettingsNavigationControllerDelegate>)
                                          delegate {
-  CHECK(IsInactiveTabsAvailable());
   SettingsNavigationController* navigationController =
       [[SettingsNavigationController alloc]
           initWithRootViewController:nil
@@ -581,6 +578,9 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 
 + (instancetype)
     notificationsSettingsControllerForBrowser:(Browser*)browser
+                                       client:(std::optional<
+                                                  PushNotificationClientId>)
+                                                  clientID
                                      delegate:
                                          (id<SettingsNavigationControllerDelegate>)
                                              delegate {
@@ -589,7 +589,7 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
           initWithRootViewController:nil
                              browser:browser
                             delegate:delegate];
-  [navigationController showNotificationsSettings];
+  [navigationController showNotificationsSettingsAndHighlightClient:clientID];
   return navigationController;
 }
 
@@ -796,6 +796,7 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
     return;
   }
   DCHECK(!self.privacySafeBrowsingCoordinator);
+  [self.privacySafeBrowsingCoordinator stop];
   self.privacySafeBrowsingCoordinator = [[PrivacySafeBrowsingCoordinator alloc]
       initWithBaseNavigationController:self
                                browser:self.browser];
@@ -821,18 +822,13 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
   self.manageSyncSettingsCoordinator = nil;
 }
 
-// Shows the saved passwords. If `showCancelButton` is true, adds a cancel
-// button as the left navigation item.
-- (void)showSavedPasswordsAndShowCancelButton:(BOOL)showCancelButton {
+// Shows the saved passwords.
+- (void)showSavedPasswords {
   self.savedPasswordsCoordinator = [[PasswordsCoordinator alloc]
       initWithBaseNavigationController:self
                                browser:self.browser];
   self.savedPasswordsCoordinator.delegate = self;
   [self.savedPasswordsCoordinator start];
-  if (showCancelButton) {
-    [self.savedPasswordsCoordinator.viewController navigationItem]
-        .leftBarButtonItem = [self cancelButton];
-  }
 }
 
 - (void)showPasswordManagerSearchPage {
@@ -1142,9 +1138,8 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 // TODO(crbug.com/41352590) : Do not pass `baseViewController` through
 // dispatcher.
 - (void)showSavedPasswordsSettingsFromViewController:
-            (UIViewController*)baseViewController
-                                    showCancelButton:(BOOL)showCancelButton {
-  [self showSavedPasswordsAndShowCancelButton:showCancelButton];
+    (UIViewController*)baseViewController {
+  [self showSavedPasswords];
 }
 
 - (void)showAddressDetails:(const autofill::AutofillProfile)address
@@ -1261,6 +1256,14 @@ NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
                                browser:_browser];
   self.notificationsCoordinator.delegate = self;
   [self.notificationsCoordinator start];
+}
+
+- (void)showNotificationsSettingsAndHighlightClient:
+    (std::optional<PushNotificationClientId>)clientID {
+  [self showNotificationsSettings];
+  if (clientID.has_value()) {
+    [self.notificationsCoordinator highlightClient:clientID.value()];
+  }
 }
 
 - (void)showPriceNotificationsSettings {

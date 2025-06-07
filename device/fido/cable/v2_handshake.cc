@@ -15,10 +15,10 @@
 #include <array>
 #include <bit>
 #include <type_traits>
+#include <variant>
 
 #include "base/base64url.h"
 #include "base/feature_list.h"
-#include "base/functional/overloaded.h"
 #include "base/numerics/byte_conversions.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
@@ -33,6 +33,7 @@
 #include "device/fido/features.h"
 #include "device/fido/fido_constants.h"
 #include "device/fido/fido_parsing_utils.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/boringssl/src/include/openssl/aes.h"
 #include "third_party/boringssl/src/include/openssl/bytestring.h"
 #include "third_party/boringssl/src/include/openssl/digest.h"
@@ -63,7 +64,7 @@ bool ConstructNonce(uint32_t counter, base::span<uint8_t, 12> out_nonce) {
 
   auto [zeros, counter_span] = out_nonce.split_at<8>();
   std::ranges::fill(zeros, uint8_t{0});
-  counter_span.copy_from(base::numerics::U32ToBigEndian(counter));
+  counter_span.copy_from(base::U32ToBigEndian(counter));
   return true;
 }
 
@@ -104,7 +105,8 @@ namespace tunnelserver {
 
 // kAssignedDomains is the list of defined tunnel server domains. These map
 // to values 0..256.
-static const char* kAssignedDomains[] = {"cable.ua5v.com", "cable.auth.com"};
+static auto kAssignedDomains =
+    std::to_array<const char*>({"cable.ua5v.com", "cable.auth.com"});
 
 std::optional<KnownDomainID> ToKnownDomainID(uint16_t domain) {
   if (domain >= 256 || domain < std::size(kAssignedDomains)) {
@@ -367,7 +369,7 @@ std::optional<Components> Parse(const std::string& qr_url) {
   }
   const cbor::Value::MapValue& qr_contents_map(qr_contents->GetMap());
 
-  base::span<const uint8_t> values[2];
+  std::array<base::span<const uint8_t>, 2> values;
   for (size_t i = 0; i < std::size(values); i++) {
     const cbor::Value::MapValue::const_iterator it =
         qr_contents_map.find(cbor::Value(static_cast<int>(i)));
@@ -581,27 +583,27 @@ void Derive(uint8_t* out,
 }  // namespace internal
 
 const char* RequestTypeToString(RequestType request_type) {
-  return absl::visit(
-      base::Overloaded{[](const FidoRequestType& request_type) {
-                         switch (request_type) {
-                           case FidoRequestType::kMakeCredential:
-                             return "mc";
-                           case FidoRequestType::kGetAssertion:
-                             return "ga";
-                             // If adding a value here, also update
-                             // `RequestTypeFromString`.
-                         }
-                       },
-                       [](const CredentialRequestType& request_type) {
-                         switch (request_type) {
-                           case CredentialRequestType::kPresentation:
-                             return "dcp";
-                           case CredentialRequestType::kIssuance:
-                             return "dci";
-                             // If adding a value here, also update
-                             // `RequestTypeFromString`.
-                         }
-                       }},
+  return std::visit(
+      absl::Overload{[](const FidoRequestType& request_type) {
+                       switch (request_type) {
+                         case FidoRequestType::kMakeCredential:
+                           return "mc";
+                         case FidoRequestType::kGetAssertion:
+                           return "ga";
+                           // If adding a value here, also update
+                           // `RequestTypeFromString`.
+                       }
+                     },
+                     [](const CredentialRequestType& request_type) {
+                       switch (request_type) {
+                         case CredentialRequestType::kPresentation:
+                           return "dcp";
+                         case CredentialRequestType::kIssuance:
+                           return "dci";
+                           // If adding a value here, also update
+                           // `RequestTypeFromString`.
+                       }
+                     }},
       request_type);
 }
 
@@ -680,15 +682,15 @@ std::optional<std::vector<uint8_t>> EncodePaddedCBORMap(
 }
 
 bool ShouldOfferLinking(RequestType request_type) {
-  return absl::visit(
-      base::Overloaded{[](const FidoRequestType&) {
-                         return base::FeatureList::IsEnabled(
-                             device::kWebAuthnHybridLinking);
-                       },
-                       [](const CredentialRequestType&) {
-                         return base::FeatureList::IsEnabled(
-                             device::kDigitalCredentialsHybridLinking);
-                       }},
+  return std::visit(
+      absl::Overload{[](const FidoRequestType&) {
+                       return base::FeatureList::IsEnabled(
+                           device::kWebAuthnHybridLinking);
+                     },
+                     [](const CredentialRequestType&) {
+                       return base::FeatureList::IsEnabled(
+                           device::kDigitalCredentialsHybridLinking);
+                     }},
       request_type);
 }
 

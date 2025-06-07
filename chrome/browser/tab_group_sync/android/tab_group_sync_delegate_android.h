@@ -34,7 +34,7 @@ class TabGroupSyncDelegateAndroid : public TabGroupSyncDelegate {
   ~TabGroupSyncDelegateAndroid() override;
 
   // TabGroupSyncDelegate implementation.
-  void HandleOpenTabGroupRequest(
+  std::optional<LocalTabGroupID> HandleOpenTabGroupRequest(
       const base::Uuid& sync_tab_group_id,
       std::unique_ptr<TabGroupActionContext> context) override;
   void CreateLocalTabGroup(const SavedTabGroup& tab_group) override;
@@ -45,6 +45,7 @@ class TabGroupSyncDelegateAndroid : public TabGroupSyncDelegate {
   std::vector<LocalTabGroupID> GetLocalTabGroupIds() override;
   std::vector<LocalTabID> GetLocalTabIdsForTabGroup(
       const LocalTabGroupID& local_tab_group_id) override;
+  std::set<LocalTabID> GetSelectedTabs() override;
   std::u16string GetTabTitle(const LocalTabID& local_tab_id) override;
   std::unique_ptr<SavedTabGroup> CreateSavedTabGroupFromLocalGroup(
       const LocalTabGroupID& local_tab_group_id) override;

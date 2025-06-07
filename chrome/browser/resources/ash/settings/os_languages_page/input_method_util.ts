@@ -166,8 +166,8 @@ export const OPTION_DEFAULT = {
   [OptionType.JAPANESE_SPACE_INPUT_STYLE]: JapaneseSpaceInputStyle.INPUT_MODE,
   [OptionType.JAPANESE_SECTION_SHORTCUT]:
       JapaneseSectionShortcut.DIGITS_123456789,
-  [OptionType.JAPANESE_KEYMAP_STYLE]: JapaneseKeymapStyle.CUSTOM,
-  [OptionType.JAPANESE_DISABLE_PERSONALIZED_SUGGESTIONS]: true,
+  [OptionType.JAPANESE_KEYMAP_STYLE]: JapaneseKeymapStyle.CHROME_OS,
+  [OptionType.JAPANESE_DISABLE_PERSONALIZED_SUGGESTIONS]: false,
   // LINT.ThenChange(/chrome/browser/ash/input_method/japanese/japanese_settings.cc:JpPrefDefaults)
 
   // Options for Korean input method.
@@ -535,7 +535,7 @@ export function generateOptions(
             // `options.length`, and `options` is immediately pushed to, so the
             // values of `pushedOptions` must always be valid indices into
             // `options`.
-            options[optionsIndex]!.optionNames.push(...optionNames);
+            options[optionsIndex].optionNames.push(...optionNames);
           }
         }
       }
@@ -945,10 +945,6 @@ export function getOptionMenuItems(option: OptionType):
     case OptionType.JAPANESE_KEYMAP_STYLE:
       return [
         {
-          value: JapaneseKeymapStyle.CUSTOM,
-          name: 'inputMethodOptionsJapaneseKeymapStyleCustom',
-        },
-        {
           value: JapaneseKeymapStyle.ATOK,
           name: 'inputMethodOptionsJapaneseKeymapStyleAtok',
         },
@@ -959,10 +955,6 @@ export function getOptionMenuItems(option: OptionType):
         {
           value: JapaneseKeymapStyle.KOTOERI,
           name: 'inputMethodOptionsJapaneseKeymapStyleKotoeri',
-        },
-        {
-          value: JapaneseKeymapStyle.MOBILE,
-          name: 'inputMethodOptionsJapaneseKeymapStyleMobile',
         },
         {
           value: JapaneseKeymapStyle.CHROME_OS,

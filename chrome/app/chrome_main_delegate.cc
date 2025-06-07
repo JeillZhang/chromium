@@ -12,6 +12,7 @@
 #include <stddef.h>
 
 #include <string>
+#include <variant>
 
 #include "base/base_paths.h"
 #include "base/check.h"
@@ -100,7 +101,6 @@
 #include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "services/tracing/public/cpp/stack_sampling/tracing_sampler_profiler.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -165,7 +165,6 @@
 #include "chromeos/ash/experiences/arc/arc_util.h"
 #include "chromeos/dbus/constants/dbus_paths.h"
 #include "content/public/common/content_features.h"
-#include "ui/lottie/resource.h"  // nogncheck
 #endif
 
 #if BUILDFLAG(IS_ANDROID)
@@ -204,7 +203,7 @@
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/browser/extensions/startup_helper.h"
+#include "chrome/browser/extensions/startup_helper.h"  // nogncheck
 #include "extensions/common/constants.h"
 #endif
 
@@ -576,11 +575,13 @@ void InitializeUserDataDir(base::CommandLine* command_line) {
   // DISPLAYs, so the profile directory can be specified in the environment to
   // support the virtual desktop use-case.
   if (user_data_dir.empty()) {
-    std::string user_data_dir_string;
     std::unique_ptr<base::Environment> environment(base::Environment::Create());
-    if (environment->GetVar("CHROME_USER_DATA_DIR", &user_data_dir_string) &&
-        base::IsStringUTF8(user_data_dir_string)) {
-      user_data_dir = base::FilePath::FromUTF8Unsafe(user_data_dir_string);
+    std::optional<std::string> user_data_dir_string =
+        environment->GetVar("CHROME_USER_DATA_DIR");
+    if (user_data_dir_string.has_value() &&
+        base::IsStringUTF8(user_data_dir_string.value())) {
+      user_data_dir =
+          base::FilePath::FromUTF8Unsafe(user_data_dir_string.value());
     }
   }
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -745,9 +746,9 @@ std::optional<int> ChromeMainDelegate::PostEarlyInitialization(
     InvokedIn invoked_in) {
   DUMP_WILL_BE_CHECK(base::ThreadPoolInstance::Get());
   const auto* invoked_in_browser =
-      absl::get_if<InvokedInBrowserProcess>(&invoked_in);
+      std::get_if<InvokedInBrowserProcess>(&invoked_in);
   if (!invoked_in_browser) {
-    CommonEarlyInitialization(invoked_in);
+    CommonEarlyInitialization();
     return std::nullopt;
   }
 
@@ -847,7 +848,7 @@ std::optional<int> ChromeMainDelegate::PostEarlyInitialization(
       ->ChromeProcessSingleton::InitializeFeatures();
 #endif
 
-  CommonEarlyInitialization(invoked_in);
+  CommonEarlyInitialization();
 
   // Initializes the resource bundle and determines the locale.
   std::string actual_locale = LoadLocalState(
@@ -866,15 +867,13 @@ std::optional<int> ChromeMainDelegate::PostEarlyInitialization(
       new net::NetworkChangeNotifierFactoryAndroid());
 #endif
 
-  if (base::FeatureList::IsEnabled(
-          features::kWriteBasicSystemProfileToPersistentHistogramsFile)) {
-    bool record = true;
+  bool record = true;
 #if BUILDFLAG(IS_ANDROID)
-    record =
-        base::FeatureList::IsEnabled(chrome::android::kUmaBackgroundSessions);
+  record =
+      base::FeatureList::IsEnabled(chrome::android::kUmaBackgroundSessions);
 #endif
-    if (record)
-      chrome_content_browser_client_->startup_data()->RecordCoreSystemProfile();
+  if (record) {
+    chrome_content_browser_client_->startup_data()->RecordCoreSystemProfile();
   }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -895,7 +894,7 @@ std::optional<int> ChromeMainDelegate::PostEarlyInitialization(
 bool ChromeMainDelegate::ShouldCreateFeatureList(InvokedIn invoked_in) {
   // The //content layer is always responsible for creating the FeatureList in
   // child processes.
-  if (absl::holds_alternative<InvokedInChildProcess>(invoked_in)) {
+  if (std::holds_alternative<InvokedInChildProcess>(invoked_in)) {
     return true;
   }
 
@@ -930,7 +929,7 @@ void ChromeMainDelegate::CreateThreadPool(std::string_view name) {
 #endif
 }
 
-void ChromeMainDelegate::CommonEarlyInitialization(InvokedIn invoked_in) {
+void ChromeMainDelegate::CommonEarlyInitialization() {
   const base::CommandLine* const command_line =
       base::CommandLine::ForCurrentProcess();
   std::string process_type =
@@ -1388,10 +1387,6 @@ void ChromeMainDelegate::PreSandboxStartup() {
       // See comment at ReadAppLocale() for why we do this.
       locale = ash::startup_settings_cache::ReadAppLocale();
     }
-
-    ui::ResourceBundle::SetLottieParsingFunctions(
-        &lottie::ParseLottieAsStillImage,
-        &lottie::ParseLottieAsThemedStillImage);
 #endif
 #if BUILDFLAG(IS_ANDROID)
     // The renderer sandbox prevents us from accessing our .pak files directly.
@@ -1524,7 +1519,7 @@ void ChromeMainDelegate::SandboxInitialized(const std::string& process_type) {
 #endif
 }
 
-absl::variant<int, content::MainFunctionParams> ChromeMainDelegate::RunProcess(
+std::variant<int, content::MainFunctionParams> ChromeMainDelegate::RunProcess(
     const std::string& process_type,
     content::MainFunctionParams main_function_params) {
 #if BUILDFLAG(IS_ANDROID)

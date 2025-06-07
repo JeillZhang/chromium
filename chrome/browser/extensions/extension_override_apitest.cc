@@ -10,6 +10,7 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_web_ui.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/chrome_manifest_url_handlers.h"
@@ -28,30 +29,14 @@
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/extensions/extension_platform_apitest.h"
-#else
-#include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/test/base/ui_test_utils.h"
-#endif
-
 using content::WebContents;
 
 namespace extensions {
 
-#if BUILDFLAG(IS_ANDROID)
-using ExtensionApiTestBase = ExtensionPlatformApiTest;
-#else
-using ExtensionApiTestBase = ExtensionApiTest;
-#endif
-
-class ExtensionOverrideTest : public ExtensionApiTestBase {
+class ExtensionOverrideTest : public ExtensionApiTest {
  protected:
   void SetUpOnMainThread() override {
-    ExtensionApiTestBase::SetUpOnMainThread();
+    ExtensionApiTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(embedded_test_server()->Start());
   }
@@ -109,19 +94,14 @@ IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest, OverrideNewTab) {
     // Navigate to the new tab page.  The overridden new tab page
     // will call chrome.test.sendMessage('controlled by first').
     ExtensionTestMessageListener listener;
-    ASSERT_TRUE(content::NavigateToURL(GetActiveWebContents(),
-                                       GURL("chrome://newtab/")));
+    ASSERT_TRUE(NavigateToURL(GURL("chrome://newtab/")));
     EXPECT_TRUE(ExtensionControlsPage(GetActiveWebContents(), extension->id()));
     EXPECT_TRUE(listener.WaitUntilSatisfied());
     EXPECT_EQ("controlled by first", listener.message());
   }
 }
 
-#if !BUILDFLAG(IS_ANDROID)
 // Check having multiple extensions with the same override.
-// TODO(crbug.com/391920604,crbug.com/391920206): Port to desktop Android when
-// our test framework supports reloading/unloading extensions. Right now this
-// requires ExtensionService, which is unsupported on Android.
 IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest, OverrideNewTabMultiple) {
   base::ScopedAllowBlockingForTesting allow_blocking;
 
@@ -150,11 +130,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest, OverrideNewTabMultiple) {
     // Navigate to the new tab page. Last extension installed wins, so
     // the new tab page should be controlled by the second extension.
     ExtensionTestMessageListener listener;
-    ASSERT_TRUE(
-        ui_test_utils::NavigateToURL(browser(), GURL("chrome://newtab/")));
-    EXPECT_TRUE(ExtensionControlsPage(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        extension2_id));
+    ASSERT_TRUE(NavigateToURL(GURL("chrome://newtab/")));
+    EXPECT_TRUE(ExtensionControlsPage(GetActiveWebContents(), extension2_id));
     EXPECT_TRUE(listener.WaitUntilSatisfied());
     EXPECT_EQ("controlled by second", listener.message());
   }
@@ -166,11 +143,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest, OverrideNewTabMultiple) {
   {
     // The page should still be controlled by the second extension.
     ExtensionTestMessageListener listener;
-    ASSERT_TRUE(
-        ui_test_utils::NavigateToURL(browser(), GURL("chrome://newtab/")));
-    EXPECT_TRUE(ExtensionControlsPage(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        extension2_id));
+    ASSERT_TRUE(NavigateToURL(GURL("chrome://newtab/")));
+    EXPECT_TRUE(ExtensionControlsPage(GetActiveWebContents(), extension2_id));
     EXPECT_TRUE(listener.WaitUntilSatisfied());
     EXPECT_EQ("controlled by second", listener.message());
   }
@@ -195,10 +169,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest, OverrideNewTabMultiple) {
   {
     // The page should still be controlled by the second extension.
     ExtensionTestMessageListener listener;
-    ASSERT_TRUE(
-        ui_test_utils::NavigateToURL(browser(), GURL("chrome://newtab/")));
-    EXPECT_TRUE(ExtensionControlsPage(
-        browser()->tab_strip_model()->GetActiveWebContents(), extension2_id));
+    ASSERT_TRUE(NavigateToURL(GURL("chrome://newtab/")));
+    EXPECT_TRUE(ExtensionControlsPage(GetActiveWebContents(), extension2_id));
     EXPECT_TRUE(listener.WaitUntilSatisfied());
     EXPECT_EQ("controlled by second", listener.message());
   }
@@ -209,11 +181,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest, OverrideNewTabMultiple) {
 
   {
     ExtensionTestMessageListener listener;
-    ASSERT_TRUE(
-        ui_test_utils::NavigateToURL(browser(), GURL("chrome://newtab/")));
-    EXPECT_TRUE(ExtensionControlsPage(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        extension1_id));
+    ASSERT_TRUE(NavigateToURL(GURL("chrome://newtab/")));
+    EXPECT_TRUE(ExtensionControlsPage(GetActiveWebContents(), extension1_id));
     EXPECT_TRUE(listener.WaitUntilSatisfied());
     EXPECT_EQ("controlled by first upgrade", listener.message());
   }
@@ -221,9 +190,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest, OverrideNewTabMultiple) {
 
 // Test that unloading an extension overriding the page reloads the page with
 // the proper url.
-// TODO(crbug.com/391920604,crbug.com/391920206): Port to desktop Android when
-// our test framework supports reloading/unloading extensions. Right now this
-// requires ExtensionService, which is unsupported on Android.
 IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest,
                        OverridingExtensionUnloadedWithPageOpen) {
   // Prefer IDs because loading/unloading invalidates the extension ptrs.
@@ -235,11 +201,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest,
     // Navigate to the new tab page. Last extension installed wins, so
     // the new tab page should be controlled by the second extension.
     ExtensionTestMessageListener listener;
-    ASSERT_TRUE(
-        ui_test_utils::NavigateToURL(browser(), GURL("chrome://newtab/")));
-    EXPECT_TRUE(ExtensionControlsPage(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        extension2_id));
+    ASSERT_TRUE(NavigateToURL(GURL("chrome://newtab/")));
+    EXPECT_TRUE(ExtensionControlsPage(GetActiveWebContents(), extension2_id));
     EXPECT_TRUE(listener.WaitUntilSatisfied());
     EXPECT_EQ("controlled by second", listener.message());
   }
@@ -251,18 +214,14 @@ IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest,
     UnloadExtension(extension2_id);
     EXPECT_TRUE(listener.WaitUntilSatisfied());
     EXPECT_EQ("controlled by first", listener.message());
-    EXPECT_TRUE(ExtensionControlsPage(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        extension1_id));
+    EXPECT_TRUE(ExtensionControlsPage(GetActiveWebContents(), extension1_id));
   }
 
   UnloadExtension(extension1_id);
-  content::WebContents* active_tab =
-      browser()->tab_strip_model()->GetActiveWebContents();
+  content::WebContents* active_tab = GetActiveWebContents();
   EXPECT_TRUE(content::WaitForLoadStop(active_tab));
   EXPECT_FALSE(ExtensionControlsPage(active_tab, extension1_id));
 }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
 IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest, OverrideNewTabIncognito) {
   LoadExtension(data_dir().AppendASCII("newtab"));
@@ -296,9 +255,8 @@ IN_PROC_BROWSER_TEST_F(
   // Navigate to the new tab page.  The overridden new tab page
   // will call chrome.test.sendMessage('controlled by first').
   ExtensionTestMessageListener listener("controlled by first");
+  ASSERT_TRUE(NavigateToURL(GURL(chrome::kChromeUINewTabURL)));
   WebContents* contents = GetActiveWebContents();
-  ASSERT_TRUE(
-      content::NavigateToURL(contents, GURL(chrome::kChromeUINewTabURL)));
   EXPECT_TRUE(ExtensionControlsPage(contents, extension->id()));
   EXPECT_TRUE(listener.WaitUntilSatisfied());
 
@@ -333,8 +291,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionOverrideTest, MAYBE_OverrideHistory) {
     ResultCatcher catcher;
     // Navigate to the history page.  The overridden history page
     // will call chrome.test.notifyPass() .
-    ASSERT_TRUE(content::NavigateToURL(GetActiveWebContents(),
-                                       GURL("chrome://history/")));
+    ASSERT_TRUE(NavigateToURL(GURL("chrome://history/")));
     ASSERT_TRUE(catcher.GetNextResult());
   }
 }

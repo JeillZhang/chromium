@@ -4,9 +4,11 @@
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
+#include "chrome/browser/extensions/extension_apitest.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -18,30 +20,18 @@
 #include "net/dns/mock_host_resolver.h"
 #include "third_party/blink/public/common/features.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/extensions/extension_platform_apitest.h"
-#else
-#include "chrome/browser/extensions/extension_apitest.h"
-#endif
-
 namespace extensions {
 
 enum class ManifestVersion { TWO, THREE };
 
-#if BUILDFLAG(IS_ANDROID)
-using ExtensionApiTestBase = ExtensionPlatformApiTest;
-#else
-using ExtensionApiTestBase = ExtensionApiTest;
-#endif
-
 class SandboxedPagesTest
-    : public ExtensionApiTestBase,
+    : public ExtensionApiTest,
       public ::testing::WithParamInterface<ManifestVersion> {
  public:
   SandboxedPagesTest() = default;
 
   void SetUpOnMainThread() override {
-    ExtensionApiTestBase::SetUpOnMainThread();
+    ExtensionApiTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
   }
 
@@ -90,7 +80,7 @@ class SandboxedPagesTest
 // in the extension's manifest. This class is parameterized on
 // kIsolateSandboxedIframes so that it tests both in-process and
 // process-isolated sandboxed frames.
-class SandboxAPIMetricsTest : public ExtensionApiTestBase,
+class SandboxAPIMetricsTest : public ExtensionApiTest,
                               public ::testing::WithParamInterface<bool> {
  public:
   SandboxAPIMetricsTest() {
@@ -104,7 +94,7 @@ class SandboxAPIMetricsTest : public ExtensionApiTestBase,
   }
 
   void SetUpOnMainThread() override {
-    ExtensionApiTestBase::SetUpOnMainThread();
+    ExtensionApiTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
   }
 
@@ -229,7 +219,7 @@ IN_PROC_BROWSER_TEST_F(SandboxedPagesTest, ManifestV3AllowsWebContent) {
   content::DOMMessageQueue message_queue;
   content::WebContents* web_contents = GetActiveWebContents();
   ASSERT_TRUE(content::NavigateToURL(
-      web_contents, extension->GetResourceURL("sandboxed.html")));
+      web_contents, extension->ResolveExtensionURL("sandboxed.html")));
   content::RenderFrameHost* frame_host = web_contents->GetPrimaryMainFrame();
   ASSERT_TRUE(frame_host);
 
@@ -299,8 +289,8 @@ IN_PROC_BROWSER_TEST_P(SandboxAPIMetricsTest,
   // successfully.
   content::DOMMessageQueue message_queue;
   content::WebContents* web_contents = GetActiveWebContents();
-  ASSERT_TRUE(content::NavigateToURL(web_contents,
-                                     extension->GetResourceURL("main.html")));
+  ASSERT_TRUE(content::NavigateToURL(
+      web_contents, extension->ResolveExtensionURL("main.html")));
   content::RenderFrameHost* frame_host = web_contents->GetPrimaryMainFrame();
   ASSERT_TRUE(frame_host);
 
@@ -374,8 +364,8 @@ IN_PROC_BROWSER_TEST_P(SandboxAPIMetricsTest,
   // successfully.
   content::DOMMessageQueue message_queue;
   content::WebContents* web_contents = GetActiveWebContents();
-  ASSERT_TRUE(content::NavigateToURL(web_contents,
-                                     extension->GetResourceURL("main.html")));
+  ASSERT_TRUE(content::NavigateToURL(
+      web_contents, extension->ResolveExtensionURL("main.html")));
   content::RenderFrameHost* frame_host = web_contents->GetPrimaryMainFrame();
   ASSERT_TRUE(frame_host);
 
@@ -445,15 +435,10 @@ IN_PROC_BROWSER_TEST_P(SandboxedPagesTest, WebAccessibleResourcesTest) {
   auto test_frame_with_fetch = [&](const char* frame_url, const char* fetch_url,
                                    bool is_web_accessible_resource, int count,
                                    std::string expected_frame_origin) {
-    // Prepare histogram.
-    base::HistogramTester histograms;
-    const char* kHistogramName =
-        "Extensions.SandboxedPageLoad.IsWebAccessibleResource";
-
     // Fetch and test resource.
     content::WebContents* web_contents = GetActiveWebContents();
-    ASSERT_TRUE(content::NavigateToURL(web_contents,
-                                       extension->GetResourceURL(frame_url)));
+    ASSERT_TRUE(content::NavigateToURL(
+        web_contents, extension->ResolveExtensionURL(frame_url)));
     constexpr char kFetchScriptTemplate[] =
         R"(
         fetch($1).then(result => {
@@ -461,13 +446,11 @@ IN_PROC_BROWSER_TEST_P(SandboxedPagesTest, WebAccessibleResourcesTest) {
         }).catch(err => {
           return String(err);
         });)";
-    EXPECT_EQ(content::EvalJs(
-                  web_contents,
-                  content::JsReplace(kFetchScriptTemplate,
-                                     extension->GetResourceURL(fetch_url))),
+    EXPECT_EQ(content::EvalJs(web_contents,
+                              content::JsReplace(
+                                  kFetchScriptTemplate,
+                                  extension->ResolveExtensionURL(fetch_url))),
               fetch_url);
-    histograms.ExpectBucketCount(kHistogramName, is_web_accessible_resource,
-                                 count);
     EXPECT_EQ(expected_frame_origin, web_contents->GetPrimaryMainFrame()
                                          ->GetLastCommittedOrigin()
                                          .Serialize());

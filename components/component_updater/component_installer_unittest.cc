@@ -49,16 +49,16 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using Configurator = update_client::Configurator;
-using CrxUpdateItem = update_client::CrxUpdateItem;
-using TestConfigurator = update_client::TestConfigurator;
-using UpdateClient = update_client::UpdateClient;
+namespace component_updater {
+namespace {
+
+using Configurator = ::update_client::Configurator;
+using CrxUpdateItem = ::update_client::CrxUpdateItem;
+using TestConfigurator = ::update_client::TestConfigurator;
+using UpdateClient = ::update_client::UpdateClient;
 
 using ::testing::_;
 using ::testing::Invoke;
-
-namespace component_updater {
-namespace {
 
 // This hash corresponds to jebgalgnebhfojomionfpkfelancnnkf.crx.
 constexpr uint8_t kSha256Hash[] = {
@@ -236,7 +236,7 @@ class ComponentInstallerTest : public testing::Test {
 };
 
 ComponentInstallerTest::ComponentInstallerTest() {
-  EXPECT_CALL(update_client(), AddObserver(_)).Times(1);
+  EXPECT_CALL(update_client(), AddObserver(_));
   auto scheduler = std::make_unique<MockUpdateScheduler>();
   scheduler_ = scheduler.get();
   ON_CALL(*scheduler_, Schedule(_, _, _, _))
@@ -249,7 +249,7 @@ ComponentInstallerTest::ComponentInstallerTest() {
 }
 
 ComponentInstallerTest::~ComponentInstallerTest() {
-  EXPECT_CALL(update_client(), RemoveObserver(_)).Times(1);
+  EXPECT_CALL(update_client(), RemoveObserver(_));
 }
 
 void ComponentInstallerTest::RunThreads() {
@@ -329,10 +329,10 @@ TEST_F(ComponentInstallerTest, RegisterComponent) {
             barrier_callback.Run();
           });
 
-  EXPECT_CALL(update_client(), GetCrxUpdateState(id, _)).Times(1);
-  EXPECT_CALL(update_client(), Stop()).Times(1);
-  EXPECT_CALL(scheduler(), Schedule(_, _, _, _)).Times(1);
-  EXPECT_CALL(scheduler(), Stop()).Times(1);
+  EXPECT_CALL(update_client(), GetCrxUpdateState(id, _));
+  EXPECT_CALL(update_client(), Stop());
+  EXPECT_CALL(scheduler(), Schedule(_, _, _, _));
+  EXPECT_CALL(scheduler(), Stop());
 
   auto installer = base::MakeRefCounted<ComponentInstaller>(
       std::make_unique<MockInstallerPolicy>());
@@ -416,7 +416,7 @@ TEST_F(ComponentInstallerTest, InstallerRegister_CheckSequence) {
         base::DoNothing(),
         base::BindLambdaForTesting(
             [&run_loop](const update_client::CrxInstaller::Result& result) {
-              ASSERT_EQ(result.result.category_,
+              ASSERT_EQ(result.result.category,
                         update_client::ErrorCategory::kNone);
               run_loop.QuitClosure().Run();
             }));
@@ -424,21 +424,21 @@ TEST_F(ComponentInstallerTest, InstallerRegister_CheckSequence) {
   }
 
   base::RunLoop run_loop;
-  EXPECT_CALL(update_client(), DoUpdate(_, _)).WillOnce(Invoke([&run_loop] {
+  EXPECT_CALL(update_client(), DoUpdate(_, _)).WillOnce([&run_loop] {
     run_loop.QuitClosure().Run();
-  }));
+  });
 
   // Set up expectations for uninteresting calls on the mocks due to component
   // updater waking up after the component is registered.
-  EXPECT_CALL(scheduler(), Schedule(_, _, _, _)).Times(1);
-  EXPECT_CALL(scheduler(), Stop()).Times(1);
-  EXPECT_CALL(update_client(), Stop()).Times(1);
+  EXPECT_CALL(scheduler(), Schedule(_, _, _, _));
+  EXPECT_CALL(scheduler(), Stop());
+  EXPECT_CALL(update_client(), Stop());
 
   MockRegisterHandler mock_register_handler;
   {
     ::testing::InSequence seq;
-    EXPECT_CALL(mock_register_handler, ComponentReady()).Times(1);
-    EXPECT_CALL(mock_register_handler, RegisterComplete()).Times(1);
+    EXPECT_CALL(mock_register_handler, ComponentReady());
+    EXPECT_CALL(mock_register_handler, RegisterComplete());
   }
 
   auto installer_policy =
@@ -478,14 +478,14 @@ TEST_F(ComponentInstallerTest, UnpackPathInstallSuccess) {
   installer->Install(
       unpack_path, update_client::jebg_public_key, nullptr, base::DoNothing(),
       base::BindOnce([](const update_client::CrxInstaller::Result& result) {
-        EXPECT_EQ(result.result.category_, update_client::ErrorCategory::kNone);
+        EXPECT_EQ(result.result.category, update_client::ErrorCategory::kNone);
       }));
 
   task_environment_.RunUntilIdle();
 
   EXPECT_FALSE(base::PathExists(unpack_path));
-  EXPECT_CALL(update_client(), Stop()).Times(1);
-  EXPECT_CALL(scheduler(), Stop()).Times(1);
+  EXPECT_CALL(update_client(), Stop());
+  EXPECT_CALL(scheduler(), Stop());
 }
 
 // Tests that the unpack path is removed when the install failed.
@@ -508,9 +508,9 @@ TEST_F(ComponentInstallerTest, UnpackPathInstallError) {
   installer->Install(
       unpack_path, update_client::jebg_public_key, nullptr, base::DoNothing(),
       base::BindOnce([](const update_client::CrxInstaller::Result& result) {
-        EXPECT_EQ(result.result.category_,
+        EXPECT_EQ(result.result.category,
                   update_client::ErrorCategory::kInstall);
-        EXPECT_EQ(result.result.code_,
+        EXPECT_EQ(result.result.code,
                   static_cast<int>(
                       update_client::InstallError::NO_DIR_COMPONENT_USER));
       }));
@@ -518,8 +518,8 @@ TEST_F(ComponentInstallerTest, UnpackPathInstallError) {
   task_environment_.RunUntilIdle();
 
   EXPECT_FALSE(base::PathExists(unpack_path));
-  EXPECT_CALL(update_client(), Stop()).Times(1);
-  EXPECT_CALL(scheduler(), Stop()).Times(1);
+  EXPECT_CALL(update_client(), Stop());
+  EXPECT_CALL(scheduler(), Stop());
 }
 
 TEST_F(ComponentInstallerTest, GetInstalledFile) {
@@ -543,7 +543,7 @@ TEST_F(ComponentInstallerTest, GetInstalledFile) {
       unpack_path, update_client::jebg_public_key, nullptr, base::DoNothing(),
       base::BindLambdaForTesting(
           [&](const update_client::CrxInstaller::Result& result) {
-            EXPECT_EQ(result.result.category_,
+            EXPECT_EQ(result.result.category,
                       update_client::ErrorCategory::kNone);
             runloop.Quit();
           }));
@@ -553,8 +553,8 @@ TEST_F(ComponentInstallerTest, GetInstalledFile) {
             base_dir.AppendASCII("1.0").AppendASCII("a"));
   EXPECT_EQ(installer->GetInstalledFile("../a"), std::nullopt);
 
-  EXPECT_CALL(update_client(), Stop()).Times(1);
-  EXPECT_CALL(scheduler(), Stop()).Times(1);
+  EXPECT_CALL(update_client(), Stop());
+  EXPECT_CALL(scheduler(), Stop());
 }
 
 TEST_F(ComponentInstallerTest, SelectComponentVersion) {
@@ -669,7 +669,7 @@ TEST_F(ComponentInstallerTest, Uninstall) {
             base::DoNothing(),
             base::BindLambdaForTesting(
                 [&](const update_client::CrxInstaller::Result& result) {
-                  EXPECT_EQ(result.result.category_,
+                  EXPECT_EQ(result.result.category,
                             update_client::ErrorCategory::kNone);
                   installer->Uninstall();
                 }));

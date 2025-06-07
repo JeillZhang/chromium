@@ -43,20 +43,7 @@ export interface FaceGazeActionsCardElement {
 }
 
 export class FaceGazeActionsCardElement extends FaceGazeActionsCardElementBase {
-  static readonly FACEGAZE_COMMAND_PAIRS_PROPERTY_NAME =
-      'commandPairs_' as const;
-  disabled: boolean;
-
-  private showAddActionDialog_: boolean;
-  private leftClickGestures_: FacialGesture[] = [];
-  private dialogPageToShow_: AddDialogPage;
-  private rowIdToUpdate_: number;
-  private commandPairToConfigure_: FaceGazeCommandPair|null = null;
-  private actionsSpokenFeedbackAlert_ = '';
-
-  // This field stores the current state of gestures assigned to macros and
-  // custom key combinations.
-  private commandPairs_: FaceGazeCommandPair[] = [];
+  static readonly FACEGAZE_COMMAND_PAIRS_PROPERTY_NAME = 'commandPairs_';
 
   static get is() {
     return 'facegaze-actions-card' as const;
@@ -115,6 +102,17 @@ export class FaceGazeActionsCardElement extends FaceGazeActionsCardElementBase {
   static get observers() {
     return [`initFromPrefs_(prefs.settings.a11y.face_gaze.enabled.value)`];
   }
+
+  disabled: boolean;
+  private actionsSpokenFeedbackAlert_ = '';
+  private commandPairs_: FaceGazeCommandPair[] = [];
+  private commandPairToConfigure_: FaceGazeCommandPair|null = null;
+  private dialogPageToShow_: AddDialogPage;
+  private disableConfigureControls_: boolean;
+  private leftClickGestures_: FacialGesture[] = [];
+  private rowIdToUpdate_: number;
+  private shouldAnnounceA11yActionFeedback_: boolean;
+  private showAddActionDialog_: boolean;
 
   private shouldAnnounceAlert_(): boolean {
     return this.actionsSpokenFeedbackAlert_ !== '';
@@ -243,7 +241,7 @@ export class FaceGazeActionsCardElement extends FaceGazeActionsCardElementBase {
              assignedGestures)) {
       if (assignedMacro === removedCommandPair.action &&
           currentGesture === removedCommandPair.gesture) {
-        delete assignedGestures[currentGesture as FacialGesture];
+        delete assignedGestures[currentGesture];
         break;
       }
     }
@@ -395,7 +393,7 @@ export class FaceGazeActionsCardElement extends FaceGazeActionsCardElementBase {
              assignedKeyCombos)) {
       if (currentGesture === gesture &&
           keyCombo === removedKeyCombo.prefString) {
-        delete assignedKeyCombos[currentGesture as FacialGesture];
+        delete assignedKeyCombos[currentGesture];
         break;
       }
     }

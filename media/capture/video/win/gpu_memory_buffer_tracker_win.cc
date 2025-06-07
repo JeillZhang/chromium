@@ -18,7 +18,7 @@
 #include "media/base/win/mf_helpers.h"
 #include "media/capture/video/video_capture_buffer_handle.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 namespace media {
 
@@ -122,10 +122,18 @@ bool GpuMemoryBufferTrackerWin::Init(const gfx::Size& dimensions,
                                 std::move(dimensions));
   }
 
-  gfx::GpuMemoryBufferHandle gmb_handle;
-  gmb_handle.type = gfx::DXGI_SHARED_HANDLE;
-  gmb_handle.set_dxgi_handle(
-      gfx::DXGIHandle(CreateNV12Texture(d3d_device_.Get(), dimensions)));
+  base::win::ScopedHandle scoped_handle =
+      CreateNV12Texture(d3d_device_.Get(), dimensions);
+  if (!scoped_handle.IsValid()) {
+    return false;
+  }
+
+  gfx::DXGIHandle dxgi_handle = gfx::DXGIHandle(std::move(scoped_handle));
+  if (!dxgi_handle.IsValid()) {
+    return false;
+  }
+
+  gfx::GpuMemoryBufferHandle gmb_handle(std::move(dxgi_handle));
   return CreateBufferInternal(std::move(gmb_handle), std::move(dimensions));
 }
 
@@ -220,9 +228,7 @@ GpuMemoryBufferTrackerWin::GetGpuMemoryBufferHandle() {
   if (IsD3DDeviceChanged()) {
     return gfx::GpuMemoryBufferHandle();
   }
-  auto handle = buffer_->CloneHandle();
-  handle.set_region(region_.Duplicate());
-  return handle;
+  return buffer_->CloneHandleWithRegion(region_.Duplicate());
 }
 
 VideoCaptureBufferType GpuMemoryBufferTrackerWin::GetBufferType() {

@@ -50,6 +50,7 @@
 namespace network {
 namespace mojom {
 enum class AlternateProtocolUsage;
+enum class DeviceBoundSessionUsage;
 enum class FetchResponseSource;
 enum class FetchResponseType : int32_t;
 enum class IPAddressSpace : int32_t;
@@ -118,6 +119,9 @@ class BLINK_PLATFORM_EXPORT WebURLResponse {
 
   base::Time ResponseTime() const;
   void SetResponseTime(base::Time);
+
+  base::Time OriginalResponseTime() const;
+  void SetOriginalResponseTime(base::Time);
 
   WebString MimeType() const;
   void SetMimeType(const WebString&);
@@ -293,6 +297,13 @@ class BLINK_PLATFORM_EXPORT WebURLResponse {
   bool ShouldUseSourceHashForJSCodeCache() const;
 
   void SetWasFetchedViaCache(bool);
+
+  void SetDeviceBoundSessionUsage(network::mojom::DeviceBoundSessionUsage);
+  network::mojom::DeviceBoundSessionUsage DeviceBoundSessionUsage() const;
+
+  // Whether the request was actually deferred by any device bound sessions.
+  void SetWasDeferredByDeviceBoundSession(bool);
+  bool WasDeferredByDeviceBoundSession() const;
 
 #if INSIDE_BLINK
  protected:

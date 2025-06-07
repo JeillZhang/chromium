@@ -5,6 +5,7 @@
 #include "chromeos/ash/components/boca/session_api/remove_student_request.h"
 
 #include "base/json/json_writer.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "chromeos/ash/components/boca/session_api/constants.h"
 #include "google_apis/gaia/gaia_id.h"
@@ -20,6 +21,7 @@ bool ParseResponse(std::string json) {
 namespace ash::boca {
 
 RemoveStudentRequest::RemoveStudentRequest(google_apis::RequestSender* sender,
+                                           std::string url_base,
                                            GaiaId gaia_id,
                                            std::string session_id,
                                            RemoveStudentCallback callback)
@@ -28,7 +30,7 @@ RemoveStudentRequest::RemoveStudentRequest(google_apis::RequestSender* sender,
                           google_apis::ProgressCallback()),
       gaia_id_(gaia_id),
       session_id_(session_id),
-      url_base_(kSchoolToolsApiBaseUrl),
+      url_base_(std::move(url_base)),
       callback_(std::move(callback)) {}
 
 RemoveStudentRequest ::~RemoveStudentRequest() = default;

@@ -98,8 +98,6 @@ ChromeComponentExtensionResourceManager::Data::Data() {
     {"chrome_app/chrome_app_icon_192.png", IDR_CHROME_APP_ICON_192},
 #if BUILDFLAG(ENABLE_INK)
     // Built in go/bbsrc/lib/BUILD
-    {"pdf/ink/ink_engine_ink.worker.js",
-     IDR_MEDIA_APP_INK_ENGINE_INK_WORKER_JS},
     {"pdf/ink/ink_engine_ink.wasm", IDR_MEDIA_APP_INK_ENGINE_INK_WASM},
     {"pdf/ink/ink_lib_binary.js", IDR_MEDIA_APP_EXPORT_CANVAS_BIN_JS},
     {"pdf/ink/ink_loader.js", IDR_MEDIA_APP_INK_JS},
@@ -130,9 +128,13 @@ ChromeComponentExtensionResourceManager::Data::Data() {
   // ResourceBundle and g_browser_process are not always initialized in unit
   // tests.
   if (ui::ResourceBundle::HasSharedInstance() && g_browser_process) {
+    // TODO(crbug.com/404131876): Remove g_browser_process usage.
+    const std::string& application_locale =
+        g_browser_process->GetApplicationLocale();
+
     ui::TemplateReplacements file_manager_replacements;
-    ui::TemplateReplacementsFromDictionaryValue(GetFileManagerStrings(),
-                                                &file_manager_replacements);
+    ui::TemplateReplacementsFromDictionaryValue(
+        GetFileManagerStrings(application_locale), &file_manager_replacements);
     template_replacements_[extension_misc::kFilesManagerAppId] =
         std::move(file_manager_replacements);
   }

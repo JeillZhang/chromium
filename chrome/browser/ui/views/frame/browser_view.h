@@ -35,7 +35,6 @@
 #include "chrome/browser/ui/views/frame/browser_view_layout.h"
 #include "chrome/browser/ui/views/frame/contents_web_view.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
-#include "chrome/browser/ui/views/frame/web_contents_close_handler.h"
 #include "chrome/browser/ui/views/intent_picker_bubble_view.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_closer.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
@@ -73,6 +72,7 @@ class AccessibilityFocusHighlight;
 class BookmarkBarView;
 class Browser;
 class ContentsLayoutManager;
+struct DropData;
 class ExclusiveAccessBubbleViews;
 class FullscreenControlHost;
 class InfoBarContainerView;
@@ -80,7 +80,6 @@ class LocationBarView;
 class MultiContentsView;
 class ScrimView;
 class SidePanel;
-class StatusBubbleViews;
 class TabSearchBubbleHost;
 class TabStrip;
 class TabStripRegionView;
@@ -91,7 +90,6 @@ class TopContainerView;
 class TopControlsSlideController;
 class TopControlsSlideControllerTest;
 class WebAppFrameToolbarView;
-class WebContentsCloseHandler;
 class WebUITabStripContainerView;
 
 namespace gfx {
@@ -123,6 +121,10 @@ class WatermarkView;
 namespace glic {
 class GlicBorderView;
 }  // namespace glic
+
+namespace new_tab_footer {
+class NewTabFooterWebView;
+}  // namespace new_tab_footer
 
 ///////////////////////////////////////////////////////////////////////////////
 // BrowserView
@@ -233,8 +235,7 @@ class BrowserView : public BrowserWindow,
   // In tabbed mode the tab strip is contained within the window's titlebar. In
   // non-tabbed mode the tab strip is positioned below the titlebar.
   // The return value is determined based on the state of
-  // `features::kImmersiveFullscreen` and `features::kImmersiveFullscreenTabs`
-  // as well as the type of browser.
+  // `features::kImmersiveFullscreen` as well as the type of browser.
   bool UsesImmersiveFullscreenTabbedMode() const;
 #endif
 
@@ -242,6 +243,8 @@ class BrowserView : public BrowserWindow,
   views::View* contents_container() { return contents_container_; }
 
   SidePanel* unified_side_panel() { return unified_side_panel_; }
+
+  MultiContentsView* multi_contents_view() { return multi_contents_view_; }
 
   void set_contents_border_widget(views::Widget* contents_border_widget) {
     GetBrowserViewLayout()->set_contents_border_widget(contents_border_widget);
@@ -286,17 +289,28 @@ class BrowserView : public BrowserWindow,
     return exclusive_access_bubble_.get();
   }
 
-  // Accessor for the contents and devtools WebViews.
-  ContentsWebView* contents_web_view() { return contents_web_view_; }
+  // Accessors for the contents and devtools WebViews.
+  // Will return the single active contents view. If side by side is enabled,
+  // it may make more sense to use GetAllVisibleContentsWebViews() depending on
+  // the use case.
+  ContentsWebView* contents_web_view() {
+    return static_cast<ContentsWebView*>(GetContentsView());
+  }
   views::WebView* devtools_web_view() { return devtools_web_view_; }
 
   ScrimView* contents_scrim_view() { return contents_scrim_view_; }
+
+  ScrimView* devtools_scrim_view() { return devtools_scrim_view_; }
 
 #if BUILDFLAG(ENABLE_GLIC)
   glic::GlicBorderView* glic_border() const { return glic_border_; }
 #endif
 
-  ScrimView* window_scrim_view_for_testing() { return window_scrim_view_; }
+  ScrimView* window_scrim_view() { return window_scrim_view_; }
+
+  new_tab_footer::NewTabFooterWebView* new_tab_footer_web_view() const {
+    return new_tab_footer_web_view_;
+  }
 
   base::WeakPtr<BrowserView> GetAsWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();
@@ -466,21 +480,44 @@ class BrowserView : public BrowserWindow,
   void UpdateWebAppStatusIconsVisiblity();
 
   // Getter for the `window.setResizable(bool)` state.
-  std::optional<bool> GetCanResizeFromWebAPI() const;
+  std::optional<bool> GetWebApiWindowResizable() const;
 
-  // Return the tab strip index of the single tab (if any) that is inactive but
-  // part of a split view. Assumes there is max one split view in the tab
-  // strip, it contains exactly two tabs, and one of those tabs is currently
-  // active.
-  int GetInactiveSplitTabIndex();
+  // Returns true if the browser is currently showing tabs in a split view.
+  bool IsInSplitView() const;
 
   // Display the current active split view as a series of multiple side-by-side
   // web contents.
-  void ShowSplitView();
+  void ShowSplitView(bool focus_active_view);
 
   // Display only the current active tab's web contents, hiding any previous
   // side-by-side display.
   void HideSplitView();
+
+  // Update the index of the active split based on the active tab's web
+  // contents.
+  void UpdateActiveTabInSplitView();
+
+  // Updates the contents in the active split view.
+  void UpdateContentsInSplitView(
+      const std::vector<std::pair<tabs::TabInterface*, int>>& prev_tabs,
+      const std::vector<std::pair<tabs::TabInterface*, int>>& new_tabs);
+
+  // True if an activation from `old_contents` to `new_contents` happens between
+  // tabs that are already in a split-view configuration.
+  bool IsTabChangeInSplitView(content::WebContents* old_contents,
+                              content::WebContents* new_contents);
+
+  // Reverses the order of the contents in the active split.
+  void ReverseWebContents();
+
+  // Resize the ratio of the contents in the active split.
+  void ResizeWebContents(double start_ratio);
+
+  // Activate the tab containing the given WebContents (if any).
+  void ActivateWebContents(content::WebContents* web_contents);
+
+  // Updates stored focus for web contents that is being activated.
+  void MaybeUpdateStoredFocusForWebContents(content::WebContents*);
 
   // BrowserWindow:
   void Show() override;
@@ -497,6 +534,7 @@ class BrowserView : public BrowserWindow,
   void SetZOrderLevel(ui::ZOrderLevel order) override;
   gfx::NativeWindow GetNativeWindow() const override;
   bool IsOnCurrentWorkspace() const override;
+  bool IsVisibleOnScreen() const override;
   void SetTopControlsShownRatio(content::WebContents* web_contents,
                                 float ratio) override;
   bool DoBrowserControlsShrinkRendererSize(
@@ -507,7 +545,7 @@ class BrowserView : public BrowserWindow,
   ui::ElementContext GetElementContext() override;
   int GetTopControlsHeight() const override;
   void SetTopControlsGestureScrollInProgress(bool in_progress) override;
-  StatusBubble* GetStatusBubble() override;
+  std::vector<StatusBubble*> GetStatusBubbles() override;
   void UpdateTitleBar() override;
   void BookmarkBarStateChanged(
       BookmarkBar::AnimateChangeType change_type) override;
@@ -531,10 +569,10 @@ class BrowserView : public BrowserWindow,
   void Maximize() override;
   void Minimize() override;
   void Restore() override;
-  void OnCanResizeFromWebAPIChanged() override;
+  void OnWebApiWindowResizableChanged() override;
   bool GetCanResize() override;
   ui::mojom::WindowShowState GetWindowShowState() const override;
-  void EnterFullscreen(const GURL& url,
+  void EnterFullscreen(const url::Origin& origin,
                        ExclusiveAccessBubbleType bubble_type,
                        int64_t display_id) override;
   void ExitFullscreen() override;
@@ -558,6 +596,7 @@ class BrowserView : public BrowserWindow,
   bool UpdateToolbarSecurityState() override;
   void UpdateCustomTabBarVisibility(bool visible, bool animate) override;
   void SetContentScrimVisibility(bool visible) override;
+  void SetDevToolsScrimVisibility(bool visible) override;
   void ResetToolbarTabState(content::WebContents* contents) override;
   void FocusToolbar() override;
   ExtensionsContainer* GetExtensionsContainer() override;
@@ -573,6 +612,7 @@ class BrowserView : public BrowserWindow,
   bool IsBookmarkBarVisible() const override;
   bool IsBookmarkBarAnimating() const override;
   bool IsTabStripEditable() const override;
+  void SetTabStripNotEditableForTesting() override;
   bool IsToolbarVisible() const override;
   bool IsToolbarShowing() const override;
   bool IsLocationBarVisible() const override;
@@ -628,6 +668,7 @@ class BrowserView : public BrowserWindow,
   bool IsDownloadShelfVisible() const override;
   DownloadShelf* GetDownloadShelf() override;
   views::View* GetTopContainer() override;
+  views::View* GetLensOverlayView() override;
   DownloadBubbleUIController* GetDownloadBubbleUIController() override;
   void ConfirmBrowserCloseWithPendingDownloads(
       int download_count,
@@ -635,8 +676,12 @@ class BrowserView : public BrowserWindow,
       base::OnceCallback<void(bool)> callback) override;
   void UserChangedTheme(BrowserThemeChangeType theme_change_type) override;
   void ShowAppMenu() override;
+  bool PreHandleMouseEvent(const blink::WebMouseEvent& event) override;
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
       const input::NativeWebKeyboardEvent& event) override;
+  void PreHandleDragUpdate(const content::DropData& drop_data,
+                           const gfx::PointF& point) override;
+  void PreHandleDragExit() override;
   bool HandleKeyboardEvent(const input::NativeWebKeyboardEvent& event) override;
   std::unique_ptr<FindBar> CreateFindBar() override;
   web_modal::WebContentsModalDialogHost* GetWebContentsModalDialogHost()
@@ -668,6 +713,7 @@ class BrowserView : public BrowserWindow,
   BookmarkBarView* GetBookmarkBarView() const;
   LocationBarView* GetLocationBarView() const;
 
+  bool IsFeaturePromoQueued(const base::Feature& iph_feature) const override;
   bool IsFeaturePromoActive(const base::Feature& iph_feature) const override;
   user_education::FeaturePromoResult CanShowFeaturePromo(
       const base::Feature& iph_feature) const override;
@@ -689,6 +735,9 @@ class BrowserView : public BrowserWindow,
   void ShowIncognitoClearBrowsingDataDialog() override;
 
   void ShowIncognitoHistoryDisclaimerDialog() override;
+  bool IsTabModalPopupDeprecated() const override;
+  void SetIsTabModalPopupDeprecated(
+      bool is_tab_modal_popup_deprecated) override;
 
   // TabStripModelObserver:
   void OnTabStripModelChanged(
@@ -698,7 +747,7 @@ class BrowserView : public BrowserWindow,
   void TabChangedAt(content::WebContents* contents,
                     int index,
                     TabChangeType change_type) override;
-  void OnSplitViewAdded(std::vector<tabs::TabInterface*> tabs) override;
+  void OnSplitTabChanged(const SplitTabChange& change) override;
   void TabStripEmpty() override;
   void WillCloseAllTabs(TabStripModel* tab_strip_model) override;
   void CloseAllTabsStopped(TabStripModel* tab_strip_model,
@@ -776,6 +825,7 @@ class BrowserView : public BrowserWindow,
   void ViewHierarchyChanged(
       const views::ViewHierarchyChangedDetails& details) override;
   void AddedToWidget() override;
+  void RemovedFromWidget() override;
   void PaintChildren(const views::PaintInfo& paint_info) override;
   void OnThemeChanged() override;
   bool GetDropFormats(int* formats,
@@ -859,6 +909,8 @@ class BrowserView : public BrowserWindow,
   }
 #endif
 
+  std::vector<ContentsWebView*> GetAllVisibleContentsWebViews();
+
   bool should_show_window_controls_overlay_toggle() const {
     return should_show_window_controls_overlay_toggle_;
   }
@@ -923,6 +975,7 @@ class BrowserView : public BrowserWindow,
   FRIEND_TEST_ALL_PREFIXES(BrowserViewTest, BrowserView);
   FRIEND_TEST_ALL_PREFIXES(BrowserViewTest, AccessibleWindowTitle);
   FRIEND_TEST_ALL_PREFIXES(PermissionChipUnitTest, AccessibleName);
+
   class AccessibilityModeObserver;
 
   // BrowserUserEducationInterface private methods:
@@ -986,6 +1039,9 @@ class BrowserView : public BrowserWindow,
   // |contents|. |contents| can be null. In this case, all optional UI will be
   // removed.
   void UpdateUIForContents(content::WebContents* contents);
+
+  // Returns the y coordinate of the client area.
+  int GetClientAreaTop();
 
   // Invoked to prepare the transition of fullscreen state.
   // If features::kAsyncFullscreenWindowState is disabled, this is invoked
@@ -1067,11 +1123,6 @@ class BrowserView : public BrowserWindow,
   // Called when ui::TouchUiController changes the current touch mode.
   void TouchModeChanged();
 
-  // Attempts to show in-product help for the WebUI tab strip. Should be
-  // called when the IPH backend is initialized or whenever the touch
-  // mode changes.
-  void MaybeShowWebUITabStripIPH();
-
   // Attempts to show in-product help for the reading list as moved into the
   // side panel. Should be called when the IPH backend is initialized or
   // whenever the touch mode changes.
@@ -1079,6 +1130,9 @@ class BrowserView : public BrowserWindow,
 
   // Attempts to show IPH promo for experimental AI.
   void MaybeShowExperimentalAIIPH();
+
+  // Attempts to show IPH promo for the tab search toolbar button.
+  void MaybeShowTabStripToolbarButtonIPH();
 
   void UpdateWindowControlsOverlayEnabled();
 
@@ -1110,6 +1164,9 @@ class BrowserView : public BrowserWindow,
   // when it should not be able to.
   void UpdateFullscreenAllowedFromPolicy(bool allowed_without_policy);
 
+  bool ShouldUseBrowserContentMinimumSize() const;
+  bool IsBrowserAWebApp() const;
+
   // The BrowserFrame that hosts this view.
   raw_ptr<BrowserFrame> frame_ = nullptr;
 
@@ -1138,7 +1195,7 @@ class BrowserView : public BrowserWindow,
   // |  --------------------------------------------------------------  |
   // |  |  devtools_web_view_                                        |  |
   // |  |------------------------------------------------------------|  |
-  // |  |  contents_web_view_                                        |  |
+  // |  |  contents_web_view_ (or multi_contents_view_ if defined)   |  |
   // |  --------------------------------------------------------------  |
   // |------------------------------------------------------------------|
   // | Active downloads (download_shelf_)                               |
@@ -1167,11 +1224,9 @@ class BrowserView : public BrowserWindow,
   // the webui based tabstrip, when applicable. see https://crbug.com/989131.
   raw_ptr<WebUITabStripContainerView> webui_tab_strip_ = nullptr;
 
-  // Allows us to react to changes in accessibility mode.
-  // TODO(dfried): this is only used to disable WebUI tabstrip (see above) while
-  // that mode has accessibile mode issues (e.g. crbug.com/1136185,
-  // crbug.com/1136236). Having an observer object allows for the browser to
-  // change mode if it enters or leaves accessibility mode.
+  // Allows us to react to changes in accessibility mode. Having an observer
+  // object allows for the browser to change mode if it enters or leaves
+  // accessibility mode.
   std::unique_ptr<AccessibilityModeObserver> accessibility_mode_observer_;
 
   // The Toolbar containing the navigation buttons, menus and the address bar.
@@ -1204,6 +1259,8 @@ class BrowserView : public BrowserWindow,
   // non-tabbed browsers like popups. May not be visible.
   std::unique_ptr<BookmarkBarView> bookmark_bar_view_;
 
+  std::unique_ptr<TabSearchBubbleHost> tab_search_bubble_host_;
+
   // Separator between top container and contents.
   raw_ptr<views::View> contents_separator_ = nullptr;
 
@@ -1221,26 +1278,40 @@ class BrowserView : public BrowserWindow,
   // The InfoBarContainerView that contains InfoBars for the current tab.
   raw_ptr<InfoBarContainerView> infobar_container_ = nullptr;
 
-  // The view that contains the active WebContents.
-  // TODO(crbug.com/393451405): Remove this direct reference when side by side
-  // is enabled, going through multi_contents_view_ for the active contents web
-  // view.
+  // The view that contains the active WebContents. Will be nullptr if the
+  // side-by-side feature is enabled; use multi_contents_view_ and its nested
+  // contents views instead.
   raw_ptr<ContentsWebView> contents_web_view_ = nullptr;
 
   // The view that contains all visible WebContents.
   raw_ptr<MultiContentsView> multi_contents_view_ = nullptr;
+
+  // The view that shows a footer at the bottom of the contents
+  // container on new tab pages.
+  raw_ptr<new_tab_footer::NewTabFooterWebView> new_tab_footer_web_view_ =
+      nullptr;
 
   // The scrim view that covers the content area when a tab-modal dialog is
   // open.
   raw_ptr<ScrimView> contents_scrim_view_ = nullptr;
 
   // It draws a border around the web contents area, on top of the
-  // `contents_web_view_`. Null if the feature isn't enabled, or the platform
+  // WebContents. Null if the feature isn't enabled, or the platform
   // isn't supported.
   raw_ptr<glic::GlicBorderView> glic_border_ = nullptr;
 
   // The view that contains devtools window for the selected WebContents.
   raw_ptr<views::WebView> devtools_web_view_ = nullptr;
+
+  // The scrim view that covers the devtools area when a tab-modal dialog is
+  // open.
+  raw_ptr<ScrimView> devtools_scrim_view_ = nullptr;
+
+  // The view that contains the Lens overlay. The Lens Overlay is a UI overlay
+  // that is shown on top of the web contents. It therefore must always have the
+  // same bounds as the contents_web_view_, but also be above the
+  // contents_web_view_.
+  raw_ptr<views::View> lens_overlay_view_ = nullptr;
 
   // The view that overlays a watermark on the contents container.
   raw_ptr<enterprise_watermark::WatermarkView> watermark_view_ = nullptr;
@@ -1269,9 +1340,6 @@ class BrowserView : public BrowserWindow,
   // devtools_web_view_ or any of its children. Used to restore focus once
   // the devtools_web_view_ is hidden.
   std::unique_ptr<views::ExternalFocusTracker> devtools_focus_tracker_;
-
-  // The Status information bubble that appears at the bottom of the window.
-  std::unique_ptr<StatusBubbleViews> status_bubble_;
 
   // The scrim view that covers the browser window when a window-modal dialog is
   // showing.
@@ -1345,8 +1413,6 @@ class BrowserView : public BrowserWindow,
           base::BindRepeating(&BrowserView::TouchModeChanged,
                               base::Unretained(this)));
 
-  std::unique_ptr<WebContentsCloseHandler> web_contents_close_handler_;
-
   // The class that registers for keyboard shortcuts for extension commands.
   std::unique_ptr<ExtensionKeybindingRegistryViews>
       extension_keybinding_registry_;
@@ -1361,6 +1427,9 @@ class BrowserView : public BrowserWindow,
   base::ScopedObservation<webapps::AppBannerManager,
                           webapps::AppBannerManager::Observer>
       app_banner_manager_observation_{this};
+
+  base::ScopedObservation<views::FocusManager, views::FocusChangeListener>
+      focus_manager_observation_{this};
 
   base::ScopedObservation<views::Widget, views::WidgetObserver>
       widget_observation_{this};

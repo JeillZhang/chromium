@@ -11,6 +11,7 @@
 #import "base/test/test_file_util.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/profile/profile_attributes_ios.h"
+#import "ios/chrome/browser/shared/model/profile/scoped_profile_keep_alive_ios.h"
 #import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
 #import "ios/chrome/browser/signin/model/account_profile_mapper.h"
 #import "ios/chrome/test/testing_application_context.h"
@@ -19,10 +20,12 @@ TestProfileManagerIOS::TestProfileManagerIOS()
     : profile_attributes_storage_(GetApplicationContext()->GetLocalState()),
       profile_data_dir_(base::CreateUniqueTempDirectoryScopedToTest()) {
   CHECK_EQ(GetApplicationContext()->GetProfileManager(), nullptr);
+
   TestingApplicationContext* app_context =
       TestingApplicationContext::GetGlobal();
   account_profile_mapper_ = std::make_unique<AccountProfileMapper>(
-      app_context->GetSystemIdentityManager(), this);
+      app_context->GetSystemIdentityManager(), this,
+      GetApplicationContext()->GetLocalState());
   app_context->SetProfileManagerAndAccountProfileMapper(
       this, account_profile_mapper_.get());
 }
@@ -35,14 +38,25 @@ TestProfileManagerIOS::~TestProfileManagerIOS() {
     observer.OnProfileManagerDestroyed(this);
   }
 
-  // The profiles must be unloaded before the AccountProfileMapper is removed
-  // from the ApplicationContext, since some keyed services (owned by the
-  // profiles) might access the AccountProfileMapper during their destruction.
-  UnloadAllProfiles();
+  // Unload all the profiles. This ensure that all their KeyedServices
+  // (which may be using the AccountProfileMapper) are destroyed before
+  // the AccountProfileMapper becomes unaccessible.
+  ProfileMap profiles_map = std::exchange(profiles_map_, {});
+  for (auto& [_, profile] : profiles_map) {
+    for (auto& observer : observers_) {
+      observer.OnProfileUnloaded(this, profile.get());
+    }
+  }
 
   TestingApplicationContext* app_context =
       TestingApplicationContext::GetGlobal();
   app_context->SetProfileManagerAndAccountProfileMapper(nullptr, nullptr);
+}
+
+void TestProfileManagerIOS::PrepareForDestruction() {
+  for (auto& observer : observers_) {
+    observer.OnProfileManagerWillBeDestroyed(this);
+  }
 }
 
 void TestProfileManagerIOS::AddObserver(ProfileManagerObserverIOS* observer) {
@@ -82,15 +96,12 @@ bool TestProfileManagerIOS::CanCreateProfileWithName(
 }
 
 std::string TestProfileManagerIOS::ReserveNewProfileName() {
-  std::string name = base::Uuid::GenerateRandomV4().AsLowercaseString();
-  CHECK(CanCreateProfileWithName(name));
-  profile_attributes_storage_.AddProfile(name);
-  return name;
+  return profile_attributes_storage_.ReserveNewProfileName();
 }
 
 bool TestProfileManagerIOS::CanDeleteProfileWithName(
     std::string_view name) const {
-  return false;
+  return profile_attributes_storage_.CanDeleteProfileWithName(name);
 }
 
 bool TestProfileManagerIOS::LoadProfileAsync(
@@ -113,54 +124,39 @@ bool TestProfileManagerIOS::CreateProfileAsync(
 
   ProfileIOS* profile = iterator->second.get();
   if (!created_callback.is_null()) {
-    std::move(created_callback).Run(profile);
+    std::move(created_callback).Run(CreateScopedProfileKeepAlive(profile));
   }
 
   if (!initialized_callback.is_null()) {
-    std::move(initialized_callback).Run(profile);
+    std::move(initialized_callback).Run(CreateScopedProfileKeepAlive(profile));
   }
 
   return true;
 }
 
-ProfileIOS* TestProfileManagerIOS::LoadProfile(std::string_view name) {
-  // TestProfileManagerIOS cannot create nor load a Profile, so the
-  // implementation is equivalent to GetProfileWithName(...).
-  return GetProfileWithName(name);
-}
-
-ProfileIOS* TestProfileManagerIOS::CreateProfile(std::string_view name) {
-  // TestProfileManagerIOS cannot create nor load a Profile, so the
-  // implementation is equivalent to GetProfileWithName(...).
-  return GetProfileWithName(name);
-}
-
-void TestProfileManagerIOS::UnloadProfile(std::string_view name) {
-  auto iter = profiles_map_.find(name);
-  DCHECK(iter != profiles_map_.end());
-  std::unique_ptr<ProfileIOS> profile = std::move(iter->second);
-  profiles_map_.erase(iter);
-  for (auto& observer : observers_) {
-    observer.OnProfileUnloaded(this, profile.get());
-  }
-}
-
-void TestProfileManagerIOS::UnloadAllProfiles() {
-  ProfileMap profiles_map = std::exchange(profiles_map_, {});
-  for (auto& [_, profile] : profiles_map) {
-    for (auto& observer : observers_) {
-      observer.OnProfileUnloaded(this, profile.get());
-    }
-  }
-}
-
 void TestProfileManagerIOS::MarkProfileForDeletion(std::string_view name) {
-  NOTREACHED();
+  profile_attributes_storage_.MarkProfileForDeletion(name);
+
+  // If the profile is not loaded, return.
+  auto iter = profiles_map_.find(name);
+  if (iter == profiles_map_.end()) {
+    return;
+  }
+
+  TestProfileIOS* profile = iter->second.get();
+  for (auto& observer : observers_) {
+    observer.OnProfileMarkedForPermanentDeletion(this, profile);
+  }
 }
 
 bool TestProfileManagerIOS::IsProfileMarkedForDeletion(
     std::string_view name) const {
   return false;
+}
+
+void TestProfileManagerIOS::PurgeProfilesMarkedForDeletion(
+    base::OnceClosure callback) {
+  NOTREACHED();
 }
 
 ProfileAttributesStorageIOS*
@@ -212,4 +208,9 @@ TestProfileIOS* TestProfileManagerIOS::AddProfileWithBuilder(
   }
 
   return iterator->second.get();
+}
+
+ScopedProfileKeepAliveIOS TestProfileManagerIOS::CreateScopedProfileKeepAlive(
+    ProfileIOS* profile) {
+  return ScopedProfileKeepAliveIOS(CreatePassKey(), profile, {});
 }

@@ -9,6 +9,7 @@
 #include <optional>
 #include <set>
 #include <utility>
+#include <variant>
 
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -49,7 +50,6 @@
 #include "net/spdy/spdy_session_pool.h"
 #include "net/spdy/spdy_stream.h"
 #include "net/ssl/ssl_cert_request_info.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "url/gurl.h"
 #include "url/scheme_host_port.h"
 
@@ -207,11 +207,11 @@ HttpProxySocketParams::HttpProxySocketParams(
   // Only supports proxy endpoints without scheme for now.
   // TODO(crbug.com/40181080): Handle scheme.
   if (is_over_transport()) {
-    DCHECK(absl::holds_alternative<HostPortPair>(
+    DCHECK(std::holds_alternative<HostPortPair>(
         nested_params_->transport()->destination()));
   } else if (is_over_ssl() && nested_params_->ssl()->GetConnectionType() ==
                                   SSLSocketParams::ConnectionType::DIRECT) {
-    DCHECK(absl::holds_alternative<HostPortPair>(
+    DCHECK(std::holds_alternative<HostPortPair>(
         nested_params_->ssl()->GetDirectConnectionParams()->destination()));
   }
 }
@@ -679,7 +679,8 @@ int HttpProxyConnectJob::DoSpdyProxyCreateStream() {
         common_connect_job_params()
             ->spdy_session_pool->CreateAvailableSessionFromSocket(
                 key, nested_connect_job_->PassSocket(),
-                nested_connect_job_->connect_timing(), net_log());
+                nested_connect_job_->connect_timing(), net_log(),
+                SpdySessionInitiator::kHttpProxyConnectJob);
     nested_connect_job_.reset();
     if (!spdy_session_result.has_value()) {
       return spdy_session_result.error();
@@ -767,6 +768,7 @@ int HttpProxyConnectJob::DoQuicProxyCreateSession() {
       /*require_dns_https_alpn=*/false, ssl_config.GetCertVerifyFlags(),
       GURL("https://" + proxy_server.ToString()), net_log(),
       &quic_net_error_details_, MultiplexedSessionCreationInitiator::kUnknown,
+      /*management_config=*/std::nullopt,
       /*failed_on_default_network_callback=*/CompletionOnceCallback(),
       base::BindOnce(&HttpProxyConnectJob::OnIOComplete,
                      base::Unretained(this)));

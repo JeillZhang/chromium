@@ -11,6 +11,7 @@
 #import "components/browsing_data/core/counters/history_counter.h"
 #import "components/browsing_data/core/counters/passwords_counter.h"
 #import "components/browsing_data/core/pref_names.h"
+#import "components/feature_engagement/public/tracker.h"
 #import "components/history/core/browser/history_service.h"
 #import "components/keyed_service/core/service_access_type.h"
 #import "components/password_manager/core/browser/password_store/mock_password_store_interface.h"
@@ -19,6 +20,7 @@
 #import "ios/chrome/browser/browsing_data/model/browsing_data_remover_factory.h"
 #import "ios/chrome/browser/browsing_data/model/tabs_counter.h"
 #import "ios/chrome/browser/discover_feed/model/discover_feed_service_factory.h"
+#import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
 #import "ios/chrome/browser/history/model/history_service_factory.h"
 #import "ios/chrome/browser/sessions/model/session_restoration_service_factory.h"
 #import "ios/chrome/browser/settings/ui_bundled/clear_browsing_data/fake_browsing_data_counter_wrapper_producer.h"
@@ -84,6 +86,8 @@ class QuickDeleteMediatorTest : public PlatformTest {
         BrowsingDataRemoverFactory::GetForProfile(profile_.get());
     DiscoverFeedService* discover_feed_service =
         DiscoverFeedServiceFactory::GetForProfile(profile_.get());
+    feature_engagement::Tracker* tracker =
+        feature_engagement::TrackerFactory::GetForProfile(profile_.get());
 
     mediator_ =
         [[QuickDeleteMediator alloc] initWithPrefs:profile_.get()->GetPrefs()
@@ -93,7 +97,8 @@ class QuickDeleteMediatorTest : public PlatformTest {
                                browsingDataRemover:browsing_data_remover
                                discoverFeedService:discover_feed_service
                     canPerformTabsClosureAnimation:NO
-                                   uiBlockerTarget:scene_state_];
+                                   uiBlockerTarget:scene_state_
+                          featureEngagementTracker:tracker];
   }
 
   ~QuickDeleteMediatorTest() override {
@@ -134,8 +139,8 @@ class QuickDeleteMediatorTest : public PlatformTest {
 
   // Triggers the history callback passed to
   // `FakeBrowsingDataCounterWrapperProducer` with a `HistoryResult` with
-  // `num_history_items`.
-  void triggerUpdateUICallbackForHistoryResults(int num_history_items) {
+  // `num_unique_domains`.
+  void triggerUpdateUICallbackForHistoryResults(int num_unique_domains) {
     // Add stub counter result for browsing history.
     browsing_data::HistoryCounter historyCounter(
         history_service_,
@@ -146,7 +151,7 @@ class QuickDeleteMediatorTest : public PlatformTest {
     historyCounter.Init(prefs(), browsing_data::ClearBrowsingDataTab::ADVANCED,
                         browsing_data::BrowsingDataCounter::ResultCallback());
     const browsing_data::HistoryCounter::HistoryResult historyResult(
-        &historyCounter, num_history_items, false, false);
+        &historyCounter, 0, false, false, "google.com", num_unique_domains);
     OCMExpect([consumer_
         setHistorySummary:quick_delete_util::GetCounterTextFromResult(
                               historyResult, timeRange())]);
@@ -196,7 +201,8 @@ class QuickDeleteMediatorTest : public PlatformTest {
     browsing_data::AutofillCounter autofillCounter(nullptr, nullptr, nullptr,
                                                    nullptr);
     const browsing_data::AutofillCounter::AutofillResult autofillResult(
-        &autofillCounter, num_suggestions, num_cards, num_addresses, 0, false);
+        &autofillCounter, num_suggestions, num_cards, num_addresses,
+        /*num_entities=*/0, false);
     OCMExpect([consumer_
         setAutofillSummary:quick_delete_util::GetCounterTextFromResult(
                                autofillResult, timeRange())]);
@@ -263,8 +269,8 @@ TEST_F(QuickDeleteMediatorTest, TestBrowsingHistorySummary) {
 
   for (const TestCase& test_case : kTestCases) {
     const browsing_data::HistoryCounter::HistoryResult result(
-        &counter, test_case.num_sites, test_case.sync_enabled,
-        test_case.sync_enabled);
+        &counter, 0, test_case.sync_enabled, test_case.sync_enabled,
+        "google.com", test_case.num_sites);
     OCMExpect([consumer_ setBrowsingDataSummary:test_case.expected_output]);
     OCMExpect([consumer_
         setHistorySummary:quick_delete_util::GetCounterTextFromResult(
@@ -410,11 +416,11 @@ TEST_F(QuickDeleteMediatorTest, TestAddressesSummary) {
   triggerUpdateUICallbackForPasswordsResults(0);
 
   // clang-format off
-    const struct TestCase {
-        int num_addresses;
-        bool sync_enabled;
-        NSString* expected_output;
-    } kTestCases[] = {
+  const struct TestCase {
+      int num_addresses;
+      bool sync_enabled;
+      NSString* expected_output;
+  } kTestCases[] = {
         {0, true, l10n_util::GetNSString(
                    IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_NO_DATA)},
         {0, false, l10n_util::GetNSString(
@@ -427,14 +433,15 @@ TEST_F(QuickDeleteMediatorTest, TestAddressesSummary) {
                    IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_ADRESSES, 2)},
         {2, false, l10n_util::GetPluralNSStringF(
                    IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_ADRESSES, 2)},
-    };
+  };
   // clang-format on
 
   browsing_data::AutofillCounter counter(nullptr, nullptr, nullptr, nullptr);
 
   for (const TestCase& test_case : kTestCases) {
     const browsing_data::AutofillCounter::AutofillResult result(
-        &counter, 0, 0, test_case.num_addresses, 0, test_case.sync_enabled);
+        &counter, 0, 0, test_case.num_addresses, /*num_entities=*/0,
+        test_case.sync_enabled);
     OCMExpect([consumer_ setBrowsingDataSummary:test_case.expected_output]);
     OCMExpect([consumer_
         setAutofillSummary:quick_delete_util::GetCounterTextFromResult(
@@ -462,11 +469,11 @@ TEST_F(QuickDeleteMediatorTest, TestCardsSummary) {
   triggerUpdateUICallbackForPasswordsResults(0);
 
   // clang-format off
-    const struct TestCase {
-        int num_cards;
-        bool sync_enabled;
-        NSString* expected_output;
-    } kTestCases[] = {
+  const struct TestCase {
+      int num_cards;
+      bool sync_enabled;
+      NSString* expected_output;
+  } kTestCases[] = {
         {0, true, l10n_util::GetNSString(
                    IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_NO_DATA)},
         {0, false, l10n_util::GetNSString(
@@ -479,14 +486,15 @@ TEST_F(QuickDeleteMediatorTest, TestCardsSummary) {
                    IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_PAYMENT_METHODS, 2)},
         {2, false, l10n_util::GetPluralNSStringF(
                    IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_PAYMENT_METHODS, 2)},
-    };
+  };
   // clang-format on
 
   browsing_data::AutofillCounter counter(nullptr, nullptr, nullptr, nullptr);
 
   for (const TestCase& test_case : kTestCases) {
     const browsing_data::AutofillCounter::AutofillResult result(
-        &counter, 0, test_case.num_cards, 0, 0, test_case.sync_enabled);
+        &counter, 0, test_case.num_cards, 0, /*num_entities=*/0,
+        test_case.sync_enabled);
 
     OCMExpect([consumer_ setBrowsingDataSummary:test_case.expected_output]);
     OCMExpect([consumer_
@@ -516,11 +524,11 @@ TEST_F(QuickDeleteMediatorTest, TestSuggestionsSummary) {
   triggerUpdateUICallbackForPasswordsResults(0);
 
   // clang-format off
-    const struct TestCase {
-        int num_suggestions;
-        bool sync_enabled;
-        NSString* expected_output;
-    } kTestCases[] = {
+  const struct TestCase {
+      int num_suggestions;
+      bool sync_enabled;
+      NSString* expected_output;
+  } kTestCases[] = {
         {0, true, l10n_util::GetNSString(
                    IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_NO_DATA)},
         {0, false, l10n_util::GetNSString(
@@ -535,14 +543,15 @@ TEST_F(QuickDeleteMediatorTest, TestSuggestionsSummary) {
                    2)},
         {2, false, l10n_util::GetPluralNSStringF(
                    IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_SUGGESTIONS, 2)},
-    };
+  };
   // clang-format on
 
   browsing_data::AutofillCounter counter(nullptr, nullptr, nullptr, nullptr);
 
   for (const TestCase& test_case : kTestCases) {
     const browsing_data::AutofillCounter::AutofillResult result(
-        &counter, test_case.num_suggestions, 0, 0, 0, test_case.sync_enabled);
+        &counter, test_case.num_suggestions, 0, 0, /*num_entities=*/0,
+        test_case.sync_enabled);
     OCMExpect([consumer_ setBrowsingDataSummary:test_case.expected_output]);
     OCMExpect([consumer_
         setAutofillSummary:quick_delete_util::GetCounterTextFromResult(
@@ -569,7 +578,7 @@ TEST_F(QuickDeleteMediatorTest,
   triggerUpdateUICallbackForTabsResults(0);
   triggerUpdateUICallbackForAutofillResults(0, 0, 0);
 
-  int num_history_items = 2;
+  int num_unique_domains = 2;
   int num_passwords = 1;
 
   // Since passwords is not selected for deletion, then it shouldn't be
@@ -577,9 +586,9 @@ TEST_F(QuickDeleteMediatorTest,
   OCMExpect([consumer_
       setBrowsingDataSummary:l10n_util::GetPluralNSStringF(
                                  IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_SITES,
-                                 num_history_items)]);
+                                 num_unique_domains)]);
 
-  triggerUpdateUICallbackForHistoryResults(num_history_items);
+  triggerUpdateUICallbackForHistoryResults(num_unique_domains);
   triggerUpdateUICallbackForPasswordsResults(num_passwords);
   EXPECT_OCMOCK_VERIFY(consumer_);
 }
@@ -600,7 +609,7 @@ TEST_F(QuickDeleteMediatorTest, TestSummaryWithSeveralTypes) {
   triggerUpdateUICallbackForTabsResults(0);
   triggerUpdateUICallbackForAutofillResults(0, 0, 0);
 
-  int num_history_items = 2;
+  int num_unique_domains = 2;
   int num_passwords = 1;
 
   // Both browsing history and passwords are selected for deletion and as such
@@ -609,14 +618,14 @@ TEST_F(QuickDeleteMediatorTest, TestSummaryWithSeveralTypes) {
       stringWithFormat:@"%@%@%@",
                        l10n_util::GetPluralNSStringF(
                            IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_SITES,
-                           num_history_items),
+                           num_unique_domains),
                        l10n_util::GetNSString(
                            IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_SEPARATOR),
                        l10n_util::GetPluralNSStringF(
                            IDS_IOS_DELETE_BROWSING_DATA_SUMMARY_PASSWORDS,
                            num_passwords)];
   OCMExpect([consumer_ setBrowsingDataSummary:expectedSummary]);
-  triggerUpdateUICallbackForHistoryResults(num_history_items);
+  triggerUpdateUICallbackForHistoryResults(num_unique_domains);
   triggerUpdateUICallbackForPasswordsResults(num_passwords);
   EXPECT_OCMOCK_VERIFY(consumer_);
 }

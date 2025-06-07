@@ -74,8 +74,8 @@ namespace {
 WTF::String EventListenerBreakpointKey(const WTF::String& event_name,
                                        const WTF::String& target_name) {
   if (target_name.empty() || target_name == "*")
-    return event_name + "$$" + "*";
-  return event_name + "$$" + target_name.LowerASCII();
+    return WTF::StrCat({event_name, "$$*"});
+  return WTF::StrCat({event_name, "$$", target_name.LowerASCII()});
 }
 }  // namespace
 
@@ -98,7 +98,7 @@ void InspectorDOMDebuggerAgent::CollectEventListeners(
   for (AtomicString& type : event_types) {
     // We need to clone the EventListenerVector because `GetEffectiveFunction`
     // can execute script which may invalidate the iterator.
-    EventListenerVector listeners;
+    EventListenerVectorSnapshot listeners;
     if (auto* registered_listeners = target->GetEventListeners(type)) {
       listeners = *registered_listeners;
     } else {
@@ -315,7 +315,7 @@ static protocol::Response DomTypeForName(const String& type_string, int& type) {
     return protocol::Response::Success();
   }
   return protocol::Response::ServerError(
-      String("Unknown DOM breakpoint type: " + type_string).Utf8());
+      WTF::StrCat({"Unknown DOM breakpoint type: ", type_string}).Utf8());
 }
 
 static String DomTypeName(int type) {
@@ -643,7 +643,8 @@ InspectorDOMDebuggerAgent::PreparePauseOnNativeEventData(
   if (!match)
     return nullptr;
 
-  const String full_event_name = kListenerEventCategoryType + event_name;
+  const String full_event_name =
+      WTF::StrCat({kListenerEventCategoryType, event_name});
   auto event_data = protocol::DictionaryValue::create();
   event_data->setString("eventName", full_event_name);
   event_data->setString("targetName", target_name);

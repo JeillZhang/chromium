@@ -48,6 +48,7 @@
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
@@ -271,8 +272,10 @@ void ResourceResponse::AddHttpHeaderField(const AtomicString& name,
   UpdateHeaderParsedState(name);
 
   HTTPHeaderMap::AddResult result = http_header_fields_.Add(name, value);
-  if (!result.is_new_entry)
-    result.stored_value->value = result.stored_value->value + ", " + value;
+  if (!result.is_new_entry) {
+    String new_value = WTF::StrCat({result.stored_value->value, ", ", value});
+    result.stored_value->value = AtomicString(new_value);
+  }
 }
 
 void ResourceResponse::AddHttpHeaderFieldWithMultipleValues(
@@ -371,9 +374,7 @@ static std::optional<base::Time> ParseDateValueInHeader(
   //
   // > A cache recipient MUST interpret invalid date formats, especially the
   // > value "0", as representing a time in the past (i.e., "already expired").
-  if (base::FeatureList::IsEnabled(
-          blink::features::kTreatHTTPExpiresHeaderValueZeroAsExpiredInBlink) &&
-      header_name == http_names::kLowerExpires && header_value == "0") {
+  if (header_name == http_names::kLowerExpires && header_value == "0") {
     return base::Time::Min();
   }
 
@@ -458,6 +459,10 @@ AtomicString ResourceResponse::HttpContentType() const {
 }
 
 AtomicString ResourceResponse::GetFilteredHttpContentEncoding() const {
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(const AtomicString, multiple_value,
+                                  ("multiple"));
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(const AtomicString, unknown_value,
+                                  ("@unknown"));
   String content_encoding =
       HttpHeaderField(http_names::kContentEncoding).LowerASCII();
   if (content_encoding.IsNull() || content_encoding.empty()) {
@@ -467,9 +472,9 @@ AtomicString ResourceResponse::GetFilteredHttpContentEncoding() const {
     return AtomicString(content_encoding);
   }
   if (content_encoding.find(',') != kNotFound) {
-    return AtomicString("multiple");
+    return multiple_value;
   }
-  return AtomicString("unknown");
+  return unknown_value;
 }
 
 bool ResourceResponse::WasCached() const {

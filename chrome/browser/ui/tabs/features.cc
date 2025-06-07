@@ -6,14 +6,9 @@
 
 #include "base/feature_list.h"
 #include "chrome/browser/buildflags.h"
-#include "chrome/common/chrome_features.h"
+#include "chrome/browser/ui/ui_features.h"
 
 namespace tabs {
-
-// Kill switch for disconnecting file select dialog when tab is deactivated.
-BASE_FEATURE(kDisconnectFileChooserOnTabDeactivateKillSwitch,
-             "DisconnectFileChooserOnTabDeactivateKillSwitch",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Splits pinned and unpinned tabs into separate TabStrips.
 // https://crbug.com/1346019
@@ -41,14 +36,19 @@ BASE_FEATURE(kScrollableTabStripOverflow,
              base::FEATURE_DISABLED_BY_DEFAULT);
 const char kScrollableTabStripOverflowModeName[] = "tabScrollOverflow";
 
+BASE_FEATURE(kTabGroupHome, "TabGroupHome", base::FEATURE_DISABLED_BY_DEFAULT);
+
 BASE_FEATURE(kTabSearchPositionSetting,
              "TabSearchPositionSetting",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+BASE_FEATURE(kTabGroupShortcuts,
+             "TabGroupShortcuts",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 bool CanShowTabSearchPositionSetting() {
-  // The combo button, which includes tab search, is always on the right side
-  // and cannot be repositioned.
-  if (features::IsTabstripComboButtonEnabled()) {
+  // Alternate tab search locations cannot be repositioned.
+  if (features::IsTabSearchMoving()) {
     return false;
   }
 // Mac and other platforms will always have the tab search position in the
@@ -58,6 +58,10 @@ bool CanShowTabSearchPositionSetting() {
 #else
   return false;
 #endif
+}
+
+bool AreTabGroupShortcutsEnabled() {
+  return base::FeatureList::IsEnabled(kTabGroupShortcuts);
 }
 
 }  // namespace tabs

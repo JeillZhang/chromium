@@ -56,6 +56,19 @@ public final class ChromePreferenceKeys {
     public static final String ADDRESS_BAR_SETTINGS_VIEW_COUNT =
             "Chrome.AddressBar.SettingsViewCount";
 
+    /** Timestamp of last time ai feature availability was checked. */
+    public static final String AI_ASSISTANT_ANALYZE_ATTACHMENT_AVAILABILITY =
+            "Chrome.AiAssistant.AnalyzeAttachmentAvailability";
+
+    public static final String AI_ASSISTANT_AVAILABILITY_CHECK_TIMESTAMP_MS =
+            "Chrome.AiAssistant.AvailabilityCheckTimestampMs";
+    public static final String AI_ASSISTANT_WEB_SUMMARIZATION_AVAILABILITY =
+            "Chrome.AiAssistant.WebSummarizationAvailability";
+
+    public static final String APPEARANCE_SETTINGS_CLICKED = "Chrome.Appearance.SettingsClicked";
+    public static final String APPEARANCE_SETTINGS_VIEW_COUNT =
+            "Chrome.Appearance.SettingsViewCount";
+
     /** The language code to override application language with. */
     public static final String APPLICATION_OVERRIDE_LANGUAGE =
             "Chrome.Language.ApplicationOverrideLanguage";
@@ -99,6 +112,10 @@ public final class ChromePreferenceKeys {
     /** Whether the Tabs sharing schema has been set. */
     public static final String AUXILIARY_SEARCH_IS_SCHEMA_SET =
             "Chrome.AuxiliarySearch.IsSchemaSet";
+
+    /** The current version of the WebPage schema sent to the App search. */
+    public static final String AUXILIARY_SEARCH_SCHEMA_VERSION =
+            "Chrome.AuxiliarySearch.SchemaVersion";
 
     /** Whether the consumer schema for Tabs sharing exists. */
     public static final String AUXILIARY_SEARCH_CONSUMER_SCHEMA_FOUND =
@@ -178,10 +195,6 @@ public final class ChromePreferenceKeys {
     public static final String CONTEXT_MENU_SHOP_IMAGE_WITH_GOOGLE_LENS_CLICKED =
             "Chrome.ContextMenu.ShopImageWithGoogleLensClicked";
 
-    /** Key used to record the number of dismissals of the Continuous Search UI. */
-    public static final String CONTINUOUS_SEARCH_DISMISSAL_COUNT =
-            "Chrome.ContinuousSearch.DismissalCount";
-
     public static final String CRASH_UPLOAD_FAILURE_BROWSER = "browser_crash_failure_upload";
     public static final String CRASH_UPLOAD_FAILURE_GPU = "gpu_crash_failure_upload";
     public static final String CRASH_UPLOAD_FAILURE_OTHER = "other_crash_failure_upload";
@@ -235,8 +248,23 @@ public final class ChromePreferenceKeys {
             "Chrome.RequestDesktopSiteGlobalSetting.DefaultEnabled";
 
     /**
-     * Indicates that Chrome should show an alert to the user about data privacy if the device
-     * lock is removed.
+     * Indicates the state of the Android-OS-provided advanced-protection setting when Chrome was
+     * last opened. Used to determine whether to show on startup a message informing the user about
+     * the setting change.
+     */
+    public static final String OS_ADVANCED_PROTECTION_SETTING =
+            "Chrome.OsAdvancedProtection.DefaultEnabled";
+
+    /**
+     * Indicates the later time of: - user changing advanced-protection android-OS setting OR - user
+     * launching Chrome.
+     */
+    public static final String OS_ADVANCED_PROTECTION_SETTING_UPDATED_TIME =
+            "Chrome.OsAdvancedProtection.UpdatedTime";
+
+    /**
+     * Indicates that Chrome should show an alert to the user about data privacy if the device lock
+     * is removed.
      */
     public static final String DEVICE_LOCK_SHOW_ALERT_IF_REMOVED =
             "Chrome.DeviceLock.ShowAlertIfRemoved";
@@ -260,11 +288,14 @@ public final class ChromePreferenceKeys {
     public static final String EXPLORE_OFFLINE_CONTENT_AVAILABILITY_STATUS =
             "Chrome.NTPExploreOfflineCard.HasExploreOfflineContent";
 
-    public static final String FIRST_RUN_CACHED_TOS_ACCEPTED = "first_run_tos_accepted";
     public static final String FIRST_RUN_FLOW_COMPLETE = "first_run_flow";
     // BACKUP_FLOW_SIGNIN_ACCOUNT_NAME used to be employed for the FRE too, thus the "first_run_"
     // prefix. The string should NOT be changed without some sort of migration.
     public static final String BACKUP_FLOW_SIGNIN_ACCOUNT_NAME = "first_run_signin_account_name";
+
+    /** Timestamp for when the user opened a ChromeTabbedActivity for the first time. */
+    public static final String FIRST_CTA_START_TIMESTAMP = "Chrome.FirstCtaStart.Timestamp";
+
     public static final String FIRST_RUN_FLOW_SIGNIN_SETUP = "first_run_signin_setup";
     // Needed by ChromeBackupAgent
     public static final String FIRST_RUN_LIGHTWEIGHT_FLOW_COMPLETE = "lightweight_first_run_flow";
@@ -298,6 +329,15 @@ public final class ChromePreferenceKeys {
             "Chrome.Policy.HomepageLocation";
 
     public static final String HOMEPAGE_LOCATION_POLICY_GURL = "Chrome.Policy.HomepageLocationGurl";
+
+    public static final String HOMEPAGE_IS_NEW_TAB_PAGE_POLICY_MANAGED =
+            "Chrome.Policy.HomepageIsNewTabPageManaged";
+    public static final String HOMEPAGE_IS_NEW_TAB_PAGE_POLICY_VALUE =
+            "Chrome.Policy.HomepageIsNewTabPageValue";
+
+    public static final String SHOW_HOME_BUTTON_POLICY_MANAGED =
+            "Chrome.Policy.ShowHomeButtonManaged";
+    public static final String SHOW_HOME_BUTTON_POLICY_VALUE = "Chrome.Policy.ShowHomeButtonValue";
 
     /** Used for get image descriptions feature, track "Just once"/"Don't ask again" choice. */
     public static final String IMAGE_DESCRIPTIONS_JUST_ONCE_COUNT =
@@ -404,6 +444,12 @@ public final class ChromePreferenceKeys {
             new KeyPrefix("Chrome.MultiInstance.IsIncognitoSelected.*");
     public static final KeyPrefix MULTI_INSTANCE_TAB_COUNT =
             new KeyPrefix("Chrome.MultiInstance.TabCount.*"); // Normal tab count
+
+    // The total tab count at the time Chrome is shut down for use during relaunch. This value may
+    // not be accurate if Chrome remains active in the foreground or background without being
+    // terminated.
+    public static final KeyPrefix MULTI_INSTANCE_TAB_COUNT_FOR_RELAUNCH =
+            new KeyPrefix("Chrome.MultiInstance.TabCountForRelaunch.*");
     public static final KeyPrefix MULTI_INSTANCE_TITLE =
             new KeyPrefix("Chrome.MultiInstance.Title.*");
     public static final KeyPrefix MULTI_INSTANCE_LAST_ACCESSED_TIME =
@@ -776,6 +822,9 @@ public final class ChromePreferenceKeys {
     public static final String SIGNIN_PROMO_HISTORY_PAGE_DECLINED =
             "Chrome.SigninPromoHistoryPage.Declined";
 
+    public static final String SIGNIN_PROMO_HISTORY_PAGE_LAST_SHOWN_TIME =
+            "Chrome.SigninPromoHistoryPage.LastShownTime";
+
     /** SyncPromo Show Count preference. */
     public static final KeyPrefix SYNC_PROMO_SHOW_COUNT =
             new KeyPrefix("Chrome.SyncPromo.ShowCount.*");
@@ -819,6 +868,8 @@ public final class ChromePreferenceKeys {
             "Chrome.Tab.ArchiveTimeDeltaHours";
     public static final String TAB_DECLUTTER_AUTO_DELETE_ENABLED =
             "Chrome.Tab.ArchiveAutoDeleteEnabled";
+    public static final String TAB_DECLUTTER_AUTO_DELETE_DECISION_MADE =
+            "Chrome.Tab.ArchiveAutoDeleteDecisionMade";
     public static final String TAB_DECLUTTER_AUTO_DELETE_TIME_DELTA_HOURS =
             "Chrome.Tab.ArchiveAutoDeleteTimeDeltaHours";
     public static final String TAB_DECLUTTER_DIALOG_IPH_DISMISS_COUNT =
@@ -828,12 +879,12 @@ public final class ChromePreferenceKeys {
             "org.chromium.chrome.browser.tab.TabIdManager.NEXT_ID";
 
     // Start timestamp of 1-day period for measuring the number of times the max-instance toast is
-    // shown when tab tearing fails.
-    public static final String TAB_TEARING_MAX_INSTANCES_FAILURE_START_TIME_MS =
-            "Chrome.TabTearing.MaxInstancesFailureStartTimeMs";
-    // Number of times in a day the max-instance toast is shown when tab tearing fails.
-    public static final String TAB_TEARING_MAX_INSTANCES_FAILURE_COUNT =
-            "Chrome.TabTearing.MaxInstancesFailureCount";
+    // shown when tab or group tearing fails.
+    public static final String TAB_OR_GROUP_TEARING_MAX_INSTANCES_FAILURE_START_TIME_MS =
+            "Chrome.TabOrGroupTearing.MaxInstancesFailureStartTimeMs";
+    // Number of times in a day the max-instance toast is shown when tab or group tearing fails.
+    public static final String TAB_OR_GROUP_TEARING_MAX_INSTANCES_FAILURE_COUNT =
+            "Chrome.TabOrGroupTearing.MaxInstancesFailureCount";
 
     // If the toolbar should be shown on top.
     public static final String TOOLBAR_TOP_ANCHORED = "Chrome.Toolbar.TopAnchored";
@@ -922,6 +973,7 @@ public final class ChromePreferenceKeys {
             new KeyPrefix("zero_suggest_post_content_data*");
 
     public static final String BLUETOOTH_NOTIFICATION_IDS = "Chrome.Bluetooth.NotificationIds";
+    public static final String SERIAL_NOTIFICATION_IDS = "Chrome.Serial.NotificationIds";
     public static final String USB_NOTIFICATION_IDS = "Chrome.USB.NotificationIds";
 
     /**
@@ -937,6 +989,11 @@ public final class ChromePreferenceKeys {
                 ADAPTIVE_TOOLBAR_CUSTOMIZATION_SETTINGS,
                 ADDRESS_BAR_SETTINGS_CLICKED,
                 ADDRESS_BAR_SETTINGS_VIEW_COUNT,
+                AI_ASSISTANT_ANALYZE_ATTACHMENT_AVAILABILITY,
+                AI_ASSISTANT_AVAILABILITY_CHECK_TIMESTAMP_MS,
+                AI_ASSISTANT_WEB_SUMMARIZATION_AVAILABILITY,
+                APPEARANCE_SETTINGS_CLICKED,
+                APPEARANCE_SETTINGS_VIEW_COUNT,
                 AUTOFILL_ASSISTANT_FIRST_TIME_LITE_SCRIPT_USER,
                 AUTOFILL_ASSISTANT_PROACTIVE_HELP_ENABLED,
                 AUTOFILL_THIRD_PARTY_MODE_STATE,
@@ -944,6 +1001,7 @@ public final class ChromePreferenceKeys {
                 AUXILIARY_SEARCH_MODULE_USER_RESPONDED,
                 AUXILIARY_SEARCH_MODULE_IMPRESSION,
                 AUXILIARY_SEARCH_IS_SCHEMA_SET,
+                AUXILIARY_SEARCH_SCHEMA_VERSION,
                 APP_LAUNCH_LAST_KNOWN_ACTIVE_TAB_STATE,
                 APP_LAUNCH_SEARCH_ENGINE_HAD_LOGO,
                 APPLICATION_OVERRIDE_LANGUAGE,
@@ -959,7 +1017,6 @@ public final class ChromePreferenceKeys {
                 CONTEXT_MENU_OPEN_IN_EPHEMERAL_TAB_CLICKED,
                 CONTEXT_MENU_SEARCH_WITH_GOOGLE_LENS_CLICKED,
                 CONTEXT_MENU_SHOP_IMAGE_WITH_GOOGLE_LENS_CLICKED,
-                CONTINUOUS_SEARCH_DISMISSAL_COUNT,
                 CUSTOM_TABS_LAST_CLIENT_PACKAGE,
                 CUSTOM_TABS_LAST_CLOSE_TAB_INTERACTION,
                 CUSTOM_TABS_LAST_CLOSE_TIMESTAMP,
@@ -981,6 +1038,7 @@ public final class ChromePreferenceKeys {
                 HOME_MODULES_IMPRESSION_COUNT_BEFORE_INTERACTION.pattern(),
                 EXPLORE_OFFLINE_CONTENT_AVAILABILITY_STATUS,
                 FIRST_RUN_SKIPPED_BY_POLICY,
+                FIRST_CTA_START_TIMESTAMP,
                 FLAGS_LAST_CACHED_MINIMAL_BROWSER_FLAGS_TIME_MILLIS,
                 HISTORY_APP_SPECIFIC_INFO_SEEN,
                 HOME_MODULES_MODULE_TYPE.pattern(),
@@ -990,6 +1048,8 @@ public final class ChromePreferenceKeys {
                 HOMEPAGE_LOCATION_POLICY_GURL,
                 HOMEPAGE_USE_CHROME_NTP,
                 HOMEPAGE_PARTNER_CUSTOMIZED_DEFAULT_GURL,
+                HOMEPAGE_IS_NEW_TAB_PAGE_POLICY_MANAGED,
+                HOMEPAGE_IS_NEW_TAB_PAGE_POLICY_VALUE,
                 IMAGE_DESCRIPTIONS_JUST_ONCE_COUNT,
                 IMAGE_DESCRIPTIONS_DONT_ASK_AGAIN,
                 INCOGNITO_REAUTH_PROMO_CARD_ENABLED,
@@ -1011,6 +1071,7 @@ public final class ChromePreferenceKeys {
                 MULTI_INSTANCE_LAST_ACCESSED_TIME.pattern(),
                 MULTI_INSTANCE_START_TIME,
                 MULTI_INSTANCE_TAB_COUNT.pattern(),
+                MULTI_INSTANCE_TAB_COUNT_FOR_RELAUNCH.pattern(),
                 MULTI_INSTANCE_TASK_MAP.pattern(),
                 MULTI_INSTANCE_TITLE.pattern(),
                 MULTI_INSTANCE_URL.pattern(),
@@ -1031,6 +1092,8 @@ public final class ChromePreferenceKeys {
                 OFFLINE_MEASUREMENTS_USER_AGENT_STRING,
                 OMNIBOX_CACHED_ZERO_SUGGEST_GROUPS_INFO,
                 OPTIMIZATION_GUIDE_PUSH_NOTIFICATION_CACHE.pattern(),
+                OS_ADVANCED_PROTECTION_SETTING,
+                OS_ADVANCED_PROTECTION_SETTING_UPDATED_TIME,
                 PASSWORD_PROTECTION_ACCOUNTS,
                 PERSISTENT_OFFLINE_CONTENT_AVAILABILITY_STATUS,
                 PIH_PRIVACY_NOTICE_CLOSED,
@@ -1053,12 +1116,16 @@ public final class ChromePreferenceKeys {
                 SEARCH_ENGINE_CHOICE_OS_CHOICE_APPLIED_TIMESTAMP,
                 SEARCH_ENGINE_CHOICE_PENDING_OS_CHOICE_DIALOG_SHOWN_ATTEMPTS,
                 SEGMENTATION_FEED_ACTIVE_USER,
+                SERIAL_NOTIFICATION_IDS,
                 SETTINGS_SAFETY_CHECK_LAST_RUN_TIMESTAMP,
                 SETTINGS_SAFETY_CHECK_RUN_COUNTER,
                 SHARING_LAST_SHARED_COMPONENT_NAME,
                 SHARING_TABS_WITH_OS,
+                SHOW_HOME_BUTTON_POLICY_MANAGED,
+                SHOW_HOME_BUTTON_POLICY_VALUE,
                 SYNC_PROMO_SHOW_COUNT.pattern(),
                 SIGNIN_PROMO_HISTORY_PAGE_DECLINED,
+                SIGNIN_PROMO_HISTORY_PAGE_LAST_SHOWN_TIME,
                 SIGNIN_PROMO_NTP_FIRST_SHOWN_TIME,
                 SIGNIN_PROMO_NTP_LAST_SHOWN_TIME,
                 SYNC_PROMO_TOTAL_SHOW_COUNT,
@@ -1070,10 +1137,11 @@ public final class ChromePreferenceKeys {
                 TAB_DECLUTTER_ARCHIVE_ENABLED,
                 TAB_DECLUTTER_ARCHIVE_TIME_DELTA_HOURS,
                 TAB_DECLUTTER_AUTO_DELETE_ENABLED,
+                TAB_DECLUTTER_AUTO_DELETE_DECISION_MADE,
                 TAB_DECLUTTER_AUTO_DELETE_TIME_DELTA_HOURS,
                 TAB_DECLUTTER_DIALOG_IPH_DISMISS_COUNT,
-                TAB_TEARING_MAX_INSTANCES_FAILURE_START_TIME_MS,
-                TAB_TEARING_MAX_INSTANCES_FAILURE_COUNT,
+                TAB_OR_GROUP_TEARING_MAX_INSTANCES_FAILURE_START_TIME_MS,
+                TAB_OR_GROUP_TEARING_MAX_INSTANCES_FAILURE_COUNT,
                 TOOLBAR_TOP_ANCHORED,
                 TWA_DISCLOSURE_SEEN_PACKAGES,
                 UMA_ON_POSTCREATE_COUNTER,

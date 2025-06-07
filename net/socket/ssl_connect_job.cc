@@ -8,6 +8,7 @@
 #include <memory>
 #include <set>
 #include <utility>
+#include <variant>
 
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -32,7 +33,6 @@
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_connection_status_flags.h"
 #include "net/ssl/ssl_info.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/boringssl/src/include/openssl/pool.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 
@@ -377,6 +377,15 @@ int SSLConnectJob::DoSSLConnect() {
       // currently do not support ECH with other connection types.
       DCHECK_EQ(params_->GetConnectionType(), SSLSocketParams::DIRECT);
     }
+  }
+
+  if (base::FeatureList::IsEnabled(features::kTLSTrustAnchorIDs) &&
+      endpoint_result_ &&
+      !endpoint_result_->metadata.trust_anchor_ids.empty() &&
+      !ssl_client_context()->config().trust_anchor_ids.empty()) {
+    ssl_config.trust_anchor_ids = SSLConfig::SelectTrustAnchorIDs(
+        endpoint_result_->metadata.trust_anchor_ids,
+        ssl_client_context()->config().trust_anchor_ids);
   }
 
   net_log().AddEvent(NetLogEventType::SSL_CONNECT_JOB_SSL_CONNECT, [&] {

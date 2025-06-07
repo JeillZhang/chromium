@@ -8,11 +8,12 @@
 #include <cstdint>
 #include <iterator>
 #include <string>
+#include <variant>
 
-#include "base/functional/overloaded.h"
 #include "base/memory/raw_ptr.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
@@ -22,18 +23,19 @@
 #include "components/autofill/core/browser/crowdsourcing/randomized_encoder.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/autofill_profile_test_api.h"
-#include "components/autofill/core/browser/data_model/bank_account.h"
-#include "components/autofill/core/browser/data_model/bnpl_issuer.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
-#include "components/autofill/core/browser/data_model/credit_card_test_api.h"
-#include "components/autofill/core/browser/data_model/entity_type.h"
-#include "components/autofill/core/browser/data_model/ewallet.h"
-#include "components/autofill/core/browser/data_model/iban.h"
-#include "components/autofill/core/browser/data_model/payment_instrument.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile_test_api.h"
+#include "components/autofill/core/browser/data_model/autofill_ai/entity_type.h"
+#include "components/autofill/core/browser/data_model/autofill_ai/entity_type_names.h"
+#include "components/autofill/core/browser/data_model/payments/bank_account.h"
+#include "components/autofill/core/browser/data_model/payments/bnpl_issuer.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card_test_api.h"
+#include "components/autofill/core/browser/data_model/payments/ewallet.h"
+#include "components/autofill/core/browser/data_model/payments/iban.h"
+#include "components/autofill/core/browser/data_model/payments/payment_instrument.h"
 #include "components/autofill/core/browser/field_types.h"
-#include "components/autofill/core/browser/integrators/mock_autofill_optimization_guide.h"
+#include "components/autofill/core/browser/integrators/optimization_guide/mock_autofill_optimization_guide.h"
 #include "components/autofill/core/browser/metrics/suggestions_list_metrics.h"
 #include "components/autofill/core/browser/payments/card_unmask_challenge_option.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
@@ -60,6 +62,7 @@
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/sync/protocol/autofill_specifics.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "ui/gfx/geometry/rect.h"
 
 using base::ASCIIToUTF16;
@@ -257,7 +260,8 @@ void SetProfileCategory(
           AutofillProfile::RecordType::kLocalOrSyncable);
       break;
     case autofill_metrics::AutofillProfileRecordTypeCategory::kAccountChrome:
-    case autofill_metrics::AutofillProfileRecordTypeCategory::kAccountNonChrome:
+    case autofill_metrics::AutofillProfileRecordTypeCategory::
+        kAccountNonChrome: {
       test_api(profile).set_record_type(AutofillProfile::RecordType::kAccount);
       // Any value that is not kInitialCreatorOrModifierChrome works.
       const int kInitialCreatorOrModifierNonChrome =
@@ -267,6 +271,15 @@ void SetProfileCategory(
                           kAccountChrome
               ? AutofillProfile::kInitialCreatorOrModifierChrome
               : kInitialCreatorOrModifierNonChrome);
+      break;
+    }
+    case autofill_metrics::AutofillProfileRecordTypeCategory::kAccountHome:
+      test_api(profile).set_record_type(
+          AutofillProfile::RecordType::kAccountHome);
+      break;
+    case autofill_metrics::AutofillProfileRecordTypeCategory::kAccountWork:
+      test_api(profile).set_record_type(
+          AutofillProfile::RecordType::kAccountWork);
       break;
   }
 }
@@ -452,6 +465,7 @@ CreditCard GetVirtualCard() {
   credit_card.set_record_type(CreditCard::RecordType::kVirtualCard);
   credit_card.set_virtual_card_enrollment_state(
       CreditCard::VirtualCardEnrollmentState::kEnrolled);
+  credit_card.set_cvc(u"123");
   test_api(credit_card).set_network_for_card(kMasterCard);
   return credit_card;
 }
@@ -657,6 +671,18 @@ CreditCardCategoryBenefit GetActiveCreditCardCategoryBenefit() {
       /*expiry_time=*/GetArbitraryFutureTime());
 }
 
+CreditCardCategoryBenefit CreateCreditCardCategoryBenefit(
+    CreditCardBenefitBase::BenefitId benefit_id,
+    CreditCardBenefitBase::LinkedCardInstrumentId linked_card_instrument_id,
+    CreditCardCategoryBenefit::BenefitCategory benefit_category,
+    std::u16string benefit_description) {
+  return CreditCardCategoryBenefit(benefit_id, linked_card_instrument_id,
+                                   benefit_category,
+                                   std::move(benefit_description),
+                                   /*start_time=*/GetArbitraryPastTime(),
+                                   /*expiry_time=*/GetArbitraryFutureTime());
+}
+
 CreditCardMerchantBenefit GetActiveCreditCardMerchantBenefit() {
   return CreditCardMerchantBenefit(
       CreditCardBenefitBase::BenefitId("id3"),
@@ -674,12 +700,13 @@ base::flat_set<url::Origin> GetOriginsForMerchantBenefit() {
 
 void SetUpCreditCardAndBenefitData(
     CreditCard& card,
-    const CreditCardBenefit& benefit,
     const std::string& issuer_id,
+    const CreditCardBenefit& benefit,
+    const std::string& benefit_source,
     TestPersonalDataManager& personal_data,
     AutofillOptimizationGuide* optimization_guide) {
-  absl::visit(
-      base::Overloaded{
+  std::visit(
+      absl::Overload{
           [&card](const CreditCardFlatRateBenefit& flat_rate_benefit) {
             card.set_instrument_id(
                 *flat_rate_benefit.linked_card_instrument_id());
@@ -701,6 +728,7 @@ void SetUpCreditCardAndBenefitData(
       benefit);
   personal_data.payments_data_manager().AddCreditCardBenefitForTest(benefit);
   card.set_issuer_id(issuer_id);
+  card.set_benefit_source(benefit_source);
   personal_data.test_payments_data_manager().AddServerCreditCard(card);
 }
 
@@ -856,50 +884,140 @@ EntityInstance GetPassportEntityInstance(PassportEntityOptions options) {
   using enum AttributeTypeName;
   std::vector<AttributeInstance> attributes;
   if (options.number) {
-    attributes.emplace_back(AttributeType(kPassportNumber), options.number,
-                            AttributeInstance::Context{});
+    attributes.emplace_back(AttributeType(kPassportNumber));
+    attributes.back().SetInfo(
+        PASSPORT_NUMBER, options.number, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
   }
   if (options.name) {
-    attributes.emplace_back(AttributeType(kPassportName), options.name,
-                            AttributeInstance::Context{});
+    attributes.emplace_back(AttributeType(kPassportName));
+    attributes.back().SetInfo(
+        PASSPORT_NAME_TAG, options.name, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
+    attributes.back().FinalizeInfo();
   }
   if (options.country) {
-    attributes.emplace_back(AttributeType(kPassportCountry), options.country,
-                            AttributeInstance::Context{});
+    attributes.emplace_back(AttributeType(kPassportCountry));
+    attributes.back().SetInfo(PASSPORT_ISSUING_COUNTRY, options.country,
+                              std::string(options.app_locale),
+                              /*format_string=*/u"",
+                              VerificationStatus::kNoStatus);
   }
   if (options.expiry_date) {
-    attributes.emplace_back(AttributeType(kPassportExpiryDate),
-                            options.expiry_date, AttributeInstance::Context{});
+    attributes.emplace_back(AttributeType(kPassportExpirationDate));
+    attributes.back().SetInfo(PASSPORT_EXPIRATION_DATE, options.expiry_date,
+                              std::string(options.app_locale),
+                              /*format_string=*/u"YYYY-MM-DD",
+                              VerificationStatus::kNoStatus);
   }
   if (options.issue_date) {
-    attributes.emplace_back(AttributeType(kPassportIssueDate),
-                            options.issue_date, AttributeInstance::Context{});
+    attributes.emplace_back(AttributeType(kPassportIssueDate));
+    attributes.back().SetInfo(PASSPORT_ISSUE_DATE, options.issue_date,
+                              std::string(options.app_locale),
+                              /*format_string=*/u"YYYY-MM-DD",
+                              VerificationStatus::kNoStatus);
   }
   return EntityInstance(
       EntityType(EntityTypeName::kPassport), std::move(attributes),
       base::Uuid::ParseLowercase(options.guid), std::string(options.nickname),
-      base::Time::FromTimeT(options.date_modified.ToTimeT()));
+      base::Time::FromTimeT(options.date_modified.ToTimeT()), /*use_count=*/0,
+      /*use_date=*/base::Time::FromTimeT(0));
 }
 
-EntityInstance GetLoyaltyCardEntityInstance(LoyaltyCardEntityOptions options) {
+EntityInstance GetDriversLicenseEntityInstance(DriversLicenseOptions options) {
   using enum AttributeTypeName;
   std::vector<AttributeInstance> attributes;
-  if (options.program) {
-    attributes.emplace_back(AttributeType(kLoyaltyCardProgram), options.program,
-                            AttributeInstance::Context{});
+  if (options.name) {
+    attributes.emplace_back(AttributeType(kDriversLicenseName));
+    attributes.back().SetInfo(
+        DRIVERS_LICENSE_NAME_TAG, options.name, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
+    attributes.back().FinalizeInfo();
   }
-  if (options.provider) {
-    attributes.emplace_back(AttributeType(kLoyaltyCardProvider),
-                            options.provider, AttributeInstance::Context{});
+  if (options.region) {
+    attributes.emplace_back(AttributeType(kDriversLicenseState));
+    attributes.back().SetInfo(
+        DRIVERS_LICENSE_REGION, options.region, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
   }
-  if (options.member_id) {
-    attributes.emplace_back(AttributeType(kLoyaltyCardMemberId),
-                            options.member_id, AttributeInstance::Context{});
+  if (options.number) {
+    attributes.emplace_back(AttributeType(kDriversLicenseNumber));
+    attributes.back().SetInfo(
+        DRIVERS_LICENSE_NUMBER, options.number, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
+  }
+  if (options.expiration_date) {
+    attributes.emplace_back(AttributeType(kDriversLicenseExpirationDate));
+    attributes.back().SetInfo(
+        DRIVERS_LICENSE_EXPIRATION_DATE, options.expiration_date,
+        std::string(options.app_locale), /*format_string=*/u"YYYY-MM-DD",
+        VerificationStatus::kNoStatus);
+  }
+  if (options.issue_date) {
+    attributes.emplace_back(AttributeType(kDriversLicenseIssueDate));
+    attributes.back().SetInfo(DRIVERS_LICENSE_ISSUE_DATE, options.issue_date,
+                              std::string(options.app_locale),
+                              /*format_string=*/u"YYYY-MM-DD",
+                              VerificationStatus::kNoStatus);
   }
   return EntityInstance(
-      EntityType(EntityTypeName::kLoyaltyCard), std::move(attributes),
+      EntityType(EntityTypeName::kDriversLicense), std::move(attributes),
       base::Uuid::ParseLowercase(options.guid), std::string(options.nickname),
-      base::Time::FromTimeT(options.date_modified.ToTimeT()));
+      base::Time::FromTimeT(options.date_modified.ToTimeT()), /*use_count=*/0,
+      /*use_date=*/base::Time::FromTimeT(0));
+}
+
+EntityInstance GetVehicleEntityInstance(VehicleOptions options) {
+  using enum AttributeTypeName;
+  std::vector<AttributeInstance> attributes;
+  if (options.name) {
+    attributes.emplace_back(AttributeType(kVehicleOwner));
+    attributes.back().SetInfo(
+        VEHICLE_OWNER_TAG, options.name, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
+    attributes.back().FinalizeInfo();
+  }
+  if (options.plate) {
+    attributes.emplace_back(AttributeType(kVehiclePlateNumber));
+    attributes.back().SetInfo(
+        VEHICLE_LICENSE_PLATE, options.plate, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
+  }
+  if (options.number) {
+    attributes.emplace_back(AttributeType(kVehicleVin));
+    attributes.back().SetInfo(
+        VEHICLE_VIN, options.number, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
+  }
+  if (options.make) {
+    attributes.emplace_back(AttributeType(kVehicleMake));
+    attributes.back().SetInfo(
+        VEHICLE_MAKE, options.make, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
+  }
+  if (options.model) {
+    attributes.emplace_back(AttributeType(kVehicleModel));
+    attributes.back().SetInfo(
+        VEHICLE_MODEL, options.model, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
+  }
+  if (options.year) {
+    attributes.emplace_back(AttributeType(kVehicleYear));
+    attributes.back().SetInfo(
+        VEHICLE_YEAR, options.year, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
+  }
+  if (options.state) {
+    attributes.emplace_back(AttributeType(kVehiclePlateState));
+    attributes.back().SetInfo(
+        VEHICLE_PLATE_STATE, options.state, std::string(options.app_locale),
+        /*format_string=*/u"", VerificationStatus::kNoStatus);
+  }
+  return EntityInstance(
+      EntityType(EntityTypeName::kVehicle), std::move(attributes),
+      base::Uuid::ParseLowercase(options.guid), std::string(options.nickname),
+      base::Time::FromTimeT(kJune2017.ToTimeT()), /*use_count=*/0,
+      /*use_date=*/base::Time::FromTimeT(0));
 }
 
 void InitializePossibleTypes(std::vector<FieldTypeSet>& possible_field_types,
@@ -1083,7 +1201,7 @@ Suggestion CreateAutofillSuggestion(const std::u16string& main_text_value,
                                     bool has_deactivated_style) {
   Suggestion suggestion;
   suggestion.main_text.value = main_text_value;
-  suggestion.minor_text.value = minor_text_value;
+  suggestion.minor_texts.emplace_back(minor_text_value);
   suggestion.acceptability =
       has_deactivated_style
           ? Suggestion::Acceptability::kUnacceptableWithDeactivatedStyle
@@ -1169,14 +1287,13 @@ sync_pb::PaymentInstrument CreatePaymentInstrumentWithLinkedBnplIssuer(
   return payment_instrument;
 }
 
-BnplIssuer GetTestLinkedBnplIssuer() {
+BnplIssuer GetTestLinkedBnplIssuer(autofill::BnplIssuer::IssuerId issuer_id) {
   std::vector<BnplIssuer::EligiblePriceRange> eligible_price_ranges;
   // Currency: USD, price lower bound: $50, price upper bound: $200.
   eligible_price_ranges.emplace_back(/*currency=*/"USD",
                                      /*price_lower_bound=*/50'000'000,
                                      /*price_upper_bound=*/200'000'000);
-  return BnplIssuer(12345, /*issuer_id=*/"test_issuer_id1",
-                    std::move(eligible_price_ranges));
+  return BnplIssuer(12345, issuer_id, std::move(eligible_price_ranges));
 }
 
 BnplIssuer GetTestUnlinkedBnplIssuer() {
@@ -1185,7 +1302,7 @@ BnplIssuer GetTestUnlinkedBnplIssuer() {
   eligible_price_ranges.emplace_back(/*currency=*/"USD",
                                      /*price_lower_bound=*/35'000'000,
                                      /*price_upper_bound=*/100'000'000);
-  return BnplIssuer(std::nullopt, /*issuer_id=*/"test_issuer_id2",
+  return BnplIssuer(std::nullopt, autofill::BnplIssuer::IssuerId::kBnplZip,
                     std::move(eligible_price_ranges));
 }
 
@@ -1196,7 +1313,7 @@ CreatePaymentInstrumentCreationOptionWithBnplIssuer(const std::string& id) {
 
   sync_pb::BnplCreationOption* bnpl_option =
       payment_instrument_creation_option.mutable_buy_now_pay_later_option();
-  bnpl_option->set_issuer_id("issuer_id");
+  bnpl_option->set_issuer_id(kBnplAffirmIssuerId);
 
   sync_pb::EligiblePriceRange eligible_price_range;
   eligible_price_range.set_currency("USD");

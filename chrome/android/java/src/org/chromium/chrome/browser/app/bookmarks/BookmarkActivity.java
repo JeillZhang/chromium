@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.app.bookmarks;
 
+import android.content.ComponentName;
 import android.content.Intent;
 import android.text.TextUtils;
 
@@ -12,11 +13,15 @@ import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.SnackbarActivity;
 import org.chromium.chrome.browser.back_press.BackPressHelper;
-import org.chromium.chrome.browser.back_press.SecondaryActivityBackPressUma.SecondaryActivity;
 import org.chromium.chrome.browser.bookmarks.BookmarkManagerCoordinator;
+import org.chromium.chrome.browser.bookmarks.BookmarkManagerOpenerImpl;
+import org.chromium.chrome.browser.bookmarks.BookmarkModel;
+import org.chromium.chrome.browser.bookmarks.BookmarkOpener;
+import org.chromium.chrome.browser.bookmarks.BookmarkOpenerImpl;
 import org.chromium.chrome.browser.bookmarks.BookmarkPage;
 import org.chromium.chrome.browser.bookmarks.BookmarkUiPrefs;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
+import org.chromium.chrome.browser.price_tracking.PriceDropNotificationManagerFactory;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.bookmarks.BookmarkId;
 import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
@@ -35,36 +40,47 @@ public class BookmarkActivity extends SnackbarActivity {
     public static final String INTENT_VISIT_BOOKMARK_ID = "BookmarkEditActivity.VisitBookmarkId";
 
     private @Nullable BookmarkManagerCoordinator mBookmarkManagerCoordinator;
+    private @Nullable BookmarkOpener mBookmarkOpener;
 
     @Override
     protected void onProfileAvailable(Profile profile) {
         super.onProfileAvailable(profile);
+        @Nullable ComponentName parentComponent =
+                IntentUtils.safeGetParcelableExtra(
+                        getIntent(), IntentHandler.EXTRA_PARENT_COMPONENT);
+        mBookmarkOpener =
+                new BookmarkOpenerImpl(
+                        () -> BookmarkModel.getForProfile(profile),
+                        /* context= */ this,
+                        /* componentName= */ parentComponent);
         mBookmarkManagerCoordinator =
                 new BookmarkManagerCoordinator(
                         this,
-                        IntentUtils.safeGetParcelableExtra(
-                                getIntent(), IntentHandler.EXTRA_PARENT_COMPONENT),
                         true,
                         getSnackbarManager(),
                         profile,
                         new BookmarkUiPrefs(ChromeSharedPreferences.getInstance()),
-                        /* bookmarkOpenedCallback= */ null);
+                        mBookmarkOpener,
+                        new BookmarkManagerOpenerImpl(),
+                        PriceDropNotificationManagerFactory.create(profile));
         String url = getIntent().getDataString();
         if (TextUtils.isEmpty(url)) url = UrlConstants.BOOKMARKS_URL;
         mBookmarkManagerCoordinator.updateForUrl(url);
         setContentView(mBookmarkManagerCoordinator.getView());
-        BackPressHelper.create(
-                this,
-                getOnBackPressedDispatcher(),
-                mBookmarkManagerCoordinator,
-                SecondaryActivity.BOOKMARK);
+        BackPressHelper.create(this, getOnBackPressedDispatcher(), mBookmarkManagerCoordinator);
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+
         if (mBookmarkManagerCoordinator != null) {
             mBookmarkManagerCoordinator.onDestroyed();
+        }
+
+        if (mBookmarkOpener != null) {
+            mBookmarkOpener.destroy();
+            mBookmarkOpener = null;
         }
     }
 

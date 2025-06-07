@@ -23,7 +23,6 @@
 #include "components/autofill/core/browser/ui/popup_open_enums.h"
 #include "components/autofill/core/common/aliases.h"
 #include "content/public/browser/render_widget_host.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 namespace content {
 class WebContents;
@@ -200,10 +199,6 @@ class AutofillPopupControllerImpl : public AutofillPopupController,
   // quickly after a the popup view was shown (see the `show_threshold`
   // parameter of `AcceptSuggestion`).
   std::optional<NextIdleBarrier> barrier_for_accepting_;
-
-  // The time of the latest successful (the view is created and shown) `Show()`
-  // call.
-  std::optional<base::TimeTicks> shown_time_;
 
   // An override to suppress minimum show thresholds. It should only be set
   // during tests that cannot mock time (e.g. the autofill interactive

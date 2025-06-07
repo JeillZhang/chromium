@@ -138,7 +138,7 @@ class EditingList::AddContainerButton : public views::Button {
     // Never focus on `add_button_` since it is redundant with the
     // `AddContainerButton` (b/331643468).
     add_button_->SetFocusBehavior(FocusBehavior::NEVER);
-    add_button_->SetBackground(views::CreateThemedRoundedRectBackground(
+    add_button_->SetBackground(views::CreateRoundedRectBackground(
         cros_tokens::kCrosSysPrimary, kAddButtonCornerRadius));
     add_button_->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(6, 6)));
     add_button_->SetImageModel(
@@ -173,7 +173,7 @@ class EditingList::AddContainerButton : public views::Button {
     }
 
     SetBackground(add_background
-                      ? views::CreateThemedRoundedRectBackground(
+                      ? views::CreateRoundedRectBackground(
                             GetState() != ButtonState::STATE_DISABLED
                                 ? cros_tokens::kCrosSysSystemOnBase
                                 : cros_tokens::kCrosSysInverseOnSurface,
@@ -212,13 +212,13 @@ class EditingList::AddContainerButton : public views::Button {
   // views::Button:
   void StateChanged(ButtonState old_state) override {
     bool enabled = GetState() != ButtonState::STATE_DISABLED;
-    title_->SetEnabledColorId(enabled ? cros_tokens::kCrosSysOnSurface
-                                      : cros_tokens::kCrosSysDisabled);
+    title_->SetEnabledColor(enabled ? cros_tokens::kCrosSysOnSurface
+                                    : cros_tokens::kCrosSysDisabled);
     if (auto* scroll_view = views::AsViewClass<views::ScrollView>(parent())) {
       UpdateBackground(/*add_background=*/scroll_view->GetVisibleRect().y() ==
                        0);
     }
-    add_button_->SetBackground(views::CreateThemedRoundedRectBackground(
+    add_button_->SetBackground(views::CreateRoundedRectBackground(
         enabled ? cros_tokens::kCrosSysPrimary : cros_tokens::kCrosSysDisabled,
         kAddButtonCornerRadius));
   }
@@ -255,7 +255,7 @@ void EditingList::UpdateWidget() {
 }
 
 void EditingList::Init() {
-  SetBackground(views::CreateThemedRoundedRectBackground(
+  SetBackground(views::CreateRoundedRectBackground(
       cros_tokens::kCrosSysSystemBaseElevatedOpaque,
       kMainContainerCornerRadius));
   SetBorder(std::make_unique<views::HighlightBorder>(

@@ -51,8 +51,8 @@ struct PlaceholderAvatarIconParams {
 // the Windows taskbar icon is 32x32 and the avatar icon overlay is 16x16. So to
 // get the shortcut avatar badge and the avatar icon overlay to match up, we
 // need to preserve those ratios when creating the shortcut icon.
-const int kShortcutIconSizeWin = 48;
-const int kProfileAvatarBadgeSizeWin = kShortcutIconSizeWin / 2;
+inline constexpr int kShortcutIconSizeWin = 48;
+inline constexpr int kProfileAvatarBadgeSizeWin = kShortcutIconSizeWin / 2;
 #endif  // BUILDFLAG(IS_WIN)
 
 // Avatar access.
@@ -143,15 +143,13 @@ int GetPlaceholderAvatarIconResourceID();
 std::string GetPlaceholderAvatarIconUrl();
 
 // Returns the outline silhouette colored generic avatar, either visible against
-// a dark or a light theme background. This function is currently under
-// experiment and only used when `kOutlineSilhouetteIcon` is enabled.
+// a dark or a light theme background.
 gfx::Image GetPlaceholderAvatarIconVisibleAgainstBackground(
     SkColor profile_color_seed,
     int size,
     AvatarVisibilityAgainstBackground visibility);
 
-// Returns a filled person icon if `kOutlineSilhouetteIcon` is disabled, and the
-// outline silhouette colored generic avatar if it is enabled. Depending on the
+// Returns the outline silhouette colored generic avatar. Depending on the
 // `icon_params`, the outline silhouette avatar will have a background/padding
 // or not.
 //
@@ -190,7 +188,7 @@ bool IsDefaultAvatarIconIndex(size_t index);
 
 // Checks if the given URL points to one of the default avatar icons. If it
 // is, returns true and its index through |icon_index|. If not, returns false.
-bool IsDefaultAvatarIconUrl(const std::string& icon_url, size_t *icon_index);
+bool IsDefaultAvatarIconUrl(std::string_view icon_url, size_t* icon_index);
 
 // Returns dictionary containing the avatar icon info in the format expected by
 // the WebUI component 'cr-profile-avatar-selector'.

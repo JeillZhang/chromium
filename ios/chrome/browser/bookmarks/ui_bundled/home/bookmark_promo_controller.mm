@@ -16,6 +16,7 @@
 #import "ios/chrome/browser/authentication/ui_bundled/account_settings_presenter.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view_configurator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view_consumer.h"
+#import "ios/chrome/browser/authentication/ui_bundled/change_profile/change_profile_bookmarks_continuation.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_promo_view_mediator.h"
 #import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_utils_ios.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
@@ -26,8 +27,8 @@
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
 #import "ios/chrome/browser/sync/model/sync_service_factory.h"
 
-@interface BookmarkPromoController () <SigninPromoViewConsumer,
-                                       IdentityManagerObserverBridgeDelegate>
+@interface BookmarkPromoController () <IdentityManagerObserverBridgeDelegate,
+                                       SigninPromoViewConsumer>
 
 @end
 
@@ -40,11 +41,13 @@
 }
 
 - (instancetype)initWithBrowser:(Browser*)browser
-                    syncService:(syncer::SyncService*)syncService
-                       delegate:(id<BookmarkPromoControllerDelegate>)delegate
-                signinPresenter:(id<SigninPresenter>)signinPresenter
-       accountSettingsPresenter:
-           (id<AccountSettingsPresenter>)accountSettingsPresenter {
+                        syncService:(syncer::SyncService*)syncService
+                           delegate:
+                               (id<BookmarkPromoControllerDelegate>)delegate
+    signinPromoViewMediatorDelegate:
+        (id<SigninPromoViewMediatorDelegate>)signinPromoViewMediatorDelegate
+           accountSettingsPresenter:
+               (id<AccountSettingsPresenter>)accountSettingsPresenter {
   DCHECK(browser);
   self = [super init];
   if (self) {
@@ -57,16 +60,20 @@
         std::make_unique<signin::IdentityManagerObserverBridge>(identityManager,
                                                                 self);
     _signinPromoViewMediator = [[SigninPromoViewMediator alloc]
-         initWithIdentityManager:identityManager
-           accountManagerService:ChromeAccountManagerServiceFactory::
-                                     GetForProfile(profile)
-                     authService:AuthenticationServiceFactory::GetForProfile(
-                                     profile)
-                     prefService:profile->GetPrefs()
-                     syncService:syncService
-                     accessPoint:signin_metrics::AccessPoint::kBookmarkManager
-                 signinPresenter:signinPresenter
-        accountSettingsPresenter:accountSettingsPresenter];
+                  initWithIdentityManager:identityManager
+                    accountManagerService:ChromeAccountManagerServiceFactory::
+                                              GetForProfile(profile)
+                              authService:AuthenticationServiceFactory::
+                                              GetForProfile(profile)
+                              prefService:profile->GetPrefs()
+                              syncService:syncService
+                              accessPoint:signin_metrics::AccessPoint::
+                                              kBookmarkManager
+                                 delegate:signinPromoViewMediatorDelegate
+                 accountSettingsPresenter:accountSettingsPresenter
+        changeProfileContinuationProvider:base::BindRepeating([]() {
+          return CreateChangeProfileBookmarksContinuation();
+        })];
     _signinPromoViewMediator.consumer = self;
     _signinPromoViewMediator.dataTypeToWaitForInitialSync =
         syncer::DataType::BOOKMARKS;
@@ -101,13 +108,6 @@
   std::optional<SigninPromoAction> signinPromoAction;
   if (!identityManager->HasPrimaryAccount(signin::ConsentLevel::kSignin)) {
     signinPromoAction = SigninPromoAction::kInstantSignin;
-  } else if (identityManager->HasPrimaryAccount(signin::ConsentLevel::kSync)) {
-    // TODO(crbug.com/40066949): Simplify once kSync becomes unreachable or is
-    // deleted from the codebase. See ConsentLevel::kSync documentation for
-    // details.
-    // If the user is already syncing, the promo should not be visible.
-    self.shouldShowSigninPromo = NO;
-    return;
   } else if (!bookmark_utils_ios::IsAccountBookmarkStorageOptedIn(
                  syncService)) {
     if (self.shouldShowSigninPromo &&
@@ -147,6 +147,12 @@
   self.shouldShowSigninPromo = YES;
 }
 
+#pragma mark - Property
+
+- (BOOL)signinInProgress {
+  return _signinPromoViewMediator.signinInProgress;
+}
+
 #pragma mark - IdentityManagerObserverBridgeDelegate
 
 // Called when a user changes the syncing state.
@@ -168,10 +174,6 @@
 }
 
 - (void)promoProgressStateDidChange {
-  [self updateShouldShowSigninPromo];
-}
-
-- (void)signinDidFinish {
   [self updateShouldShowSigninPromo];
 }
 

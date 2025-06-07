@@ -11,6 +11,7 @@
 
 #include "base/containers/contains.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
@@ -25,7 +26,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
-#include "chrome/browser/ui/tabs/tab_group.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -37,6 +37,9 @@
 #include "components/saved_tab_groups/public/types.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "components/tab_groups/tab_group_id.h"
+#include "components/tabs/public/split_tab_collection.h"
+#include "components/tabs/public/split_tab_visual_data.h"
+#include "components/tabs/public/tab_group.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/web_contents_tester.h"
@@ -123,8 +126,6 @@ class TabsApiUnitTest : public ExtensionServiceTestBase {
         browser()->profile());
   }
 
-  void MaybeSaveLocalTabGroup(const tab_groups::LocalTabGroupID& local_id);
-
 #if BUILDFLAG(IS_CHROMEOS)
   aura::Window* root_window() { return test_helper_.GetContext(); }
 #endif
@@ -182,21 +183,6 @@ void TabsApiUnitTest::TearDown() {
 #endif
 }
 
-void TabsApiUnitTest::MaybeSaveLocalTabGroup(
-    const tab_groups::LocalTabGroupID& local_id) {
-  if (tab_groups::IsTabGroupsSaveV2Enabled()) {
-    // In V2, all tab groups are automatically saved by default. For this
-    // reason, there is no need to manually save the group again.
-    return;
-  }
-
-  tab_groups::SavedTabGroup saved_group =
-      tab_groups::SavedTabGroupUtils::CreateSavedTabGroupFromLocalId(local_id);
-  sync_service()->SaveGroup(std::move(saved_group));
-
-  ASSERT_TRUE(sync_service()->GetGroup(local_id));
-}
-
 bool TabsApiUnitTest::CommitPendingLoadForController(
     content::NavigationController& controller) {
   if (!controller.GetPendingEntry()) {
@@ -240,7 +226,7 @@ TEST_F(TabsApiUnitTest, IsTabStripEditable) {
   }
 
   // Start logical drag.
-  browser_window()->SetIsTabStripEditable(false);
+  browser_window()->SetTabStripNotEditableForTesting();
   ASSERT_FALSE(browser_window()->IsTabStripEditable());
 
   // Succeed with updates that don't interact with the tab strip model.
@@ -589,13 +575,7 @@ TEST_F(TabsApiUnitTest, TabsUpdateSavedTabGroupTab) {
       {GetTabStripModel()->GetIndexOfWebContents(raw_contents)});
   tab_groups::TabGroupVisualData visual_data(
       u"Initial title", tab_groups::TabGroupColorId::kBlue);
-  browser()
-      ->tab_strip_model()
-      ->group_model()
-      ->GetTabGroup(group)
-      ->SetVisualData(visual_data);
-
-  MaybeSaveLocalTabGroup(group);
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(group, visual_data);
 
   EXPECT_TRUE(
       ExtensionTabUtil::TabIsInSavedTabGroup(raw_contents, GetTabStripModel()));
@@ -619,11 +599,9 @@ TEST_F(TabsApiUnitTest, TabsUpdateSavedTabGroupTab) {
   {  // Reset the active states, and then test highlighted for a saved tab.
     GetTabStripModel()->ActivateTabAt(
         GetTabStripModel()->GetIndexOfWebContents(raw_non_updated_contents));
-    if (GetTabStripModel()->IsTabSelected(
-            GetTabStripModel()->GetIndexOfWebContents(raw_contents))) {
-      GetTabStripModel()->ToggleSelectionAt(
-          GetTabStripModel()->GetIndexOfWebContents(raw_contents));
-    }
+    GetTabStripModel()->DeselectTabAt(
+        GetTabStripModel()->GetIndexOfWebContents(raw_contents));
+
     scoped_refptr<const Extension> extension =
         ExtensionBuilder("UpdateTest").Build();
     auto function = base::MakeRefCounted<TabsUpdateFunction>();
@@ -640,11 +618,9 @@ TEST_F(TabsApiUnitTest, TabsUpdateSavedTabGroupTab) {
   {  // Reset the active states, and then test selected state for a saved tab.
     GetTabStripModel()->ActivateTabAt(
         GetTabStripModel()->GetIndexOfWebContents(raw_non_updated_contents));
-    if (GetTabStripModel()->IsTabSelected(
-            GetTabStripModel()->GetIndexOfWebContents(raw_contents))) {
-      GetTabStripModel()->ToggleSelectionAt(
-          GetTabStripModel()->GetIndexOfWebContents(raw_contents));
-    }
+    GetTabStripModel()->DeselectTabAt(
+        GetTabStripModel()->GetIndexOfWebContents(raw_contents));
+
     scoped_refptr<const Extension> extension =
         ExtensionBuilder("UpdateTest").Build();
     auto function = base::MakeRefCounted<TabsUpdateFunction>();
@@ -975,13 +951,7 @@ TEST_F(TabsApiUnitTest, TabsMoveSavedTabGroupTabAllowed) {
   tab_groups::TabGroupId group = GetTabStripModel()->AddToNewGroup({0, 1, 2});
   tab_groups::TabGroupVisualData visual_data(
       u"Initial title", tab_groups::TabGroupColorId::kBlue);
-  browser()
-      ->tab_strip_model()
-      ->group_model()
-      ->GetTabGroup(group)
-      ->SetVisualData(visual_data);
-
-  MaybeSaveLocalTabGroup(group);
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(group, visual_data);
 
   // Use the TabsUpdateFunction to navigate to chromium.org
   int tab_extension_id = sessions::SessionTabHelper::IdForTab(
@@ -1244,7 +1214,6 @@ TEST_F(TabsApiUnitTest, TabsGroupForSavedTabGroupTab) {
 
   // group the first tab. make sure its saved.
   tab_groups::TabGroupId old_group = GetTabStripModel()->AddToNewGroup({0});
-  MaybeSaveLocalTabGroup(old_group);
 
   // with extensions group the 2 tabs into a new group.
   auto function = base::MakeRefCounted<TabsGroupFunction>();
@@ -1336,13 +1305,7 @@ TEST_F(TabsApiUnitTest, TabsUngroupSingleGroupForSavedTabGroup) {
   tab_groups::TabGroupId group = GetTabStripModel()->AddToNewGroup({0});
   tab_groups::TabGroupVisualData visual_data(
       u"Initial title", tab_groups::TabGroupColorId::kBlue);
-  browser()
-      ->tab_strip_model()
-      ->group_model()
-      ->GetTabGroup(group)
-      ->SetVisualData(visual_data);
-
-  MaybeSaveLocalTabGroup(group);
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(group, visual_data);
 
   auto function = base::MakeRefCounted<TabsUngroupFunction>();
   function->set_extension(extension);
@@ -1504,13 +1467,7 @@ TEST_F(TabsApiUnitTest, TabsGoForwardAndBackSavedTabGroupTab) {
       {GetTabStripModel()->GetIndexOfWebContents(web_contents)});
   tab_groups::TabGroupVisualData visual_data(
       u"Initial title", tab_groups::TabGroupColorId::kBlue);
-  browser()
-      ->tab_strip_model()
-      ->group_model()
-      ->GetTabGroup(group)
-      ->SetVisualData(visual_data);
-
-  MaybeSaveLocalTabGroup(group);
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(group, visual_data);
 
   {
     auto goback_function = base::MakeRefCounted<TabsGoBackFunction>();
@@ -1802,13 +1759,7 @@ TEST_F(TabsApiUnitTest, TabsDiscardSavedTabGroupTabNotAllowed) {
       {GetTabStripModel()->GetIndexOfWebContents(web_contents)});
   tab_groups::TabGroupVisualData visual_data(
       u"Initial title", tab_groups::TabGroupColorId::kBlue);
-  browser()
-      ->tab_strip_model()
-      ->group_model()
-      ->GetTabGroup(group)
-      ->SetVisualData(visual_data);
-
-  MaybeSaveLocalTabGroup(group);
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(group, visual_data);
 
   // The tab discard function should fail.
   auto function = base::MakeRefCounted<TabsDiscardFunction>();
@@ -1816,6 +1767,32 @@ TEST_F(TabsApiUnitTest, TabsDiscardSavedTabGroupTabNotAllowed) {
   EXPECT_TRUE(api_test_utils::RunFunction(
       function.get(), base::StringPrintf("[%d]", tab_id), profile(),
       api_test_utils::FunctionMode::kNone));
+}
+
+TEST_F(TabsApiUnitTest, SplitTabsWithHighlightFunction) {
+  // Add a couple of web contents to the browser and mark them as split.
+  for (int i = 0; i < /*numTabs=*/2; ++i) {
+    std::unique_ptr<content::WebContents> contents(
+        content::WebContentsTester::CreateTestWebContents(profile(), nullptr));
+    CreateSessionServiceTabHelper(contents.get());
+    GetTabStripModel()->AppendWebContents(std::move(contents),
+                                          /*foreground=*/true);
+  }
+  GetTabStripModel()->ActivateTabAt(0);
+  GetTabStripModel()->AddToNewSplit({1}, split_tabs::SplitTabVisualData());
+
+  // Run extension to highlight tabs
+  auto extension = CreateTabsExtension();
+  std::string args = base::StringPrintf("[{\"tabs\": [%d]}]", 0);
+  scoped_refptr<TabsHighlightFunction> function =
+      base::MakeRefCounted<TabsHighlightFunction>();
+  function->set_extension(extension);
+  ASSERT_TRUE(api_test_utils::RunFunction(function.get(), args, profile(),
+                                          api_test_utils::FunctionMode::kNone));
+
+  // Check that both sides of the split are selected.
+  ASSERT_TRUE(GetTabStripModel()->selection_model().IsSelected(0));
+  ASSERT_TRUE(GetTabStripModel()->selection_model().IsSelected(1));
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -1855,13 +1832,7 @@ TEST_F(TabsApiUnitTest,
       {GetTabStripModel()->GetIndexOfWebContents(web_contents)});
   tab_groups::TabGroupVisualData visual_data(
       u"Initial title", tab_groups::TabGroupColorId::kBlue);
-  browser()
-      ->tab_strip_model()
-      ->group_model()
-      ->GetTabGroup(group)
-      ->SetVisualData(visual_data);
-
-  MaybeSaveLocalTabGroup(group);
+  browser()->tab_strip_model()->ChangeTabGroupVisuals(group, visual_data);
 
   // The tab discard function should not fail.
   auto function = base::MakeRefCounted<TabsDiscardFunction>();

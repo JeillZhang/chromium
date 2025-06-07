@@ -30,11 +30,11 @@
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_apply_task.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_apply_waiter.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_discovery_task.h"
-#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/iwa_key_distribution_info_provider.h"
 #include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_external_install_options.h"
-#include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest.h"
 #include "chrome/browser/web_applications/web_app_install_manager_observer.h"
 #include "components/webapps/common/web_app_id.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
+#include "components/webapps/isolated_web_apps/update_channel.h"
 #include "net/base/backoff_entry.h"
 
 class GURL;
@@ -51,7 +51,8 @@ class IsolatedWebAppURLLoaderFactory;
 class WebAppProvider;
 
 namespace {
-constexpr base::TimeDelta kDefaultUpdateDiscoveryFrequency = base::Hours(5);
+inline constexpr base::TimeDelta kDefaultUpdateDiscoveryFrequency =
+    base::Hours(5);
 }
 
 // This enum lists the error types that can occur during the update of an
@@ -98,9 +99,6 @@ struct IsolatedWebAppUpdateOptions {
 //
 // TODO(crbug.com/40274186): Implement updates for unmanaged IWAs once we have
 // designed that process.
-//
-// TODO(crbug.com/40274187): Consider only executing update discovery tasks when
-// the user is not on a metered/paid internet connection.
 class IsolatedWebAppUpdateManager
     : public WebAppInstallManagerObserver,
       public IwaKeyDistributionInfoProvider::Observer {

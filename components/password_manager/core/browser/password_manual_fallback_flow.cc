@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <variant>
 
 #include "base/check.h"
 #include "base/check_deref.h"
@@ -91,7 +92,9 @@ PasswordManualFallbackFlow::PasswordManualFallbackFlow(
     PasswordManualFallbackMetricsRecorder* manual_fallback_metrics_recorder,
     const PasswordFormCache* password_form_cache,
     std::unique_ptr<SavedPasswordsPresenter> passwords_presenter)
-    : suggestion_generator_(password_manager_driver, password_client),
+    : suggestion_generator_(password_manager_driver,
+                            password_client,
+                            autofill_client),
       password_manager_driver_(password_manager_driver),
       autofill_client_(autofill_client),
       password_client_(password_client),
@@ -180,7 +183,7 @@ void PasswordManualFallbackFlow::RunFlow(
   RunFlowImpl(bounds, text_direction);
 }
 
-absl::variant<autofill::AutofillDriver*, PasswordManagerDriver*>
+std::variant<autofill::AutofillDriver*, PasswordManagerDriver*>
 PasswordManualFallbackFlow::GetDriver() {
   return password_manager_driver_.get();
 }
@@ -390,14 +393,9 @@ void PasswordManualFallbackFlow::MaybeAuthenticateBeforeFilling(
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
     const std::u16string origin = base::UTF8ToUTF16(GetShownOrigin(
         url::Origin::Create(password_manager_driver_->GetLastCommittedURL())));
-#endif
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
     message =
         l10n_util::GetStringFUTF16(IDS_PASSWORD_MANAGER_FILLING_REAUTH, origin);
-#elif BUILDFLAG(IS_CHROMEOS)
-    message = l10n_util::GetStringFUTF16(
-        IDS_PASSWORD_MANAGER_FILLING_REAUTH_CHROMEOS, origin);
-#endif
+#endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
     authenticator_->AuthenticateWithMessage(
         message, metrics_util::TimeCallbackMediumTimes(
                      std::move(on_reath_complete),

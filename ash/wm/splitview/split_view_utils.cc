@@ -198,10 +198,6 @@ const char* GetSnapActionSourceMetricComponent(
       return "SnapByDeskOrSessionChange";
     case WindowSnapActionSource::kSnapGroupWindowUpdate:
       return "SnapGroupWindowUpdate";
-    case WindowSnapActionSource::kTest:
-      return "Test";
-    case WindowSnapActionSource::kLacrosSnapButtonOrWindowLayoutMenu:
-      return "SnapByLacrosSnapButtonOrWindowLayoutMenu";
     case WindowSnapActionSource::kSnapBySwapWindowsInSnapGroup:
       return "SnapBySwapWindowsInSnapGroup";
   }
@@ -872,12 +868,10 @@ SnapViewType GetOppositeSnapType(aura::Window* window) {
 bool CanSnapActionSourceStartFasterSplitView(
     WindowSnapActionSource snap_action_source) {
   switch (snap_action_source) {
-    case WindowSnapActionSource::kDragWindowToEdgeToSnap:
-    case WindowSnapActionSource::kSnapByWindowLayoutMenu:
-    case WindowSnapActionSource::kLongPressCaptionButtonToSnap:
     case WindowSnapActionSource::kDragOrSelectOverviewWindowToSnap:
-    case WindowSnapActionSource::kTest:
-    case WindowSnapActionSource::kLacrosSnapButtonOrWindowLayoutMenu:
+    case WindowSnapActionSource::kDragWindowToEdgeToSnap:
+    case WindowSnapActionSource::kLongPressCaptionButtonToSnap:
+    case WindowSnapActionSource::kSnapByWindowLayoutMenu:
       // We only start partial overview for the above snap sources.
       return true;
     default:

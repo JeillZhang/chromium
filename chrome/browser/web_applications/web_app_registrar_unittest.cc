@@ -23,7 +23,7 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/apps/link_capturing/link_capturing_feature_test_support.h"
 #include "chrome/browser/web_applications/commands/run_on_os_login_command.h"
 #include "chrome/browser/web_applications/commands/web_app_uninstall_command.h"
@@ -31,8 +31,8 @@
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
+#include "chrome/browser/web_applications/proto/web_app.pb.h"
 #include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
-#include "chrome/browser/web_applications/proto/web_app_proto_package.pb.h"
 #include "chrome/browser/web_applications/scope_extension_info.h"
 #include "chrome/browser/web_applications/test/fake_web_app_database_factory.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
@@ -62,11 +62,12 @@
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_features.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "components/user_manager/test_helper.h"
 #include "components/user_manager/user_names.h"
 #endif
 
@@ -91,7 +92,7 @@ Registry CreateRegistryForTesting(const std::string& base_url, int num_apps) {
     web_app->SetInstallState(proto::INSTALLED_WITH_OS_INTEGRATION);
     // Set an OS integration state (with shortcuts) to prevent migration to a
     // partially installed status.
-    proto::WebAppOsIntegrationState os_state;
+    proto::os_state::WebAppOsIntegration os_state;
     os_state.mutable_shortcut();
     web_app->SetCurrentOsIntegrationStates(os_state);
 
@@ -483,7 +484,7 @@ TEST_F(WebAppRegistrarTest, GetAppDataFields) {
   EXPECT_EQ(description, registrar().GetAppDescription(app_id));
   EXPECT_EQ(theme_color, registrar().GetAppThemeColor(app_id));
   EXPECT_EQ(start_url, registrar().GetAppStartUrl(app_id));
-  EXPECT_EQ(mojom::UserDisplayMode::kStandalone,
+  EXPECT_EQ(mojom::UserDisplayMode::kBrowser,
             registrar().GetAppUserDisplayMode(app_id));
 
   {
@@ -506,6 +507,8 @@ TEST_F(WebAppRegistrarTest, GetAppDataFields) {
     ASSERT_TRUE(future.Wait());
     EXPECT_EQ(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION,
               registrar().GetInstallState(app_id));
+    EXPECT_EQ(mojom::UserDisplayMode::kStandalone,
+              registrar().GetAppUserDisplayMode(app_id));
   }
 
   {
@@ -1093,13 +1096,20 @@ TEST_F(WebAppRegistrarTest, NotLocallyInstalledAppGetsDisplayModeBrowser) {
 
 TEST_F(WebAppRegistrarTest,
        NotLocallyInstalledAppGetsDisplayModeBrowserEvenForIsolatedWebApps) {
+  base::test::ScopedFeatureList scoped_feature_list(features::kIsolatedWebApps);
   StartWebAppProvider();
 
-  auto web_app = test::CreateWebApp();
+  std::unique_ptr<WebApp> web_app =
+      test::CreateWebApp(GURL("isolated-app://random_name"));
   const webapps::AppId app_id = web_app->app_id();
   web_app->SetDisplayMode(DisplayMode::kStandalone);
   web_app->SetUserDisplayMode(mojom::UserDisplayMode::kStandalone);
   web_app->SetInstallState(proto::SUGGESTED_FROM_ANOTHER_DEVICE);
+  web_app->SetIsolationData(
+      IsolationData::Builder(
+          IwaStorageOwnedBundle{"random_name", /*dev_mode=*/false},
+          base::Version("1.0.0"))
+          .Build());
 
   RegisterAppUnsafe(std::move(web_app));
 
@@ -1112,7 +1122,8 @@ TEST_F(WebAppRegistrarTest,
   base::test::ScopedFeatureList scoped_feature_list(features::kIsolatedWebApps);
   StartWebAppProvider();
 
-  std::unique_ptr<WebApp> web_app = test::CreateWebApp();
+  std::unique_ptr<WebApp> web_app =
+      test::CreateWebApp(GURL("isolated-app://random_name"));
   const webapps::AppId app_id = web_app->app_id();
 
   // Valid manifest must have standalone display mode
@@ -1136,7 +1147,8 @@ TEST_F(WebAppRegistrarTest,
   base::test::ScopedFeatureList scoped_feature_list(features::kIsolatedWebApps);
   StartWebAppProvider();
 
-  std::unique_ptr<WebApp> web_app = test::CreateWebApp();
+  std::unique_ptr<WebApp> web_app =
+      test::CreateWebApp(GURL("isolated-app://random_name"));
   const webapps::AppId app_id = web_app->app_id();
 
   web_app->SetDisplayMode(DisplayMode::kBorderless);
@@ -1286,7 +1298,7 @@ TEST_F(WebAppRegistrarTest, AppsDoNotOverlapIfNestedScope) {
                                      WebAppManagement::kDefault);
   web_app2->SetScope(GURL("https://example_scope.com/nested"));
   web_app2->SetLinkCapturingUserPreference(
-      proto::LinkCapturingUserPreference::CAPTURE_SUPPORTED_LINKS);
+      proto::NAVIGATION_CAPTURING_PREFERENCE_CAPTURE);
 
   const webapps::AppId app_id1 = web_app1->app_id();
   const webapps::AppId app_id2 = web_app2->app_id();
@@ -1409,6 +1421,7 @@ TEST_F(WebAppRegistrarTest_TabStrip, TabbedAppNewTabUrl) {
 
   web_app->SetDisplayMode(DisplayMode::kTabbed);
   web_app->SetTabStrip(tab_strip);
+  web_app->SetInstallState(proto::InstallState::INSTALLED_WITH_OS_INTEGRATION);
   RegisterAppUnsafe(std::move(web_app));
 
   EXPECT_EQ(registrar().GetAppNewTabUrl(app_id), new_tab_url);
@@ -1472,6 +1485,8 @@ TEST_F(WebAppRegistrarTest, InnerAndOuterScopeIntentPicker) {
       test::CreateWebApp(GURL("https://abc.com"), WebAppManagement::kPolicy);
   outer_web_app->SetName("ABC_Outer");
   outer_web_app->SetScope(GURL("https://abc.com/"));
+  outer_web_app->SetInstallState(
+      proto::InstallState::INSTALLED_WITH_OS_INTEGRATION);
   const webapps::AppId outer_app_id = outer_web_app->app_id();
   RegisterAppUnsafe(std::move(outer_web_app));
 
@@ -1479,6 +1494,8 @@ TEST_F(WebAppRegistrarTest, InnerAndOuterScopeIntentPicker) {
                                           WebAppManagement::kDefault);
   inner_web_app->SetName("ABC_Inner");
   inner_web_app->SetScope(GURL("https://abc.com/inner"));
+  inner_web_app->SetInstallState(
+      proto::InstallState::INSTALLED_WITH_OS_INTEGRATION);
   const webapps::AppId inner_app_id = inner_web_app->app_id();
   RegisterAppUnsafe(std::move(inner_web_app));
 
@@ -1506,7 +1523,7 @@ TEST_F(WebAppRegistrarTest, InnerAndOuterScopeIntentPicker) {
                           Pair(outer_app_id, "ABC_Outer")));
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 
 class WebAppRegistrarAshTest : public WebAppTest {
  public:
@@ -1517,11 +1534,11 @@ class WebAppRegistrarAshTest : public WebAppTest {
     auto* fake_user_manager = user_manager.get();
     scoped_user_manager_ = std::make_unique<user_manager::ScopedUserManager>(
         std::move(user_manager));
-    auto* user = fake_user_manager->AddUser(user_manager::StubAccountId());
-    fake_user_manager->UserLoggedIn(user_manager::StubAccountId(),
-                                    user->username_hash(),
-                                    /*browser_restart=*/false,
-                                    /*is_child=*/false);
+    fake_user_manager->AddUser(user_manager::StubAccountId());
+    fake_user_manager->UserLoggedIn(
+        user_manager::StubAccountId(),
+        user_manager::TestHelper::GetFakeUsernameHash(
+            user_manager::StubAccountId()));
     // Need to run the WebAppTest::SetUp() after the fake user manager set up
     // so that the scoped_user_manager can be destructed in the correct order.
     WebAppTest::SetUp();
@@ -1590,75 +1607,211 @@ TEST_F(WebAppRegistrarAshTest, SourceSupported) {
   EXPECT_FALSE(base::Contains(registrar.GetAppIds(), uninstalling_id));
 }
 
-#endif
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
+class WebAppRegistrarDisplayModeTest
+    : public WebAppRegistrarTest,
+      public testing::WithParamInterface<DisplayMode> {
+ public:
+  const webapps::AppId CreateAppInRegistryWithUserDisplayModeAndOverrides(
+      mojom::UserDisplayMode user_display_mode,
+      std::vector<DisplayMode> display_mode_overrides,
+      bool is_isolated = false) {
+    GURL start_url = GURL("https://example.com/start");
+    if (is_isolated) {
+      constexpr char kIwaHostname[] =
+          "berugqztij5biqquuk3mfwpsaibuegaqcitgfchwuosuofdjabzqaaic";
+      start_url =
+          GURL(base::StrCat({chrome::kIsolatedAppScheme,
+                             url::kStandardSchemeSeparator, kIwaHostname}));
+    }
+    auto web_app = test::CreateWebApp(start_url);
+    const webapps::AppId app_id = web_app->app_id();
 
-using WebAppRegistrarLacrosTest = WebAppTest;
+    // Get the display mode from the parameterized inputs.
+    web_app->SetDisplayMode(GetParam());
+    web_app->SetUserDisplayMode(user_display_mode);
+    web_app->SetInstallState(proto::INSTALLED_WITH_OS_INTEGRATION);
+    web_app->SetDisplayModeOverride(std::move(display_mode_overrides));
 
-TEST_F(WebAppRegistrarLacrosTest, SwaSourceNotSupported) {
-  const GURL example_url("https://example.com/my-app/start");
-  const GURL swa_url("chrome://swa/start");
-  const GURL uninstalling_url("https://example.com/uninstalling/start");
+    if (is_isolated) {
+      web_app->SetIsolationData(
+          IsolationData::Builder(
+              IwaStorageOwnedBundle{"random_name", /*dev_mode=*/false},
+              base::Version("1.0.0"))
+              .Build());
+    }
 
-  webapps::AppId example_id;
-  webapps::AppId swa_id;
-  webapps::AppId uninstalling_id;
-  WebAppRegistrarMutable registrar(profile());
-  {
-    Registry registry;
-
-    auto example_app = test::CreateWebApp(example_url);
-    example_id = example_app->app_id();
-    registry.emplace(example_id, std::move(example_app));
-
-    auto swa_app = test::CreateWebApp(swa_url, WebAppManagement::Type::kSystem);
-    swa_id = swa_app->app_id();
-    registry.emplace(swa_id, std::move(swa_app));
-
-    auto uninstalling_app = test::CreateWebApp(uninstalling_url);
-    uninstalling_app->SetIsUninstalling(true);
-    uninstalling_id = uninstalling_app->app_id();
-    registry.emplace(uninstalling_id, std::move(uninstalling_app));
-
-    registrar.InitRegistry(std::move(registry));
+    RegisterAppUnsafe(std::move(web_app));
+    return app_id;
   }
 
-  EXPECT_EQ(registrar.FindBestAppWithUrlInScope(
-                example_url,
-                web_app::WebAppFilter::InstalledInOperatingSystemForTesting()),
-            example_id);
-  EXPECT_EQ(registrar.GetAppScope(example_id),
-            GURL("https://example.com/my-app/"));
-  EXPECT_TRUE(registrar.GetAppUserDisplayMode(example_id).has_value());
-  EXPECT_EQ(registrar.CountUserInstalledApps(), 1);
+  // When user_display_mode indicates a user preference for opening in
+  // a standalone window, we open in a minimal-ui window (for app_display_mode
+  // 'browser' or 'minimal-ui') or a standalone window (for app_display_mode
+  // 'standalone' or 'fullscreen'). For all other display modes, keep the
+  // display modes as they're specified.
+  DisplayMode GetResolvedDisplayModeForStandaloneUDM() {
+    switch (GetParam()) {
+      case DisplayMode::kBrowser:
+      case DisplayMode::kMinimalUi:
+        return DisplayMode::kMinimalUi;
+      case DisplayMode::kStandalone:
+      case DisplayMode::kFullscreen:
+        return DisplayMode::kStandalone;
+      case DisplayMode::kBorderless:
+        return DisplayMode::kBorderless;
+      case DisplayMode::kWindowControlsOverlay:
+        return DisplayMode::kWindowControlsOverlay;
+      case DisplayMode::kTabbed:
+        return DisplayMode::kTabbed;
+      case DisplayMode::kUndefined:
+      case DisplayMode::kPictureInPicture:
+        NOTREACHED();
+    }
+  }
 
-  // System web apps are managed by Ash, excluded in Lacros
-  // WebAppRegistrar.
-  EXPECT_EQ(CountApps(registrar.GetApps()), 1);
+  // Same as `GetResolvedDisplayModeForStandaloneUDM()`, except minimal-ui does
+  // not exist for IWAs.
+  DisplayMode GetResolvedDisplayModeForStandaloneUDMIsolated() {
+    switch (GetParam()) {
+      case DisplayMode::kBrowser:
+      case DisplayMode::kMinimalUi:
+      case DisplayMode::kStandalone:
+      case DisplayMode::kFullscreen:
+      case DisplayMode::kTabbed:
+        return DisplayMode::kStandalone;
+      case DisplayMode::kBorderless:
+        return DisplayMode::kBorderless;
+      case DisplayMode::kWindowControlsOverlay:
+        return DisplayMode::kWindowControlsOverlay;
+      case DisplayMode::kUndefined:
+      case DisplayMode::kPictureInPicture:
+        NOTREACHED();
+    }
+  }
 
-  EXPECT_FALSE(
-      registrar
-          .FindBestAppWithUrlInScope(
-              swa_url,
-              web_app::WebAppFilter::InstalledInOperatingSystemForTesting())
-          .has_value());
-  EXPECT_TRUE(registrar.GetAppScope(swa_id).is_empty());
-  EXPECT_FALSE(registrar.GetAppUserDisplayMode(swa_id).has_value());
+ private:
+  base::test::ScopedFeatureList feature_list_{features::kIsolatedWebApps};
+};
 
-  EXPECT_FALSE(
-      registrar
-          .FindBestAppWithUrlInScope(
-              uninstalling_url,
-              web_app::WebAppFilter::InstalledInOperatingSystemForTesting())
-          .has_value());
-  EXPECT_EQ(registrar.GetAppScope(uninstalling_id),
-            GURL("https://example.com/uninstalling/"));
-  EXPECT_TRUE(registrar.GetAppUserDisplayMode(uninstalling_id).has_value());
-  EXPECT_FALSE(base::Contains(registrar.GetAppIds(), uninstalling_id));
+// When user_display_mode indicates a user preference for opening in a browser
+// tab, we open in a browser tab.
+TEST_P(WebAppRegistrarDisplayModeTest, UserWantsBrowser) {
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kBrowser, {});
+  EXPECT_EQ(DisplayMode::kBrowser,
+            registrar().GetAppEffectiveDisplayMode(app_id));
 }
 
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
+TEST_P(WebAppRegistrarDisplayModeTest, UserWantsStandalone) {
+  if (GetParam() == DisplayMode::kPictureInPicture) {
+    GTEST_SKIP()
+        << "PictureInPicture not supported for standalone display modes";
+  }
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kStandalone, {});
+  EXPECT_EQ(GetResolvedDisplayModeForStandaloneUDM(),
+            registrar().GetAppEffectiveDisplayMode(app_id));
+}
+
+// When user_display_mode indicates a user preference for opening in a browser
+// tab, we open in a browser tab, even if display_overrides are specified.
+TEST_P(WebAppRegistrarDisplayModeTest, UserWantsBrowserStandaloneOverride) {
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kBrowser, {DisplayMode::kStandalone});
+  EXPECT_EQ(DisplayMode::kBrowser,
+            registrar().GetAppEffectiveDisplayMode(app_id));
+}
+
+// When user_display_mode indicates a user preference for opening in
+// a standalone window, and the only display modes provided for
+// display_overrides contain only 'fullscreen' or 'browser',  open in a
+// minimal-ui window (for app_display_mode 'browser' or 'minimal-ui') or a
+// standalone window (for app_display_mode 'standalone' or 'fullscreen').
+TEST_P(WebAppRegistrarDisplayModeTest, UserWantsStandaloneFullScreenOverride) {
+  if (GetParam() == DisplayMode::kPictureInPicture) {
+    GTEST_SKIP()
+        << "PictureInPicture not supported for standalone display modes";
+  }
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kStandalone, {DisplayMode::kFullscreen});
+  EXPECT_EQ(GetResolvedDisplayModeForStandaloneUDM(),
+            registrar().GetAppEffectiveDisplayMode(app_id));
+}
+
+// When user_display_mode indicates a user preference for opening in
+// a standalone window, and return the first entry that is either
+// 'standalone' or 'minimal-ui' in display_override.
+TEST_P(WebAppRegistrarDisplayModeTest, UserWantsStandaloneMultipleOverrides) {
+  if (GetParam() == DisplayMode::kPictureInPicture) {
+    GTEST_SKIP()
+        << "PictureInPicture not supported for standalone display modes";
+  }
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kStandalone,
+          {DisplayMode::kFullscreen, DisplayMode::kBrowser,
+           DisplayMode::kStandalone});
+  EXPECT_EQ(DisplayMode::kStandalone,
+            registrar().GetAppEffectiveDisplayMode(app_id));
+}
+
+TEST_P(WebAppRegistrarDisplayModeTest, UserStandaloneNoOverrideIsolated) {
+  if (GetParam() == DisplayMode::kPictureInPicture) {
+    GTEST_SKIP()
+        << "PictureInPicture not supported for standalone display modes";
+  }
+  StartWebAppProvider();
+  const webapps::AppId app_id =
+      CreateAppInRegistryWithUserDisplayModeAndOverrides(
+          mojom::UserDisplayMode::kStandalone, {}, /*is_isolated=*/true);
+  EXPECT_EQ(GetResolvedDisplayModeForStandaloneUDMIsolated(),
+            registrar().GetAppEffectiveDisplayMode(app_id));
+}
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         WebAppRegistrarDisplayModeTest,
+                         testing::Values(DisplayMode::kBrowser,
+                                         DisplayMode::kMinimalUi,
+                                         DisplayMode::kStandalone,
+                                         DisplayMode::kFullscreen,
+                                         DisplayMode::kBorderless,
+                                         DisplayMode::kPictureInPicture,
+                                         DisplayMode::kWindowControlsOverlay,
+                                         DisplayMode::kTabbed),
+                         [](const testing::TestParamInfo<DisplayMode>& info) {
+                           switch (info.param) {
+                             case DisplayMode::kBrowser:
+                               return "Browser";
+                             case DisplayMode::kMinimalUi:
+                               return "MinimalUi";
+                             case DisplayMode::kStandalone:
+                               return "Standalone";
+                             case DisplayMode::kFullscreen:
+                               return "Fullscreen";
+                             case DisplayMode::kBorderless:
+                               return "Borderless";
+                             case DisplayMode::kPictureInPicture:
+                               return "PictureInPicture";
+                             case DisplayMode::kWindowControlsOverlay:
+                               return "WindowControlsOverlay";
+                             case DisplayMode::kTabbed:
+                               return "Tabbed";
+                             case DisplayMode::kUndefined:
+                               NOTREACHED();
+                           }
+                         });
+
 
 class WebAppRegistrarParameterizedTest
     : public WebAppRegistrarTest,
@@ -1693,7 +1846,7 @@ TEST_P(WebAppRegistrarParameterizedTest, AppsOverlapIfSharesScope) {
                                      WebAppManagement::kDefault);
   web_app2->SetScope(GURL("https://example_scope.com"));
   web_app2->SetLinkCapturingUserPreference(
-      proto::LinkCapturingUserPreference::CAPTURE_SUPPORTED_LINKS);
+      proto::NAVIGATION_CAPTURING_PREFERENCE_CAPTURE);
 
   const webapps::AppId app_id1 = web_app1->app_id();
   const webapps::AppId app_id2 = web_app2->app_id();
@@ -1720,13 +1873,13 @@ TEST_P(WebAppRegistrarParameterizedTest, Filter_OpensInBrowserTab) {
   web_app_1->SetUserDisplayMode(mojom::UserDisplayMode::kBrowser);
   web_app_1->SetInstallState(proto::INSTALLED_WITH_OS_INTEGRATION);
   web_app_1->SetLinkCapturingUserPreference(
-      proto::LinkCapturingUserPreference::CAPTURE_SUPPORTED_LINKS);
+      proto::NAVIGATION_CAPTURING_PREFERENCE_CAPTURE);
 
   web_app_2->SetDisplayMode(DisplayMode::kStandalone);
   web_app_2->SetUserDisplayMode(mojom::UserDisplayMode::kStandalone);
   web_app_2->SetInstallState(proto::INSTALLED_WITH_OS_INTEGRATION);
   web_app_2->SetLinkCapturingUserPreference(
-      proto::LinkCapturingUserPreference::CAPTURE_SUPPORTED_LINKS);
+      proto::NAVIGATION_CAPTURING_PREFERENCE_CAPTURE);
 
   RegisterAppUnsafe(std::move(web_app_1));
   RegisterAppUnsafe(std::move(web_app_2));

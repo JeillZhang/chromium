@@ -17,6 +17,7 @@
 #include "base/check.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "chromeos/ash/services/bluetooth_config/public/cpp/cros_bluetooth_config_util.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "chromeos/ui/vector_icons/vector_icons.h"
@@ -198,7 +199,7 @@ void BluetoothDeviceListItemView::UpdateDeviceProperties(
                       GetDeviceIcon(device_type),
                       static_cast<ui::ColorId>(cros_tokens::kCrosSysOnSurface)),
                   GetPairedDeviceName(device_properties_));
-  text_label()->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+  text_label()->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
   TypographyProvider::Get()->StyleLabel(ash::TypographyToken::kCrosButton2,
                                         *text_label());
 

@@ -97,9 +97,14 @@ TEST_F(AccessibilityTest, HistogramTest) {
 
   {
     ui::AXTreeUpdate response;
-    ScopedFreezeAXCache freeze(cache);
-    cache.SerializeEntireTree(/* max_node_count */ 1000,
-                              base::TimeDelta::FiniteMax(), &response);
+    // Create a secondary AXObjectCache for a snapshot.
+    Member<blink::AXObjectCache> snapshot_cache =
+        blink::AXObjectCache::CreateSnapshotter(GetDocument(),
+                                                ui::kAXModeBasic);
+    std::set<ui::AXSerializationErrorFlag> out_error;
+    snapshot_cache->SerializeEntireTreeAndDispose(/* max_node_count */ 1000,
+                                                  base::TimeDelta::FiniteMax(),
+                                                  &response, &out_error);
     histogram_tester.ExpectTotalCount(
         "Accessibility.Performance.AXObjectCacheImpl.Snapshot", 1);
     histogram_tester.ExpectTotalCount(
@@ -170,6 +175,8 @@ class MockAXObject : public AXObject {
   ax::mojom::blink::Role NativeRoleIgnoringAria() const override {
     return ax::mojom::blink::Role::kUnknown;
   }
+
+  String ToString(bool verbose) const override { return "mock"; }
 };
 
 unsigned MockAXObject::num_children_changed_calls_ = 0;
@@ -186,8 +193,8 @@ TEST_F(AccessibilityTest, PauseUpdatesAfterMaxNumberQueued) {
   MockAXObject* ax_obj = MakeGarbageCollected<MockAXObject>(*ax_object_cache);
   ax_object_cache->AssociateAXID(ax_obj);
   for (unsigned i = 0; i < max_updates + 1; i++) {
-    ax_object_cache->DeferTreeUpdate(
-        AXObjectCacheImpl::TreeUpdateReason::kChildrenChanged, ax_obj);
+    ax_object_cache->DeferTreeUpdate(TreeUpdateReason::kChildrenChanged,
+                                     ax_obj);
   }
   ax_object_cache->ProcessCleanLayoutCallbacks(document);
 
@@ -206,10 +213,8 @@ TEST_F(AccessibilityTest, UpdateAXForAllDocumentsAfterPausedUpdates) {
   UpdateAllLifecyclePhasesForTest();
   AXObject* root = ax_object_cache->Root();
   // Queue one update too many.
-  ax_object_cache->DeferTreeUpdate(
-      AXObjectCacheImpl::TreeUpdateReason::kChildrenChanged, root);
-  ax_object_cache->DeferTreeUpdate(
-      AXObjectCacheImpl::TreeUpdateReason::kChildrenChanged, root);
+  ax_object_cache->DeferTreeUpdate(TreeUpdateReason::kChildrenChanged, root);
+  ax_object_cache->DeferTreeUpdate(TreeUpdateReason::kChildrenChanged, root);
 
   ax_object_cache->UpdateAXForAllDocuments();
   ScopedFreezeAXCache freeze(*ax_object_cache);
@@ -245,6 +250,95 @@ TEST_F(AccessibilityTest, AccessibilityFocus) {
   ax_ul->PerformAction(action);
   EXPECT_EQ(ul, cache.GetAccessibilityFocus());
 }
+
+#if AX_FAIL_FAST_BUILD()
+TEST_F(AccessibilityTest, NodesRequiringCacheUpdate) {
+  String test_content =
+      "<body>"
+      "<div id=foo></div>"
+      "<div id=bar></div>"
+      "<div id=baz></div>"
+      "</body>";
+  SetBodyInnerHTML(test_content);
+
+  auto& cache = GetAXObjectCache();
+  auto& nodes_requiring_cache_update = cache.GetNodesRequiringCacheUpdate();
+  ASSERT_TRUE(nodes_requiring_cache_update.empty());
+
+  AXObject* foo = GetAXObjectByElementId("foo");
+  AXID foo_id = foo->AXObjectID();
+  CHECK(foo);
+
+  AXObject* bar = GetAXObjectByElementId("bar");
+  AXID bar_id = bar->AXObjectID();
+  CHECK(bar);
+
+  AXObject* baz = GetAXObjectByElementId("baz");
+  AXID baz_id = baz->AXObjectID();
+  CHECK(baz);
+
+  // DeferTreeUpdate() should require the node's cached attribute values be
+  // updated. Make sure we are tracking these nodes in
+  // GetNodesRequiringCacheUpdate() mapped to the correct update reason.
+  cache.DeferTreeUpdate(TreeUpdateReason::kChildrenChanged, foo);
+  ASSERT_TRUE(nodes_requiring_cache_update.Contains(foo_id));
+  ASSERT_EQ(nodes_requiring_cache_update.size(), 1U);
+
+  auto entry = nodes_requiring_cache_update.find(foo_id);
+  ASSERT_EQ(entry->value, TreeUpdateReason::kChildrenChanged);
+
+  // Calling DeferTreeUpdate() on a second node should result in two entries in
+  // GetNodesRequiringCacheUpdate().
+  cache.DeferTreeUpdate(TreeUpdateReason::kUpdateAriaOwns, bar);
+  ASSERT_TRUE(nodes_requiring_cache_update.Contains(bar_id));
+  ASSERT_TRUE(nodes_requiring_cache_update.Contains(foo_id));
+  ASSERT_EQ(nodes_requiring_cache_update.size(), 2U);
+
+  entry = nodes_requiring_cache_update.find(bar_id);
+  ASSERT_EQ(entry->value, TreeUpdateReason::kUpdateAriaOwns);
+
+  // Calling DeferTreeUpdate() on a node already in
+  // GetNodesRequiringCacheUpdate() should replace the existing entry.
+  cache.DeferTreeUpdate(TreeUpdateReason::kMarkDocumentDirty, bar);
+  ASSERT_TRUE(nodes_requiring_cache_update.Contains(bar_id));
+  ASSERT_TRUE(nodes_requiring_cache_update.Contains(foo_id));
+  ASSERT_EQ(nodes_requiring_cache_update.size(), 2U);
+
+  entry = nodes_requiring_cache_update.find(bar_id);
+  ASSERT_EQ(entry->value, TreeUpdateReason::kMarkDocumentDirty);
+
+  // Calling SetCachedValuesNeedUpdate() on a third node should result in three
+  // entries in GetNodesRequiringCacheUpdate().
+  baz->SetCachedValuesNeedUpdate(true, TreeUpdateReason::kFocusableChanged);
+  ASSERT_TRUE(nodes_requiring_cache_update.Contains(baz_id));
+  ASSERT_TRUE(nodes_requiring_cache_update.Contains(bar_id));
+  ASSERT_TRUE(nodes_requiring_cache_update.Contains(foo_id));
+  ASSERT_EQ(nodes_requiring_cache_update.size(), 3U);
+
+  entry = nodes_requiring_cache_update.find(baz_id);
+  ASSERT_EQ(entry->value, TreeUpdateReason::kFocusableChanged);
+
+  // Detaching an object should remove it from GetNodesRequiringCacheUpdate().
+  foo->Detach();
+  ASSERT_EQ(nodes_requiring_cache_update.size(), 2U);
+  ASSERT_TRUE(nodes_requiring_cache_update.Contains(bar_id));
+  ASSERT_TRUE(nodes_requiring_cache_update.Contains(baz_id));
+
+  // Reset foo's AXObjectCacheImpl to avoid failure on completion of test.
+  foo->SetAXObjectCacheForTest(cache);
+
+  // Removing an object from the AXCache should remove if from
+  // GetNodesRequiringCacheUpdate(), as well.
+  cache.Remove(bar_id, false);
+  ASSERT_EQ(nodes_requiring_cache_update.size(), 1U);
+  ASSERT_TRUE(nodes_requiring_cache_update.Contains(baz_id));
+
+  // Calling SetCachedValuesNeedUpdate() to false will remove the last object
+  // from GetNodesRequiringCacheUpdate().
+  baz->SetCachedValuesNeedUpdate(false);
+  ASSERT_TRUE(nodes_requiring_cache_update.empty());
+}
+#endif
 
 class AXViewTransitionTest : public testing::Test {
  public:
@@ -349,6 +443,9 @@ TEST_F(AXViewTransitionTest, TransitionPseudoNotRelevant) {
   auto* image_wrapper_pseudo = container_pseudo->GetPseudoElement(
       kPseudoIdViewTransitionImagePair, AtomicString("shared"));
   ASSERT_TRUE(image_wrapper_pseudo);
+  auto* nested_groups_pseudo = container_pseudo->GetPseudoElement(
+      kPseudoIdViewTransitionGroupChildren, AtomicString("shared"));
+  ASSERT_FALSE(nested_groups_pseudo);
   auto* incoming_image_pseudo = image_wrapper_pseudo->GetPseudoElement(
       kPseudoIdViewTransitionNew, AtomicString("shared"));
   ASSERT_TRUE(incoming_image_pseudo);

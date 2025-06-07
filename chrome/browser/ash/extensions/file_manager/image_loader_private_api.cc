@@ -20,6 +20,7 @@
 #include "chrome/browser/ash/arc/fileapi/arc_documents_provider_root_map.h"
 #include "chrome/browser/ash/arc/fileapi/arc_file_system_operation_runner.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/extensions/file_manager/private_api_util.h"
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
 #include "chrome/browser/ash/file_manager/path_util.h"
@@ -36,6 +37,7 @@
 #include "net/base/mime_sniffer.h"
 #include "net/base/mime_util.h"
 #include "skia/ext/codec_utils.h"
+#include "skia/ext/skia_utils_base.h"
 #include "storage/browser/file_system/file_system_context.h"
 #include "storage/common/file_system/file_system_types.h"
 #include "storage/common/file_system/file_system_util.h"
@@ -69,8 +71,8 @@ std::string ConvertAndEncode(const SkBitmap& bitmap) {
     DLOG(WARNING) << "Thumbnail encoding error";
     return std::string();
   }
-  return MakeThumbnailDataUrlOnThreadPool(
-      kMimeTypeImagePng, base::span(png_data->bytes(), png_data->size()));
+  return MakeThumbnailDataUrlOnThreadPool(kMimeTypeImagePng,
+                                          skia::as_byte_span(*png_data));
 }
 
 // The maximum size of the input PDF file for which thumbnails are generated.

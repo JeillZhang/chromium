@@ -9,9 +9,17 @@
 #include "base/bits.h"
 #include "base/logging.h"
 #include "media/base/win/mf_helpers.h"
+#include "media/gpu/h264_dpb.h"
 #include "media/gpu/windows/d3d12_helpers.h"
+#include "media/gpu/windows/d3d12_video_encode_av1_delegate.h"
+#include "media/gpu/windows/d3d12_video_encode_h264_delegate.h"
 #include "media/gpu/windows/d3d12_video_encoder_wrapper.h"
 #include "third_party/microsoft_dxheaders/src/include/directx/d3dx12_core.h"
+
+#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+#include "media/gpu/windows/d3d12_video_encode_h265_delegate.h"
+#include "media/parsers/h265_parser.h"
+#endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
 
 #define CHECK_FEATURE_SUPPORT(feature_suffix, data)                         \
   do {                                                                      \
@@ -32,13 +40,17 @@ D3D12VideoEncodeDelegate::GetSupportedProfiles(
     ID3D12VideoDevice3* video_device) {
   CHECK(video_device);
   VideoEncodeAccelerator::SupportedProfiles supported_profiles;
-  for (D3D12_VIDEO_ENCODER_CODEC codec : std::vector<D3D12_VIDEO_ENCODER_CODEC>{
-           // TODO(40275246): add codecs.
+  for (D3D12_VIDEO_ENCODER_CODEC codec : {
+           D3D12_VIDEO_ENCODER_CODEC_H264,
+#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+           D3D12_VIDEO_ENCODER_CODEC_HEVC,
+#endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+           D3D12_VIDEO_ENCODER_CODEC_AV1,
        }) {
     D3D12_FEATURE_DATA_VIDEO_ENCODER_CODEC codec_support{.Codec = codec};
     CHECK_FEATURE_SUPPORT(CODEC, codec_support);
     if (!codec_support.IsSupported) {
-      return {};
+      continue;
     }
     VideoEncodeAccelerator::SupportedProfile supported_profile;
     D3D12_FEATURE_DATA_VIDEO_ENCODER_OUTPUT_RESOLUTION_RATIOS_COUNT count{
@@ -54,7 +66,7 @@ D3D12VideoEncodeDelegate::GetSupportedProfiles(
     };
     CHECK_FEATURE_SUPPORT(OUTPUT_RESOLUTION, output_resolution);
     if (!output_resolution.IsSupported) {
-      return {};
+      continue;
     }
     supported_profile.min_resolution =
         gfx::Size(output_resolution.MinResolutionSupported.Width,
@@ -85,7 +97,24 @@ D3D12VideoEncodeDelegate::GetSupportedProfiles(
 
     std::vector<std::pair<VideoCodecProfile, std::vector<VideoPixelFormat>>>
         profiles;
-    // TODO(40275246): add codecs.
+    switch (codec) {
+      case D3D12_VIDEO_ENCODER_CODEC_H264:
+        profiles =
+            D3D12VideoEncodeH264Delegate::GetSupportedProfiles(video_device);
+        break;
+#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+      case D3D12_VIDEO_ENCODER_CODEC_HEVC:
+        profiles =
+            D3D12VideoEncodeH265Delegate::GetSupportedProfiles(video_device);
+        break;
+#endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+      case D3D12_VIDEO_ENCODER_CODEC_AV1:
+        profiles =
+            D3D12VideoEncodeAV1Delegate::GetSupportedProfiles(video_device);
+        break;
+      default:
+        NOTREACHED();
+    }
     for (const auto& [profile, formats] : profiles) {
       supported_profile.profile = profile;
       supported_profile.gpu_supported_pixel_formats = formats;
@@ -130,12 +159,8 @@ EncoderStatus D3D12VideoEncodeDelegate::Initialize(
   }
   processed_input_frame_.Reset();
 
-  auto rate_control =
+  rate_control_ =
       D3D12VideoEncoderRateControl::Create(config.bitrate, config.framerate);
-  if (!rate_control.has_value()) {
-    return EncoderStatus::Codes::kEncoderUnsupportedConfig;
-  }
-  rate_control_ = rate_control.value();
 
   static constexpr uint32_t kDefaultGOPLength = 3000;
   config.gop_length = config.gop_length.value_or(kDefaultGOPLength);
@@ -147,19 +172,20 @@ EncoderStatus D3D12VideoEncodeDelegate::Initialize(
   return InitializeVideoEncoder(config);
 }
 
+bool D3D12VideoEncodeDelegate::ReportsAverageQp() const {
+  return false;
+}
+
 bool D3D12VideoEncodeDelegate::UpdateRateControl(const Bitrate& bitrate,
                                                  uint32_t framerate) {
   auto rate_control = D3D12VideoEncoderRateControl::Create(bitrate, framerate);
-  if (!rate_control.has_value()) {
-    return false;
-  }
 
-  if (rate_control->GetMode() != rate_control_.GetMode() &&
+  if (rate_control.GetMode() != rate_control_.GetMode() &&
       !SupportsRateControlReconfiguration()) {
     return false;
   }
 
-  rate_control_ = rate_control.value();
+  rate_control_ = rate_control;
   return true;
 }
 
@@ -169,7 +195,7 @@ D3D12VideoEncodeDelegate::Encode(
     UINT input_frame_subresource,
     const gfx::ColorSpace& input_frame_color_space,
     const BitstreamBuffer& bitstream_buffer,
-    bool force_keyframe) {
+    const VideoEncoder::EncodeOptions& options) {
   if (D3D12_RESOURCE_DESC input_frame_desc = input_frame->GetDesc();
       input_frame_desc.Width != input_size_.Width ||
       input_frame_desc.Height != input_size_.Height ||
@@ -201,7 +227,7 @@ D3D12VideoEncodeDelegate::Encode(
   }
 
   auto impl_result =
-      EncodeImpl(input_frame.Get(), input_frame_subresource, force_keyframe);
+      EncodeImpl(input_frame.Get(), input_frame_subresource, options);
   if (!impl_result.has_value()) {
     return std::move(impl_result).error();
   }
@@ -266,7 +292,28 @@ D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl::operator=(
   return *this;
 }
 
-std::optional<D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl>
+// static
+D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl
+D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl::CreateCqp(
+    uint32_t i_frame_qp,
+    uint32_t p_frame_qp,
+    uint32_t b_frame_qp) {
+  D3D12VideoEncoderRateControl rate_control;
+  rate_control.params_.cqp = {
+      .ConstantQP_FullIntracodedFrame = i_frame_qp,
+      .ConstantQP_InterPredictedFrame_PrevRefOnly = p_frame_qp,
+      .ConstantQP_InterPredictedFrame_BiDirectionalRef = b_frame_qp};
+  rate_control.rate_control_ = {
+      .Mode = D3D12_VIDEO_ENCODER_RATE_CONTROL_MODE_CQP,
+      .ConfigParams = {.DataSize = sizeof(rate_control.params_.cqp),
+                       .pConfiguration_CQP = &rate_control.params_.cqp},
+      .TargetFrameRate = {30, 1},
+  };
+  return rate_control;
+}
+
+// static
+D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl
 D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl::Create(
     Bitrate bitrate,
     uint32_t framerate) {
@@ -296,10 +343,22 @@ D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl::Create(
       };
       break;
     case Bitrate::Mode::kExternal:
-      // TODO(crbug.com/40275246): wire to CQP
-      LOG(ERROR)
-          << "D3D12VideoEncoder does not support Bitrate::Mode::kExternal";
-      return std::nullopt;
+      // The effective QP value will be set before each frame. Filling a
+      // commonly used default value that would be most likely supported by the
+      // hardware.
+      constexpr uint32_t kDefaultQp = 26;
+      rate_control.params_.cqp = {
+          .ConstantQP_FullIntracodedFrame = kDefaultQp,
+          .ConstantQP_InterPredictedFrame_PrevRefOnly = kDefaultQp,
+          .ConstantQP_InterPredictedFrame_BiDirectionalRef = kDefaultQp,
+      };
+      rate_control.rate_control_ = {
+          .Mode = D3D12_VIDEO_ENCODER_RATE_CONTROL_MODE_CQP,
+          .ConfigParams = {.DataSize = sizeof(rate_control.params_.cqp),
+                           .pConfiguration_CQP = &rate_control.params_.cqp},
+          .TargetFrameRate = {framerate, 1},
+      };
+      break;
   }
   return rate_control;
 }
@@ -307,6 +366,23 @@ D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl::Create(
 D3D12_VIDEO_ENCODER_RATE_CONTROL_MODE
 D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl::GetMode() const {
   return rate_control_.Mode;
+}
+
+void D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl::SetCQP(
+    FrameType frame_type,
+    uint32_t qp) {
+  CHECK_EQ(rate_control_.Mode, D3D12_VIDEO_ENCODER_RATE_CONTROL_MODE_CQP);
+  switch (frame_type) {
+    case FrameType::kIntra:
+      params_.cqp.ConstantQP_FullIntracodedFrame = qp;
+      break;
+    case FrameType::kInterPrev:
+      params_.cqp.ConstantQP_InterPredictedFrame_PrevRefOnly = qp;
+      break;
+    case FrameType::kInterBiDirectional:
+      params_.cqp.ConstantQP_InterPredictedFrame_BiDirectionalRef = qp;
+      break;
+  }
 }
 
 bool D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl::operator==(
@@ -343,12 +419,16 @@ bool D3D12VideoEncodeDelegate::D3D12VideoEncoderRateControl::operator==(
 
 EncoderStatus::Or<size_t> D3D12VideoEncodeDelegate::ReadbackBitstream(
     base::span<uint8_t> bitstream_buffer) {
-  auto size_or_error =
-      video_encoder_wrapper_->GetEncodedBitstreamWrittenBytesCount();
-  if (!size_or_error.has_value()) {
-    return std::move(size_or_error).error();
+  auto metadata_or_error = video_encoder_wrapper_->GetEncoderOutputMetadata();
+  if (!metadata_or_error.has_value()) {
+    return std::move(metadata_or_error).error();
   }
-  uint32_t size = std::move(size_or_error).value();
+  ScopedD3D12ResourceMap metadata = std::move(metadata_or_error).value();
+  uint32_t size = reinterpret_cast<const D3D12_VIDEO_ENCODER_OUTPUT_METADATA*>(
+                      metadata.data().data())
+                      ->EncodedBitstreamWrittenBytesCount;
+  D3D12_RANGE written_range{};
+  metadata.Commit(&written_range);
   EncoderStatus status =
       video_encoder_wrapper_->ReadbackBitstream(bitstream_buffer.first(size));
   if (!status.is_ok()) {
@@ -359,8 +439,7 @@ EncoderStatus::Or<size_t> D3D12VideoEncodeDelegate::ReadbackBitstream(
 
 template <size_t maxDpbSize>
 D3D12VideoEncodeDecodedPictureBuffers<
-    maxDpbSize>::D3D12VideoEncodeDecodedPictureBuffers(size_t size)
-    : size_(size) {}
+    maxDpbSize>::D3D12VideoEncodeDecodedPictureBuffers() = default;
 
 template <size_t maxDpbSize>
 D3D12VideoEncodeDecodedPictureBuffers<
@@ -370,7 +449,12 @@ template <size_t maxDpbSize>
 bool D3D12VideoEncodeDecodedPictureBuffers<maxDpbSize>::InitializeTextureArray(
     ID3D12Device* device,
     gfx::Size texture_size,
-    DXGI_FORMAT format) {
+    DXGI_FORMAT format,
+    size_t max_num_ref_frames) {
+  CHECK_GT(max_num_ref_frames, 0u);
+  CHECK_LE(max_num_ref_frames, kMaxDpbSize);
+  size_ = max_num_ref_frames;
+
   // We reserve one space in extra for the current frame.
   const size_t array_size = size_ + 1;
   resources_.resize(array_size);
@@ -409,17 +493,17 @@ D3D12VideoEncodeDecodedPictureBuffers<maxDpbSize>::GetCurrentFrame() const {
 template <size_t maxDpbSize>
 void D3D12VideoEncodeDecodedPictureBuffers<maxDpbSize>::InsertCurrentFrame(
     size_t position) {
-  base::span raw_resources_span(raw_resources_);
-  std::ranges::rotate(raw_resources_span.subspan(position),
-                      std::prev(raw_resources_span.end()));
-  base::span subresources_span(subresources_);
-  std::ranges::rotate(subresources_span.subspan(position),
-                      std::prev(subresources_span.end()));
+  CHECK_GT(resources_.size(), 0u);
+  base::span raw_resources_span = base::span(raw_resources_).subspan(position);
+  std::ranges::rotate(raw_resources_span, std::prev(raw_resources_span.end()));
+  base::span subresources_span = base::span(subresources_).subspan(position);
+  std::ranges::rotate(subresources_span, std::prev(subresources_span.end()));
 }
 
 template <size_t maxDpbSize>
 void D3D12VideoEncodeDecodedPictureBuffers<maxDpbSize>::ReplaceWithCurrentFrame(
     size_t position) {
+  CHECK_GT(resources_.size(), 0u);
   std::swap(raw_resources_[position], raw_resources_.back());
   std::swap(subresources_[position], subresources_.back());
 }
@@ -433,5 +517,14 @@ D3D12_VIDEO_ENCODE_REFERENCE_FRAMES D3D12VideoEncodeDecodedPictureBuffers<
       .pSubresources = subresources_.data(),
   };
 }
+
+template class D3D12VideoEncodeDecodedPictureBuffers<H264DPB::kDPBMaxSize>;
+#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+static_assert(static_cast<size_t>(H264DPB::kDPBMaxSize) ==
+              static_cast<size_t>(/*H265*/ kMaxDpbSize));
+#endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+
+template class D3D12VideoEncodeDecodedPictureBuffers<
+    D3D12VideoEncodeDelegate::kAV1DPBMaxSize>;
 
 }  // namespace media

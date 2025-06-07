@@ -267,15 +267,17 @@ SavedPasswordsPresenter::GetExpectedAddResult(
 
 bool SavedPasswordsPresenter::AddCredential(
     const CredentialUIEntry& credential,
-    password_manager::PasswordForm::Type type) {
+    password_manager::PasswordForm::Type type,
+    base::OnceClosure completion) {
   if (GetExpectedAddResult(credential) != AddResult::kSuccess) {
+    std::move(completion).Run();
     return false;
   }
 
   UnblocklistBothStores(credential);
   PasswordForm form = GenerateFormFromCredential(credential, type);
 
-  GetStoreFor(form).AddLogin(form);
+  GetStoreFor(form).AddLogin(form, std::move(completion));
   return true;
 }
 
@@ -427,7 +429,9 @@ SavedPasswordsPresenter::GetCorrespondingPasswordForms(
   std::ranges::transform(range.first, range.second, std::back_inserter(forms),
                          [](const auto& pair) { return pair.second; });
 #else
+  passwords_grouper_->CheckHeapIntegrity();
   forms = passwords_grouper_->GetPasswordFormsFor(credential);
+  passwords_grouper_->CheckHeapIntegrity();
 #endif
   return forms;
 }
@@ -608,18 +612,22 @@ void SavedPasswordsPresenter::MaybeGroupCredentials(
 #endif  // !BUILDFLAG(IS_ANDROID)
 
   // Notify observers after grouping is complete.
+  passwords_grouper_->CheckHeapIntegrity();
   passwords_grouper_->GroupCredentials(
       std::move(all_forms), std::move(passkeys),
       metrics_util::TimeCallback(std::move(completion),
                                  "PasswordManager.PasswordsGrouping.Time"));
+  passwords_grouper_->CheckHeapIntegrity();
 }
 
 SavedPasswordsPresenter::EditResult SavedPasswordsPresenter::EditPasskey(
     const CredentialUIEntry& updated_credential) {
   CHECK(!updated_credential.passkey_credential_id.empty());
   CHECK(passkey_store_);
+  passwords_grouper_->CheckHeapIntegrity();
   std::optional<PasskeyCredential> original_credential =
       passwords_grouper_->GetPasskeyFor(updated_credential);
+  passwords_grouper_->CheckHeapIntegrity();
   if (!original_credential) {
     return EditResult::kNotFound;
   }

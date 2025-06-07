@@ -5,6 +5,7 @@
 #include "chromeos/ash/components/boca/session_api/join_session_request.h"
 
 #include "base/json/json_writer.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "chromeos/ash/components/boca/session_api/constants.h"
 #include "chromeos/ash/components/boca/session_api/session_parser.h"
@@ -12,6 +13,7 @@
 namespace ash::boca {
 
 JoinSessionRequest::JoinSessionRequest(google_apis::RequestSender* sender,
+                                       std::string url_base,
                                        ::boca::UserIdentity user,
                                        std::string device_id,
                                        std::string join_code,
@@ -22,7 +24,7 @@ JoinSessionRequest::JoinSessionRequest(google_apis::RequestSender* sender,
       join_code_(join_code),
       user_(std::move(user)),
       device_id_(device_id),
-      url_base_(kSchoolToolsApiBaseUrl),
+      url_base_(std::move(url_base)),
       callback_(std::move(callback)) {}
 
 JoinSessionRequest ::~JoinSessionRequest() = default;

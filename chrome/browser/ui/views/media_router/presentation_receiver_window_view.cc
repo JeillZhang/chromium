@@ -8,7 +8,6 @@
 
 #include "base/check.h"
 #include "base/functional/bind.h"
-#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -126,17 +125,15 @@ PresentationReceiverWindowView::PresentationReceiverWindowView(
       exclusive_access_manager_(this) {
   SetHasWindowSizeControls(true);
 
-  // TODO(pbos): See if this can retain SetOwnedByWidget(true) and get deleted
-  // through WidgetDelegate::DeleteDelegate(). This requires confirming that
-  // delegate_->WindowClosed() is safe to call before this deletes.
-  SetOwnedByWidget(false);
-  RegisterDeleteDelegateCallback(base::BindOnce(
-      [](PresentationReceiverWindowView* dialog) {
-        auto* const delegate = dialog->delegate_.get();
-        delete dialog;
-        delegate->WindowClosed();
-      },
-      this));
+  RegisterDeleteDelegateCallback(
+      RegisterDeleteCallbackPassKey(),
+      base::BindOnce(
+          [](PresentationReceiverWindowView* dialog) {
+            auto* const delegate = dialog->delegate_.get();
+            delete dialog;
+            delegate->WindowClosed();
+          },
+          this));
 
   DCHECK(frame);
   DCHECK(delegate);
@@ -155,8 +152,7 @@ void PresentationReceiverWindowView::Init() {
   const auto accelerators = GetAcceleratorList();
   const auto fullscreen_accelerator = std::ranges::find(
       accelerators, IDC_FULLSCREEN, &AcceleratorMapping::command_id);
-  CHECK(fullscreen_accelerator != accelerators.end(),
-        base::NotFatalUntil::M130);
+  CHECK(fullscreen_accelerator != accelerators.end());
   fullscreen_accelerator_ = ui::Accelerator(fullscreen_accelerator->keycode,
                                             fullscreen_accelerator->modifiers);
 #endif
@@ -203,9 +199,9 @@ void PresentationReceiverWindowView::Init() {
   box_owner->set_cross_axis_alignment(
       views::BoxLayout::CrossAxisAlignment::kStretch);
   auto* box = SetLayoutManager(std::move(box_owner));
-  AddChildView(location_bar_view_.get());
+  AddChildViewRaw(location_bar_view_.get());
   box->SetFlexForView(location_bar_view_, 0);
-  AddChildView(web_view);
+  AddChildViewRaw(web_view);
   box->SetFlexForView(web_view, 1);
 
   location_bar_view_->Init();
@@ -298,14 +294,14 @@ bool PresentationReceiverWindowView::IsFullscreen() const {
 }
 
 void PresentationReceiverWindowView::EnterFullscreen(
-    const GURL& url,
+    const url::Origin& origin,
     ExclusiveAccessBubbleType bubble_type,
     const int64_t display_id) {
   frame_->SetFullscreen(true);
 #if !BUILDFLAG(IS_CHROMEOS)
   OnFullscreenChanged();
 #endif
-  UpdateExclusiveAccessBubble({.url = url, .type = bubble_type},
+  UpdateExclusiveAccessBubble({.origin = origin, .type = bubble_type},
                               base::NullCallback());
 }
 
@@ -319,18 +315,21 @@ void PresentationReceiverWindowView::ExitFullscreen() {
 void PresentationReceiverWindowView::UpdateExclusiveAccessBubble(
     const ExclusiveAccessBubbleParams& params,
     ExclusiveAccessBubbleHideCallback first_hide_callback) {
+  bool should_hide_bubble =
+      !params.has_download && params.type == EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE;
+
 #if BUILDFLAG(IS_CHROMEOS)
   // On Chrome OS, we will not show the toast for the normal browser fullscreen
   // mode.  The 'F11' text is confusing since how to access F11 on a Chromebook
   // is not common knowledge and there is also a dedicated fullscreen toggle
   // button available.
-  if ((!params.has_download &&
-       params.type == EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE) ||
-      params.url.is_empty()) {
-#else
-  if (!params.has_download &&
-      params.type == EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE) {
+  if (params.type ==
+      EXCLUSIVE_ACCESS_BUBBLE_TYPE_BROWSER_FULLSCREEN_EXIT_INSTRUCTION) {
+    should_hide_bubble = true;
+  }
 #endif
+
+  if (should_hide_bubble) {
     // |exclusive_access_bubble_.reset()| will trigger callback for current
     // bubble with |ExclusiveAccessBubbleHideReason::kInterrupted| if available.
     exclusive_access_bubble_.reset();

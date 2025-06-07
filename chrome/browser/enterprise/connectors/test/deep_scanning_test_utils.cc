@@ -4,6 +4,7 @@
 
 #include "chrome/browser/enterprise/connectors/test/deep_scanning_test_utils.h"
 
+#include "base/barrier_closure.h"
 #include "base/containers/contains.h"
 #include "base/containers/flat_map.h"
 #include "base/json/json_reader.h"
@@ -316,12 +317,24 @@ void EventReportValidator::ExpectSensitiveDataEvents(
   content_transfer_method_ = expected_content_transfer_method;
   user_justification_ = expected_user_justification;
 
+  base::RepeatingClosure barrier_closure = base::BarrierClosure(
+      expected_filenames.size(), base::BindOnce(
+                                     [](base::RepeatingClosure closure) {
+                                       if (!closure.is_null()) {
+                                         closure.Run();
+                                       }
+                                     },
+                                     std::move(done_closure_)));
+
   EXPECT_CALL(*client_, UploadSecurityEventReport)
       .Times(expected_filenames.size())
       .WillRepeatedly(
-          [this](bool include_device_info, base::Value::Dict report,
+          [this, barrier_closure](bool include_device_info, base::Value::Dict report,
                  base::OnceCallback<void(policy::CloudPolicyClient::Result)>
-                     callback) { ValidateReport(&report); });
+                     callback) {
+            ValidateReport(&report);
+            barrier_closure.Run();
+          });
 }
 
 void EventReportValidator::
@@ -461,55 +474,6 @@ void EventReportValidator::ExpectDangerousDownloadEvent(
           });
 }
 
-void EventReportValidator::ExpectLoginEvent(
-    const std::string& expected_url,
-    const bool expected_is_federated,
-    const std::string& expected_federated_origin,
-    const std::string& expected_profile_username,
-    const std::string& expected_profile_identifier,
-    const std::u16string& expected_login_username) {
-  event_key_ = enterprise_connectors::kKeyLoginEvent;
-  url_ = expected_url;
-  is_federated_ = expected_is_federated;
-  federated_origin_ = expected_federated_origin;
-  username_ = expected_profile_username;
-  profile_identifier_ = expected_profile_identifier;
-  login_user_name_ = expected_login_username;
-  EXPECT_CALL(*client_, UploadSecurityEventReport)
-      .WillOnce(
-          [this](bool include_device_info, base::Value::Dict report,
-                 base::OnceCallback<void(policy::CloudPolicyClient::Result)>
-                     callback) {
-            ValidateReport(&report);
-            if (!done_closure_.is_null()) {
-              done_closure_.Run();
-            }
-          });
-}
-
-void EventReportValidator::ExpectPasswordBreachEvent(
-    const std::string& expected_trigger,
-    const std::vector<std::pair<std::string, std::u16string>>&
-        expected_identities,
-    const std::string& expected_profile_username,
-    const std::string& expected_profile_identifier) {
-  event_key_ = enterprise_connectors::kKeyPasswordBreachEvent;
-  trigger_ = expected_trigger;
-  password_breach_identities_ = expected_identities;
-  username_ = expected_profile_username;
-  profile_identifier_ = expected_profile_identifier;
-  EXPECT_CALL(*client_, UploadSecurityEventReport)
-      .WillOnce(
-          [this](bool include_device_info, base::Value::Dict report,
-                 base::OnceCallback<void(policy::CloudPolicyClient::Result)>
-                     callback) {
-            ValidateReport(&report);
-            if (!done_closure_.is_null()) {
-              done_closure_.Run();
-            }
-          });
-}
-
 void EventReportValidator::ValidateReport(const base::Value::Dict* report) {
   DCHECK(report);
 
@@ -579,8 +543,8 @@ void EventReportValidator::ValidateFederatedOrigin(
 }
 
 void EventReportValidator::ValidateIdentities(const base::Value::Dict* value) {
-  const base::Value::List* identities = value->FindList(
-      SafeBrowsingPrivateEventRouter::kKeyPasswordBreachIdentities);
+  const base::Value::List* identities =
+      value->FindList(kKeyPasswordBreachIdentities);
   if (!password_breach_identities_) {
     EXPECT_EQ(nullptr, identities);
   } else {
@@ -592,11 +556,10 @@ void EventReportValidator::ValidateIdentities(const base::Value::Dict* value) {
       for (const auto& actual_identity : *identities) {
         const base::Value::Dict& actual_identity_dict =
             actual_identity.GetDict();
-        const std::string* url = actual_identity_dict.FindString(
-            SafeBrowsingPrivateEventRouter::kKeyPasswordBreachIdentitiesUrl);
+        const std::string* url =
+            actual_identity_dict.FindString(kKeyPasswordBreachIdentitiesUrl);
         const std::string* actual_username = actual_identity_dict.FindString(
-            SafeBrowsingPrivateEventRouter::
-                kKeyPasswordBreachIdentitiesUsername);
+            kKeyPasswordBreachIdentitiesUsername);
         EXPECT_NE(nullptr, actual_username);
         const std::u16string username = base::UTF8ToUTF16(*actual_username);
         EXPECT_NE(nullptr, url);
@@ -641,8 +604,15 @@ void EventReportValidator::ValidateDlpRule(
     const ContentAnalysisResponse::Result::TriggeredRule& expected_rule) {
   ValidateField(value, SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleName,
                 expected_rule.rule_name());
-  ValidateField(value, SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleId,
-                expected_rule.rule_id());
+  if (expected_rule.rule_id().empty()) {
+    ValidateField(value, SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleId,
+                  std::optional<int>());
+  } else {
+    int expected_rule_id = 0;
+    ASSERT_TRUE(base::StringToInt(expected_rule.rule_id(), &expected_rule_id));
+    ValidateField(value, SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleId,
+                  std::optional<int>(expected_rule_id));
+  }
 }
 
 void EventReportValidator::ValidateFilenameMappedAttributes(
@@ -713,13 +683,21 @@ void EventReportValidator::ValidateDataControlsAttributes(
           SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleName);
       ASSERT_TRUE(name);
 
-      const std::string* id = rule.GetDict().FindString(
-          SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleId);
-      ASSERT_TRUE(id);
-
       ASSERT_TRUE(data_controls_triggered_rules_.count(i));
       ASSERT_EQ(data_controls_triggered_rules_[i].rule_name, *name);
-      ASSERT_EQ(data_controls_triggered_rules_[i].rule_id, *id);
+
+      std::optional<int> id = rule.GetDict().FindInt(
+          SafeBrowsingPrivateEventRouter::kKeyTriggeredRuleId);
+      if (id) {
+        int expected_rule_id = 0;
+        ASSERT_TRUE(base::StringToInt(data_controls_triggered_rules_[i].rule_id,
+                                      &expected_rule_id));
+        ASSERT_EQ(expected_rule_id, *id);
+      } else {
+        ASSERT_TRUE(data_controls_triggered_rules_[i].rule_id.empty())
+            << " Got rule_id " << data_controls_triggered_rules_[i].rule_id
+            << " instead of nothing.";
+      }
 
       ++i;
     }
@@ -745,10 +723,6 @@ void EventReportValidator::ValidateDataMaskingAttributes(
   }
 }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
-
-void EventReportValidator::ExpectNoReport() {
-  EXPECT_CALL(*client_, UploadSecurityEventReport).Times(0);
-}
 
 void EventReportValidator::SetDoneClosure(base::RepeatingClosure closure) {
   done_closure_ = std::move(closure);

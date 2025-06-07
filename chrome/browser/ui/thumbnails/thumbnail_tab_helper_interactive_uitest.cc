@@ -6,6 +6,7 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/sessions/tab_loader_tester.h"
@@ -210,16 +211,14 @@ IN_PROC_BROWSER_TEST_F(ThumbnailTabHelperUpdatedInteractiveTest,
       WindowOpenDisposition::NEW_WINDOW,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_BROWSER);
   RunTestSequence(
-      InContext(GetBrowser(1)->window()->GetElementContext(),
-                Steps(AddInstrumentedTab(kFirstTab,
-                                         GURL(chrome::kChromeUINewTabURL), 1),
-                      WaitForWebContentsReady(kFirstTab),
-                      AddInstrumentedTab(kSecondTab,
-                                         GURL(chrome::kChromeUINewTabURL), 2),
-                      WaitForWebContentsReady(kSecondTab),
-                      AddInstrumentedTab(kThirdTab,
-                                         GURL(chrome::kChromeUINewTabURL), 3),
-                      WaitForWebContentsReady(kThirdTab))),
+      InContext(
+          GetBrowser(1)->window()->GetElementContext(),
+          AddInstrumentedTab(kFirstTab, GURL(chrome::kChromeUINewTabURL), 1),
+          WaitForWebContentsReady(kFirstTab),
+          AddInstrumentedTab(kSecondTab, GURL(chrome::kChromeUINewTabURL), 2),
+          WaitForWebContentsReady(kSecondTab),
+          AddInstrumentedTab(kThirdTab, GURL(chrome::kChromeUINewTabURL), 3),
+          WaitForWebContentsReady(kThirdTab)),
       CheckTabCountInBrowserIndex(1, 4), CheckActiveTabInBrowserIndex(1, 3),
       ObserveState(kBrowserRemovedState, [this]() { return GetBrowser(1); }),
       // Can't close browser when WebContents is notifying observers.

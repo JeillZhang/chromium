@@ -16,8 +16,11 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_image_encode_options.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_async_blob_creator.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
+#include "third_party/blink/renderer/core/html/canvas/unique_font_selector.h"
+#include "third_party/blink/renderer/platform/fonts/plain_text_painter.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_dispatcher.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
@@ -25,6 +28,7 @@
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 
@@ -37,6 +41,11 @@ BASE_FEATURE(kUseSharedBitmapProviderForSoftwareCompositing,
 CanvasRenderingContextHost::CanvasRenderingContextHost(HostType host_type,
                                                        const gfx::Size& size)
     : CanvasResourceHost(size), host_type_(host_type) {}
+
+void CanvasRenderingContextHost::Trace(Visitor* visitor) const {
+  visitor->Trace(plain_text_painter_);
+  visitor->Trace(unique_font_selector_);
+}
 
 void CanvasRenderingContextHost::RecordCanvasSizeToUMA() {
   if (did_record_canvas_size_to_uma_)
@@ -58,17 +67,19 @@ void CanvasRenderingContextHost::RecordCanvasSizeToUMA() {
 }
 
 scoped_refptr<StaticBitmapImage>
-CanvasRenderingContextHost::CreateTransparentImage(
-    const gfx::Size& size) const {
-  if (!IsValidImageSize(size))
+CanvasRenderingContextHost::CreateTransparentImage() const {
+  if (!IsValidImageSize()) {
     return nullptr;
+  }
   SkImageInfo info = SkImageInfo::Make(
-      gfx::SizeToSkISize(size), GetRenderingContextSkColorType(),
-      kPremul_SkAlphaType, GetRenderingContextSkColorSpace());
+      gfx::SizeToSkISize(Size()),
+      viz::ToClosestSkColorType(GetRenderingContextFormat()),
+      kPremul_SkAlphaType, GetRenderingContextColorSpace().ToSkColorSpace());
   sk_sp<SkSurface> surface =
       SkSurfaces::Raster(info, info.minRowBytes(), nullptr);
-  if (!surface)
+  if (!surface) {
     return nullptr;
+  }
   return UnacceleratedStaticBitmapImage::Create(surface->makeImageSnapshot());
 }
 
@@ -77,9 +88,32 @@ void CanvasRenderingContextHost::Commit(scoped_refptr<CanvasResource>&&,
   NOTIMPLEMENTED();
 }
 
+bool CanvasRenderingContextHost::IsValidImageSize() const {
+  const gfx::Size size = Size();
+  if (size.IsEmpty()) {
+    return false;
+  }
+  base::CheckedNumeric<int> area = size.GetCheckedArea();
+  // Firefox limits width/height to 32767 pixels, but slows down dramatically
+  // before it reaches that limit. We limit by area instead, giving us larger
+  // maximum dimensions, in exchange for a smaller maximum canvas size.
+  static constexpr int kMaxCanvasArea =
+      32768 * 8192;  // Maximum canvas area in CSS pixels
+  if (!area.IsValid() || area.ValueOrDie() > kMaxCanvasArea) {
+    return false;
+  }
+  // In Skia, we will also limit width/height to 65535.
+  static constexpr int kMaxSkiaDim =
+      65535;  // Maximum width/height in CSS pixels.
+  if (size.width() > kMaxSkiaDim || size.height() > kMaxSkiaDim) {
+    return false;
+  }
+  return true;
+}
+
 bool CanvasRenderingContextHost::IsPaintable() const {
   return (RenderingContext() && RenderingContext()->IsPaintable()) ||
-         IsValidImageSize(Size());
+         IsValidImageSize();
 }
 
 bool CanvasRenderingContextHost::PrintedInCurrentTask() const {
@@ -110,47 +144,80 @@ bool CanvasRenderingContextHost::IsImageBitmapRenderingContext() const {
 }
 
 CanvasResourceProvider*
-CanvasRenderingContextHost::GetOrCreateCanvasResourceProvider(
-    RasterModeHint hint) {
-  return GetOrCreateCanvasResourceProviderImpl(hint);
+CanvasRenderingContextHost::GetOrCreateCanvasResourceProviderForCanvas2D() {
+  CHECK(IsRenderingContext2D());
+  auto* provider = ResourceProvider();
+  if (!provider && !did_fail_to_create_resource_provider_) {
+    if (IsValidImageSize()) {
+      provider = CreateCanvasResourceProvider2D();
+    }
+    if (!provider) {
+      did_fail_to_create_resource_provider_ = true;
+    } else if (provider->IsValid()) {
+      base::UmaHistogramBoolean("Blink.Canvas.ResourceProviderIsAccelerated",
+                                provider->IsAccelerated());
+      base::UmaHistogramEnumeration("Blink.Canvas.ResourceProviderType",
+                                    provider->GetType());
+    }
+  }
+  return provider;
 }
 
 CanvasResourceProvider*
-CanvasRenderingContextHost::GetOrCreateCanvasResourceProviderImpl(
-    RasterModeHint hint) {
-  if (!ResourceProvider() && !did_fail_to_create_resource_provider_) {
-    if (IsValidImageSize(Size())) {
-      if (IsWebGPU()) {
-        CreateCanvasResourceProviderWebGPU();
-      } else if (IsWebGL()) {
-        CreateCanvasResourceProviderWebGL();
-      } else {
-        CreateCanvasResourceProvider2D(hint);
-      }
+CanvasRenderingContextHost::GetOrCreateCanvasResourceProviderForWebGL() {
+  CHECK(IsWebGL());
+  auto* provider = ResourceProvider();
+  if (!provider && !did_fail_to_create_resource_provider_) {
+    if (IsValidImageSize()) {
+      provider = CreateCanvasResourceProviderWebGL();
     }
-    if (!ResourceProvider())
+    if (!provider) {
       did_fail_to_create_resource_provider_ = true;
+    } else if (provider->IsValid()) {
+      base::UmaHistogramBoolean("Blink.Canvas.ResourceProviderIsAccelerated",
+                                provider->IsAccelerated());
+      base::UmaHistogramEnumeration("Blink.Canvas.ResourceProviderType",
+                                    provider->GetType());
+    }
   }
-  return ResourceProvider();
+  return provider;
 }
 
-void CanvasRenderingContextHost::CreateCanvasResourceProviderWebGPU() {
+CanvasResourceProvider*
+CanvasRenderingContextHost::GetOrCreateCanvasResourceProviderForWebGPU() {
+  CHECK(IsWebGPU());
+  auto* provider = ResourceProvider();
+  if (!provider && !did_fail_to_create_resource_provider_) {
+    if (IsValidImageSize()) {
+      provider = CreateCanvasResourceProviderWebGPU();
+    }
+    if (!provider) {
+      did_fail_to_create_resource_provider_ = true;
+    } else if (provider->IsValid()) {
+      base::UmaHistogramBoolean("Blink.Canvas.ResourceProviderIsAccelerated",
+                                provider->IsAccelerated());
+      base::UmaHistogramEnumeration("Blink.Canvas.ResourceProviderType",
+                                    provider->GetType());
+    }
+  }
+  return provider;
+}
+
+CanvasResourceProvider*
+CanvasRenderingContextHost::CreateCanvasResourceProviderWebGPU() {
   std::unique_ptr<CanvasResourceProvider> provider;
   if (SharedGpuContext::IsGpuCompositingEnabled()) {
     provider = CanvasResourceProvider::CreateWebGPUImageProvider(
         Size(), GetRenderingContextFormat(), GetRenderingContextAlphaType(),
         GetRenderingContextColorSpace(), gpu::SharedImageUsageSet(), this);
   }
+  auto* raw_provider = provider.get();
   ReplaceResourceProvider(std::move(provider));
-  if (ResourceProvider() && ResourceProvider()->IsValid()) {
-    base::UmaHistogramBoolean("Blink.Canvas.ResourceProviderIsAccelerated",
-                              ResourceProvider()->IsAccelerated());
-    base::UmaHistogramEnumeration("Blink.Canvas.ResourceProviderType",
-                                  ResourceProvider()->GetType());
-  }
+  return raw_provider;
 }
 
-void CanvasRenderingContextHost::CreateCanvasResourceProviderWebGL() {
+CanvasResourceProvider*
+CanvasRenderingContextHost::CreateCanvasResourceProviderWebGL() {
   DCHECK(IsWebGL());
 
   base::WeakPtr<CanvasResourceDispatcher> dispatcher =
@@ -187,16 +254,9 @@ void CanvasRenderingContextHost::CreateCanvasResourceProviderWebGL() {
           SharedGpuContext::ContextProviderWrapper(), this);
     }
     if (!provider) {
-      // If PassThrough failed, try a SharedImage with usage display enabled,
-      // and if WebGLImageChromium is enabled, add concurrent read write and
-      // usage scanout (overlay).
+      // If PassThrough failed, try a SharedImage with usage display enabled.
       gpu::SharedImageUsageSet shared_image_usage_flags =
           gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
-      if (using_webgl_image_chromium) {
-        shared_image_usage_flags |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
-        shared_image_usage_flags |=
-            gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE;
-      }
       provider = CanvasResourceProvider::CreateSharedImageProvider(
           Size(), format, alpha_type, color_space, kShouldInitialize,
           SharedGpuContext::ContextProviderWrapper(), RasterMode::kGPU,
@@ -219,35 +279,32 @@ void CanvasRenderingContextHost::CreateCanvasResourceProviderWebGL() {
   }
 
   // If either of the other modes failed and / or it was not possible to do, we
-  // will backup with a SharedBitmap, and if that was not possible with a Bitmap
-  // provider.
-  bool use_shared_bitmap_provider =
+  // will backup with a software SharedImage, and if that was not possible with
+  // a Bitmap provider.
+  bool use_software_shared_image_provider =
       base::FeatureList::IsEnabled(
           kUseSharedBitmapProviderForSoftwareCompositing)
           ? !SharedGpuContext::IsGpuCompositingEnabled()
           : !!dispatcher;
 
-  if (!provider && use_shared_bitmap_provider) {
-    provider = CanvasResourceProvider::CreateSharedBitmapProvider(
-        Size(), format, alpha_type, color_space, kShouldInitialize,
-        SharedGpuContext::SharedImageInterfaceProvider(), this);
+  if (!provider && use_software_shared_image_provider) {
+    provider =
+        CanvasResourceProvider::CreateSharedImageProviderForSoftwareCompositor(
+            Size(), format, alpha_type, color_space, kShouldInitialize,
+            SharedGpuContext::SharedImageInterfaceProvider(), this);
   }
   if (!provider) {
     provider = CanvasResourceProvider::CreateBitmapProvider(
         Size(), format, alpha_type, color_space, kShouldInitialize, this);
   }
 
+  auto* raw_provider = provider.get();
   ReplaceResourceProvider(std::move(provider));
-  if (ResourceProvider() && ResourceProvider()->IsValid()) {
-    base::UmaHistogramBoolean("Blink.Canvas.ResourceProviderIsAccelerated",
-                              ResourceProvider()->IsAccelerated());
-    base::UmaHistogramEnumeration("Blink.Canvas.ResourceProviderType",
-                                  ResourceProvider()->GetType());
-  }
+  return raw_provider;
 }
 
-void CanvasRenderingContextHost::CreateCanvasResourceProvider2D(
-    RasterModeHint hint) {
+CanvasResourceProvider*
+CanvasRenderingContextHost::CreateCanvasResourceProvider2D() {
   DCHECK(IsRenderingContext2D() || IsImageBitmapRenderingContext());
   base::WeakPtr<CanvasResourceDispatcher> dispatcher =
       GetOrCreateResourceDispatcher()
@@ -258,8 +315,7 @@ void CanvasRenderingContextHost::CreateCanvasResourceProvider2D(
   const SkAlphaType alpha_type = GetRenderingContextAlphaType();
   const viz::SharedImageFormat format = GetRenderingContextFormat();
   const gfx::ColorSpace color_space = GetRenderingContextColorSpace();
-  const bool use_gpu =
-      hint == RasterModeHint::kPreferGPU && ShouldAccelerate2dContext();
+  const bool use_gpu = ShouldTryToUseGpuRaster() && ShouldAccelerate2dContext();
   constexpr auto kShouldInitialize =
       CanvasResourceProvider::ShouldInitialize::kCallClear;
   if (use_gpu && LowLatencyEnabled()) {
@@ -303,6 +359,12 @@ void CanvasRenderingContextHost::CreateCanvasResourceProvider2D(
         shared_image_usage_flags, this);
   } else if (SharedGpuContext::MaySupportImageChromium() &&
              RuntimeEnabledFeatures::Canvas2dImageChromiumEnabled()) {
+    // In this case, we are using CPU raster and GPU compositing and native
+    // mappable buffers are supported. Try to use a
+    // CanvasResourceProviderSharedImage, which if successful will result in
+    // using a SharedImage that can be mapped onto the CPU for software raster
+    // writes and then read by the display compositor (and potentially used as
+    // an overlay).
     const gpu::SharedImageUsageSet shared_image_usage_flags =
         gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT;
     provider = CanvasResourceProvider::CreateSharedImageProvider(
@@ -312,44 +374,43 @@ void CanvasRenderingContextHost::CreateCanvasResourceProvider2D(
   }
 
   // If either of the other modes failed and / or it was not possible to do, we
-  // will backup with a SharedBitmap, and if that was not possible with a Bitmap
-  // provider.
-  bool use_shared_bitmap_provider =
+  // will backup with a software SharedImage, and if that was not possible with
+  // a Bitmap provider.
+  bool use_software_shared_image_provider =
       base::FeatureList::IsEnabled(
           kUseSharedBitmapProviderForSoftwareCompositing)
           ? !SharedGpuContext::IsGpuCompositingEnabled()
           : !!dispatcher;
 
-  if (!provider && use_shared_bitmap_provider) {
-    provider = CanvasResourceProvider::CreateSharedBitmapProvider(
-        Size(), format, alpha_type, color_space, kShouldInitialize,
-        SharedGpuContext::SharedImageInterfaceProvider(), this);
+  if (!provider && use_software_shared_image_provider) {
+    // In this case, we are using CPU raster and CPU compositing. Create a
+    // CanvasResourceProvider that uses a SharedImage backed by a shared-memory
+    // buffer that can be written by canvas raster and read by the compositor.
+    provider =
+        CanvasResourceProvider::CreateSharedImageProviderForSoftwareCompositor(
+            Size(), format, alpha_type, color_space, kShouldInitialize,
+            SharedGpuContext::SharedImageInterfaceProvider(), this);
   }
   if (!provider) {
+    // The final fallback is to raster into a bitmap that will then either be
+    // uploaded into GPU memory (for GPU compositing) or copied into the Viz
+    // process (for software compositing).
     provider = CanvasResourceProvider::CreateBitmapProvider(
         Size(), format, alpha_type, color_space, kShouldInitialize, this);
   }
 
+  auto* raw_provider = provider.get();
   ReplaceResourceProvider(std::move(provider));
 
-  if (ResourceProvider()) {
-    if (ResourceProvider()->IsValid()) {
-      base::UmaHistogramBoolean("Blink.Canvas.ResourceProviderIsAccelerated",
-                                ResourceProvider()->IsAccelerated());
-      base::UmaHistogramEnumeration("Blink.Canvas.ResourceProviderType",
-                                    ResourceProvider()->GetType());
-    }
-    ResourceProvider()->SetResourceRecyclingEnabled(true);
+  if (raw_provider) {
+    raw_provider->SetResourceRecyclingEnabled(true);
   }
+  return raw_provider;
 }
 
 SkAlphaType CanvasRenderingContextHost::GetRenderingContextAlphaType() const {
   return RenderingContext() ? RenderingContext()->GetAlphaType()
                             : kPremul_SkAlphaType;
-}
-
-SkColorType CanvasRenderingContextHost::GetRenderingContextSkColorType() const {
-  return viz::ToClosestSkColorType(GetRenderingContextFormat());
 }
 
 viz::SharedImageFormat CanvasRenderingContextHost::GetRenderingContextFormat()
@@ -358,15 +419,19 @@ viz::SharedImageFormat CanvasRenderingContextHost::GetRenderingContextFormat()
                             : GetN32FormatForCanvas();
 }
 
-sk_sp<SkColorSpace>
-CanvasRenderingContextHost::GetRenderingContextSkColorSpace() const {
-  return GetRenderingContextColorSpace().ToSkColorSpace();
-}
-
 gfx::ColorSpace CanvasRenderingContextHost::GetRenderingContextColorSpace()
     const {
   return RenderingContext() ? RenderingContext()->GetColorSpace()
                             : gfx::ColorSpace::CreateSRGB();
+}
+
+PlainTextPainter& CanvasRenderingContextHost::GetPlainTextPainter() {
+  if (!plain_text_painter_) {
+    plain_text_painter_ =
+        MakeGarbageCollected<PlainTextPainter>(PlainTextPainter::kCanvas);
+    UseCounter::Count(GetTopExecutionContext(), WebFeature::kCanvasTextNg);
+  }
+  return *plain_text_painter_;
 }
 
 bool CanvasRenderingContextHost::IsOffscreenCanvas() const {
@@ -426,6 +491,11 @@ bool CanvasRenderingContextHost::ContextHasOpenLayers(
     const CanvasRenderingContext* context) const {
   return context != nullptr && context->IsRenderingContext2D() &&
          context->LayerCount() != 0;
+}
+
+bool CanvasRenderingContextHost::IsContextLost() const {
+  CanvasRenderingContext* context = RenderingContext();
+  return !context || context->isContextLost();
 }
 
 }  // namespace blink

@@ -4,11 +4,6 @@
 
 #include "content/browser/web_package/signed_exchange_handler.h"
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
-
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -16,6 +11,8 @@
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
@@ -40,8 +37,9 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
-#include "crypto/sha2.h"
+#include "crypto/hash.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
+#include "net/base/host_port_pair.h"
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
@@ -116,7 +114,8 @@ void VerifyCert(const scoped_refptr<net::X509Certificate>& certificate,
   }
 
   network_context->VerifyCertForSignedExchange(
-      certificate, url, ocsp_result, sct_list, std::move(wrapped_callback));
+      certificate, net::HostPortPair::FromURL(url), ocsp_result, sct_list,
+      std::move(wrapped_callback));
 }
 
 std::string OCSPErrorToString(const bssl::OCSPVerifyResult& ocsp_result) {
@@ -346,8 +345,7 @@ SignedExchangeHandler::ParsePrologueBeforeFallbackUrl() {
 
   prologue_before_fallback_url_ =
       signed_exchange_prologue::BeforeFallbackUrl::Parse(
-          base::span(
-              header_buf_->bytes(),
+          header_buf_->first(
               signed_exchange_prologue::BeforeFallbackUrl::kEncodedSizeInBytes),
           devtools_proxy_.get());
 
@@ -368,8 +366,7 @@ SignedExchangeHandler::ParsePrologueFallbackUrlAndAfter() {
 
   prologue_fallback_url_and_after_ =
       signed_exchange_prologue::FallbackUrlAndAfter::Parse(
-          base::span(
-              header_buf_->bytes(),
+          header_buf_->first(
               prologue_before_fallback_url_.ComputeFallbackUrlAndAfterLength()),
           prologue_before_fallback_url_, devtools_proxy_.get());
 
@@ -727,7 +724,8 @@ void SignedExchangeHandler::CheckAbsenceOfCookies(base::OnceClosure callback) {
                             : net::CookieSettingOverrides(),
           /*devtools_cookie_setting_overrides=*/net::CookieSettingOverrides(),
           cookie_manager_.BindNewPipeAndPassReceiver(),
-          render_frame_host ? render_frame_host->CreateCookieAccessObserver()
+          render_frame_host ? render_frame_host->CreateCookieAccessObserver(
+                                  CookieAccessDetails::Source::kNonNavigation)
                             : mojo::NullRemote());
 
   CHECK(isolation_info.top_frame_origin().has_value());

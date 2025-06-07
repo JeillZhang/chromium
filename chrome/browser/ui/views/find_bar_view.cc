@@ -217,7 +217,7 @@ FindBarView::FindBarView(FindBarHost* host) {
               views::Builder<FindBarMatchCountLabel>()
                   .CopyAddressTo(&match_count_text_)
                   .SetBackgroundColor(kColorFindBarBackground)
-                  .SetEnabledColorId(kColorFindBarMatchCount)
+                  .SetEnabledColor(kColorFindBarMatchCount)
                   .SetCanProcessEventsWithinSubtree(false)
                   .SetProperty(views::kMarginsKey,
                                gfx::Insets(toast_label_vertical_margin +
@@ -294,7 +294,7 @@ FindBarView::FindBarView(FindBarHost* host) {
     border->SetColor(kColorFindBarBackground);
     border->set_md_shadow_elevation(
         layout_provider->GetCornerRadiusMetric(views::Emphasis::kHigh));
-    border->SetCornerRadius(corner_radius);
+    border->set_rounded_corners(gfx::RoundedCornersF(corner_radius));
 
     SetBackground(std::make_unique<views::BubbleBackground>(border.get()));
     SetBorder(std::move(border));
@@ -384,6 +384,11 @@ void FindBarView::ClearMatchCount() {
   UpdateMatchCountAppearance(false);
   DeprecatedLayoutImmediately();
   SchedulePaint();
+}
+
+bool FindBarView::ContainsFocus() const {
+  return find_text_->HasFocus() || find_previous_button_->HasFocus() ||
+         find_next_button_->HasFocus() || close_button_->HasFocus();
 }
 
 ///////////////////////////////////////////////////////////////////////////////

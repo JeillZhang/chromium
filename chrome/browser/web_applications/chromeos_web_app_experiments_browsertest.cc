@@ -11,6 +11,7 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "chrome/browser/apps/app_service/app_registry_cache_waiter.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
@@ -34,15 +35,17 @@
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/theme_change_waiter.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
+#include "third_party/blink/public/common/manifest/manifest.h"
 #include "third_party/blink/public/mojom/input/input_event.mojom-shared.h"
+#include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/startup/browser_init_params.h"
-#endif
-
 static_assert(BUILDFLAG(IS_CHROMEOS), "For Chrome OS only");
+
+namespace {
+constexpr char kMicrosoft365ManifestUrlsFinchParam[] = "m365-manifest-urls";
+}
 
 namespace web_app {
 
@@ -80,12 +83,6 @@ class ChromeOsWebAppExperimentsBrowserTest
         browser(), embedded_test_server()->GetURL(
                        "/web_apps/get_manifest.html?theme_color.json"));
     apps::AppReadinessWaiter(profile(), app_id_).Await();
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    auto init_params = chromeos::BrowserInitParams::GetForTests()->Clone();
-    init_params->is_upload_office_to_cloud_enabled = true;
-    chromeos::BrowserInitParams::SetInitParamsForTests(std::move(init_params));
-#endif
   }
   void TearDownOnMainThread() override {
     WebAppNavigationBrowserTest::TearDownOnMainThread();
@@ -96,8 +93,6 @@ class ChromeOsWebAppExperimentsBrowserTest
   webapps::AppId app_id_;
   GURL extended_scope_;
   GURL extended_scope_page_;
-  // This has no effect in Lacros, the feature is enabled via
-  // `chromeos::BrowserInitParams` instead.
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
@@ -109,10 +104,6 @@ IN_PROC_BROWSER_TEST_P(ChromeOsWebAppExperimentsBrowserTest,
   NavigateViaLinkClickToURLAndWait(app_browser, extended_scope_page_);
   EXPECT_FALSE(app_browser->app_controller()->ShouldShowCustomTabBar());
 }
-
-// TODO(https://issuetracker.google.com/248979304): Deflake these tests on
-// Lacros + Ash.
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
 
 IN_PROC_BROWSER_TEST_P(ChromeOsWebAppExperimentsBrowserTest,
                        LinkCaptureScopeExtension) {
@@ -156,7 +147,10 @@ IN_PROC_BROWSER_TEST_P(ChromeOsWebAppExperimentsBrowserTest,
 INSTANTIATE_TEST_SUITE_P(
     All,
     ChromeOsWebAppExperimentsBrowserTest,
-    testing::Values(apps::test::LinkCapturingFeatureVersion::kV1DefaultOff),
+    testing::Values(apps::test::LinkCapturingFeatureVersion::kV1DefaultOff,
+                    apps::test::LinkCapturingFeatureVersion::kV2DefaultOff,
+                    apps::test::LinkCapturingFeatureVersion::
+                        kV2DefaultOffCaptureExistingFrames),
     apps::test::LinkCapturingVersionToString);
 
 class ChromeOsWebAppExperimentsNavigationBrowserTest
@@ -420,9 +414,205 @@ IN_PROC_BROWSER_TEST_P(ChromeOsWebAppExperimentsNavigationBrowserTest,
 INSTANTIATE_TEST_SUITE_P(
     All,
     ChromeOsWebAppExperimentsNavigationBrowserTest,
-    testing::Values(apps::test::LinkCapturingFeatureVersion::kV1DefaultOff),
+    testing::Values(apps::test::LinkCapturingFeatureVersion::kV1DefaultOff,
+                    apps::test::LinkCapturingFeatureVersion::kV2DefaultOff,
+                    apps::test::LinkCapturingFeatureVersion::
+                        kV2DefaultOffCaptureExistingFrames),
     apps::test::LinkCapturingVersionToString);
 
-#endif  // !BUILDFLAG(IS_CHROMEOS_LACROS)
+class ChromeOsWebAppExperimentsManifestOverrideBrowserTest
+    : public InProcessBrowserTest {
+ public:
+  ChromeOsWebAppExperimentsManifestOverrideBrowserTest() = default;
+
+  void TearDown() override {
+    InProcessBrowserTest::TearDown();
+    scoped_feature_list_.Reset();
+  }
+
+  Profile* profile() { return browser()->profile(); }
+
+  content::WebContents* web_contents() const {
+    return browser()->tab_strip_model()->GetActiveWebContents();
+  }
+
+  content::RenderFrameHost* RenderFrameHost() const {
+    return web_contents()->GetPrimaryMainFrame();
+  }
+
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+class ChromeOsWebAppExperimentsManifestOverrideDisabledBrowserTest
+    : public ChromeOsWebAppExperimentsManifestOverrideBrowserTest {
+ public:
+  ChromeOsWebAppExperimentsManifestOverrideDisabledBrowserTest() {
+    scoped_feature_list_.InitAndDisableFeature(
+        chromeos::features::kMicrosoft365ManifestOverride);
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(
+    ChromeOsWebAppExperimentsManifestOverrideDisabledBrowserTest,
+    DontOverrideManifestWithFlagDisabled) {
+  const GURL m365PWAUrl = GURL("https://www.microsoft365.com/");
+
+  blink::mojom::ManifestPtr manifest = blink::mojom::Manifest::New();
+  manifest->id = m365PWAUrl;
+  manifest->start_url = m365PWAUrl;
+
+  ChromeOsWebAppExperiments::MaybeOverrideManifest(RenderFrameHost(), manifest);
+
+  EXPECT_EQ(m365PWAUrl, manifest->id);
+}
+
+class ChromeOsWebAppExperimentsManifestOverrideEnabledBrowserTest
+    : public ChromeOsWebAppExperimentsManifestOverrideBrowserTest {
+ public:
+  ChromeOsWebAppExperimentsManifestOverrideEnabledBrowserTest() {
+    EnableM365ManifestUrls(
+        "https://www.microsoft365.com/,https://www.example.com/");
+  }
+
+  void EnableM365ManifestUrls(const std::string& urls) {
+    scoped_feature_list_.InitAndEnableFeatureWithParameters(
+        chromeos::features::kMicrosoft365ManifestOverride,
+        {{kMicrosoft365ManifestUrlsFinchParam, urls}});
+  }
+};
+
+// The manifest id should not be overridden if the start URL is not contained in
+// the Url list of the corresponding finch parameter.
+IN_PROC_BROWSER_TEST_F(
+    ChromeOsWebAppExperimentsManifestOverrideEnabledBrowserTest,
+    DontOverrideManifestForNonMatchingUrl) {
+  const GURL m365PWAUrl = GURL("https://www.example2.com/");
+
+  blink::mojom::ManifestPtr manifest = blink::mojom::Manifest::New();
+  manifest->id = m365PWAUrl;
+  manifest->start_url = m365PWAUrl;
+
+  ChromeOsWebAppExperiments::MaybeOverrideManifest(RenderFrameHost(), manifest);
+
+  EXPECT_EQ(m365PWAUrl, manifest->id);
+}
+
+// The manifest id should not be overridden if the start URL origin matches but
+// the path does not.
+IN_PROC_BROWSER_TEST_F(
+    ChromeOsWebAppExperimentsManifestOverrideEnabledBrowserTest,
+    DontOverrideManifestForUrlWithPath) {
+  const GURL m365PWAUrlWithPath =
+      GURL("https://www.microsoft365.com/launch/word/");
+
+  blink::mojom::ManifestPtr manifest = blink::mojom::Manifest::New();
+  manifest->id = m365PWAUrlWithPath;
+  manifest->start_url = m365PWAUrlWithPath;
+
+  ChromeOsWebAppExperiments::MaybeOverrideManifest(RenderFrameHost(), manifest);
+
+  EXPECT_EQ(m365PWAUrlWithPath, manifest->id);
+}
+
+// The manifest id should be overridden if the start URL matches a URL in the
+// corresponding finch flag.
+IN_PROC_BROWSER_TEST_F(
+    ChromeOsWebAppExperimentsManifestOverrideEnabledBrowserTest,
+    OverrideManifestIdForMatchingUrl) {
+  // Override manifest for plain Url.
+  const GURL m365PWAUrl = GURL("https://www.microsoft365.com/");
+
+  blink::mojom::ManifestPtr manifest = blink::mojom::Manifest::New();
+  manifest->id = m365PWAUrl;
+  manifest->start_url = m365PWAUrl;
+
+  ChromeOsWebAppExperiments::MaybeOverrideManifest(RenderFrameHost(), manifest);
+
+  EXPECT_EQ(GURL("https://www.microsoft365.com/?from=Homescreen"),
+            manifest->id);
+}
+
+// The manifest id should be overridden if the start URL matches a URL in the
+// corresponding finch flag except for query parameters.
+IN_PROC_BROWSER_TEST_F(
+    ChromeOsWebAppExperimentsManifestOverrideEnabledBrowserTest,
+    OverrideManifestIdForMatchingUrlWithQueryParams) {
+  const GURL m365PWAUrl = GURL("https://www.microsoft365.com/?auth=1");
+
+  blink::mojom::ManifestPtr manifest = blink::mojom::Manifest::New();
+  manifest->id = m365PWAUrl;
+  manifest->start_url = m365PWAUrl;
+
+  ChromeOsWebAppExperiments::MaybeOverrideManifest(RenderFrameHost(), manifest);
+
+  EXPECT_EQ(GURL("https://www.microsoft365.com/?from=Homescreen"),
+            manifest->id);
+}
+
+// The manifest id should be overridden if the start URL matches a URL in the
+// corresponding finch flag except for a file name.
+IN_PROC_BROWSER_TEST_F(
+    ChromeOsWebAppExperimentsManifestOverrideEnabledBrowserTest,
+    OverrideManifestIdForMatchingUrlWithFileName) {
+  const GURL m365PWAUrl = GURL("https://www.microsoft365.com/index.html");
+
+  blink::mojom::ManifestPtr manifest = blink::mojom::Manifest::New();
+  manifest->id = m365PWAUrl;
+  manifest->start_url = m365PWAUrl;
+
+  ChromeOsWebAppExperiments::MaybeOverrideManifest(RenderFrameHost(), manifest);
+
+  EXPECT_EQ(GURL("https://www.microsoft365.com/?from=Homescreen"),
+            manifest->id);
+}
+
+// The manifest id should be overridden if the start URL matches a URL in the
+// corresponding finch flag except for a fragment.
+IN_PROC_BROWSER_TEST_F(
+    ChromeOsWebAppExperimentsManifestOverrideEnabledBrowserTest,
+    OverrideManifestIdForMatchingUrlWithFragment) {
+  const GURL m365PWAUrl = GURL("https://www.microsoft365.com/#test");
+
+  blink::mojom::ManifestPtr manifest = blink::mojom::Manifest::New();
+  manifest->id = m365PWAUrl;
+  manifest->start_url = m365PWAUrl;
+
+  ChromeOsWebAppExperiments::MaybeOverrideManifest(RenderFrameHost(), manifest);
+
+  EXPECT_EQ(GURL("https://www.microsoft365.com/?from=Homescreen"),
+            manifest->id);
+}
+
+// The manifest id should be overridden if the start URL matches one of multiple
+// URLs in the corresponding finch flag.
+IN_PROC_BROWSER_TEST_F(
+    ChromeOsWebAppExperimentsManifestOverrideEnabledBrowserTest,
+    OverrideManifestIdForMultipleUrls) {
+  const GURL m365PWAUrl1 = GURL("https://www.microsoft365.com/");
+  const GURL m365PWAUrl2 = GURL("https://www.example.com/?test=a");
+
+  {
+    blink::mojom::ManifestPtr manifest = blink::mojom::Manifest::New();
+    manifest->id = m365PWAUrl1;
+    manifest->start_url = m365PWAUrl1;
+
+    ChromeOsWebAppExperiments::MaybeOverrideManifest(RenderFrameHost(),
+                                                     manifest);
+
+    EXPECT_EQ(GURL("https://www.microsoft365.com/?from=Homescreen"),
+              manifest->id);
+  }
+
+  {
+    blink::mojom::ManifestPtr manifest = blink::mojom::Manifest::New();
+    manifest->id = m365PWAUrl2;
+    manifest->start_url = m365PWAUrl2;
+
+    ChromeOsWebAppExperiments::MaybeOverrideManifest(RenderFrameHost(),
+                                                     manifest);
+
+    EXPECT_EQ(GURL("https://www.example.com/?from=Homescreen"), manifest->id);
+  }
+}
 
 }  // namespace web_app

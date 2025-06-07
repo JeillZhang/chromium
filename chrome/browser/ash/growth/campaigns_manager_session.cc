@@ -16,6 +16,7 @@
 #include "base/check.h"
 #include "base/check_is_test.h"
 #include "base/logging.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_ash.h"
@@ -117,6 +118,10 @@ std::optional<growth::ActionType> GetActionTypeBySlot(growth::Slot slot) {
     return growth::ActionType::kShowNudge;
   }
 
+  if (slot == growth::Slot::kDryRun) {
+    return growth::ActionType::kDryRun;
+  }
+
   return std::nullopt;
 }
 
@@ -168,6 +173,11 @@ void MaybeTriggerSlot(growth::Slot slot) {
     return;
   }
 
+  if (action_type == growth::ActionType::kDryRun) {
+    // Skip rendering for dry run.
+    return;
+  }
+
   const auto* payload = growth::GetPayloadBySlot(campaign, slot);
   if (!payload) {
     // No payload for the targeted slot. It is valid for counterfactual control.
@@ -196,6 +206,7 @@ void MaybeTriggerRuntimeCampaigns(growth::TriggerType type,
 
   MaybeTriggerSlot(growth::Slot::kNudge);
   MaybeTriggerSlot(growth::Slot::kNotification);
+  MaybeTriggerSlot(growth::Slot::kDryRun);
 }
 
 void MaybeTriggerCampaignsWhenCampaignsLoaded() {

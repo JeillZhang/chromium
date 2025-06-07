@@ -16,6 +16,7 @@
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
+#include "gpu/config/gpu_info.h"
 #include "gpu/config/gpu_preferences.h"
 #include "media/base/bitrate.h"
 #include "media/base/media_log.h"
@@ -25,6 +26,10 @@
 #include "media/gpu/test/raw_video.h"
 #include "media/gpu/test/video_test_helpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "gpu/config/gpu_info_collector.h"
+#endif  // BUILDFLAG(IS_WIN)
 
 namespace media {
 namespace test {
@@ -182,7 +187,8 @@ VideoEncoderClient::VideoEncoderClient(
       encoder_client_state_(VideoEncoderClientState::kUninitialized),
       current_stats_(encoder_client_config_.framerate,
                      config.num_temporal_layers,
-                     config.num_spatial_layers) {
+                     config.num_spatial_layers),
+      test_sii_(base::MakeRefCounted<gpu::TestSharedImageInterface>()) {
   DETACH_FROM_SEQUENCE(encoder_client_sequence_checker_);
 
   weak_this_ = weak_this_factory_.GetWeakPtr();
@@ -291,6 +297,11 @@ VideoEncoderStats VideoEncoderClient::GetStats() const {
 void VideoEncoderClient::ResetStats() {
   base::AutoLock auto_lock(stats_lock_);
   current_stats_.Reset();
+}
+
+bool VideoEncoderClient::IsHardwareAccelerated() {
+  base::AutoLock auto_lock(stats_lock_);
+  return encoder_info_.is_hardware_accelerated;
 }
 
 void VideoEncoderClient::RequireBitstreamBuffers(
@@ -495,6 +506,9 @@ void VideoEncoderClient::NotifyErrorStatus(const EncoderStatus& status) {
 }
 
 void VideoEncoderClient::NotifyEncoderInfoChange(const VideoEncoderInfo& info) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(encoder_client_sequence_checker_);
+  base::AutoLock auto_lock(stats_lock_);
+  encoder_info_ = info;
 }
 
 void VideoEncoderClient::CreateEncoderTask(const RawVideo* video,
@@ -515,6 +529,8 @@ void VideoEncoderClient::CreateEncoderTask(const RawVideo* video,
       encoder_client_config_.input_storage_type,
       encoder_client_config_.content_type);
 
+  config.required_encoder_type =
+      VideoEncodeAccelerator::Config::EncoderType::kNoPreference;
   config.drop_frame_thresh_percentage =
       encoder_client_config_.drop_frame_thresh;
   config.spatial_layers = encoder_client_config_.spatial_layers;
@@ -523,9 +539,21 @@ void VideoEncoderClient::CreateEncoderTask(const RawVideo* video,
     config.gop_length = encoder_client_config_.gop_length;
   }
 
-  encoder_ = GpuVideoEncodeAcceleratorFactory::CreateVEA(
+  gpu::GPUInfo gpu_info;
+
+#if BUILDFLAG(IS_WIN)
+  gpu::CollectGraphicsInfoForTesting(&gpu_info);
+#endif  // BUILDFLAG(IS_WIN)
+
+  auto encoder_or_error = GpuVideoEncodeAcceleratorFactory::CreateVEA(
       config, this, gpu::GpuPreferences(), gpu::GpuDriverBugWorkarounds(),
-      gpu::GPUInfo::GPUDevice());
+      gpu_info.active_gpu());
+  encoder_ = encoder_or_error.has_value() ? std::move(encoder_or_error).value()
+                                          : nullptr;
+  if (encoder_) {
+    encoder_->SetSharedImageInterfaceForTesting(test_sii_);
+  }
+
   *success = (encoder_ != nullptr);
 
   // Initialization is continued once the encoder notifies us of the coded size

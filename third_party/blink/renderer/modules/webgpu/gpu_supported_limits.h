@@ -19,33 +19,41 @@ class GPUSupportedLimits final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-#ifdef WGPU_BREAKING_CHANGE_FLATTEN_LIMITS
-  explicit GPUSupportedLimits(const wgpu::Limits& limits);
+  // TODO(crbug.com/421950205) Make this more like dawn::utils::ComboLimits (for
+  // chaining safety) or replace it with a similar webgpu_cpp.h helper.
+  struct ComboLimits : public wgpu::Limits
+#ifdef WGPU_BREAKING_CHANGE_COMPATIBILITY_MODE_LIMITS
+      ,
+                       public wgpu::CompatibilityModeLimits
+#endif
+  {
+    ComboLimits();
+    ComboLimits(const ComboLimits&) = delete;
+    void operator=(ComboLimits&) = delete;
+    ComboLimits(ComboLimits&&) = delete;
+    void operator=(ComboLimits&&) = delete;
 
-  static void MakeUndefined(wgpu::Limits* out);
+    // This is not copyable or movable to avoid surprises with nextInChain
+    // pointers becoming stale (or getting replaced with nullptr).
+    // This explicit copy makes it clear what happens.
+    void UnlinkedCopyTo(ComboLimits*) const;
+
+    // Sets the nextInChain pointers and returns the base struct. Use this
+    // (rather than &comboLimits) whenever passing a ComboLimits to the API.
+    wgpu::Limits* GetLinked();
+  };
+
+  explicit GPUSupportedLimits(const ComboLimits& limits);
+
   // Returns true if populated, false if not and the ScriptPromiseResolverBase
   // has been rejected.
   static bool Populate(
-      wgpu::Limits* out,
+      ComboLimits* out,
       const HeapVector<
           std::pair<String,
                     Member<V8UnionUndefinedOrUnsignedLongLongEnforceRange>>>&
           in,
       ScriptPromiseResolverBase*);
-#else
-  explicit GPUSupportedLimits(const wgpu::SupportedLimits& limits);
-
-  static void MakeUndefined(wgpu::RequiredLimits* out);
-  // Returns true if populated, false if not and the ScriptPromiseResolverBase
-  // has been rejected.
-  static bool Populate(
-      wgpu::RequiredLimits* out,
-      const HeapVector<
-          std::pair<String,
-                    Member<V8UnionUndefinedOrUnsignedLongLongEnforceRange>>>&
-          in,
-      ScriptPromiseResolverBase*);
-#endif  // WGPU_BREAKING_CHANGE_FLATTEN_LIMITS
 
   GPUSupportedLimits(const GPUSupportedLimits&) = delete;
   GPUSupportedLimits& operator=(const GPUSupportedLimits&) = delete;
@@ -72,7 +80,6 @@ class GPUSupportedLimits final : public ScriptWrappable {
   uint64_t maxBufferSize() const;
   unsigned maxVertexAttributes() const;
   unsigned maxVertexBufferArrayStride() const;
-  unsigned maxInterStageShaderComponents() const;
   unsigned maxInterStageShaderVariables() const;
   unsigned maxColorAttachments() const;
   unsigned maxColorAttachmentBytesPerSample() const;
@@ -88,7 +95,7 @@ class GPUSupportedLimits final : public ScriptWrappable {
   unsigned maxStorageTexturesInVertexStage() const;
 
  private:
-  wgpu::Limits limits_;
+  ComboLimits limits_;
 };
 
 }  // namespace blink

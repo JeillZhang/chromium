@@ -43,6 +43,7 @@ class PlatformGlobalShortcutListenerDelegate;
 class PlatformKeyboardHook;
 class PlatformMenuUtils;
 class PlatformScreen;
+class PlatformSessionManager;
 class PlatformUserInputMonitor;
 class PlatformUtils;
 class SurfaceFactoryOzone;
@@ -135,10 +136,6 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
     // If true, the platform shows and updates the drag image.
     bool platform_shows_drag_image = true;
 
-    // Linux only, but see a TODO in BrowserDesktopWindowTreeHostLinux.
-    // Determines whether the platform supports the global application menu.
-    bool supports_global_application_menus = false;
-
     // Determines if the application modal dialogs should use the event blocker
     // to allow the only browser window receiving UI events.
     bool app_modal_dialogs_use_event_blocker = false;
@@ -171,8 +168,12 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
     // via overlays. If overlays are not supported the promotion and validation
     // logic can be skipped.
     bool supports_overlays = false;
+
     // Indicates whether the platform supports server-side window decorations.
     bool supports_server_side_window_decorations = true;
+
+    // Indicates whether the platform supports window controls menus.
+    bool supports_server_window_menus = false;
 
     // For platforms that have optional support for server-side decorations,
     // this parameter allows setting the desired state in tests.  The platform
@@ -204,6 +205,14 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
 
     // Allows overriding whether per window scaling is enabled in tests.
     static SupportsForTest override_supports_per_window_scaling_for_test;
+
+    // Whether windowing system level session management is supported. If set,
+    // GetSessionManager method must return a valid object.
+    bool supports_session_management = false;
+
+    // Linux only, but see a TODO in BrowserDesktopWindowTreeHostLinux.
+    // Determines whether the platform supports the global application menu.
+    bool supports_global_application_menus = false;
   };
 
   // Corresponds to chrome_browser_main_extra_parts.h.
@@ -297,6 +306,9 @@ class COMPONENT_EXPORT(OZONE) OzonePlatform {
       base::RepeatingCallback<void(KeyEvent* event)> callback,
       std::optional<base::flat_set<DomCode>> dom_codes,
       gfx::AcceleratedWidget accelerated_widget);
+  // Returns the PlatformSessionManager instance, if platform-level session
+  // management is supported, null otherwise.
+  virtual PlatformSessionManager* GetSessionManager();
 
   // Returns true if the specified buffer format is supported.
   virtual bool IsNativePixmapConfigSupported(gfx::BufferFormat format,

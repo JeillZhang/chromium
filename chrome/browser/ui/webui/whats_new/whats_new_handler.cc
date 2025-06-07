@@ -48,6 +48,9 @@ void WhatsNewHandler::RecordTimeToLoadContent(base::Time time) {
 }
 
 void WhatsNewHandler::RecordVersionPageLoaded(bool is_auto_open) {
+  // Store that this version was used to show a version page.
+  whats_new_registry_->SetVersionUsed();
+
   base::RecordAction(base::UserMetricsAction("UserEducation.WhatsNew.Shown"));
   base::RecordAction(
       base::UserMetricsAction("UserEducation.WhatsNew.VersionShown"));
@@ -206,7 +209,7 @@ void WhatsNewHandler::TryShowHatsSurveyWithTimeout() {
             .InMilliseconds(),
         /*product_specific_bits_data=*/{},
         /*product_specific_string_data=*/{},
-        /*navigation_behaviour=*/HatsService::REQUIRE_SAME_ORIGIN,
+        /*navigation_behavior=*/HatsService::REQUIRE_SAME_ORIGIN,
         base::DoNothing(), base::DoNothing(), survey_override.value());
   } else {
     hats_service->LaunchDelayedSurveyForWebContents(
@@ -215,6 +218,6 @@ void WhatsNewHandler::TryShowHatsSurveyWithTimeout() {
             .InMilliseconds(),
         /*product_specific_bits_data=*/{},
         /*product_specific_string_data=*/{},
-        /*navigation_behaviour=*/HatsService::REQUIRE_SAME_ORIGIN);
+        /*navigation_behavior=*/HatsService::REQUIRE_SAME_ORIGIN);
   }
 }

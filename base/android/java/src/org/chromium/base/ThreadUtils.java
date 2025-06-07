@@ -14,10 +14,10 @@ import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
 import org.chromium.build.BuildConfig;
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.NullUnmarked;
 import org.chromium.build.annotations.Nullable;
 
 import java.util.concurrent.Callable;
-import java.util.concurrent.FutureTask;
 
 /** Helper methods to deal with threading related tasks. */
 @NullMarked
@@ -89,11 +89,15 @@ public class ThreadUtils {
                 Thread uiThread = getUiThreadLooper().getThread();
                 if (curThread == uiThread) {
                     assert false
-                            : "Background-only class called from UI thread (expected: "
+                            : "Class was initialized on a background thread, but current operation"
+                                  + " was performed on the UI thread (expected: "
                                     + mThread
                                     + ")";
                 } else if (mThread == uiThread) {
-                    assert false : "UI-only class called from background thread: " + curThread;
+                    assert false
+                            : "Class was initialized on the UI thread, but current operation was"
+                                  + " performed on a background thread: "
+                                    + curThread;
                 }
                 assert false
                         : "Method called from wrong background thread. Expected: "
@@ -191,20 +195,9 @@ public class ThreadUtils {
      * @param c The Callable to run
      * @return The result of the callable
      */
+    @NullUnmarked // https://github.com/uber/NullAway/issues/1075
     public static <T extends @Nullable Object> T runOnUiThreadBlocking(Callable<T> c) {
         return PostTask.runSynchronously(TaskTraits.UI_DEFAULT, c);
-    }
-
-    /**
-     * Run the supplied FutureTask on the main thread. The method will block only if the current
-     * thread is the main thread.
-     *
-     * @param task The FutureTask to run
-     * @return The queried task (to aid inline construction)
-     */
-    public static <T extends @Nullable Object> FutureTask<T> runOnUiThread(FutureTask<T> task) {
-        PostTask.runOrPostTask(TaskTraits.UI_DEFAULT, task);
-        return task;
     }
 
     /**
@@ -215,18 +208,6 @@ public class ThreadUtils {
      */
     public static void runOnUiThread(Runnable r) {
         PostTask.runOrPostTask(TaskTraits.UI_DEFAULT, r);
-    }
-
-    /**
-     * Post the supplied FutureTask to run on the main thread. The method will not block, even if
-     * called on the UI thread.
-     *
-     * @param task The FutureTask to run
-     * @return The queried task (to aid inline construction)
-     */
-    public static <T extends @Nullable Object> FutureTask<T> postOnUiThread(FutureTask<T> task) {
-        PostTask.postTask(TaskTraits.UI_DEFAULT, task);
-        return task;
     }
 
     /**

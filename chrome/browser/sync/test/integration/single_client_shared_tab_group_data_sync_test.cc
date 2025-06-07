@@ -8,6 +8,7 @@
 
 #include "base/test/scoped_feature_list.h"
 #include "base/uuid.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/sync/test/integration/saved_tab_groups_helper.h"
 #include "chrome/browser/sync/test/integration/shared_tab_group_data_helper.h"
 #include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
@@ -17,6 +18,7 @@
 #include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/test/base/chrome_test_utils.h"
 #include "components/data_sharing/public/features.h"
+#include "components/saved_tab_groups/public/collaboration_finder.h"
 #include "components/saved_tab_groups/public/features.h"
 #include "components/saved_tab_groups/public/saved_tab_group.h"
 #include "components/saved_tab_groups/public/saved_tab_group_tab.h"
@@ -24,6 +26,9 @@
 #include "components/saved_tab_groups/public/types.h"
 #include "components/saved_tab_groups/public/utils.h"
 #include "components/saved_tab_groups/test_support/saved_tab_group_test_utils.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/sync/base/client_tag_hash.h"
+#include "components/sync/base/collaboration_id.h"
 #include "components/sync/base/data_type.h"
 #include "components/sync/protocol/saved_tab_group_specifics.pb.h"
 #include "components/sync/protocol/shared_tab_group_data_specifics.pb.h"
@@ -31,11 +36,16 @@
 #include "components/sync/service/sync_service_impl.h"
 #include "components/tab_groups/tab_group_color.h"
 #include "content/public/test/browser_test.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/build_info.h"
+#endif  // BUILDFLAG(IS_ANDROID)
 
 namespace tab_groups {
 namespace {
@@ -48,6 +58,7 @@ constexpr char kDefaultTabTitle[] = "Title";
 using tab_groups::HasSavedGroupMetadata;
 using testing::Contains;
 using testing::ElementsAre;
+using testing::Optional;
 using testing::SizeIs;
 using testing::UnorderedElementsAre;
 
@@ -61,6 +72,32 @@ std::unique_ptr<net::test_server::HttpResponse> HandleRequest(
     return http_response;
   }
   return nullptr;
+}
+
+sync_pb::SavedTabGroupSpecifics MakeSavedTabGroupSpecifics(
+    const base::Uuid& guid,
+    const std::string& title,
+    sync_pb::SavedTabGroup::SavedTabGroupColor color) {
+  sync_pb::SavedTabGroupSpecifics specifics;
+  specifics.set_guid(guid.AsLowercaseString());
+  sync_pb::SavedTabGroup* pb_group = specifics.mutable_group();
+  pb_group->set_title(title);
+  pb_group->set_color(color);
+  return specifics;
+}
+
+sync_pb::SavedTabGroupSpecifics MakeSavedTabGroupTabSpecifics(
+    const base::Uuid& guid,
+    const base::Uuid& group_guid,
+    const std::string& title,
+    const GURL& url) {
+  sync_pb::SavedTabGroupSpecifics specifics;
+  specifics.set_guid(guid.AsLowercaseString());
+  sync_pb::SavedTabGroupTab* pb_tab = specifics.mutable_tab();
+  pb_tab->set_title(title);
+  pb_tab->set_group_guid(group_guid.AsLowercaseString());
+  pb_tab->set_url(url.spec());
+  return specifics;
 }
 
 sync_pb::SharedTabGroupDataSpecifics MakeSharedTabGroupSpecifics(
@@ -93,9 +130,32 @@ sync_pb::SharedTabGroupDataSpecifics MakeSharedTabGroupTabSpecifics(
 }
 
 std::string GetClientTag(const sync_pb::SharedTabGroupDataSpecifics& specifics,
-                         const std::string& collaboration_id) {
-  return specifics.guid() + "|" + collaboration_id;
+                         const syncer::CollaborationId& collaboration_id) {
+  return specifics.guid() + "|" + collaboration_id.value();
 }
+
+// Waits until the tab group exists in the model regardless any filtration (e.g.
+// due to empty groups or transitioning).
+class TabGroupExistsChecker : public SingleClientStatusChangeChecker {
+ public:
+  TabGroupExistsChecker(base::Uuid group_id,
+                        TabGroupSyncService* tab_group_sync_service,
+                        syncer::SyncServiceImpl* sync_service)
+      : SingleClientStatusChangeChecker(sync_service),
+        group_id_(group_id),
+        tab_group_sync_service_(tab_group_sync_service) {
+    CHECK(tab_group_sync_service_);
+  }
+
+  bool IsExitConditionSatisfied(std::ostream* os) override {
+    *os << "Waiting for tab group to exist without filtration.";
+    return tab_group_sync_service_->GetGroup(group_id_).has_value();
+  }
+
+ private:
+  const base::Uuid group_id_;
+  raw_ptr<TabGroupSyncService> tab_group_sync_service_;
+};
 
 // Waits until the data type has an error.
 class SharedTabGroupDataErrorChecker : public SingleClientStatusChangeChecker {
@@ -113,15 +173,45 @@ class SingleClientSharedTabGroupDataSyncTest : public SyncTest {
   SingleClientSharedTabGroupDataSyncTest() : SyncTest(SINGLE_CLIENT) {
     feature_overrides_.InitWithFeatures(
         {data_sharing::features::kDataSharingFeature,
-         tab_groups::kTabGroupsSaveV2,
          tab_groups::kTabGroupSyncServiceDesktopMigration},
         {});
   }
   ~SingleClientSharedTabGroupDataSyncTest() override = default;
 
+  void SetUp() override {
+#if BUILDFLAG(IS_ANDROID)
+    if (base::android::BuildInfo::GetInstance()->is_automotive()) {
+      // TODO(crbug.com/399444939): Re-enable once automotive is supported.
+      GTEST_SKIP() << "Test shouldn't run on automotive builders.";
+    }
+#endif
+    SyncTest::SetUp();
+  }
+
+  void RegisterCollaboration(const syncer::CollaborationId& collaboration_id) {
+    GetTabGroupSyncService()
+        ->GetCollaborationFinderForTesting()
+        ->SetCollaborationAvailableForTesting(collaboration_id);
+  }
+
+  GaiaId GetGaiaId() const {
+    return GetClient(0)->GetGaiaIdForAccount(SyncTestAccount::kDefaultAccount);
+  }
+
+  sync_pb::SyncEntity::CollaborationMetadata MakeCollaborationMetadata(
+      const syncer::CollaborationId& collaboration_id) {
+    sync_pb::SyncEntity::CollaborationMetadata collaboration_metadata;
+    collaboration_metadata.set_collaboration_id(collaboration_id.value());
+    collaboration_metadata.mutable_creation_attribution()
+        ->set_obfuscated_gaia_id(GetGaiaId().ToString());
+    collaboration_metadata.mutable_last_update_attribution()
+        ->set_obfuscated_gaia_id(GetGaiaId().ToString());
+    return collaboration_metadata;
+  }
+
   void AddSpecificsToFakeServer(
       sync_pb::SharedTabGroupDataSpecifics shared_specifics,
-      const std::string& collaboration_id) {
+      const syncer::CollaborationId& collaboration_id) {
     // First, create the collaboration for the user.
     GetFakeServer()->AddCollaboration(collaboration_id);
 
@@ -135,7 +225,19 @@ class SingleClientSharedTabGroupDataSyncTest : public SyncTest {
                 GetClientTag(entity_specifics.shared_tab_group_data(),
                              collaboration_id),
                 entity_specifics, /*creation_time=*/0, /*last_modified_time=*/0,
-                collaboration_id));
+                MakeCollaborationMetadata(collaboration_id)));
+  }
+
+  void AddSavedSpecificsToFakeServer(
+      sync_pb::SavedTabGroupSpecifics saved_specifics) {
+    sync_pb::EntitySpecifics entity_specifics;
+    *entity_specifics.mutable_saved_tab_group() = std::move(saved_specifics);
+    GetFakeServer()->InjectEntity(
+        syncer::PersistentUniqueClientEntity::CreateFromSpecificsForTesting(
+            /*non_unique_name=*/"",
+            /*client_tag=*/entity_specifics.saved_tab_group().guid(),
+            entity_specifics,
+            /*creation_time=*/0, /*last_modified_time=*/0));
   }
 
   TabGroupSyncService* GetTabGroupSyncService() const {
@@ -152,11 +254,28 @@ class SingleClientSharedTabGroupDataSyncTest : public SyncTest {
   }
 
   void MakeTabGroupShared(const LocalTabGroupID& local_group_id,
-                          std::string_view collaboration_id) {
+                          const syncer::CollaborationId& collaboration_id) {
     // TODO(crbug.com/382557489): use the proper callback.
     GetTabGroupSyncService()->MakeTabGroupShared(
         local_group_id, collaboration_id,
         TabGroupSyncService::TabGroupSharingCallback());
+  }
+
+  void InjectTombstoneToFakeServer(
+      const sync_pb::SharedTabGroupDataSpecifics& shared_group_specifics,
+      const CollaborationId& collaboration_id) {
+    const syncer::ClientTagHash shared_group_client_tag_hash =
+        syncer::ClientTagHash::FromUnhashed(
+            syncer::SHARED_TAB_GROUP_DATA,
+            GetClientTag(shared_group_specifics, collaboration_id));
+
+    GetFakeServer()->InjectEntity(
+        syncer::PersistentTombstoneEntity::CreateNewShared(
+            syncer::LoopbackServerEntity::CreateId(
+                syncer::SHARED_TAB_GROUP_DATA,
+                shared_group_client_tag_hash.value()),
+            shared_group_client_tag_hash.value(),
+            MakeCollaborationMetadata(collaboration_id)));
   }
 
   // Returns the only saved tab group specifics from the fake server. The group
@@ -201,42 +320,57 @@ IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
 IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
                        ShouldDownloadGroupsAndTabsAtInitialSync) {
   const base::Uuid group_guid = base::Uuid::GenerateRandomV4();
-  const std::string collaboration_id = "collaboration";
+  const syncer::CollaborationId kCollaborationId("collaboration");
+
+  // SetupClients() must be called to get access to IdentityManager before
+  // injecting entities to the fake server.
+  ASSERT_TRUE(SetupClients());
 
   AddSpecificsToFakeServer(
       MakeSharedTabGroupSpecifics(
           group_guid,
           /*originating_saved_group_guid=*/base::Uuid::GenerateRandomV4(),
           "title", sync_pb::SharedTabGroup_Color_CYAN),
-      collaboration_id);
+      kCollaborationId);
   AddSpecificsToFakeServer(
       MakeSharedTabGroupTabSpecifics(base::Uuid::GenerateRandomV4(), group_guid,
                                      "tab 1", GURL("http://google.com/1")),
-      collaboration_id);
+      kCollaborationId);
   AddSpecificsToFakeServer(
       MakeSharedTabGroupTabSpecifics(base::Uuid::GenerateRandomV4(), group_guid,
                                      "tab 2", GURL("http://google.com/2")),
-      collaboration_id);
+      kCollaborationId);
 
   ASSERT_TRUE(SetupSync());
+  RegisterCollaboration(kCollaborationId);
 
   std::vector<SavedTabGroup> service_groups = GetAllTabGroups();
   ASSERT_THAT(service_groups,
               UnorderedElementsAre(HasSharedGroupMetadata(
-                  "title", TabGroupColorId::kCyan, collaboration_id)));
+                  "title", TabGroupColorId::kCyan, kCollaborationId)));
   const SavedTabGroup& group = service_groups.front();
-  EXPECT_FALSE(group.creation_time_windows_epoch_micros().is_null());
+  EXPECT_FALSE(group.creation_time().is_null());
   EXPECT_THAT(
       group.saved_tabs(),
       UnorderedElementsAre(HasTabMetadata("tab 1", "http://google.com/1"),
                            HasTabMetadata("tab 2", "http://google.com/2")));
   for (const SavedTabGroupTab& tab : group.saved_tabs()) {
-    EXPECT_FALSE(tab.creation_time_windows_epoch_micros().is_null());
+    EXPECT_FALSE(tab.creation_time().is_null());
   }
 }
 
+// Flaky on Android: crbug.com/403333571.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_ShouldTransitionSavedToSharedTabGroup \
+  DISABLED_ShouldTransitionSavedToSharedTabGroup
+#else
+#define MAYBE_ShouldTransitionSavedToSharedTabGroup \
+  ShouldTransitionSavedToSharedTabGroup
+#endif
 IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
-                       ShouldTransitionSavedToSharedTabGroup) {
+                       MAYBE_ShouldTransitionSavedToSharedTabGroup) {
+  syncer::CollaborationId kCollaborationId("collaboration");
+
   const GURL kUrl = embedded_test_server()->GetURL(kDefaultURLPath);
   ASSERT_TRUE(SetupSync());
 
@@ -258,10 +392,10 @@ IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
 
   // Add the user to the collaboration before making any changes (to prevent
   // filtration of local entities on GetUpdates before Commit).
-  GetFakeServer()->AddCollaboration("collaboration");
+  GetFakeServer()->AddCollaboration(kCollaborationId);
 
   // Transition the saved tab group to shared tab group.
-  MakeTabGroupShared(local_group_id, "collaboration");
+  MakeTabGroupShared(local_group_id, kCollaborationId);
 
   // Saved tab group remains intact, hence verify only that the shared tab group
   // is committed. Page title will be sanitized when convering a saved tab group
@@ -311,11 +445,21 @@ IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
             saved_group_specifics.guid());
 }
 
+// Flaky on Android: crbug.com/403333571.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_ShouldTransitionSavedToSharedGroupRemotely \
+  DISABLED_ShouldTransitionSavedToSharedGroupRemotely
+#else
+#define MAYBE_ShouldTransitionSavedToSharedGroupRemotely \
+  ShouldTransitionSavedToSharedGroupRemotely
+#endif
 IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
-                       ShouldTransitionSavedToSharedGroupRemotely) {
+                       MAYBE_ShouldTransitionSavedToSharedGroupRemotely) {
   const GURL kUrl = embedded_test_server()->GetURL(kDefaultURLPath);
-  const std::string kCollaborationId = "collaboration";
+  const syncer::CollaborationId kCollaborationId("collaboration");
+
   ASSERT_TRUE(SetupSync());
+  RegisterCollaboration(kCollaborationId);
 
   // Create a new group with a single tab, and wait until a new saved tab group
   // is committed to the server.
@@ -332,10 +476,6 @@ IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
                   "title", sync_pb::SavedTabGroup::SAVED_TAB_GROUP_COLOR_BLUE),
               HasSpecificsSavedTab(kDefaultTabTitle, kUrl.spec())))
           .Wait());
-
-  // Add the user to the collaboration before making any changes (to prevent
-  // filtration of local entities on GetUpdates before Commit).
-  GetFakeServer()->AddCollaboration(kCollaborationId);
 
   std::vector<SavedTabGroup> local_groups =
       GetTabGroupSyncService()->GetAllGroups();
@@ -383,6 +523,57 @@ IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
+                       ShouldIgnoreOriginatingSavedGroupAfterTransition) {
+  const syncer::CollaborationId kCollaborationId("collaboration");
+  const GURL kUrl = embedded_test_server()->GetURL(kDefaultURLPath);
+
+  // SetupClients() must be called to get access to IdentityManager before
+  // injecting entities to the fake server.
+  ASSERT_TRUE(SetupClients());
+
+  // Create a shared tab group remotely to avoid having local originating saved
+  // group.
+  const base::Uuid kOriginatingSavedGroupGuid = base::Uuid::GenerateRandomV4();
+  const base::Uuid kSharedGroupGuid = base::Uuid::GenerateRandomV4();
+  AddSpecificsToFakeServer(
+      MakeSharedTabGroupSpecifics(
+          kSharedGroupGuid,
+          /*originating_saved_group_guid=*/kOriginatingSavedGroupGuid, "title",
+          sync_pb::SharedTabGroup::CYAN),
+      kCollaborationId);
+
+  const base::Uuid kSharedTabGuid = base::Uuid::GenerateRandomV4();
+  AddSpecificsToFakeServer(
+      MakeSharedTabGroupTabSpecifics(
+          /*guid=*/kSharedTabGuid, kSharedGroupGuid, kDefaultTabTitle, kUrl),
+      kCollaborationId);
+
+  ASSERT_TRUE(SetupSync());
+  RegisterCollaboration(kCollaborationId);
+
+  ASSERT_THAT(GetTabGroupSyncService()->GetAllGroups(),
+              ElementsAre(HasSharedGroupMetadata(
+                  "title", TabGroupColorId::kCyan, kCollaborationId)));
+
+  // Add the originating saved tab group remotely.
+  AddSavedSpecificsToFakeServer(MakeSavedTabGroupSpecifics(
+      kOriginatingSavedGroupGuid, "title",
+      sync_pb::SavedTabGroup::SAVED_TAB_GROUP_COLOR_BLUE));
+  AddSavedSpecificsToFakeServer(MakeSavedTabGroupTabSpecifics(
+      /*guid=*/base::Uuid::GenerateRandomV4(), kOriginatingSavedGroupGuid,
+      kDefaultTabTitle, kUrl));
+
+  ASSERT_TRUE(TabGroupExistsChecker(kOriginatingSavedGroupGuid,
+                                    GetTabGroupSyncService(), GetSyncService(0))
+                  .Wait());
+
+  // The shared tab group should remain intact and the only one.
+  EXPECT_THAT(GetTabGroupSyncService()->GetAllGroups(),
+              ElementsAre(HasSharedGroupMetadata(
+                  "title", TabGroupColorId::kCyan, kCollaborationId)));
+}
+
+IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
                        ShouldIgnoreTabGroupWithSameGuid) {
   ASSERT_TRUE(SetupSync());
 
@@ -409,17 +600,17 @@ IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
           kGroupGuid,
           /*originating_saved_group_guid=*/base::Uuid::GenerateRandomV4(),
           "title", sync_pb::SharedTabGroup_Color_CYAN),
-      kCollaborationId.value());
+      kCollaborationId);
   AddSpecificsToFakeServer(
       MakeSharedTabGroupTabSpecifics(/*guid=*/base::Uuid::GenerateRandomV4(),
                                      kGroupGuid, "tab 1",
                                      GURL("http://google.com/1")),
-      kCollaborationId.value());
+      kCollaborationId);
   AddSpecificsToFakeServer(
       MakeSharedTabGroupTabSpecifics(/*guid=*/base::Uuid::GenerateRandomV4(),
                                      kGroupGuid, "tab 2",
                                      GURL("http://google.com/2")),
-      kCollaborationId.value());
+      kCollaborationId);
 
   ASSERT_TRUE(AwaitQuiescence());
 
@@ -457,14 +648,14 @@ IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
       MakeSharedTabGroupTabSpecifics(/*guid=*/base::Uuid::GenerateRandomV4(),
                                      saved_group.saved_guid(), "tab 1",
                                      GURL("http://google.com/1")),
-      kCollaborationId.value());
+      kCollaborationId);
 
   // The same but have even GUID collision of tabs.
   AddSpecificsToFakeServer(
       MakeSharedTabGroupTabSpecifics(/*guid=*/tab_2.saved_tab_guid(),
                                      saved_group.saved_guid(), "tab 2",
                                      GURL("http://google.com/2")),
-      kCollaborationId.value());
+      kCollaborationId);
 
   ASSERT_TRUE(AwaitQuiescence());
 
@@ -479,12 +670,83 @@ IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
                   HasTabMetadata("Saved tab 2", "http://google.com/saved_2")));
 }
 
+// This test covers the following scenario for the device #2:
+// 1. User shares a saved tab group from device #1.
+// 2. Shared tab group is committed to the server.
+// 3. Shared tab group is received by device #2, the originating saved tab group
+//    is transitioned to shared and marked as hidden.
+// 4. Sharing fails on device #1 and the shared tab group is deleted (uploading
+//    tombstones).
+// 5. Device #2 receives the tombstones and applies the deletion of the shared
+//    tab group. The originating saved tab group should be restored.
+IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
+                       ShouldRestoreOriginatingSavedGroupOnShareFailure) {
+  const GURL kUrl = embedded_test_server()->GetURL(kDefaultURLPath);
+  const CollaborationId kCollaborationId("collaboration");
+
+  ASSERT_TRUE(SetupClients());
+  RegisterCollaboration(kCollaborationId);
+
+  // Create both shared and originating saved tab groups remotely.
+  const base::Uuid kOriginatingSavedGroupGuid = base::Uuid::GenerateRandomV4();
+  const base::Uuid kSharedGroupGuid = base::Uuid::GenerateRandomV4();
+
+  const sync_pb::SharedTabGroupDataSpecifics shared_group_specifics =
+      MakeSharedTabGroupSpecifics(
+          kSharedGroupGuid,
+          /*originating_saved_group_guid=*/kOriginatingSavedGroupGuid, "title",
+          sync_pb::SharedTabGroup::CYAN);
+  AddSpecificsToFakeServer(shared_group_specifics, kCollaborationId);
+  AddSpecificsToFakeServer(MakeSharedTabGroupTabSpecifics(
+                               /*guid=*/base::Uuid::GenerateRandomV4(),
+                               kSharedGroupGuid, kDefaultTabTitle, kUrl),
+                           kCollaborationId);
+  AddSavedSpecificsToFakeServer(MakeSavedTabGroupSpecifics(
+      kOriginatingSavedGroupGuid, "title",
+      sync_pb::SavedTabGroup::SAVED_TAB_GROUP_COLOR_BLUE));
+  AddSavedSpecificsToFakeServer(MakeSavedTabGroupTabSpecifics(
+      /*guid=*/base::Uuid::GenerateRandomV4(), kOriginatingSavedGroupGuid,
+      kDefaultTabTitle, kUrl));
+
+  // The initial merge should result in a shared tab group with a hidden
+  // originating saved tab group.
+  ASSERT_TRUE(SetupSync());
+
+  ASSERT_TRUE(
+      SavedTabOrGroupExistsChecker(GetTabGroupSyncService(), kSharedGroupGuid)
+          .Wait());
+
+  // Only shared tab group is available from GetAllGroups().
+  ASSERT_THAT(GetTabGroupSyncService()->GetAllGroups(),
+              ElementsAre(HasSharedGroupMetadata(
+                  "title", TabGroupColorId::kCyan, kCollaborationId)));
+
+  // The originating saved tab group is hidden but still available.
+  ASSERT_THAT(
+      GetTabGroupSyncService()->GetGroup(kOriginatingSavedGroupGuid),
+      Optional(HasSavedGroupMetadata(u"title", TabGroupColorId::kBlue)));
+
+  // Simulate a failure of the sharing operation on the remote client which
+  // resulted in a tombstone of the shared tab group.
+  InjectTombstoneToFakeServer(shared_group_specifics, kCollaborationId);
+
+  ASSERT_TRUE(SavedTabOrGroupDoesNotExistChecker(GetTabGroupSyncService(),
+                                                 kSharedGroupGuid)
+                  .Wait());
+
+  // The originating saved tab group should be restored and available.
+  EXPECT_THAT(
+      GetTabGroupSyncService()->GetAllGroups(),
+      ElementsAre(HasSavedGroupMetadata(u"title", TabGroupColorId::kBlue)));
+}
+
 IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
                        ShouldFailDataTypeForCrossCollaborationUpdates) {
   ASSERT_TRUE(SetupSync());
 
   const base::Uuid kGroupGuid = base::Uuid::GenerateRandomV4();
-  const std::string kCollaborationId = "collaboration";
+  const syncer::CollaborationId kCollaborationId("collaboration");
+  RegisterCollaboration(kCollaborationId);
 
   // Create 2 shared tab groups.
   AddSpecificsToFakeServer(
@@ -505,7 +767,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
   AddSpecificsToFakeServer(
       MakeSharedTabGroupTabSpecifics(base::Uuid::GenerateRandomV4(), kGroupGuid,
                                      "tab 1", GURL("http://google.com/1")),
-      "other_collaboration");
+      syncer::CollaborationId("other_collaboration"));
 
   // The data type is expected to fail.
   ExcludeDataTypesFromCheckForDataTypeFailures({syncer::SHARED_TAB_GROUP_DATA});
@@ -518,31 +780,40 @@ IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
 IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
                        PRE_ShouldReloadDataOnBrowserRestart) {
   const base::Uuid group_guid = base::Uuid::GenerateRandomV4();
-  const std::string collaboration_id = "collaboration";
+  const syncer::CollaborationId kCollaborationId("collaboration");
+
+  // SetupClients() must be called to get access to IdentityManager before
+  // injecting entities to the fake server.
+  ASSERT_TRUE(SetupClients());
 
   AddSpecificsToFakeServer(
       MakeSharedTabGroupSpecifics(
           group_guid,
           /*originating_saved_group_guid=*/base::Uuid::GenerateRandomV4(),
           "title", sync_pb::SharedTabGroup_Color_CYAN),
-      collaboration_id);
+      kCollaborationId);
   AddSpecificsToFakeServer(
       MakeSharedTabGroupTabSpecifics(base::Uuid::GenerateRandomV4(), group_guid,
                                      "tab 1", GURL("http://google.com/1")),
-      collaboration_id);
+      kCollaborationId);
   AddSpecificsToFakeServer(
       MakeSharedTabGroupTabSpecifics(base::Uuid::GenerateRandomV4(), group_guid,
                                      "tab 2", GURL("http://google.com/2")),
-      collaboration_id);
+      kCollaborationId);
 
   ASSERT_TRUE(SetupSync());
+  RegisterCollaboration(kCollaborationId);
+
   ASSERT_THAT(GetAllTabGroups(), SizeIs(1));
 }
 
 IN_PROC_BROWSER_TEST_F(SingleClientSharedTabGroupDataSyncTest,
                        ShouldReloadDataOnBrowserRestart) {
+  const syncer::CollaborationId kCollaborationId("collaboration");
   ASSERT_TRUE(SetupClients());
-  ASSERT_TRUE(GetClient(0)->AwaitSyncSetupCompletion());
+  GetFakeServer()->AddCollaboration(kCollaborationId);
+  RegisterCollaboration(kCollaborationId);
+  ASSERT_TRUE(GetClient(0)->AwaitSyncTransportActive());
 
   ASSERT_THAT(GetAllTabGroups(), SizeIs(1));
   EXPECT_THAT(

@@ -53,16 +53,20 @@ IN_PROC_BROWSER_TEST_F(NewTabPageTest, MiddleSlotPromo) {
   RunTest("new_tab_page/middle_slot_promo_test.js", "mocha.run()");
 }
 
-IN_PROC_BROWSER_TEST_F(NewTabPageTest, MobilePromo) {
-  RunTest("new_tab_page/mobile_promo_test.js", "mocha.run()");
-}
-
 IN_PROC_BROWSER_TEST_F(NewTabPageTest, ImageProcessor) {
   RunTest("new_tab_page/image_processor_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(NewTabPageTest, Transparency) {
   RunTest("new_tab_page/transparency_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageTest, Composebox) {
+  RunTest("new_tab_page/composebox/composebox_test.js", "mocha.run()");
+}
+
+IN_PROC_BROWSER_TEST_F(NewTabPageTest, ComposeboxFileCarousel) {
+  RunTest("new_tab_page/composebox/file_carousel_test.js", "mocha.run()");
 }
 
 using NewTabPageModulesTest = NewTabPageBrowserTest;
@@ -85,10 +89,6 @@ IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, ModuleDescriptor) {
 
 IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, ModuleRegistry) {
   RunTest("new_tab_page/modules/module_registry_test.js", "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, ModuleHeader) {
-  RunTest("new_tab_page/modules/module_header_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(NewTabPageModulesTest, InfoDialog) {

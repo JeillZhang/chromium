@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "third_party/blink/renderer/core/layout/inline/inline_node.h"
 
 #include <algorithm>
@@ -15,7 +10,6 @@
 
 #include "base/containers/adapters.h"
 #include "base/debug/dump_without_crashing.h"
-#include "base/metrics/histogram_macros.h"
 #include "base/not_fatal_until.h"
 #include "base/trace_event/trace_event.h"
 #include "third_party/blink/renderer/core/dom/text_diff_range.h"
@@ -29,10 +23,10 @@
 #include "third_party/blink/renderer/core/layout/inline/inline_item_result_ruby_column.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_items_builder.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_layout_algorithm.h"
-#include "third_party/blink/renderer/core/layout/inline/inline_text_auto_space.h"
 #include "third_party/blink/renderer/core/layout/inline/line_breaker.h"
 #include "third_party/blink/renderer/core/layout/inline/line_info.h"
 #include "third_party/blink/renderer/core/layout/inline/offset_mapping.h"
+#include "third_party/blink/renderer/core/layout/inline/text_auto_space.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_counter.h"
 #include "third_party/blink/renderer/core/layout/layout_inline.h"
@@ -64,6 +58,7 @@
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/bidi_paragraph.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
+#include "third_party/blink/renderer/platform/wtf/text/character_visitor.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_offset_map.h"
 
@@ -272,8 +267,10 @@ class ReusingTextShaper final {
       if (*item.Style()->GetFont() != font) {
         continue;
       }
-      if (shape_result->IsAppliedSpacing())
+      if (item.IsUnsafeToReuseShapeResult() ||
+          shape_result->IsAppliedSpacing()) {
         continue;
+      }
       shape_results.push_back(shape_result);
     }
     return shape_results;
@@ -946,6 +943,7 @@ class InlineNodeDataEditor final {
 bool InlineNode::SetTextWithOffset(LayoutText* layout_text,
                                    String new_text,
                                    const TextDiffRange& diff) {
+  TRACE_EVENT0("blink", "InlineNode::SetTextWithOffset");
   if (!layout_text->HasValidInlineItems() ||
       !layout_text->IsInLayoutNGInlineFormattingContext())
     return false;
@@ -1377,22 +1375,14 @@ void InlineNode::ShapeText(InlineItemsData* data,
                            const String* previous_text,
                            const InlineItems* previous_items,
                            const Font* override_font) const {
-  TRACE_EVENT0("fonts", "InlineNode::ShapeText");
-  base::ScopedClosureRunner scoped_closure_runner(WTF::BindOnce(
-      [](base::ElapsedTimer timer, Document* document) {
-        if (document) {
-          document->MaybeRecordShapeTextElapsedTime(timer.Elapsed());
-        }
-      },
-      base::ElapsedTimer(),
-      WrapWeakPersistent(GetLayoutBox() ? &GetLayoutBox()->GetDocument()
-                                        : nullptr)));
-
   const String& text_content = data->text_content;
   InlineItems* items = &data->items;
+#if EXPENSIVE_DCHECKS_ARE_ON()
+  InlineItem::CheckIndex(*items);
+#endif  // EXPENSIVE_DCHECKS_ARE_ON()
 
   ShapeResultSpacing<String> spacing(text_content, IsSvgText());
-  InlineTextAutoSpace auto_space(*data);
+  TextAutoSpace auto_space(*data);
 
   const bool allow_shape_cache =
       IsNGShapeCacheAllowed(text_content, override_font, *items, spacing) &&
@@ -1569,8 +1559,7 @@ void InlineNode::ShapeText(InlineItemsData* data,
     text_item_ranges.ReserveInitialCapacity(num_text_items);
     ClearCollectionScope clear_scope(&text_item_ranges);
 
-    const bool has_ligatures =
-        shape_result->NumGlyphs() < shape_result->NumCharacters();
+    const bool has_ligatures = shape_result->HasLigatures();
     if (has_ligatures) {
       shape_result->EnsurePositionData();
     }
@@ -1603,7 +1592,7 @@ void InlineNode::ShapeText(InlineItemsData* data,
     shape_result->CopyRanges(text_item_ranges.data(), text_item_ranges.size());
   }
 
-  auto_space.ApplyIfNeeded(*data);
+  auto_space.ApplyIfNeeded(*this, *data);
 
 #if DCHECK_IS_ON()
   for (const Member<InlineItem>& item_ptr : *items) {
@@ -1662,6 +1651,10 @@ void InlineNode::ShapeTextForFirstLineIfNeeded(InlineNodeData* data) const {
     first_line_items->segments = data->segments->Clone();
   }
 
+#if EXPENSIVE_DCHECKS_ARE_ON()
+  InlineItem::CheckIndex(first_line_items->items);
+#endif  // EXPENSIVE_DCHECKS_ARE_ON()
+
   // Re-shape if the font is different.
   if (needs_reshape || FirstLineNeedsReshape(*first_line_style, *block_style))
     ShapeText(first_line_items);
@@ -1676,6 +1669,7 @@ void InlineNode::ShapeTextIncludingFirstLine(
     InlineNodeData* data,
     const String* previous_text,
     const InlineItems* previous_items) const {
+  TRACE_EVENT0("blink", "InlineNode::ShapeTextIncludingFirstLine");
   InlineItem::UpdateIndex(data->items);
   ShapeText(data, previous_text, previous_items);
   ShapeTextForFirstLineIfNeeded(data);
@@ -1732,20 +1726,16 @@ namespace {
 
 template <typename CharType>
 String CreateTextContentForStickyImagesQuirk(
-    const CharType* text,
-    unsigned length,
+    base::span<const CharType> text,
     base::span<const Member<InlineItem>> items) {
-  StringBuffer<CharType> buffer(length);
-  CharType* characters = buffer.Characters();
-  memcpy(characters, text, length * sizeof(CharType));
+  StringBuffer<CharType> buffer(text.size());
+  base::span<CharType> span = buffer.Span();
+  span.copy_from(text);
   for (const Member<InlineItem>& item_ptr : items) {
     const InlineItem& item = *item_ptr;
     if (item.Type() == InlineItem::kAtomicInline && item.IsImage()) {
-      // TODO(crbug.com/351564777): Resolve a buffer safety issue.
-      DCHECK_EQ(UNSAFE_TODO(characters[item.StartOffset()]),
-                kObjectReplacementCharacter);
-      // TODO(crbug.com/351564777): Resolve a buffer safety issue.
-      UNSAFE_TODO(characters[item.StartOffset()]) = kNoBreakSpaceCharacter;
+      DCHECK_EQ(span[item.StartOffset()], kObjectReplacementCharacter);
+      span[item.StartOffset()] = kNoBreakSpaceCharacter;
     }
   }
   return buffer.Release();
@@ -1765,12 +1755,9 @@ String InlineNode::TextContentForStickyImagesQuirk(
     const InlineItem& item = *items_data.items[i];
     if (item.Type() == InlineItem::kAtomicInline && item.IsImage()) {
       auto item_span = base::span(items_data.items).subspan(i);
-      if (text_content.Is8Bit()) {
-        return CreateTextContentForStickyImagesQuirk(
-            text_content.Characters8(), text_content.length(), item_span);
-      }
-      return CreateTextContentForStickyImagesQuirk(
-          text_content.Characters16(), text_content.length(), item_span);
+      return WTF::VisitCharacters(text_content, [&](auto chars) {
+        return CreateTextContentForStickyImagesQuirk(chars, item_span);
+      });
     }
   }
   return text_content;
@@ -2045,9 +2032,9 @@ static LayoutUnit ComputeContentSize(InlineNode node,
                                            /* is_new_fc */ true);
       builder.SetAvailableBlockSize(space.AvailableSize().block_size);
       builder.SetPercentageResolutionBlockSize(
-          space.PercentageResolutionBlockSize());
-      builder.SetReplacedPercentageResolutionBlockSize(
-          space.ReplacedPercentageResolutionBlockSize());
+          float_node.IsReplaced()
+              ? space.ReplacedChildPercentageResolutionBlockSize()
+              : space.PercentageResolutionBlockSize());
       const auto float_space = builder.ToConstraintSpace();
 
       const MinMaxSizesResult child_result =

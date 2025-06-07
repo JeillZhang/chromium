@@ -17,7 +17,6 @@ import androidx.test.filters.MediumTest;
 
 import org.junit.After;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -44,8 +43,8 @@ import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabTestUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.chrome.test.transit.BlankCTATabInitialStatePublicTransitRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
 import org.chromium.chrome.test.transit.hub.RegularTabSwitcherStation;
 import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.transit.quick_delete.QuickDeleteDialogFacility;
@@ -62,13 +61,9 @@ import java.util.concurrent.TimeoutException;
 public class QuickDeleteControllerTest {
     private static final long FIFTEEN_MINUTES_IN_MS = TimeUnit.MINUTES.toMillis(15);
 
-    @ClassRule
-    public static ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
-
     @Rule
-    public BlankCTATabInitialStatePublicTransitRule mInitialStateRule =
-            new BlankCTATabInitialStatePublicTransitRule(sActivityTestRule);
+    public AutoResetCtaTransitTestRule mCtaTestRule =
+            ChromeTransitTestRules.autoResetCtaActivityRule();
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
@@ -79,7 +74,7 @@ public class QuickDeleteControllerTest {
 
     @Before
     public void setUp() {
-        WebPageStation firstPage = mInitialStateRule.startOnBlankPage();
+        WebPageStation firstPage = mCtaTestRule.startOnBlankPage();
 
         BrowsingDataBridgeJni.setInstanceForTesting(mBrowsingDataBridgeMock);
         // Ensure that whenever the mock is asked to clear browsing data, the callback is
@@ -97,7 +92,7 @@ public class QuickDeleteControllerTest {
                 .clearBrowsingData(any(), any(), any(), anyInt(), any(), any(), any(), any());
 
         // Set the time for the initial tab to be outside of the quick delete time span.
-        Tab initialTab = firstPage.getLoadedTab();
+        Tab initialTab = firstPage.loadedTabElement.get();
         runOnUiThreadBlocking(
                 () -> {
                     TabTestUtils.setLastNavigationCommittedTimestampMillis(
@@ -124,7 +119,8 @@ public class QuickDeleteControllerTest {
     public void testDefaultTimePeriodSelectedIs15Minutes() {
         QuickDeleteDialogFacility dialog = mSecondPage.openRegularTabAppMenu().clearBrowsingData();
         var option =
-                (TimePeriodUtils.TimePeriodSpinnerOption) dialog.getSpinner().getSelectedItem();
+                (TimePeriodUtils.TimePeriodSpinnerOption)
+                        dialog.spinnerElement.get().getSelectedItem();
         assertEquals(TimePeriod.LAST_15_MINUTES, option.getTimePeriod());
         dialog.clickCancel();
     }
@@ -233,7 +229,7 @@ public class QuickDeleteControllerTest {
     @Test
     @MediumTest
     public void testMoreOptions_OpensClearBrowsingData() {
-        Tab secondTab = mSecondPage.getLoadedTab();
+        Tab secondTab = mSecondPage.loadedTabElement.get();
         QuickDeleteDialogFacility dialog = mSecondPage.openRegularTabAppMenu().clearBrowsingData();
 
         HistogramWatcher histogramWatcher =

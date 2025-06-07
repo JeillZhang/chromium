@@ -11,6 +11,11 @@ namespace views::features {
 
 // Please keep alphabetized.
 
+// Used to enable additional a11y attributes when announcing text.
+BASE_FEATURE(kAnnounceTextAdditionalAttributes,
+             "AnnounceTextAdditionalAttributes",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
 // Use a high-contrast style for ink drops when in platform high-contrast mode,
 // including full opacity and a high-contrast color
 BASE_FEATURE(kEnablePlatformHighContrastInkDrop,
@@ -29,18 +34,6 @@ BASE_FEATURE(kEnableTouchDragCursorSync,
 // to kKeyboardAccessibleTooltip in //ui/base/ui_base_features.cc.
 BASE_FEATURE(kKeyboardAccessibleTooltipInViews,
              "KeyboardAccessibleTooltipInViews",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// Used to enable additional a11y attributes when announcing text.
-BASE_FEATURE(kAnnounceTextAdditionalAttributes,
-             "AnnounceTextAdditionalAttributes",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-// Whether the window appearance follows the color provider's color mode.
-// This is only effective for mac. Some plumbing is not restricted to mac,
-// therefore this flag is included in all platforms.
-BASE_FEATURE(kMacWindowFollowsColorProviderColorMode,
-             "MacWindowFollowsColorProviderColorMode",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace views::features

@@ -9,12 +9,14 @@
 #include <algorithm>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <set>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "base/check.h"
 #include "base/check_op.h"
@@ -44,7 +46,6 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/apps/app_service/app_icon/app_icon_factory.h"
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
@@ -65,7 +66,7 @@
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/os_integration/web_app_file_handler_manager.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
-#include "chrome/browser/web_applications/proto/web_app_proto_package.pb.h"
+#include "chrome/browser/web_applications/proto/web_app.pb.h"
 #include "chrome/browser/web_applications/scope_extension_info.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_chromeos_data.h"
@@ -75,7 +76,6 @@
 #include "chrome/browser/web_applications/web_app_management_type.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
-#include "chrome/browser/web_applications/web_app_sync_bridge.h"
 #include "chrome/browser/web_applications/web_app_tab_helper.h"
 #include "chrome/browser/web_applications/web_app_ui_manager.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
@@ -99,7 +99,6 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "net/cookies/cookie_partition_key.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom-shared.h"
@@ -110,37 +109,31 @@
 #include "url/origin.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
-#include "chrome/browser/apps/browser_instance/browser_app_instance_tracker.h"
-#include "chrome/browser/badging/badge_manager.h"
-#include "chrome/browser/badging/badge_manager_factory.h"
-#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
-#include "chrome/browser/notifications/notification_display_service_factory.h"
-#include "chrome/browser/web_applications/chromeos_web_app_experiments.h"
-#include "chromeos/constants/chromeos_features.h"
-#include "ui/message_center/public/cpp/notification.h"
-#include "ui/message_center/public/cpp/notifier_id.h"
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 #include "ash/webui/projector_app/public/cpp/projector_app_constants.h"  // nogncheck
 #include "ash/webui/system_apps/public/system_web_app_type.h"
+#include "chrome/browser/apps/browser_instance/browser_app_instance_tracker.h"
 #include "chrome/browser/ash/guest_os/guest_os_terminal.h"
 #include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
+#include "chrome/browser/badging/badge_manager.h"
+#include "chrome/browser/badging/badge_manager_factory.h"
 #include "chrome/browser/chromeos/arc/arc_web_contents_data.h"  // nogncheck
+#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+#include "chrome/browser/notifications/notification_display_service_factory.h"
+#include "chrome/browser/web_applications/chromeos_web_app_experiments.h"
+#include "chrome/browser/web_applications/policy/app_service_web_app_policy.h"
 #include "chromeos/ash/components/file_manager/app_id.h"
 #include "chromeos/ash/experiences/system_web_apps/types/system_web_app_data.h"
 #include "chromeos/ash/experiences/system_web_apps/types/system_web_app_delegate.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "components/app_restore/app_launch_info.h"
 #include "components/app_restore/full_restore_save_handler.h"
 #include "components/app_restore/full_restore_utils.h"
 #include "components/services/app_service/public/cpp/app_registry_cache.h"
 #include "components/sessions/core/session_id.h"
 #include "extensions/browser/api/file_handlers/mime_util.h"  // nogncheck
-#endif
-
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-#include "chromeos/lacros/lacros_service.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notifier_id.h"
 #endif
 
 using apps::IconEffects;
@@ -301,8 +294,6 @@ apps::InstallSource GetInstallSource(
     case webapps::WebappInstallSource::SYNC:
     case webapps::WebappInstallSource::WEBAPK_RESTORE:
       return apps::InstallSource::kSync;
-    case webapps::WebappInstallSource::COUNT:
-      NOTREACHED();
   }
 }
 
@@ -555,7 +546,7 @@ void WebAppPublisherHelper::SetWebAppShowInFields(const WebApp* web_app,
     bool should_show_app = true;
     // TODO(b/201422755): Remove Web app specific hiding for demo mode once icon
     // load fixed.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     if (ash::DemoSession::Get()) {
       should_show_app = ash::DemoSession::Get()->ShouldShowWebApp(
           web_app->start_url().spec());
@@ -664,12 +655,12 @@ apps::IntentFilters WebAppPublisherHelper::CreateIntentFiltersForWebApp(
                  CreateIntentFiltersFromFileHandlers(*enabled_file_handlers));
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (app.app_id() == ash::kChromeUIUntrustedProjectorSwaAppId) {
     filters.push_back(apps_util::MakeIntentFilterForUrlScope(
         GURL(ash::kChromeUIUntrustedProjectorPwaUrl)));
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   return filters;
 }
@@ -728,7 +719,7 @@ apps::AppPtr WebAppPublisherHelper::CreateWebApp(const WebApp* web_app) {
             app->install_reason == apps::InstallReason::kSystem)
       << base::ToString(app->install_reason);
 
-  app->policy_ids = GetPolicyIds(*web_app);
+  app->policy_ids = WebAppPolicyManager::GetPolicyIds(profile(), *web_app);
 
   app->permissions = CreatePermissions(web_app);
 
@@ -784,7 +775,7 @@ apps::AppPtr WebAppPublisherHelper::CreateWebApp(const WebApp* web_app) {
     app->intent_filters.push_back(apps_util::CreateLockScreenFilter());
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (web_app->app_id() == guest_os::kTerminalSystemAppId) {
     app->intent_filters.push_back(apps_util::CreateFileFilter(
         {apps_util::kIntentActionView},
@@ -1016,7 +1007,7 @@ void WebAppPublisherHelper::LaunchAppWithIntent(
     return;
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (app_id == guest_os::kTerminalSystemAppId) {
     int64_t display_id =
         window_info ? window_info->display_id : display::kInvalidDisplayId;
@@ -1041,8 +1032,7 @@ void WebAppPublisherHelper::LaunchAppWithIntent(
       base::BindOnce(
           [](apps::LaunchCallback callback, apps::LaunchSource launch_source,
              std::vector<content::WebContents*> web_contentses) {
-// TODO(crbug.com/40184120): Set ArcWebContentsData for Lacros.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
             for (content::WebContents* web_contents : web_contentses) {
               if (launch_source == apps::LaunchSource::kFromArc) {
                 // Add a flag to remember this tab originated in the ARC
@@ -1075,7 +1065,7 @@ void WebAppPublisherHelper::LaunchAppWithParams(
   bool is_system_web_app = false;
   std::optional<GURL> override_url = std::nullopt;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // Terminal SWA has custom launch code and manages its own restore data.
   if (params.app_id == guest_os::kTerminalSystemAppId) {
     guest_os::LaunchTerminalHome(profile_, params.display_id,
@@ -1105,7 +1095,7 @@ void WebAppPublisherHelper::LaunchAppWithParams(
   // Create the FullRestoreSaveHandler instance before launching the app to
   // observe the browser window.
   full_restore::FullRestoreSaveHandler::GetInstance();
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   provider_->scheduler().LaunchAppWithCustomParams(
       std::move(params),
@@ -1127,9 +1117,9 @@ void WebAppPublisherHelper::SetPermission(const std::string& app_id,
   }
 
   if (permission->permission_type == apps::PermissionType::kFileHandling) {
-    if (absl::holds_alternative<bool>(permission->value)) {
+    if (std::holds_alternative<bool>(permission->value)) {
       provider_->scheduler().PersistFileHandlersUserChoice(
-          app_id, absl::get<bool>(permission->value), base::DoNothing());
+          app_id, std::get<bool>(permission->value), base::DoNothing());
     }
     return;
   }
@@ -1146,9 +1136,9 @@ void WebAppPublisherHelper::SetPermission(const std::string& app_id,
     return;
   }
 
-  DCHECK(absl::holds_alternative<apps::TriState>(permission->value));
+  DCHECK(std::holds_alternative<apps::TriState>(permission->value));
   ContentSetting permission_value = CONTENT_SETTING_DEFAULT;
-  switch (absl::get<apps::TriState>(permission->value)) {
+  switch (std::get<apps::TriState>(permission->value)) {
     case apps::TriState::kAllow:
       permission_value = CONTENT_SETTING_ALLOW;
       break;
@@ -1454,7 +1444,13 @@ void WebAppPublisherHelper::OnWebAppDisabledStateChanged(
 
   // If the disable mode is hidden, update the visibility of the new disabled
   // app.
-  if (is_disabled && provider_->policy_manager().IsDisabledAppsModeHidden()) {
+  std::optional<ash::SystemWebAppType> system_app_type = std::nullopt;
+  auto* swa_manager = ash::SystemWebAppManager::Get(profile());
+  if (swa_manager) {
+    system_app_type = swa_manager->GetSystemAppTypeForAppId(app->app_id);
+  }
+  if (is_disabled &&
+      provider_->policy_manager().IsDisabledAppsModeHidden(system_app_type)) {
     UpdateAppDisabledMode(*app);
   }
 
@@ -1691,71 +1687,12 @@ void WebAppPublisherHelper::LaunchAppWithIntentImpl(
           std::move(callback)));
 }
 
-std::vector<std::string> WebAppPublisherHelper::GetPolicyIds(
-    const WebApp& web_app) const {
-  const auto& app_id = web_app.app_id();
-
-  if (web_app.isolation_data() && registrar().IsInstalledByPolicy(app_id)) {
-    // This is an IWA - and thus, web_bundle_id == policy_id == URL hostname
-    return {web_app.start_url().host()};
-  }
-
-  std::vector<std::string> policy_ids;
-
-  if (std::optional<std::string_view> preinstalled_web_app_policy_id =
-          apps_util::GetPolicyIdForPreinstalledWebApp(app_id)) {
-    policy_ids.emplace_back(*preinstalled_web_app_policy_id);
-  }
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  auto* swa_manager = ash::SystemWebAppManager::Get(profile());
-  if (swa_manager && swa_manager->IsSystemWebApp(app_id)) {
-    const auto& swa_data = web_app.client_data().system_web_app_data;
-    DCHECK(swa_data);
-    const ash::SystemWebAppType swa_type = swa_data->system_app_type;
-    const std::optional<std::string_view> swa_policy_id =
-        apps_util::GetPolicyIdForSystemWebAppType(swa_type);
-    if (swa_policy_id) {
-      policy_ids.emplace_back(*swa_policy_id);
-    }
-
-    // File Manager SWA uses File Manager Extension's ID for policy.
-    if (swa_type == ash::SystemWebAppType::FILE_MANAGER) {
-      policy_ids.push_back(file_manager::kFileManagerAppId);
-    }
-  }
-#endif  // BUIDLFLAG(IS_CHROMEOS_ASH)
-
-  for (const auto& [source, external_config] :
-       web_app.management_to_external_config_map()) {
-    if (!external_config.additional_policy_ids.empty()) {
-      std::ranges::copy(external_config.additional_policy_ids,
-                        std::back_inserter(policy_ids));
-    }
-  }
-
-  if (!registrar().HasExternalAppWithInstallSource(
-          app_id, ExternalInstallSource::kExternalPolicy)) {
-    return policy_ids;
-  }
-
-  base::flat_map<webapps::AppId, base::flat_set<GURL>> installed_apps =
-      registrar().GetExternallyInstalledApps(
-          ExternalInstallSource::kExternalPolicy);
-  if (auto* install_urls = base::FindOrNull(installed_apps, app_id)) {
-    DCHECK(!install_urls->empty());
-    base::Extend(policy_ids, base::ToVector(*install_urls, &GURL::spec));
-  }
-
-  return policy_ids;
-}
-
 apps::PackageId WebAppPublisherHelper::GetPackageId(
     const WebApp& web_app) const {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (web_app.client_data().system_web_app_data) {
     const std::optional<std::string_view> policy_id =
-        apps_util::GetPolicyIdForSystemWebAppType(
+        GetPolicyIdForSystemWebAppType(
             web_app.client_data().system_web_app_data->system_app_type);
     if (policy_id) {
       return apps::PackageId(apps::PackageType::kSystem, *policy_id);
@@ -1767,7 +1704,13 @@ apps::PackageId WebAppPublisherHelper::GetPackageId(
 
 #if BUILDFLAG(IS_CHROMEOS)
 void WebAppPublisherHelper::UpdateAppDisabledMode(apps::App& app) {
-  if (provider_->policy_manager().IsDisabledAppsModeHidden()) {
+  std::optional<ash::SystemWebAppType> system_app_type = std::nullopt;
+  auto* swa_manager = ash::SystemWebAppManager::Get(profile());
+  if (swa_manager) {
+    system_app_type = swa_manager->GetSystemAppTypeForAppId(app.app_id);
+  }
+
+  if (provider_->policy_manager().IsDisabledAppsModeHidden(system_app_type)) {
     app.show_in_launcher = false;
     app.show_in_search = false;
     app.show_in_shelf = false;
@@ -1777,12 +1720,6 @@ void WebAppPublisherHelper::UpdateAppDisabledMode(apps::App& app) {
   app.show_in_search = true;
   app.show_in_shelf = true;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  auto* swa_manager = ash::SystemWebAppManager::Get(profile());
-  if (!swa_manager) {
-    return;
-  }
-  auto system_app_type = swa_manager->GetSystemAppTypeForAppId(app.app_id);
   if (system_app_type.has_value()) {
     auto* system_app = swa_manager->GetSystemApp(*system_app_type);
     DCHECK(system_app);
@@ -1790,7 +1727,6 @@ void WebAppPublisherHelper::UpdateAppDisabledMode(apps::App& app) {
     app.show_in_shelf = system_app->ShouldShowInSearchAndShelf();
     app.show_in_search = system_app->ShouldShowInSearchAndShelf();
   }
-#endif
 }
 
 bool WebAppPublisherHelper::MaybeAddNotification(
@@ -1855,7 +1791,7 @@ bool WebAppPublisherHelper::ShouldShowBadge(const std::string& app_id,
 
   return badge_manager_->GetBadgeValue(app_id).has_value();
 }
-#endif
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 void WebAppPublisherHelper::LaunchAppWithFilesCheckingUserPermission(
     const std::string& app_id,
@@ -1867,21 +1803,33 @@ void WebAppPublisherHelper::LaunchAppWithFilesCheckingUserPermission(
                      weak_ptr_factory_.GetWeakPtr(), app_id, std::move(params),
                      std::move(callback));
 
-  switch (
-      provider_->registrar_unsafe().GetAppFileHandlerApprovalState(app_id)) {
-    case ApiApprovalState::kRequiresPrompt:
-      provider_->ui_manager().ShowWebAppFileLaunchDialog(
-          file_paths, app_id, std::move(launch_callback));
-      break;
-    case ApiApprovalState::kAllowed:
-      std::move(launch_callback)
-          .Run(/*allowed=*/true, /*remember_user_choice=*/false);
-      break;
-    case ApiApprovalState::kDisallowed:
-      // We shouldn't have gotten this far (i.e. "open with" should not have
-      // been selectable) if file handling was already disallowed for the app.
-      NOTREACHED();
+  if (std::ranges::all_of(file_paths, [this, &app_id](auto file) {
+        std::optional<std::string> file_extension_string;
+#if BUILDFLAG(IS_WIN)
+        std::string converted_extension_utf8;
+        std::wstring file_extension = file.Extension();
+        if (base::WideToUTF8(file_extension.c_str(), file_extension.size(),
+                             &converted_extension_utf8)) {
+          file_extension_string = converted_extension_utf8;
+        } else {
+          file_extension_string = std::nullopt;
+        }
+#else   // BUILDFLAG(IS_WIN)
+        file_extension_string = file.Extension();
+#endif  // BUILDFLAG(IS_WIN)
+        return provider_->registrar_unsafe().GetAppFileHandlerApprovalState(
+                   app_id, file_extension_string) == ApiApprovalState::kAllowed;
+      })) {
+    return std::move(launch_callback)
+        .Run(/*allowed=*/true, /*remember_user_choice=*/false);
   }
+
+  CHECK_EQ(
+      provider_->registrar_unsafe().GetAppFileHandlerUserApprovalState(app_id),
+      ApiApprovalState::kRequiresPrompt);
+
+  return provider_->ui_manager().ShowWebAppFileLaunchDialog(
+      file_paths, app_id, std::move(launch_callback));
 }
 
 void WebAppPublisherHelper::OnFileHandlerDialogCompleted(
@@ -1949,7 +1897,7 @@ void WebAppPublisherHelper::OnLaunchCompleted(
     base::WeakPtr<Browser> browser,
     base::WeakPtr<content::WebContents> web_contents,
     apps::LaunchContainer container) {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // Save all launch information for system web apps, because the
   // browser session restore can't restore system web apps.
   int session_id =
@@ -1972,7 +1920,7 @@ void WebAppPublisherHelper::OnLaunchCompleted(
                                       std::move(launch_info));
     }
   }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   std::move(on_complete).Run(web_contents.get());
 }

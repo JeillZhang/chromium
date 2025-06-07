@@ -23,6 +23,7 @@
 #include "ui/compositor/layer.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/label_button.h"
@@ -36,10 +37,6 @@
 #include "ui/views/view_class_properties.h"
 #include "ui/views/widget/unique_widget_ptr.h"
 #include "ui/views/widget/widget.h"
-
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-#include "chromeos/ash/resources/internal/strings/grit/ash_internal_strings.h"
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 namespace ash {
 
@@ -98,14 +95,9 @@ views::Builder<views::StyledLabel> GetTextBodyBuilder(
 views::Builder<views::StyledLabel> GetParagraphOneBuilder() {
   return GetTextBodyBuilder(
              l10n_util::GetStringUTF16(
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
                  ash::features::IsLobsterEnabled()
-                     ? IDS_ASH_MAGIC_BOOST_WITH_LOBSTER_DISCLAIMER_PARAGRAPH_ONE
-                     : IDS_ASH_MAGIC_BOOST_DISCLAMIER_PARAGRAPH_ONE)
-#else
-                 IDS_ASH_MAGIC_BOOST_DISCLAMIER_PARAGRAPH_ONE)
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
-                 )
+                     ? IDS_LOBSTER_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_ONE
+                     : IDS_ASH_MAGIC_BOOST_DISCLAMIER_PARAGRAPH_ONE))
       .SetID(magic_boost::ViewId::DisclaimerViewParagraphOne);
 }
 
@@ -115,14 +107,9 @@ views::Builder<views::StyledLabel> GetParagraphTwoBuilder(
   const std::u16string link_text =
       l10n_util::GetStringUTF16(IDS_ASH_MAGIC_BOOST_DISCLAIMER_TERMS_LINK_TEXT);
   const std::u16string text = l10n_util::GetStringFUTF16(
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
       ash::features::IsLobsterEnabled()
-          ? IDS_ASH_MAGIC_BOOST_WITH_LOBSTER_DISCLAIMER_PARAGRAPH_TWO
-          : IDS_ASH_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_TWO
-#else
-      IDS_ASH_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_TWO
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
-      ,
+          ? IDS_LOBSTER_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_TWO
+          : IDS_ASH_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_TWO,
       {link_text}, &offsets);
 
   return views::Builder<views::StyledLabel>()
@@ -142,14 +129,9 @@ views::Builder<views::StyledLabel> GetParagraphTwoBuilder(
 views::Builder<views::StyledLabel> GetParagraphThreeBuilder() {
   return GetTextBodyBuilder(
              l10n_util::GetStringUTF16(
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
                  ash::features::IsLobsterEnabled()
-                     ? IDS_ASH_MAGIC_BOOST_WITH_LOBSTER_DISCLAIMER_PARAGRAPH_THREE
-                     : IDS_ASH_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_THREE
-#else
-                 IDS_ASH_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_THREE
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
-                 ))
+                     ? IDS_LOBSTER_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_THREE
+                     : IDS_ASH_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_THREE))
       .SetID(magic_boost::ViewId::DisclaimerViewParagraphThree);
 }
 
@@ -159,14 +141,9 @@ views::Builder<views::StyledLabel> GetParagraphFourBuilder(
   const std::u16string link_text = l10n_util::GetStringUTF16(
       IDS_ASH_MAGIC_BOOST_DISCLAIMER_LEARN_MORE_LINK_TEXT);
   const std::u16string text = l10n_util::GetStringFUTF16(
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
       ash::features::IsLobsterEnabled()
-          ? IDS_ASH_MAGIC_BOOST_WITH_LOBSTER_DISCLAIMER_PARAGRAPH_FOUR
-          : IDS_ASH_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_FOUR
-#else
-      IDS_ASH_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_FOUR
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
-      ,
+          ? IDS_LOBSTER_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_FOUR
+          : IDS_ASH_MAGIC_BOOST_DISCLAIMER_PARAGRAPH_FOUR,
       {link_text}, &offsets);
 
   return views::Builder<views::StyledLabel>()
@@ -196,7 +173,7 @@ MagicBoostDisclaimerView::MagicBoostDisclaimerView(
       .CopyAddressTo(&disclaimer_view)
       .SetLayoutManager(std::make_unique<views::BoxLayout>(
           views::BoxLayout::Orientation::kVertical))
-      .SetBackground(views::CreateThemedRoundedRectBackground(
+      .SetBackground(views::CreateRoundedRectBackground(
           cros_tokens::kCrosSysDialogContainer, kRadius))
       .SetPaintToLayer()
       .AddChildren(
@@ -224,7 +201,7 @@ MagicBoostDisclaimerView::MagicBoostDisclaimerView(
                                   TypographyProvider::Get()
                                       ->ResolveTypographyToken(
                                           TypographyToken::kCrosDisplay7))
-                              .SetEnabledColorId(cros_tokens::kCrosSysOnSurface)
+                              .SetEnabledColor(cros_tokens::kCrosSysOnSurface)
                               .SetHorizontalAlignment(
                                   gfx::HorizontalAlignment::ALIGN_LEFT)
                               .SetID(magic_boost::ViewId::DisclaimerViewTitle)
@@ -285,7 +262,7 @@ views::UniqueWidgetPtr MagicBoostDisclaimerView::CreateWidget(
   params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
   params.activatable = views::Widget::InitParams::Activatable::kYes;
   params.shadow_elevation = 2;
-  params.corner_radius = kRadius;
+  params.rounded_corners = gfx::RoundedCornersF(kRadius);
   params.shadow_type = views::Widget::InitParams::ShadowType::kDrop;
   params.z_order = ui::ZOrderLevel::kFloatingUIElement;
   params.name = GetWidgetName();

@@ -27,9 +27,7 @@ import org.mockito.junit.MockitoRule;
 import org.mockito.quality.Strictness;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -51,7 +49,6 @@ import org.chromium.components.sync.UserSelectableType;
 import java.util.Set;
 
 @RunWith(BaseRobolectricTestRunner.class)
-@Features.DisableFeatures(ChromeFeatureList.FORCE_DISABLE_EXTENDED_SYNC_PROMOS)
 public class SigninPromoDelegateTest {
     @Rule
     public final MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.STRICT_STUBS);
@@ -218,19 +215,37 @@ public class SigninPromoDelegateTest {
     }
 
     @Test
-    public void testNtpPromoHidden_dismissedBefore() {
-        doReturn(true).when(mSigninManager).isSigninAllowed();
-        ChromeSharedPreferences.getInstance()
-                .writeBoolean(ChromePreferenceKeys.SIGNIN_PROMO_NTP_PROMO_DISMISSED, true);
-        setupDelegate(SigninAccessPoint.NTP_FEED_TOP_PROMO, /* visibleAccount= */ null);
+    public void testHistoryPagePromoHidden_hasPrimaryAccount_historySyncDeclinedOften() {
+        HistorySyncHelper.setInstanceForTesting(mHistorySyncHelper);
+        doReturn(true).when(mHistorySyncHelper).isDeclinedOften();
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        doReturn(true).when(mIdentityManager).hasPrimaryAccount(ConsentLevel.SIGNIN);
+        setupDelegate(SigninAccessPoint.HISTORY_PAGE, /* visibleAccount= */ null);
 
         assertFalse(mDelegate.canShowPromo());
     }
 
     @Test
-    @Features.EnableFeatures(ChromeFeatureList.FORCE_DISABLE_EXTENDED_SYNC_PROMOS)
-    public void testNtpPromoHidden_disabledByForce() {
+    public void testHistoryPagePromoHidden_hasPrimaryAccount_cct() {
+        HistorySyncHelper.setInstanceForTesting(mHistorySyncHelper);
+        mAccountManagerTestRule.addAccount(TestAccounts.ACCOUNT1);
+        mDelegate =
+                new HistoryPageSigninPromoDelegate(
+                        mContext,
+                        mProfile,
+                        mLauncher,
+                        mOnPromoStateChange,
+                        /* isCreatedInCct= */ true);
+        mDelegate.refreshPromoState(TestAccounts.ACCOUNT1);
+
+        assertFalse(mDelegate.canShowPromo());
+    }
+
+    @Test
+    public void testNtpPromoHidden_dismissedBefore() {
         doReturn(true).when(mSigninManager).isSigninAllowed();
+        ChromeSharedPreferences.getInstance()
+                .writeBoolean(ChromePreferenceKeys.SIGNIN_PROMO_NTP_PROMO_DISMISSED, true);
         setupDelegate(SigninAccessPoint.NTP_FEED_TOP_PROMO, /* visibleAccount= */ null);
 
         assertFalse(mDelegate.canShowPromo());
@@ -316,7 +331,11 @@ public class SigninPromoDelegateTest {
                     case SigninAccessPoint.BOOKMARK_MANAGER -> new BookmarkSigninPromoDelegate(
                             mContext, mProfile, mLauncher, mOnPromoStateChange, mOnOpenSettings);
                     case SigninAccessPoint.HISTORY_PAGE -> new HistoryPageSigninPromoDelegate(
-                            mContext, mProfile, mLauncher, mOnPromoStateChange);
+                            mContext,
+                            mProfile,
+                            mLauncher,
+                            mOnPromoStateChange,
+                            /* isCreatedInCct= */ false);
                     case SigninAccessPoint.NTP_FEED_TOP_PROMO -> new NtpSigninPromoDelegate(
                             mContext, mProfile, mLauncher, mOnPromoStateChange);
                     case SigninAccessPoint.RECENT_TABS -> new RecentTabsSigninPromoDelegate(

@@ -43,7 +43,7 @@
 #include "base/threading/thread_id_name_manager.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/tick_clock.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "build/blink_buildflags.h"
 #include "build/build_config.h"
 
@@ -114,6 +114,8 @@ using TimeRecordingPolicy =
 namespace {
 
 constexpr TimeDelta kLongTaskTraceEventThreshold = Milliseconds(50);
+// Proportion of tasks which will record thread time for metrics.
+const double kTaskSamplingRateForRecordingCPUTime = 0.001;
 
 void ReclaimMemoryFromQueue(internal::TaskQueueImpl* queue, LazyNow* lazy_now) {
   queue->ReclaimMemory(lazy_now->Now());
@@ -121,8 +123,10 @@ void ReclaimMemoryFromQueue(internal::TaskQueueImpl* queue, LazyNow* lazy_now) {
   // will still be valid but the work queues will have been removed by
   // TaskQueueImpl::UnregisterTaskQueue.
   if (queue->delayed_work_queue()) {
-    queue->delayed_work_queue()->RemoveAllCanceledTasksFromFront();
-    queue->immediate_work_queue()->RemoveAllCanceledTasksFromFront();
+    queue->delayed_work_queue()->RemoveCancelledTasks(
+        WorkQueue::RemoveCancelledTasksPolicy::kFront);
+    queue->immediate_work_queue()->RemoveCancelledTasks(
+        WorkQueue::RemoveCancelledTasksPolicy::kFront);
   }
 }
 
@@ -146,10 +150,6 @@ char* PrependHexAddress(char* output, const void* address) {
 // Atomic to avoid TSAN flags when a test  tries to access the value before the
 // feature list is available.
 std::atomic_bool g_record_crash_keys = false;
-
-#if BUILDFLAG(IS_WIN)
-bool g_explicit_high_resolution_timer_win = true;
-#endif  // BUILDFLAG(IS_WIN)
 
 }  // namespace
 
@@ -280,10 +280,6 @@ void SequenceManagerImpl::InitializeFeatures() {
   TaskQueueImpl::InitializeFeatures();
   MessagePump::InitializeFeatures();
   ThreadControllerWithMessagePumpImpl::InitializeFeatures();
-#if BUILDFLAG(IS_WIN)
-  g_explicit_high_resolution_timer_win =
-      FeatureList::IsEnabled(kExplicitHighResolutionTimerWin);
-#endif  // BUILDFLAG(IS_WIN)
 
   g_record_crash_keys.store(
       FeatureList::IsEnabled(kRecordSequenceManagerCrashKeys),
@@ -307,11 +303,6 @@ void SequenceManagerImpl::BindToMessagePump(std::unique_ptr<MessagePump> pump) {
   if (settings_.message_loop_type == MessagePumpType::UI) {
     controller_->AttachToMessagePump();
   }
-#if BUILDFLAG(USE_BLINK)
-  if (settings_.message_loop_type == MessagePumpType::IO) {
-    controller_->AttachToMessagePump();
-  }
-#endif
 #endif
 }
 
@@ -494,7 +485,6 @@ void SequenceManagerImpl::SetNextWakeUp(LazyNow* lazy_now,
 void SequenceManagerImpl::MaybeEmitTaskDetails(
     perfetto::EventContext& ctx,
     const SequencedTaskSource::SelectedTask& selected_task) const {
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   // Other parameters are included only when "scheduler" category is enabled.
   const uint8_t* scheduler_category_enabled =
       TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED("scheduler");
@@ -508,7 +498,6 @@ void SequenceManagerImpl::MaybeEmitTaskDetails(
       settings().priority_settings.TaskPriorityToProto(selected_task.priority));
   sequence_manager_task->set_queue_name(selected_task.task_queue_name);
 
-#endif  //  BUILDFLAG(ENABLE_BASE_TRACING)
 }
 
 void SequenceManagerImpl::SetRunTaskSynchronouslyAllowed(
@@ -617,7 +606,8 @@ SequenceManagerImpl::SelectNextTaskImpl(LazyNow& lazy_now,
     }
 
     // If the head task was canceled, remove it and run the selector again.
-    if (work_queue->RemoveAllCanceledTasksFromFront()) [[unlikely]] {
+    if (work_queue->RemoveCancelledTasks(
+            WorkQueue::RemoveCancelledTasksPolicy::kFront)) [[unlikely]] {
       continue;
     }
 
@@ -755,30 +745,27 @@ void SequenceManagerImpl::MaybeAddLeewayToTask(Task& task) const {
   }
 }
 
-// TODO(crbug.com/40204558): Rename once ExplicitHighResolutionTimerWin
-// experiment is shipped.
-bool SequenceManagerImpl::HasPendingHighResolutionTasks() {
+#if BUILDFLAG(IS_WIN)
+bool SequenceManagerImpl::NextWakeUpNeedsHighRes() {
   // Only consider high-res tasks in the |wake_up_queue| (ignore the
   // |non_waking_wake_up_queue|).
-#if BUILDFLAG(IS_WIN)
-  if (g_explicit_high_resolution_timer_win) {
-    std::optional<WakeUp> wake_up =
-        main_thread_only().wake_up_queue->GetNextDelayedWakeUp();
-    if (!wake_up) {
-      return false;
-    }
-    // Under the kExplicitHighResolutionTimerWin experiment, rely on leeway
-    // being larger than the minimum time of a low resolution timer (16ms). This
-    // way, we don't need to activate the high resolution timer for precise
-    // tasks that will run in more than 16ms if there are non precise tasks in
-    // front of them.
-    DCHECK_GE(MessagePump::GetLeewayIgnoringThreadOverride(),
-              Milliseconds(Time::kMinLowResolutionThresholdMs));
-    return wake_up->delay_policy == subtle::DelayPolicy::kPrecise;
+  std::optional<WakeUp> wake_up =
+      main_thread_only().wake_up_queue->GetNextDelayedWakeUp();
+  if (!wake_up) {
+    return false;
   }
-#endif  // BUILDFLAG(IS_WIN)
-  return main_thread_only().wake_up_queue->has_pending_high_resolution_tasks();
+  // Rely on leeway being larger than the minimum time of a low resolution timer
+  // (16ms). This guarantees that we only need high-res if the next wakeup is
+  // kPrecise as wakeups are sorted by their latest deadline and a flexible
+  // wakeup being in front of the queue implies that there isn't a kPrecise
+  // wakeup within [now, now + leeway] (as any flexible wakeup with a latest
+  // deadline within that range would have been eligible to run just now, before
+  // going idle).
+  DCHECK_GE(MessagePump::GetLeewayIgnoringThreadOverride(),
+            Milliseconds(Time::kMinLowResolutionThresholdMs));
+  return wake_up->delay_policy == subtle::DelayPolicy::kPrecise;
 }
+#endif  // BUILDFLAG(IS_WIN)
 
 void SequenceManagerImpl::OnBeginWork() {
   work_tracker_.OnBeginWork();
@@ -815,9 +802,19 @@ void SequenceManagerImpl::WillQueueTask(Task* pending_task) {
 
 TaskQueue::TaskTiming SequenceManagerImpl::InitializeTaskTiming(
     internal::TaskQueueImpl* task_queue) {
-  bool records_wall_time =
-      ShouldRecordTaskTiming(task_queue) == TimeRecordingPolicy::DoRecord;
-  return TaskQueue::TaskTiming(records_wall_time);
+  bool records_wall_time = false;
+  bool records_thread_time = false;
+
+  if (ShouldRecordTaskTiming(task_queue) == TimeRecordingPolicy::DoRecord) {
+    records_wall_time = true;
+    if (ThreadTicks::IsSupported()) {
+      records_thread_time =
+          settings_.sample_cpu_time &&
+          ShouldRecordSubsampledMetric(kTaskSamplingRateForRecordingCPUTime);
+    }
+  }
+
+  return TaskQueue::TaskTiming(records_wall_time, records_thread_time);
 }
 
 TimeRecordingPolicy SequenceManagerImpl::ShouldRecordTaskTiming(
@@ -1114,8 +1111,10 @@ bool SequenceManagerImpl::IsIdleForTesting() {
 
   // Make sure that canceled tasks don't affect the return value.
   for (internal::TaskQueueImpl* queue : main_thread_only().active_queues) {
-    queue->delayed_work_queue()->RemoveAllCanceledTasksFromFront();
-    queue->immediate_work_queue()->RemoveAllCanceledTasksFromFront();
+    queue->delayed_work_queue()->RemoveCancelledTasks(
+        WorkQueue::RemoveCancelledTasksPolicy::kFront);
+    queue->immediate_work_queue()->RemoveCancelledTasks(
+        WorkQueue::RemoveCancelledTasksPolicy::kFront);
   }
 
   return !main_thread_only().selector.GetHighestPendingPriority().has_value();

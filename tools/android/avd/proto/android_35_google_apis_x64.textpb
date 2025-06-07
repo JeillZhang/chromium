@@ -11,15 +11,15 @@ emulator_package {
 
 system_image_package {
   package_name: "chromium/third_party/android_sdk/public/system-images/android-35/google_apis/x86_64"
-  version: "vNcoxPG6VS5NgGEWmx2Qi3R9P8EC8E-MvyVZ-diDxWYC"  # (r8) AE3A.240806.005
+  version: "RlhGUPY3gzHBfmiZuOqMu1uuznsnr5mbavafY8kK73AC"  # (r9) AE3A.240806.043
 }
 system_image_name: "system-images;android-35;google_apis;x86_64"
 
 avd_package {
   package_name: "chromium/third_party/android_sdk/public/avds/android-35/google_apis/x86_64"
-  # Created in https://ci.chromium.org/ui/b/8723031256415080033
-  # Patched gmscore version 24.26.32 in https://crrev.com/c/5735581
-  version: "QxYmJxrVAbnBxpl-WfzXQcz0mV26KZijrlLgtwbhOXIC"
+  # Created in https://ci.chromium.org/ui/b/8719089370664121393
+  # Patched gmscore version 25.07.33 in https://crrev.com/c/6377466
+  version: "k3QVudkqVEk8zJA8JnUGuwvwKSaqVK-FhpgA2xY399sC"
 }
 avd_name: "android_35_google_apis_x64"
 

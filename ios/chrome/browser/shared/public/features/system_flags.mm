@@ -29,6 +29,7 @@ NSString* const kAlternateDiscoverFeedServerURL =
     @"AlternateDiscoverFeedServerURL";
 NSString* const kEnableStartupCrash = @"EnableStartupCrash";
 NSString* const kFirstRunForceEnabled = @"FirstRunForceEnabled";
+NSString* const kFirstRunForceDisabled = @"FirstRunForceDisabled";
 NSString* const kUpgradePromoForceEnabled = @"UpgradePromoForceEnabled";
 NSString* const kOriginServerHost = @"AlternateOriginServerHost";
 NSString* const kWhatsNewPromoStatus = @"WhatsNewPromoStatus";
@@ -59,14 +60,13 @@ NSString* const kSafetyCheckNotificationsInactivityThreshold =
 BASE_FEATURE(kEnableThirdPartyKeyboardWorkaround,
              "EnableThirdPartyKeyboardWorkaround",
              base::FEATURE_ENABLED_BY_DEFAULT);
-NSString* const kTabResumptionDecorationOverride =
-    @"TabResumptionDecorationOverride";
 NSString* const kTipsMagicStackLensShopWithImage =
     @"TipsMagicStackLensShopWithImage";
 NSString* const kTipsMagicStackStateOverride = @"TipsMagicStackStateOverride";
 NSString* const kInactiveTabsDemoMode = @"InactiveTabsDemoMode";
 NSString* const kInactiveTabsTestMode = @"InactiveTabsTestMode";
 NSString* const kAsyncStartupOverrideResponse = @"AsyncStartupOverrideResponse";
+NSString* const kLensResultPanelGwsURL = @"LensResultPanelGwsURL";
 }  // namespace
 
 namespace experimental_flags {
@@ -74,6 +74,11 @@ namespace experimental_flags {
 bool AlwaysDisplayFirstRun() {
   return
       [[NSUserDefaults standardUserDefaults] boolForKey:kFirstRunForceEnabled];
+}
+
+bool NeverDisplayFirstRun() {
+  return
+      [[NSUserDefaults standardUserDefaults] boolForKey:kFirstRunForceDisabled];
 }
 
 bool AlwaysDisplayUpgradePromo() {
@@ -325,15 +330,6 @@ bool ShouldUseInactiveTabsTestThreshold() {
       [[NSUserDefaults standardUserDefaults] boolForKey:kInactiveTabsTestMode];
 }
 
-NSString* GetTabResumptionDecorationOverride() {
-  NSString* override_value = [[NSUserDefaults standardUserDefaults]
-      stringForKey:kTabResumptionDecorationOverride];
-  if ([override_value length]) {
-    return override_value;
-  }
-  return nil;
-}
-
 bool ShouldOpenInIncognitoOverride() {
   NSString* value = [[NSUserDefaults standardUserDefaults]
       stringForKey:kAsyncStartupOverrideResponse];
@@ -358,6 +354,11 @@ bool AlwaysShowTheFirstPartyIncognitoUI() {
 bool EnableAIPrototypingMenu() {
   return [[NSUserDefaults standardUserDefaults]
       boolForKey:@"EnableAIPrototypingMenu"];
+}
+
+NSString* GetLensResultPanelGwsURL() {
+  return [[NSUserDefaults standardUserDefaults]
+      stringForKey:kLensResultPanelGwsURL];
 }
 
 }  // namespace experimental_flags

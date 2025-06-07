@@ -9,7 +9,6 @@
 #include <memory>
 #include <utility>
 
-#include "base/not_fatal_until.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
@@ -55,7 +54,7 @@ std::unique_ptr<views::Label> CreateErrorLabel(const std::u16string& error,
       .SetHorizontalAlignment(gfx::ALIGN_LEFT)
       .SetBorder(views::CreateEmptyBorder(
           gfx::Insets::TLBR(kErrorLabelTopPadding, 0, 0, 0)))
-      .SetEnabledColorId(ui::kColorAlertHighSeverity)
+      .SetEnabledColor(ui::kColorAlertHighSeverity)
       .Build();
 }
 
@@ -460,7 +459,7 @@ void EditorViewController::AddOrUpdateErrorMessageForField(
     autofill::FieldType type,
     const std::u16string& error_message) {
   const auto& label_view_it = error_labels_.find(type);
-  CHECK(label_view_it != error_labels_.end(), base::NotFatalUntil::M130);
+  CHECK(label_view_it != error_labels_.end());
 
   if (error_message.empty()) {
     label_view_it->second->RemoveAllChildViews();

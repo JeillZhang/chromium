@@ -91,9 +91,12 @@
 #include <cmath>
 #include <memory>
 #include <numeric>
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "base/check_is_test.h"
 #include "base/compiler_specific.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
@@ -284,6 +287,11 @@
 #include "third_party/blink/renderer/core/layout/layout_font_accessor_win.h"
 #endif
 
+#if BUILDFLAG(IS_IOS)
+#include "third_party/blink/renderer/core/editing/dom_selection.h"
+#include "third_party/blink/renderer/core/page/autoscroll_controller.h"
+#endif  // BUILDFLAG(IS_IOS)
+
 namespace blink {
 
 namespace {
@@ -356,6 +364,10 @@ class ChromePrintContext : public PrintContext {
     GraphicsContext& context = builder.Context();
     context.SetPrintingMetafile(canvas->GetPrintingMetafile());
     context.SetPrinting(true);
+    if (frame_->GetDocument()->Printing()) {
+      context.SetPrintingInternalHeadersAndFooters(
+          frame_->GetPrintParams().printing_internal_headers_and_footers);
+    }
     context.BeginRecording();
     SpoolPage(context, page_index);
     canvas->drawPicture(context.EndRecording());
@@ -370,6 +382,8 @@ class ChromePrintContext : public PrintContext {
     GraphicsContext& context = builder.Context();
     context.SetPrintingMetafile(canvas->GetPrintingMetafile());
     context.SetPrinting(true);
+    context.SetPrintingInternalHeadersAndFooters(
+        frame_->GetPrintParams().printing_internal_headers_and_footers);
     context.BeginRecording();
 
     // Fill the whole background by white.
@@ -817,6 +831,11 @@ void WebLocalFrameImpl::SetContentSettingsClient(
   content_settings_client_ = client;
 }
 
+const mojom::RendererContentSettingsPtr& WebLocalFrameImpl::GetContentSettings()
+    const {
+  return GetFrame()->GetContentSettings();
+}
+
 ScrollableArea* WebLocalFrameImpl::LayoutViewport() const {
   if (LocalFrameView* view = GetFrameView())
     return view->LayoutViewport();
@@ -864,12 +883,13 @@ gfx::PointF WebLocalFrameImpl::GetScrollOffset() const {
   return gfx::PointF();
 }
 
-void WebLocalFrameImpl::SetScrollOffset(const gfx::PointF& offset) {
+bool WebLocalFrameImpl::SetScrollOffset(const gfx::PointF& offset) {
   if (ScrollableArea* scrollable_area = LayoutViewport()) {
-    scrollable_area->SetScrollOffset(
+    return scrollable_area->SetScrollOffset(
         scrollable_area->ScrollPositionToOffset(offset),
         mojom::blink::ScrollType::kProgrammatic);
   }
+  return false;
 }
 
 gfx::Size WebLocalFrameImpl::DocumentSize() const {
@@ -1616,6 +1636,34 @@ void WebLocalFrameImpl::MoveCaretSelection(
   GetFrame()->Selection().MoveCaretSelection(point_in_contents);
 }
 
+#if BUILDFLAG(IS_IOS)
+void WebLocalFrameImpl::StartAutoscrollForSelectionToPoint(
+    const gfx::PointF& point_in_viewport) {
+  TRACE_EVENT0("blink",
+               "WebLocalFrameImpl::StartAutoscrollForSelectionToPoint");
+  if (!ViewImpl() || !ViewImpl()->GetPage()) {
+    return;
+  }
+  auto* element = GetFrame()->GetDocument()->GetSelection()->baseNode();
+  if (!element) {
+    return;
+  }
+  ViewImpl()
+      ->GetPage()
+      ->GetAutoscrollController()
+      .StartAutoscrollForSelectionToPoint(element->GetLayoutObject(),
+                                          point_in_viewport);
+}
+
+void WebLocalFrameImpl::StopAutoscroll() {
+  TRACE_EVENT0("blink", "WebLocalFrameImpl::StopAutoscroll");
+  if (!ViewImpl() || !ViewImpl()->GetPage()) {
+    return;
+  }
+  ViewImpl()->GetPage()->GetAutoscrollController().StopAutoscroll();
+}
+#endif  // BUILDFLAG(IS_IOS)
+
 bool WebLocalFrameImpl::SetEditableSelectionOffsets(int start, int end) {
   TRACE_EVENT0("blink", "WebLocalFrameImpl::setEditableSelectionOffsets");
   if (EditContext* edit_context =
@@ -1936,7 +1984,8 @@ bool WebLocalFrameImpl::GetPrintPresetOptionsForPlugin(
 bool WebLocalFrameImpl::CapturePaintPreview(const gfx::Rect& bounds,
                                             cc::PaintCanvas* canvas,
                                             bool include_linked_destinations,
-                                            bool skip_accelerated_content) {
+                                            bool skip_accelerated_content,
+                                            bool allow_scrollbars) {
   bool success = false;
   {
     // Ignore paint timing while capturing a paint preview as it can change LCP
@@ -1948,7 +1997,8 @@ bool WebLocalFrameImpl::CapturePaintPreview(const gfx::Rect& bounds,
         *GetFrame()->GetDocument(),
         skip_accelerated_content
             ? Document::kPaintingPreviewSkipAcceleratedContent
-            : Document::kPaintingPreview);
+            : Document::kPaintingPreview,
+        allow_scrollbars);
     GetFrame()->StartPaintPreview();
     PaintPreviewContext* paint_preview_context =
         MakeGarbageCollected<PaintPreviewContext>(GetFrame());
@@ -2116,7 +2166,6 @@ WebLocalFrameImpl* WebLocalFrameImpl::CreateProvisional(
       frame_token);
   network::mojom::blink::WebSandboxFlags sandbox_flags =
       network::mojom::blink::WebSandboxFlags::kNone;
-  PermissionsPolicyFeatureState feature_state;
   if (!previous_frame->Owner() || previous_frame->IsFencedFrameRoot()) {
     // Provisional main frames need to force sandbox flags.  This is necessary
     // to inherit sandbox flags when a sandboxed frame does a window.open()
@@ -2554,48 +2603,19 @@ WebViewImpl* WebLocalFrameImpl::ViewImpl() const {
   return GetFrame()->GetPage()->GetChromeClient().GetWebView();
 }
 
-bool WebLocalFrameImpl::ShouldWarmUpCompositorOnPrerenderFromThisPoint(
-    features::Prerender2WarmUpCompositorTriggerPoint trigger_point) {
-  static const bool is_warm_up_compositor_enabled =
-      base::FeatureList::IsEnabled(::features::kWarmUpCompositor);
-  if (!is_warm_up_compositor_enabled) {
-    return false;
-  }
-
+bool WebLocalFrameImpl::ShouldWarmUpCompositor() {
   if (!GetFrame()->IsOutermostMainFrame()) {
     return false;
   }
 
-  if (!GetFrame()->GetPage() || !GetFrame()->GetPage()->IsPrerendering() ||
-      !GetFrame()->GetPage()->ShouldWarmUpCompositorOnPrerender()) {
-    return false;
-  }
-
-  static const bool is_prerender2_warm_up_compositor_enabled =
-      base::FeatureList::IsEnabled(features::kPrerender2WarmUpCompositor);
-  // TODO(crbug.com/41496019): Seek the best point to start warm-up.
-  static const auto prerender2_warm_up_compositor_trigger_point =
-      features::kPrerender2WarmUpCompositorTriggerPoint.Get();
-  if (!is_prerender2_warm_up_compositor_enabled ||
-      prerender2_warm_up_compositor_trigger_point != trigger_point) {
-    return false;
-  }
-
-  return true;
+  // It can be effective for prerendering pages to consider warming up their
+  // composers before they are activated and visible.
+  return GetFrame()->GetPage() && GetFrame()->GetPage()->IsPrerendering() &&
+         GetFrame()->GetPage()->ShouldWarmUpCompositorOnPrerender();
 }
 
 void WebLocalFrameImpl::DidCommitLoad() {
-  if (frame_widget_ &&
-      ShouldWarmUpCompositorOnPrerenderFromThisPoint(
-          features::Prerender2WarmUpCompositorTriggerPoint::kDidCommitLoad)) {
-    frame_widget_->WarmUpCompositor();
-  }
-}
-
-void WebLocalFrameImpl::DidDispatchDOMContentLoadedEvent() {
-  if (frame_widget_ && ShouldWarmUpCompositorOnPrerenderFromThisPoint(
-                           features::Prerender2WarmUpCompositorTriggerPoint::
-                               kDidDispatchDOMContentLoadedEvent)) {
+  if (frame_widget_ && ShouldWarmUpCompositor()) {
     frame_widget_->WarmUpCompositor();
   }
 }
@@ -2613,12 +2633,6 @@ void WebLocalFrameImpl::DidFailLoad(const ResourceError& error,
 void WebLocalFrameImpl::DidFinish() {
   if (!Client())
     return;
-
-  if (frame_widget_ &&
-      ShouldWarmUpCompositorOnPrerenderFromThisPoint(
-          features::Prerender2WarmUpCompositorTriggerPoint::kDidFinishLoad)) {
-    frame_widget_->WarmUpCompositor();
-  }
 
   if (WebPluginContainerImpl* plugin = GetFrame()->GetWebPluginContainer())
     plugin->DidFinishLoading();
@@ -2840,9 +2854,21 @@ void WebLocalFrameImpl::DownloadURL(
 }
 
 WebFrame* WebLocalFrameImpl::GetProvisionalOwnerFrame() {
-  return GetFrame()->IsProvisional()
-             ? WebFrame::FromCoreFrame(GetFrame()->GetProvisionalOwnerFrame())
-             : nullptr;
+  if (!GetFrame()->IsProvisional()) {
+    return nullptr;
+  }
+  if (GetFrame()->IsMainFrame()) {
+    // For provisional main frames created for a local <-> local swap, the
+    // `GetProvisionalOwnerFrame()` will return the "fake" RemoteFrame created
+    // as a placeholder for the new WebView / Page. To get the previous local
+    // frame, get it using `GetPreviousMainFrameForLocalSwap()` instead.
+    Frame* previous_local_main_frame =
+        ViewImpl()->GetPage()->GetPreviousMainFrameForLocalSwap();
+    if (previous_local_main_frame) {
+      return WebFrame::FromCoreFrame(previous_local_main_frame);
+    }
+  }
+  return WebFrame::FromCoreFrame(GetFrame()->GetProvisionalOwnerFrame());
 }
 
 void WebLocalFrameImpl::MaybeStartOutermostMainFrameNavigation(
@@ -3130,6 +3156,14 @@ void WebLocalFrameImpl::AddInspectorIssueImpl(
           InspectorIssue::Create(std::move(info)))));
 }
 
+void WebLocalFrameImpl::AddUserReidentificationIssueImpl(
+    std::optional<std::string> devtools_request_id,
+    const WebURL& affected_request_url) {
+  DCHECK(GetFrame());
+  AuditsIssue::ReportUserReidentificationIssue(GetFrame(), devtools_request_id,
+                                               affected_request_url);
+}
+
 void WebLocalFrameImpl::AddGenericIssueImpl(
     mojom::blink::GenericIssueErrorType error_type,
     int violating_node_id) {
@@ -3314,7 +3348,8 @@ void WebLocalFrameImpl::SetLCPPHint(
     return;
   }
 
-  lcpp->set_lcp_element_locators(hint->lcp_element_locators);
+  lcpp->set_lcp_element_locators(hint->lcp_element_locators,
+                                 hint->lcp_element_locators_all);
 
   HashSet<KURL> lcp_influencer_scripts;
   for (auto& url : hint->lcp_influencer_scripts) {
@@ -3333,8 +3368,8 @@ void WebLocalFrameImpl::SetLCPPHint(
   Vector<url::Origin> preconnect_origins;
   preconnect_origins.reserve(
       base::checked_cast<wtf_size_t>(hint->preconnect_origins.size()));
-  for (const auto& origin_url : hint->preconnect_origins) {
-    preconnect_origins.emplace_back(url::Origin::Create(origin_url));
+  for (const auto& origin : hint->preconnect_origins) {
+    preconnect_origins.emplace_back(origin);
   }
   lcpp->set_preconnected_origins(preconnect_origins);
 
@@ -3345,6 +3380,11 @@ void WebLocalFrameImpl::SetLCPPHint(
     unused_preloads.emplace_back(url);
   }
   lcpp->set_unused_preloads(std::move(unused_preloads));
+
+  if (hint->for_testing) {
+    CHECK_IS_TEST();
+    lcpp->enable_testing();
+  }
 }
 
 bool WebLocalFrameImpl::IsFeatureEnabled(

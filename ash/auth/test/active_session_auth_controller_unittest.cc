@@ -8,7 +8,6 @@
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/test/ash_test_base.h"
-#include "base/functional/overloaded.h"
 #include "base/test/run_until.h"
 #include "base/test/test_future.h"
 #include "chromeos/ash/components/cryptohome/system_salt_getter.h"
@@ -25,6 +24,7 @@
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
 #include "google_apis/gaia/gaia_id.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/cros_system_api/dbus/cryptohome/dbus-constants.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -65,13 +65,10 @@ class ActiveSessionAuthControllerTest
     UserDataAuthClient::InitializeFake();
     auth_parts_ = AuthParts::Create(local_state());
 
-    AshTestBase::SetUp();
+    NoSessionAshTestBase::SetUp();
 
-    GetSessionControllerClient()->Reset();
-    GetSessionControllerClient()->AddUserSession(
-        kUserEmail, user_manager::UserType::kRegular);
-    GetSessionControllerClient()->SetSessionState(
-        session_manager::SessionState::ACTIVE);
+    ClearLogin();
+    SimulateUserLogin({kUserEmail, user_manager::UserType::kRegular});
   }
 
   void TearDown() override {
@@ -84,7 +81,7 @@ class ActiveSessionAuthControllerTest
     CryptohomeMiscClient::Shutdown();
     UserDataAuthClient::Shutdown();
 
-    AshTestBase::TearDown();
+    NoSessionAshTestBase::TearDown();
   }
 
   void InitializeUserManager() {
@@ -98,9 +95,7 @@ class ActiveSessionAuthControllerTest
     user_manager_->AddGaiaUser(account_id_, user_manager::UserType::kRegular);
     user_manager_->UserLoggedIn(
         account_id_,
-        user_manager::FakeUserManager::GetFakeUsernameHash(account_id_),
-        /*browser_restart=*/false,
-        /*is_child=*/false);
+        user_manager::FakeUserManager::GetFakeUsernameHash(account_id_));
     ASSERT_FALSE(user_manager_->IsUserCryptohomeDataEphemeral(account_id_));
   }
 
@@ -287,11 +282,12 @@ TEST_P(ActiveSessionAuthControllerTest, SubmitPassword) {
       authenticate_auth_factor_request.auth_input().password_input().secret(),
       HashPassword(kExpectedPassword));
 
-  std::visit(base::Overloaded([](auto&& arg) {
-               EXPECT_TRUE(arg->IsReady());
-               EXPECT_EQ(arg->template Get<bool>(), true);
-             }),
-             future);
+  std::visit(
+      [](auto&& arg) {
+        EXPECT_TRUE(arg->IsReady());
+        EXPECT_EQ(arg->template Get<bool>(), true);
+      },
+      future);
 }
 
 // Tests that the AuthenticateAuthFactor call to cryptohome includes the
@@ -328,8 +324,7 @@ TEST_P(ActiveSessionAuthControllerTest, WrongPassword) {
       authenticate_auth_factor_request.auth_input().password_input().secret(),
       HashPassword(kExpectedPassword));
 
-  std::visit(base::Overloaded([](auto&& arg) { EXPECT_FALSE(arg->IsReady()); }),
-             future);
+  std::visit([](auto&& arg) { EXPECT_FALSE(arg->IsReady()); }, future);
 }
 
 // Tests that the AuthenticateAuthFactor call to cryptohome includes the
@@ -364,11 +359,12 @@ TEST_P(ActiveSessionAuthControllerTest, SubmitPin) {
   EXPECT_EQ(authenticate_auth_factor_request.auth_input().pin_input().secret(),
             HashPin(kExpectedPin));
 
-  std::visit(base::Overloaded([](auto&& arg) {
-               EXPECT_TRUE(arg->IsReady());
-               EXPECT_EQ(arg->template Get<bool>(), true);
-             }),
-             future);
+  std::visit(
+      [](auto&& arg) {
+        EXPECT_TRUE(arg->IsReady());
+        EXPECT_EQ(arg->template Get<bool>(), true);
+      },
+      future);
 }
 
 // Tests that the AuthenticateAuthFactor call to cryptohome includes the
@@ -408,8 +404,7 @@ TEST_P(ActiveSessionAuthControllerTest, WrongPin) {
   EXPECT_EQ(authenticate_auth_factor_request.auth_input().pin_input().secret(),
             HashPin(kExpectedPin));
 
-  std::visit(base::Overloaded([](auto&& arg) { EXPECT_FALSE(arg->IsReady()); }),
-             future);
+  std::visit([](auto&& arg) { EXPECT_FALSE(arg->IsReady()); }, future);
 }
 
 // Tests that the AuthenticateAuthFactor calls to cryptohome are
@@ -445,8 +440,7 @@ TEST_P(ActiveSessionAuthControllerTest, BadPinThenGoodPassword) {
   EXPECT_EQ(authenticate_auth_factor_request.auth_input().pin_input().secret(),
             HashPin(bad_pin));
 
-  std::visit(base::Overloaded([](auto&& arg) { EXPECT_FALSE(arg->IsReady()); }),
-             future);
+  std::visit([](auto&& arg) { EXPECT_FALSE(arg->IsReady()); }, future);
 
   // Await authentication with password.
   ActiveSessionAuthControllerImpl::TestApi(controller)
@@ -462,11 +456,12 @@ TEST_P(ActiveSessionAuthControllerTest, BadPinThenGoodPassword) {
       authenticate_auth_factor_request.auth_input().password_input().secret(),
       HashPassword(kExpectedPassword));
 
-  std::visit(base::Overloaded([](auto&& arg) {
-               EXPECT_TRUE(arg->IsReady());
-               EXPECT_EQ(arg->template Get<bool>(), true);
-             }),
-             future);
+  std::visit(
+      [](auto&& arg) {
+        EXPECT_TRUE(arg->IsReady());
+        EXPECT_EQ(arg->template Get<bool>(), true);
+      },
+      future);
 }
 
 // Check the format and content of pin lockout status message.
@@ -521,7 +516,7 @@ TEST_P(ActiveSessionAuthControllerTest, OnAuthCancel) {
   // Await close.
   base::RunLoop().RunUntilIdle();
 
-  std::visit(base::Overloaded(
+  std::visit(absl::Overload(
                  [](std::unique_ptr<WebAuthNCallback>& callback) {
                    EXPECT_TRUE(callback->IsReady());
                    EXPECT_FALSE(callback->Get<bool>());
@@ -544,11 +539,12 @@ TEST_P(ActiveSessionAuthControllerTest, WithoutAnyFactor) {
   auto future = ShowAuthDialogForVariant(GetParam());
 
   base::RunLoop().RunUntilIdle();
-  std::visit(base::Overloaded([](auto&& arg) {
-               EXPECT_TRUE(arg->IsReady());
-               EXPECT_EQ(arg->template Get<bool>(), false);
-             }),
-             future);
+  std::visit(
+      [](auto&& arg) {
+        EXPECT_TRUE(arg->IsReady());
+        EXPECT_EQ(arg->template Get<bool>(), false);
+      },
+      future);
 }
 
 // Validate PIN status with PIN only.
@@ -625,11 +621,12 @@ TEST_P(ActiveSessionAuthControllerTest, PinOnlySubmit) {
   EXPECT_EQ(authenticate_auth_factor_request.auth_input().pin_input().secret(),
             HashPin(kExpectedPin));
 
-  std::visit(base::Overloaded([](auto&& arg) {
-               EXPECT_TRUE(arg->IsReady());
-               EXPECT_EQ(arg->template Get<bool>(), true);
-             }),
-             future);
+  std::visit(
+      [](auto&& arg) {
+        EXPECT_TRUE(arg->IsReady());
+        EXPECT_EQ(arg->template Get<bool>(), true);
+      },
+      future);
 }
 
 INSTANTIATE_TEST_SUITE_P(All,

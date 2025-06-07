@@ -228,7 +228,8 @@ void AddFlags(content::WebUIDataSource* html_source, bool is_glic_version) {
                           profiles::IsProfileCreationAllowed());
 }
 
-void AddResourcePaths(content::WebUIDataSource* html_source) {
+void AddResourcePaths(content::WebUIDataSource* html_source,
+                      bool is_glic_version) {
   constexpr webui::ResourcePath kResourcePaths[] = {
       {"left_banner.svg", IDR_SIGNIN_IMAGES_SHARED_LEFT_BANNER_SVG},
       {"left_banner_dark.svg", IDR_SIGNIN_IMAGES_SHARED_LEFT_BANNER_DARK_SVG},
@@ -237,11 +238,20 @@ void AddResourcePaths(content::WebUIDataSource* html_source) {
 #if BUILDFLAG(ENABLE_GLIC)
       {"glic_banner_top_right.svg", IDR_GLIC_PROFILE_BANNER_TOP_RIGHT},
       {"glic_banner_bottom_left.svg", IDR_GLIC_PROFILE_BANNER_BOTTOM_LEFT},
-      {"glic_logo.svg", IDR_GLIC_PROFILE_LOGO},
+      {"glic_banner_top_right_light.svg",
+       IDR_GLIC_PROFILE_BANNER_TOP_RIGHT_LIGHT},
+      {"glic_banner_bottom_left_light.svg",
+       IDR_GLIC_PROFILE_BANNER_BOTTOM_LEFT_LIGHT},
+      {"glic_profile_branding.css", IDR_GLIC_PROFILE_BRANDING_CSS},
 #endif  // BUILDFLAG(ENABLE_GLIC)
-      {"product_logo.svg", IDR_PRODUCT_LOGO_SVG},
   };
   html_source->AddResourcePaths(kResourcePaths);
+
+  html_source->AddResourcePath("picker_logo.svg",
+#if BUILDFLAG(ENABLE_GLIC)
+                               is_glic_version ? IDR_GLIC_PROFILE_LOGO :
+#endif  // BUILDFLAG(ENABLE_GLIC)
+                                               IDR_PRODUCT_LOGO_SVG);
 }
 
 }  // namespace
@@ -279,7 +289,7 @@ ProfilePickerUI::ProfilePickerUI(content::WebUI* web_ui)
   // Add all resources.
   AddStrings(html_source, is_glic_version);
   AddFlags(html_source, is_glic_version);
-  AddResourcePaths(html_source);
+  AddResourcePaths(html_source, is_glic_version);
 
   webui::SetupWebUIDataSource(html_source, kProfilePickerResources,
                               IDR_PROFILE_PICKER_PROFILE_PICKER_HTML);

@@ -8,7 +8,10 @@
 
 #include <memory>
 
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/to_string.h"
+#include "base/test/metrics/histogram_enum_reader.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
@@ -30,6 +33,7 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/mock_navigation_handle.h"
+#include "content/public/test/mock_navigation_throttle_registry.h"
 #include "content/public/test/test_renderer_host.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -81,6 +85,10 @@ class FPFPageActivationThrottleTest
     RenderViewHostTestHarness::SetUp();
     mock_nav_handle_ = std::make_unique<content::MockNavigationHandle>(
         RenderViewHostTestHarness::web_contents());
+    mock_nav_registry_ =
+        std::make_unique<content::MockNavigationThrottleRegistry>(
+            mock_nav_handle_.get(),
+            content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
   }
 
   void TearDown() override {
@@ -92,6 +100,7 @@ class FPFPageActivationThrottleTest
   base::test::ScopedFeatureList scoped_feature_list_;
   TestSupport test_support_;
   std::unique_ptr<content::MockNavigationHandle> mock_nav_handle_;
+  std::unique_ptr<content::MockNavigationThrottleRegistry> mock_nav_registry_;
 };
 
 MATCHER_P(WithActivationDecision,
@@ -111,7 +120,7 @@ TEST_F(FPFPageActivationThrottleTest, FlagDisabled_IsUnknown) {
   // Use a mock throttle to test GetActivationDecision() by making EXPECT_CALL
   // on public function.
   auto mock_throttle = MockFingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
 
   // Expect that NotifyResult is called with UNKNOWN ActivationDecision.
@@ -124,7 +133,7 @@ TEST_F(FPFPageActivationThrottleTest, FlagDisabled_IsUnknown) {
 
   // Initialize a real throttle to test histograms are emitted as expected.
   auto throttle = FingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
 
   throttle.WillProcessResponse();
@@ -145,7 +154,7 @@ TEST_F(FPFPageActivationThrottleTest,
   // Use a mock throttle to test GetActivationDecision() by making EXPECT_CALL
   // on public function.
   auto mock_throttle = MockFingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
 
   // Expect NotifyResult is called with ACTIVATED ActivationDecision.
@@ -158,7 +167,7 @@ TEST_F(FPFPageActivationThrottleTest,
 
   // Initialize a real throttle to test histograms are emitted as expected.
   auto throttle = FingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
 
   throttle.WillProcessResponse();
@@ -183,7 +192,7 @@ TEST_F(FPFPageActivationThrottleTest, FlagEnabledWithDryRun_IsActivated) {
   // Use a mock throttle to test GetActivationDecision() by making EXPECT_CALL
   // on public function.
   auto mock_throttle = MockFingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
 
   // Expect that NotifyResult is called with ACTIVATED ActivationDecision.
@@ -196,7 +205,7 @@ TEST_F(FPFPageActivationThrottleTest, FlagEnabledWithDryRun_IsActivated) {
 
   // Initialize a real throttle to test histograms are emitted as expected.
   auto throttle = FingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
 
   throttle.WillProcessResponse();
@@ -222,7 +231,7 @@ TEST_F(FPFPageActivationThrottleTest,
   // Use a mock throttle to test GetActivationDecision() by making EXPECT_CALL
   // on public function.
   auto mock_throttle = MockFingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
 
   // Expect that NotifyResult is called with ACTIVATION_DISABLED
@@ -236,7 +245,7 @@ TEST_F(FPFPageActivationThrottleTest,
 
   // Initialize a real throttle to test histograms are emitted as expected.
   auto throttle = FingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
 
   throttle.WillProcessResponse();
@@ -269,7 +278,7 @@ TEST_F(FPFPageActivationThrottleTest,
       GURL("http://cool.things.com"));
 
   auto throttle = FingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
 
   throttle.WillProcessResponse();
@@ -308,7 +317,7 @@ TEST_F(FPFPageActivationThrottleTest,
       ContentSettingsType::COOKIES, CONTENT_SETTING_ALLOW);
 
   auto throttle = FingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
 
   throttle.WillProcessResponse();
@@ -344,7 +353,7 @@ TEST_F(
       ContentSettingsType::COOKIES, CONTENT_SETTING_ALLOW);
 
   auto throttle = FingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
 
   throttle.WillProcessResponse();
@@ -377,7 +386,7 @@ TEST_F(FPFPageActivationThrottleTest,
       ContentSettingsType::COOKIES, CONTENT_SETTING_ALLOW);
 
   auto throttle = FingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs(),
       /*is_incognito=*/true);
 
@@ -414,7 +423,7 @@ TEST_F(FPFPageActivationThrottleTest,
   // Use a mock throttle to mock NotifyPageActivationComputed
   auto mock_throttle =
       MockActivationThrottleMockingNotifyPageActivationComputed(
-          mock_nav_handle_.get(), test_support_.content_settings(),
+          *mock_nav_registry_, test_support_.content_settings(),
           test_support_.tracking_protection_settings(), test_support_.prefs());
 
   // Expect that NotifyPageActivationComputed is called with an ActivationState
@@ -438,7 +447,7 @@ TEST_F(FPFPageActivationThrottleTest,
   // Use a mock throttle to mock NotifyPageActivationComputed
   auto mock_throttle =
       MockActivationThrottleMockingNotifyPageActivationComputed(
-          mock_nav_handle_.get(), test_support_.content_settings(),
+          *mock_nav_registry_, test_support_.content_settings(),
           test_support_.tracking_protection_settings(), test_support_.prefs(),
           /*is_incognito=*/true);
 
@@ -463,7 +472,7 @@ TEST_F(
   // Use a mock throttle to mock NotifyPageActivationComputed
   auto mock_throttle =
       MockActivationThrottleMockingNotifyPageActivationComputed(
-          mock_nav_handle_.get(), test_support_.content_settings(),
+          *mock_nav_registry_, test_support_.content_settings(),
           test_support_.tracking_protection_settings(), test_support_.prefs());
 
   // Expect that NotifyPageActivationComputed is called with an ActivationState
@@ -510,6 +519,10 @@ class FPFPageActivationThrottleWithTrackingProtectionSettingTest
     RenderViewHostTestHarness::SetUp();
     mock_nav_handle_ = std::make_unique<content::MockNavigationHandle>(
         RenderViewHostTestHarness::web_contents());
+    mock_nav_registry_ =
+        std::make_unique<content::MockNavigationThrottleRegistry>(
+            mock_nav_handle_.get(),
+            content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
     scoped_feature_list_.InitWithFeatures(
         // FingerprintingProtectionUx flag isn't used together with
         // `EnableFingerprintingProtectionFilter(InIncognito)`.
@@ -526,6 +539,7 @@ class FPFPageActivationThrottleWithTrackingProtectionSettingTest
   base::test::ScopedFeatureList scoped_feature_list_;
   TestSupport test_support_;
   std::unique_ptr<content::MockNavigationHandle> mock_nav_handle_;
+  std::unique_ptr<content::MockNavigationThrottleRegistry> mock_nav_registry_;
 };
 
 const FPFGetActivationWithTrackingProtectionSettingTestCase
@@ -573,12 +587,12 @@ TEST_P(FPFPageActivationThrottleWithTrackingProtectionSettingTest,
   auto tracking_protection_settings =
       std::make_unique<privacy_sandbox::TrackingProtectionSettings>(
           test_support_.prefs(), test_support_.content_settings(),
-          test_case.is_incognito);
+          /*management_service=*/nullptr, test_case.is_incognito);
 
   // Create ActivationThrottle with the TrackingProtectionSettings, and
   // specified incognito mode.
   auto test_throttle = FingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       tracking_protection_settings.get(), test_support_.prefs(),
       test_case.is_incognito);
 
@@ -611,9 +625,14 @@ class FPFPageActivationThrottleTestRefreshHeuristicUmaTest
     content::RenderViewHostTestHarness::SetUp();
     mock_nav_handle_ = std::make_unique<content::MockNavigationHandle>(
         RenderViewHostTestHarness::web_contents());
+    mock_nav_registry_ =
+        std::make_unique<content::MockNavigationThrottleRegistry>(
+            mock_nav_handle_.get(),
+            content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
   }
 
   void TearDown() override {
+    mock_nav_registry_.reset();
     mock_nav_handle_.reset();
     RenderViewHostTestHarness::TearDown();
   }
@@ -635,6 +654,7 @@ class FPFPageActivationThrottleTestRefreshHeuristicUmaTest
  protected:
   TestSupport test_support_;
   std::unique_ptr<content::MockNavigationHandle> mock_nav_handle_;
+  std::unique_ptr<content::MockNavigationThrottleRegistry> mock_nav_registry_;
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
@@ -690,7 +710,7 @@ TEST_P(FPFPageActivationThrottleTestRefreshHeuristicUmaTest,
 
   // Call `GetActivation` on throttle to trigger UMAs.
   auto test_throttle = FingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
   test_throttle.GetActivation();
 
@@ -750,9 +770,14 @@ class FPFPageActivationThrottleTestGetActivationTest
     content::RenderViewHostTestHarness::SetUp();
     mock_nav_handle_ = std::make_unique<content::MockNavigationHandle>(
         RenderViewHostTestHarness::web_contents());
+    mock_nav_registry_ =
+        std::make_unique<content::MockNavigationThrottleRegistry>(
+            mock_nav_handle_.get(),
+            content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
   }
 
   void TearDown() override {
+    mock_nav_registry_.reset();
     mock_nav_handle_.reset();
     RenderViewHostTestHarness::TearDown();
   }
@@ -790,6 +815,7 @@ class FPFPageActivationThrottleTestGetActivationTest
  protected:
   TestSupport test_support_;
   std::unique_ptr<content::MockNavigationHandle> mock_nav_handle_;
+  std::unique_ptr<content::MockNavigationThrottleRegistry> mock_nav_registry_;
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
@@ -962,7 +988,7 @@ TEST_P(FPFPageActivationThrottleTestGetActivationTest,
 
   // Prepare the manager under test and input with initial_decision param.
   auto test_throttle = FingerprintingProtectionPageActivationThrottle(
-      mock_nav_handle_.get(), test_support_.content_settings(),
+      *mock_nav_registry_, test_support_.content_settings(),
       test_support_.tracking_protection_settings(), test_support_.prefs());
   GetActivationResult activation = test_throttle.GetActivation();
 
@@ -970,9 +996,30 @@ TEST_P(FPFPageActivationThrottleTestGetActivationTest,
   EXPECT_EQ(activation.decision, test_case.expected_decision);
 }
 
-// TODO(crbug.com/366267410): Add unittest to check the equivalence of the
-// ExceptionSource enum defined in
-// `fingerprinting_protection_activatoin_throttle.h` with the associated
-// definition in `enums.xml`
+// Filepath is not found on Android devices, checking on desktop should be
+// sufficient.
+#if !BUILDFLAG(IS_ANDROID)
+TEST_F(FPFPageActivationThrottleTest, ExceptionSourceHistograms) {
+  std::optional<base::HistogramEnumEntryMap> sources;
+  std::vector<std::string> missing_sources;
+  {
+    sources =
+        base::ReadEnumFromEnumsXml("FingerprintingProtectionExceptionSource");
+    ASSERT_TRUE(sources.has_value());
+  }
+  for (int i = 0; i <= static_cast<int>(ExceptionSource::EXCEPTION_SOURCE_MAX);
+       ++i) {
+    if (!sources->contains(i)) {
+      missing_sources.push_back(base::NumberToString(i));
+    }
+  }
+  ASSERT_TRUE(missing_sources.empty())
+      << "Exception sources: " << base::JoinString(missing_sources, ", ")
+      << " configured in fingerprinting_protection_page_activation_throttle.h "
+         "but no corresponding enum values were added to "
+         "FingerprintingProtectionExceptionSource enum in "
+         "tools/metrics/histograms/enums.xml.";
+}
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace fingerprinting_protection_filter

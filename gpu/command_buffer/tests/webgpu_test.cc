@@ -197,8 +197,14 @@ void WebGPUTest::WaitForCompletion(wgpu::Device device) {
   // Wait for any work submitted to the queue to be finished. The guarantees of
   // Dawn are that all previous operations will have been completed and more
   // importantly the callbacks will have been called.
+#ifdef WGPU_BREAKING_CHANGE_QUEUE_WORK_DONE_CALLBACK_MESSAGE
+  wgpu::FutureWaitInfo wait_info = {device.GetQueue().OnSubmittedWorkDone(
+      wgpu::CallbackMode::WaitAnyOnly,
+      [](wgpu::QueueWorkDoneStatus, wgpu::StringView) {})};
+#else   // WGPU_BREAKING_CHANGE_QUEUE_WORK_DONE_CALLBACK_MESSAGE
   wgpu::FutureWaitInfo wait_info = {device.GetQueue().OnSubmittedWorkDone(
       wgpu::CallbackMode::WaitAnyOnly, [](wgpu::QueueWorkDoneStatus) {})};
+#endif  // WGPU_BREAKING_CHANGE_QUEUE_WORK_DONE_CALLBACK_MESSAGE
 
   while (!wait_info.completed) {
     instance_.WaitAny(1, &wait_info, 0);
@@ -467,10 +473,8 @@ TEST_F(WebGPUTest, CompatibilityMode) {
   // Compatibility adapter should be available.
   EXPECT_NE(adapter_, nullptr);
 
-  wgpu::AdapterInfo info;
-  adapter_.GetInfo(&info);
-
-  EXPECT_TRUE(info.compatibilityMode);
+  // A compat defaulting adapter could optionally have the CoreFeaturesAndLimits
+  // feature.
 }
 
 TEST_F(WebGPUTest, NonCompatibilityMode) {
@@ -483,10 +487,8 @@ TEST_F(WebGPUTest, NonCompatibilityMode) {
   // Non-compatibility adapter should be available.
   EXPECT_NE(adapter_, nullptr);
 
-  wgpu::AdapterInfo info;
-  adapter_.GetInfo(&info);
-
-  EXPECT_FALSE(info.compatibilityMode);
+  // A core defaulting adapter must have the CoreFeaturesAndLimits feature.
+  EXPECT_TRUE(adapter_.HasFeature(wgpu::FeatureName::CoreFeaturesAndLimits));
 }
 
 }  // namespace gpu

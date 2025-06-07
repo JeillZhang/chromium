@@ -19,7 +19,6 @@ import 'chrome://resources/ash/common/cr_elements/action_link.css.js';
 import 'chrome://resources/polymer/v3_0/iron-flex-layout/iron-flex-layout-classes.js';
 import 'chrome://resources/polymer/v3_0/iron-icon/iron-icon.js';
 import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
-import '../icons.html.js';
 import './cups_edit_printer_dialog.js';
 import './cups_enterprise_printers.js';
 import './cups_nearby_printers.js';
@@ -204,18 +203,6 @@ export class SettingsCupsPrintersElement extends
       },
 
       /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kAddPrinter,
-          Setting.kSavedPrinters,
-          Setting.kPrintJobs,
-        ]),
-      },
-
-      /**
        * Indicates whether the nearby printers section is expanded.
        * @private {boolean}
        */
@@ -240,6 +227,13 @@ export class SettingsCupsPrintersElement extends
   prefs: Object;
   printers: CupsPrinterInfo[];
   searchTerm: string;
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kAddPrinter,
+    Setting.kSavedPrinters,
+    Setting.kPrintJobs,
+  ]);
 
   private addPrintServerResultText_: string;
   private addPrinterResultText_: string;

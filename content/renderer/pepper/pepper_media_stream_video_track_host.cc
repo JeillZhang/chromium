@@ -32,7 +32,6 @@
 #include "third_party/blink/public/web/modules/mediastream/media_stream_video_source.h"
 #include "third_party/blink/public/web/modules/mediastream/web_media_stream_utils.h"
 #include "third_party/libyuv/include/libyuv.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 
 using media::VideoFrame;
 using ppapi::host::HostMessageContext;
@@ -435,14 +434,11 @@ class PepperMediaStreamVideoTrackHost::VideoSource final
   ~VideoSource() final { StopSourceImpl(); }
 
   void StartSourceImpl(
-      blink::VideoCaptureDeliverFrameCB frame_callback,
-      blink::EncodedVideoFrameCB encoded_frame_callback,
-      blink::VideoCaptureSubCaptureTargetVersionCB
-          sub_capture_target_version_callback,
-      blink::VideoCaptureNotifyFrameDroppedCB frame_dropped_callback) final {
+      blink::MediaStreamVideoSourceCallbacks media_stream_callbacks) final {
     if (host_) {
-      host_->frame_deliverer_ =
-          new FrameDeliverer(video_task_runner(), std::move(frame_callback));
+      host_->frame_deliverer_ = new FrameDeliverer(
+          video_task_runner(),
+          std::move(media_stream_callbacks.deliver_frame_cb));
     }
   }
 

@@ -132,6 +132,9 @@ CONSOLE MESSAGE:     method constructor
 CONSOLE MESSAGE:     method dispatchEvent
 CONSOLE MESSAGE:     method removeEventListener
 CONSOLE MESSAGE:     method when
+CONSOLE MESSAGE: interface Float16Array : TypedArray
+CONSOLE MESSAGE:     attribute BYTES_PER_ELEMENT
+CONSOLE MESSAGE:     method constructor
 CONSOLE MESSAGE: interface Observable
 CONSOLE MESSAGE:     static method from
 CONSOLE MESSAGE:     attribute @@toStringTag
@@ -140,6 +143,7 @@ CONSOLE MESSAGE:     method constructor
 CONSOLE MESSAGE:     method drop
 CONSOLE MESSAGE:     method every
 CONSOLE MESSAGE:     method filter
+CONSOLE MESSAGE:     method finally
 CONSOLE MESSAGE:     method find
 CONSOLE MESSAGE:     method first
 CONSOLE MESSAGE:     method flatMap
@@ -158,6 +162,11 @@ CONSOLE MESSAGE: interface PromiseRejectionEvent : Event
 CONSOLE MESSAGE:     attribute @@toStringTag
 CONSOLE MESSAGE:     getter promise
 CONSOLE MESSAGE:     getter reason
+CONSOLE MESSAGE:     method constructor
+CONSOLE MESSAGE: interface QuotaExceededError : DOMException
+CONSOLE MESSAGE:     attribute @@toStringTag
+CONSOLE MESSAGE:     getter quota
+CONSOLE MESSAGE:     getter requested
 CONSOLE MESSAGE:     method constructor
 CONSOLE MESSAGE: interface ReadableByteStreamController
 CONSOLE MESSAGE:     attribute @@toStringTag
@@ -308,6 +317,7 @@ CONSOLE MESSAGE:     getter search
 CONSOLE MESSAGE:     getter username
 CONSOLE MESSAGE:     method constructor
 CONSOLE MESSAGE:     method exec
+CONSOLE MESSAGE:     method generate
 CONSOLE MESSAGE:     method test
 CONSOLE MESSAGE: interface URLSearchParams
 CONSOLE MESSAGE:     attribute @@toStringTag

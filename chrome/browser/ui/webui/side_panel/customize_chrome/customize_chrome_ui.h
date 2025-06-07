@@ -83,7 +83,10 @@ class CustomizeChromeUI
   void ScrollToSection(CustomizeChromeSection section);
 
   // Passthrough that calls the CustomizeChromePage's AttachedTabStateUpdated.
-  void AttachedTabStateUpdated(bool is_source_tab_first_party_ntp);
+  void AttachedTabStateUpdated(const GURL& url);
+
+  // Passthrough that calls to CustomizeChromePage's UpdateThemeEditable.
+  void UpdateThemeEditable(bool is_theme_editable);
 
   // Gets a weak pointer to this object.
   base::WeakPtr<CustomizeChromeUI> GetWeakPtr();
@@ -122,7 +125,7 @@ class CustomizeChromeUI
           side_panel::customize_chrome::mojom::CustomizeToolbarHandlerFactory>
           receiver);
 
-  static constexpr std::string GetWebUIName() { return "CustomizeChrome"; }
+  static constexpr std::string_view GetWebUIName() { return "CustomizeChrome"; }
 
  private:
   // side_panel::mojom::CustomizeChromePageHandlerFactory
@@ -184,7 +187,8 @@ class CustomizeChromeUI
   // Caches a request to scroll to a section in case the request happens before
   // the front-end is ready to receive the request.
   std::optional<CustomizeChromeSection> section_;
-  std::optional<bool> is_source_tab_first_party_ntp_;
+  GURL source_tab_url_;
+  std::optional<bool> is_theme_editable_;
 
   std::unique_ptr<user_education::HelpBubbleHandler> help_bubble_handler_;
   mojo::Receiver<help_bubble::mojom::HelpBubbleHandlerFactory>

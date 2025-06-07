@@ -64,7 +64,8 @@ char* fct6() {
   // base::span<int> var1 = new int[1024];
   int* var1 = new int[1024];
   int offset = 1;
-  // No rewrite here for now.
+  // Expected rewrite:
+  // return base::as_writable_byte_span(var1.subspan(offset));
   return reinterpret_cast<char*>(var1 + offset);
 }
 
@@ -76,7 +77,7 @@ int* fct7() {
   int* var1 = new int[1024];
   int offset = 1;
   // Expected rewrite:
-  // return (var1 + offset).data();
+  // return var1.subspan(offset).data();
   return var1 + offset;
 }
 
@@ -88,7 +89,9 @@ char* fct8() {
   int* var1 = new int[1024];
   int offset = 1;
   // Expected rewrite:
-  // return (reinterpret_cast<char*>(var1) + offset).data();
+  // return reinterpret_cast<char*>(var1).subspan(offset).data();
+  // As-is, this code doesn't compile because we don't yet handle
+  // adapting these reinterpret_cast expressions for spans.
   return reinterpret_cast<char*>(var1) + offset;
 }
 

@@ -203,6 +203,9 @@ bool NestedTracingScenario::OnStopTrigger(
 bool NestedTracingScenario::OnUploadTrigger(
     const BackgroundTracingRule* triggered_rule) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  TriggersDataSource::EmitTrigger(triggered_rule);
+  base::UmaHistogramSparse("Tracing.Background.Scenario.Trigger.Upload",
+                           TriggerNameHash(triggered_rule));
 
   for (auto& rule : stop_rules_) {
     rule->Uninstall();
@@ -243,6 +246,7 @@ TracingScenario::TracingScenario(
     bool is_local_scenario,
     bool request_startup_tracing)
     : TracingScenarioBase(config.scenario_name()),
+      description_(config.scenario_description()),
       privacy_filtering_enabled_(enable_privacy_filter),
       is_local_scenario_(is_local_scenario),
       request_startup_tracing_(request_startup_tracing),
@@ -409,14 +413,22 @@ void TracingScenario::OnNestedScenarioUpload(
   DCHECK_EQ(active_scenario_, nested_scenario);
   CHECK_EQ(nested_scenario->current_state(),
            NestedTracingScenario::State::kDisabled);
-  CHECK_EQ(current_state_, State::kRecording);
-  TriggersDataSource::EmitTrigger(triggered_rule);
-  base::UmaHistogramSparse("Tracing.Background.Scenario.Trigger.Upload",
-                           TriggerNameHash(triggered_rule));
+  CHECK(current_state_ == State::kStarting ||
+        current_state_ == State::kRecording)
+      << static_cast<int>(current_state_);
 
+  if (on_nested_stopped_.IsCancelled()) {
+    for (auto& rule : stop_rules_) {
+      rule->Install(base::BindRepeating(&TracingScenario::OnStopTrigger,
+                                        base::Unretained(this)));
+    }
+  }
+  on_nested_stopped_.Cancel();
   active_scenario_ = nullptr;
   SetState(State::kCloning);
-  if (!scenario_delegate_->OnScenarioCloned(this)) {
+  // Skip cloning if the trace isn't allowed to save or is still starting.
+  if (!scenario_delegate_->OnScenarioCloned(this) ||
+      current_state_ == State::kStarting) {
     OnTracingCloned();
     return;
   }
@@ -490,7 +502,7 @@ bool TracingScenario::OnStartTrigger(
     rule->Uninstall();
   }
 
-  SetState(State::kRecording);
+  SetState(State::kStarting);
 
   if (request_startup_tracing_) {
     perfetto::Tracing::SetupStartupTracingOpts opts;
@@ -545,6 +557,10 @@ bool TracingScenario::OnStopTrigger(
     SetState(State::kDisabled);
     scenario_delegate_->OnScenarioIdle(this);
     return true;
+  } else if (current_state_ == State::kStarting) {
+    for (auto& rule : upload_rules_) {
+      rule->Uninstall();
+    }
   }
   tracing_session_->Stop();
   SetState(State::kStopping);
@@ -573,6 +589,10 @@ bool TracingScenario::OnUploadTrigger(
     tracing_session_.reset();
     SetState(State::kDisabled);
     scenario_delegate_->OnScenarioIdle(this);
+    return true;
+  } else if (current_state_ == State::kStarting) {
+    SetState(State::kStopping);
+    tracing_session_->Stop();
     return true;
   }
   CHECK(current_state_ == State::kRecording ||
@@ -611,6 +631,7 @@ void TracingScenario::OnTracingError(perfetto::TracingError error) {
 
 void TracingScenario::OnTracingStart() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  SetState(State::kRecording);
   scenario_delegate_->OnScenarioRecording(this);
 }
 
@@ -621,6 +642,7 @@ void TracingScenario::OnTracingStop() {
       current_state_ != State::kFinalizing) {
     // Tracing was stopped internally.
     CHECK(current_state_ == State::kSetup ||
+          current_state_ == State::kStarting ||
           current_state_ == State::kRecording ||
           current_state_ == State::kCloning)
         << static_cast<int>(current_state_);
@@ -654,18 +676,17 @@ void TracingScenario::OnTracingStop() {
 
 void TracingScenario::OnTracingCloned() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (current_state_ != State::kCloning) {
+  if (current_state_ == State::kCloning) {
+    SetState(State::kRecording);
+  }
+  if (current_state_ != State::kStarting &&
+      current_state_ != State::kRecording) {
     // Tracing was stopped.
     return;
   }
-  SetState(State::kRecording);
   // All nested scenarios are re-enabled.
   for (auto& scenario : nested_scenarios_) {
     scenario->Enable();
-  }
-  for (auto& rule : stop_rules_) {
-    rule->Install(base::BindRepeating(&TracingScenario::OnStopTrigger,
-                                      base::Unretained(this)));
   }
 }
 
@@ -684,13 +705,15 @@ void TracingScenario::OnFinalizingDone(
 void TracingScenario::DisableNestedScenarios() {
   if (active_scenario_) {
     CHECK(current_state_ == State::kRecording ||
+          current_state_ == State::kStarting ||
           current_state_ == State::kStopping)
         << static_cast<int>(current_state_);
     on_nested_stopped_.Cancel();
     active_scenario_->Disable();
     active_scenario_ = nullptr;
   } else if (current_state_ == State::kRecording ||
-             current_state_ == State::kSetup) {
+             current_state_ == State::kSetup ||
+             current_state_ == State::kStarting) {
     for (auto& nested_scenario : nested_scenarios_) {
       nested_scenario->Disable();
     }

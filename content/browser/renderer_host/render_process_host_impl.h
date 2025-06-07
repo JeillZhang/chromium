@@ -49,6 +49,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/process_allocation_context.h"
 #include "content/public/browser/render_process_host.h"
+#include "media/gpu/buildflags.h"
 #include "media/mojo/mojom/interface_factory.mojom-forward.h"
 #include "media/mojo/mojom/video_decode_perf_history.mojom-forward.h"
 #include "media/mojo/mojom/video_encoder_metrics_provider.mojom-forward.h"
@@ -84,10 +85,8 @@
 #include "third_party/blink/public/mojom/loader/code_cache.mojom-forward.h"
 #include "third_party/blink/public/mojom/plugins/plugin_registry.mojom-forward.h"
 #include "third_party/blink/public/mojom/push_messaging/push_messaging.mojom-forward.h"
-#include "third_party/blink/public/mojom/webdatabase/web_database.mojom-forward.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_proto.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/memory/memory_pressure_listener.h"
@@ -95,7 +94,7 @@
 #endif
 
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
-#include "media/mojo/mojom/stable/stable_video_decoder.mojom.h"
+#include "media/mojo/mojom/interface_factory.mojom.h"
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 
 #if BUILDFLAG(IS_FUCHSIA)
@@ -201,7 +200,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
       public metrics::HistogramChildProcess
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
     ,
-      public media::stable::mojom::StableVideoDecoderTracker
+      public media::mojom::VideoDecoderTracker
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 {
  public:
@@ -278,6 +277,7 @@ class CONTENT_EXPORT RenderProcessHostImpl
   bool HasPriorityOverride() override;
   void ClearPriorityOverride() override;
 #endif
+  void SetHasSpareRendererPriority(bool has_spare_renderer_priority) override;
 #if BUILDFLAG(IS_ANDROID)
   ChildProcessImportance GetEffectiveImportance() override;
   base::android::ChildBindingState GetEffectiveChildBindingState() override;
@@ -564,7 +564,9 @@ class CONTENT_EXPORT RenderProcessHostImpl
     kSpareTaken = 4,
     kRefusedBySiteInstance = 5,
     kRefusedForPdfContent = 6,
-    kMaxValue = kRefusedForPdfContent
+    kRefusedForJitMismatch = 7,
+    kRefusedForV8OptimizationMismatch = 8,
+    kMaxValue = kRefusedForV8OptimizationMismatch
   };
   // LINT.ThenChange(tools/metrics/histograms/metadata/browser/histograms.xml:SpareProcessMaybeTakeAction)
 
@@ -605,6 +607,10 @@ class CONTENT_EXPORT RenderProcessHostImpl
 #if !BUILDFLAG(IS_ANDROID)
   // Gets the platform-specific limit. Used by GetMaxRendererProcessCount().
   static size_t GetPlatformMaxRendererProcessCount();
+
+  // Returns whether the current platform has no known process limit, in which
+  // case `GetPlatformMaxRendererProcessCount()` will use a fallback value.
+  static bool IsPlatformProcessLimitUnknownForTesting();
 #endif
 
   // This forces a renderer that is running "in process" to shut down.
@@ -641,6 +647,9 @@ class CONTENT_EXPORT RenderProcessHostImpl
 
   void OnBoostForLoadingAdded() override;
   void OnBoostForLoadingRemoved() override;
+
+  void OnImmersiveXrSessionStarted() override;
+  void OnImmersiveXrSessionStopped() override;
 
   // Sets the global factory used to create new RenderProcessHosts in unit
   // tests.  It may be nullptr, in which case the default RenderProcessHost will
@@ -835,9 +844,8 @@ class CONTENT_EXPORT RenderProcessHostImpl
       override;
 
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
-  void CreateStableVideoDecoder(
-      mojo::PendingReceiver<media::stable::mojom::StableVideoDecoder> receiver)
-      override;
+  void CreateOOPVideoDecoder(
+      mojo::PendingReceiver<media::mojom::VideoDecoder> receiver) override;
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 
   void BindP2PSocketManager(
@@ -863,19 +871,17 @@ class CONTENT_EXPORT RenderProcessHostImpl
 #endif
 
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
-  using StableVideoDecoderFactoryCreationCB = base::RepeatingCallback<void(
-      mojo::PendingReceiver<media::stable::mojom::StableVideoDecoderFactory>)>;
-  static void SetStableVideoDecoderFactoryCreationCBForTesting(
-      StableVideoDecoderFactoryCreationCB cb);
+  using VideoDecoderFactoryCreationCB = base::RepeatingCallback<void(
+      mojo::PendingReceiver<media::mojom::InterfaceFactory>)>;
+  static void SetVideoDecoderFactoryCreationCBForTesting(
+      VideoDecoderFactoryCreationCB cb);
 
-  enum class StableVideoDecoderEvent {
+  enum class VideoDecoderEvent {
     kFactoryResetTimerStopped,
     kAllDecodersDisconnected,
   };
-  using StableVideoDecoderEventCB =
-      base::RepeatingCallback<void(StableVideoDecoderEvent)>;
-  static void SetStableVideoDecoderEventCBForTesting(
-      StableVideoDecoderEventCB cb);
+  using VideoDecoderEventCB = base::RepeatingCallback<void(VideoDecoderEvent)>;
+  static void SetVideoDecoderEventCBForTesting(VideoDecoderEventCB cb);
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 
   void GetBoundInterfacesForTesting(std::vector<std::string>& out);
@@ -985,11 +991,13 @@ class CONTENT_EXPORT RenderProcessHostImpl
     std::unique_ptr<service_manager::BinderRegistry> binders_;
     mojo::Receiver<mojom::ChildProcessHost> receiver_{this};
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
     mojo::Remote<media::mojom::VideoEncodeAcceleratorProviderFactory>
         video_encode_accelerator_factory_remote_;
+#endif
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
     ChildThreadTypeSwitcher child_thread_type_switcher_;
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#endif
   };
 
   // Use CreateRenderProcessHost() instead of calling this constructor
@@ -1047,10 +1055,6 @@ class CONTENT_EXPORT RenderProcessHostImpl
   void BindVideoEncoderMetricsProvider(
       mojo::PendingReceiver<media::mojom::VideoEncoderMetricsProvider>
           receiver);
-#if BUILDFLAG(IS_ANDROID)
-  void BindWebDatabaseHostImpl(
-      mojo::PendingReceiver<blink::mojom::WebDatabaseHost> receiver);
-#endif  // BUILDFLAG(IS_ANDROID)
   void BindAecDumpManager(
       mojo::PendingReceiver<blink::mojom::AecDumpManager> receiver);
   void CreateMediaLogRecordHost(
@@ -1252,9 +1256,9 @@ class CONTENT_EXPORT RenderProcessHostImpl
   bool AreAllRefCountsZero();
 
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
-  void OnStableVideoDecoderDisconnected();
+  void OnVideoDecoderDisconnected();
 
-  void ResetStableVideoDecoderFactory();
+  void ResetVideoDecoderFactory();
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 
   mojo::OutgoingInvitation mojo_invitation_;
@@ -1429,24 +1433,22 @@ class CONTENT_EXPORT RenderProcessHostImpl
   std::unique_ptr<PermissionServiceContext> permission_service_context_;
 
 #if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
-  // Connection to the StableVideoDecoderFactory that lives in a utility
+  // Connection to the InterfaceFactory that lives in a utility
   // process. This is only used for out-of-process video decoding.
-  mojo::Remote<media::stable::mojom::StableVideoDecoderFactory>
-      stable_video_decoder_factory_remote_;
+  mojo::Remote<media::mojom::InterfaceFactory> video_decoder_factory_remote_;
 
-  // Using |stable_video_decoder_trackers_|, we track the StableVideoDecoders
-  // that have been created using |stable_video_decoder_factory_remote_|. That
-  // way, we know when the remote StableVideoDecoder dies.
-  mojo::ReceiverSet<media::stable::mojom::StableVideoDecoderTracker>
-      stable_video_decoder_trackers_;
+  // Using |video_decoder_trackers_|, we track the VideoDecoders
+  // that have been created using |video_decoder_factory_remote_|. That way, we
+  // know when the remote VideoDecoder dies.
+  mojo::ReceiverSet<media::mojom::VideoDecoderTracker> video_decoder_trackers_;
 
-  // |stable_video_decoder_factory_reset_timer_| allows us to delay the reset()
-  // of |stable_video_decoder_factory_remote_|: after all StableVideoDecoders
-  // have disconnected, we wait for the timer to trigger, and if no request
-  // comes in to create a StableVideoDecoder before that, we reset the
-  // |stable_video_decoder_factory_remote_| which should cause the destruction
-  // of the remote video decoder utility process.
-  base::OneShotTimer stable_video_decoder_factory_reset_timer_;
+  // |video_decoder_factory_reset_timer_| allows us to delay the reset() of
+  // |video_decoder_factory_remote_|: after all VideoDecoders have disconnected,
+  // we wait for the timer to trigger, and if no request comes in to create a
+  // VideoDecoder before that, we reset the |video_decoder_factory_remote_|
+  // which should cause the destruction of the remote video decoder utility
+  // process.
+  base::OneShotTimer video_decoder_factory_reset_timer_;
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 
 #if BUILDFLAG(IS_FUCHSIA)
@@ -1523,6 +1525,10 @@ class CONTENT_EXPORT RenderProcessHostImpl
   // processing commit navigation and initial loading (crbug/351953350).
   int boost_for_loading_count_ = 0;
 
+  // Tracks whether or not the current process is in an immersive webxr session.
+  // Used to determine if a process should not be backgrounded.
+  bool has_immersive_xr_session_ = false;
+
   std::unique_ptr<mojo::Receiver<viz::mojom::CompositingModeReporter>>
       compositing_mode_reporter_;
 
@@ -1578,6 +1584,16 @@ class CONTENT_EXPORT RenderProcessHostImpl
   size_t outermost_main_frame_count_ = 0;
   // Maximum number of outermost main frames this process hosted concurrently.
   size_t max_outermost_main_frames_ = 0;
+
+  // Whether to consider the process as a spare renderer when
+  // calculating the priority.
+  // The attribute starts out as false and is set to true if this renderer
+  // process is launched as a spare process.  When the process is taken for
+  // navigation, the value will stay true until the priority is set in
+  // RenderWidgetHostImpl. For other renderer process allocations, the value
+  // will be set to false when the process is taken from the
+  // SpareRenderProcessHostManager.
+  bool has_spare_renderer_priority_ = false;
 
   // A WeakPtrFactory which is reset every time ResetIPC() or Cleanup() is run.
   // Used to vend WeakPtrs which are invalidated any time the RenderProcessHost

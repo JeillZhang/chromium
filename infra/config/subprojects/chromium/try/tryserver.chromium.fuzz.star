@@ -5,6 +5,7 @@
 
 load("//lib/builders.star", "cpu", "os", "siso")
 load("//lib/consoles.star", "consoles")
+load("//lib/gn_args.star", "gn_args")
 load("//lib/try.star", "try_")
 
 try_.defaults.set(
@@ -15,6 +16,7 @@ try_.defaults.set(
     cores = 8,
     os = os.LINUX_DEFAULT,
     execution_timeout = try_.DEFAULT_EXECUTION_TIMEOUT,
+    reclient_enabled = False,
     service_account = try_.DEFAULT_SERVICE_ACCOUNT,
     siso_enabled = True,
     siso_project = siso.project.DEFAULT_UNTRUSTED,
@@ -139,4 +141,43 @@ try_.builder(
     mirrors = ["ci/Win ASan Release Media"],
     gn_args = "ci/Win ASan Release Media",
     os = os.WINDOWS_DEFAULT,
+)
+
+try_.builder(
+    name = "linux-centipede-high-end-asan-dcheck",
+    mirrors = ["ci/Centipede High End Upload Linux ASan DCheck"],
+    gn_args = gn_args.config(
+        configs = [
+            "ci/Centipede High End Upload Linux ASan DCheck",
+            "no_symbols",
+            "skip_generate_fuzzer_owners",
+        ],
+    ),
+    contact_team_email = "chrome-deet-core@google.com",
+)
+
+try_.builder(
+    name = "linux-libfuzzer-high-end-asan-rel",
+    mirrors = ["ci/Libfuzzer High End Upload Linux ASan"],
+    gn_args = gn_args.config(
+        configs = [
+            "ci/Libfuzzer High End Upload Linux ASan",
+            "no_symbols",
+            "skip_generate_fuzzer_owners",
+        ],
+    ),
+    contact_team_email = "chrome-deet-core@google.com",
+)
+
+try_.builder(
+    name = "linux-libfuzzer-high-end-asan-dbg",
+    mirrors = ["ci/Libfuzzer High End Upload Linux ASan Debug"],
+    gn_args = gn_args.config(
+        configs = [
+            "ci/Libfuzzer High End Upload Linux ASan Debug",
+            "no_symbols",
+            "skip_generate_fuzzer_owners",
+        ],
+    ),
+    contact_team_email = "chrome-deet-core@google.com",
 )

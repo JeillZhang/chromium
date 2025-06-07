@@ -15,10 +15,10 @@
 // Creates and saves `numberOfGroups` synced tab groups.
 + (void)prepareFakeSyncedTabGroups:(NSInteger)numberOfGroups;
 
-// Creates and saves `numberOfGroups` shared tab groups. A user with
-// `fakeIdentity1` joins the group as a member and a user with `fakeIdentity2`
-// joins the group as an owner.
-+ (void)prepareFakeSharedTabGroups:(NSInteger)numberOfGroups;
+// Creates and saves `numberOfGroups` shared tab groups. The user (using foo1
+// account) will be set as `owner` or not of the group.
++ (void)prepareFakeSharedTabGroups:(NSInteger)numberOfGroups
+                           asOwner:(BOOL)owner;
 
 // Removes a group at `index`.
 + (void)removeAtIndex:(unsigned int)index;
@@ -31,6 +31,14 @@
 
 // Sets the mock response for getting the shared entities preview of a group.
 + (void)mockSharedEntitiesPreview;
+
+// Adds a tab to the group specified by `index`. `index` considers only groups
+// not tabs. The group should be shared already and the tab is added by a member
+// (fakeIdentity3).
++ (void)addSharedTabToGroupAtIndex:(unsigned int)index;
+
+// Returns the URL of the activity logs.
++ (NSString*)activityLogsURL;
 
 @end
 

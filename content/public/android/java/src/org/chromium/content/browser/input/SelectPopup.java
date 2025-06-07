@@ -4,6 +4,8 @@
 
 package org.chromium.content.browser.input;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.content.Context;
 import android.view.View;
 import android.view.ViewGroup;
@@ -20,8 +22,8 @@ import org.chromium.content.browser.PopupController.HideablePopup;
 import org.chromium.content.browser.WindowEventObserver;
 import org.chromium.content.browser.WindowEventObserverManager;
 import org.chromium.content.browser.webcontents.WebContentsImpl;
-import org.chromium.content.browser.webcontents.WebContentsImpl.UserDataFactory;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.WebContents.UserDataFactory;
 import org.chromium.ui.accessibility.AccessibilityState;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.ViewAndroidDelegate;
@@ -62,13 +64,13 @@ public class SelectPopup
 
     /**
      * Get {@link SelectPopup} object used for the give WebContents.
+     *
      * @param webContents {@link WebContents} object.
      * @return {@link SelectPopup} object.
      */
     public static SelectPopup fromWebContents(WebContents webContents) {
         SelectPopup ret =
-                ((WebContentsImpl) webContents)
-                        .getOrSetUserData(SelectPopup.class, UserDataFactoryLazyHolder.INSTANCE);
+                webContents.getOrSetUserData(SelectPopup.class, UserDataFactoryLazyHolder.INSTANCE);
         assert ret != null;
         return ret;
     }
@@ -88,7 +90,7 @@ public class SelectPopup
         mWebContents = (WebContentsImpl) webContents;
         ViewAndroidDelegate viewDelegate = mWebContents.getViewAndroidDelegate();
         assert viewDelegate != null;
-        mContainerView = viewDelegate.getContainerView();
+        mContainerView = assumeNonNull(viewDelegate.getContainerView());
         viewDelegate.addObserver(this);
         PopupController.register(mWebContents, this);
         WindowEventObserverManager.from(mWebContents).addObserver(this);

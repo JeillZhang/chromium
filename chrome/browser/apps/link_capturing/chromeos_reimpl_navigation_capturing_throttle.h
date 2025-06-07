@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_APPS_LINK_CAPTURING_CHROMEOS_REIMPL_NAVIGATION_CAPTURING_THROTTLE_H_
 
 #include "base/auto_reset.h"
+#include "base/values.h"
 #include "content/public/browser/navigation_throttle.h"
 
 class Profile;
@@ -24,8 +25,7 @@ class ChromeOsReimplNavigationCapturingThrottle
  public:
   using ThrottleCheckResult = content::NavigationThrottle::ThrottleCheckResult;
 
-  static std::unique_ptr<content::NavigationThrottle> MaybeCreate(
-      content::NavigationHandle* handle);
+  static bool MaybeCreateAndAdd(content::NavigationThrottleRegistry& registry);
 
   // Set clock used for timing to enable manipulation during tests.
   static base::AutoReset<const base::TickClock*> SetClockForTesting(
@@ -44,15 +44,15 @@ class ChromeOsReimplNavigationCapturingThrottle
 
  private:
   ChromeOsReimplNavigationCapturingThrottle(
-      content::NavigationHandle* navigation_handle,
+      content::NavigationThrottleRegistry& registry,
       Profile* profile);
+
+  ThrottleCheckResult HandleRequest();
 
   // Identify whether web contents need to be deleted post navigation capturing.
   bool IsEmptyDanglingWebContentsAfterLinkCapture();
 
-  // Identify if the current navigation was triggered via a link click and not
-  // any other sources.
-  bool IsCapturableLinkClick();
+  base::Value::Dict debug_data_;
 
   raw_ref<Profile> profile_;
   base::WeakPtrFactory<ChromeOsReimplNavigationCapturingThrottle>

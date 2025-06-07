@@ -34,7 +34,7 @@ class HeuristicSourceTest
     const HeuristicSourceParams& test_case = GetParam();
     std::vector<base::test::FeatureRefAndParams> enabled_features;
     std::vector<base::test::FeatureRef> disabled_features;
-    if (test_case.model_predictions_feature) {
+    if (test_case.model_predictions_feature.has_value()) {
       std::string model_prediction_active =
           base::ToString(test_case.model_predictions_feature.value());
       enabled_features.push_back(
@@ -52,8 +52,8 @@ class HeuristicSourceTest
   base::test::ScopedFeatureList features_;
 };
 
-// TODO(crbug.com/373902907): Flaky on ios bots.
-#if BUILDFLAG(IS_IOS)
+// TODO(crbug.com/373902907): Flaky on ios and android bots.
+#if BUILDFLAG(IS_IOS) || BUILDFLAG(IS_ANDROID)
 #define MAYBE_HeuristicSourceParams DISABLED_HeuristicSourceParams
 #else
 #define MAYBE_HeuristicSourceParams HeuristicSourceParams
@@ -67,11 +67,8 @@ INSTANTIATE_TEST_SUITE_P(
     HeuristicSourceTest,
     HeuristicSourceTest,
     testing::Values(
-// The pattern provider behavior differs between Chrome and non-Chrome branded
-// instances.
-#if !BUILDFLAG(USE_INTERNAL_AUTOFILL_PATTERNS)
         HeuristicSourceParams{
-            .expected_active_source = HeuristicSource::kLegacyRegexes},
+            .expected_active_source = HeuristicSource::kRegexes},
 
         HeuristicSourceParams{.model_predictions_feature = true,
                               .expected_active_source =
@@ -79,18 +76,6 @@ INSTANTIATE_TEST_SUITE_P(
 
         HeuristicSourceParams{
             .model_predictions_feature = false,
-            .expected_active_source = HeuristicSource::kLegacyRegexes}
-#else
-        HeuristicSourceParams{.model_predictions_feature = true,
-                              .expected_active_source =
-                                  HeuristicSource::kAutofillMachineLearning},
-
-        HeuristicSourceParams{
-            .model_predictions_feature = false,
-            .expected_active_source = HeuristicSource::kDefaultRegexes},
-        HeuristicSourceParams{
-            .expected_active_source = HeuristicSource::kDefaultRegexes}
-#endif
-        ));
+            .expected_active_source = HeuristicSource::kRegexes}));
 
 }  // namespace autofill

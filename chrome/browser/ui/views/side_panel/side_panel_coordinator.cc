@@ -161,7 +161,7 @@ std::unique_ptr<views::Label> CreateTitle() {
       std::u16string(), views::style::CONTEXT_LABEL,
       views::style::STYLE_HEADLINE_5);
 
-  title->SetEnabledColorId(kColorSidePanelEntryTitle);
+  title->SetEnabledColor(kColorSidePanelEntryTitle);
   title->SetBackgroundColor(kColorToolbar);
   title->SetSubpixelRenderingEnabled(false);
   const int horizontal_margin =
@@ -423,6 +423,17 @@ std::optional<SidePanelEntry::Id> SidePanelCoordinator::GetCurrentEntryId()
   return current_key_
              ? std::optional<SidePanelEntry::Id>(current_key_->key.id())
              : std::nullopt;
+}
+
+int SidePanelCoordinator::GetCurrentEntryDefaultContentWidth() const {
+  if (!current_key_) {
+    return SidePanelEntry::kSidePanelDefaultContentWidth;
+  }
+
+  const SidePanelEntry* const entry = GetEntryForUniqueKey(*current_key_);
+  CHECK(entry);
+
+  return entry->GetDefaultContentWidth();
 }
 
 bool SidePanelCoordinator::IsSidePanelShowing() const {
@@ -1003,7 +1014,9 @@ void SidePanelCoordinator::UpdateHeaderPinButtonState() {
   header_pin_button_->SetToggled(current_pinned_state);
   header_pin_button_->SetVisible(
       !profile->IsIncognitoProfile() && !profile->IsGuestSession() &&
-      action_item->GetProperty(actions::kActionItemPinnableKey));
+      action_item->GetProperty(actions::kActionItemPinnableKey) ==
+          std::underlying_type_t<actions::ActionPinnableState>(
+              actions::ActionPinnableState::kPinnable));
 
   if (!current_pinned_state) {
     // Show IPH for side panel pinning icon.

@@ -59,6 +59,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
@@ -96,8 +97,8 @@ class FrontendMenuProvider final : public ContextMenuProvider {
   void ContextMenuItemSelected(unsigned action) override {
     if (!devtools_host_ || action >= DevToolsHost::kMaxContextMenuAction)
       return;
-    devtools_host_->EvaluateScript("DevToolsAPI.contextMenuItemSelected(" +
-                                   String::Number(action) + ")");
+    devtools_host_->EvaluateScript(WTF::StrCat(
+        {"DevToolsAPI.contextMenuItemSelected(", String::Number(action), ")"}));
   }
 
  private:
@@ -124,11 +125,7 @@ void DevToolsHost::Trace(Visitor* visitor) const {
 void DevToolsHost::EvaluateScript(const String& expression) {
   if (ScriptForbiddenScope::IsScriptForbidden())
     return;
-  if (RuntimeEnabledFeatures::BlinkLifecycleScriptForbiddenEnabled()) {
-    CHECK(!ScriptForbiddenScope::WillBeScriptForbidden());
-  } else {
-    DCHECK(!ScriptForbiddenScope::WillBeScriptForbidden());
-  }
+
   ClassicScript::CreateUnspecifiedScript(expression,
                                          ScriptSourceLocationType::kInternal)
       ->RunScriptOnScriptState(ToScriptStateForMainWorld(frontend_frame_));
@@ -197,7 +194,7 @@ static std::u16string GetLabel(const Member<ShowContextMenuItem> item) {
   // '&' does not show up in context menus unless replaced by '&&'.
   String label = item->getLabelOr(String()).Replace('&', "&&");
   label.Ensure16Bit();
-  return std::u16string(label.Characters16(), label.length());
+  return std::u16string(label.View16());
 }
 
 static std::vector<MenuItemInfo> PopulateContextMenuItems(

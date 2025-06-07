@@ -30,6 +30,7 @@
 #include <cassert>
 #include <memory>
 #include <utility>
+#include <variant>
 
 #include "base/feature_list.h"
 #include "base/task/single_thread_task_runner.h"
@@ -65,6 +66,7 @@
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -73,7 +75,7 @@ namespace blink {
 namespace {
 
 void NotifyFinishObservers(
-    HeapHashSet<WeakMember<ResourceFinishObserver>>* observers) {
+    GCedHeapHashSet<WeakMember<ResourceFinishObserver>>* observers) {
   for (const auto& observer : *observers)
     observer->NotifyFinished();
 }
@@ -85,8 +87,8 @@ void GetSharedBufferMemoryDump(SharedBuffer* buffer,
   String dump_name;
   buffer->GetMemoryDumpNameAndSize(dump_name, dump_size);
 
-  WebMemoryAllocatorDump* dump =
-      memory_dump->CreateMemoryAllocatorDump(dump_prefix + dump_name);
+  WebMemoryAllocatorDump* dump = memory_dump->CreateMemoryAllocatorDump(
+      WTF::StrCat({dump_prefix, dump_name}));
   dump->AddScalar("size", "bytes", dump_size);
   memory_dump->AddSuballocation(
       dump->Guid(), String(WTF::Partitions::kAllocatedObjectPoolName));
@@ -95,7 +97,7 @@ void GetSharedBufferMemoryDump(SharedBuffer* buffer,
 // These response headers are not copied from a revalidated response to the
 // cached response headers. For compatibility, this list is based on Chromium's
 // net/http/http_response_headers.cc.
-const auto kHeadersToIgnoreAfterRevalidation = std::to_array<const char*>({
+constexpr auto kHeadersToIgnoreAfterRevalidation = std::to_array<const char*>({
     "allow",
     "connection",
     "etag",
@@ -153,13 +155,6 @@ Resource::Resource(const ResourceRequestHead& request,
       response_timestamp_(Now()),
       resource_request_(request),
       overhead_size_(CalculateOverheadSize()) {
-  scoped_refptr<const SecurityOrigin> top_frame_origin =
-      resource_request_.TopFrameOrigin();
-  if (top_frame_origin) {
-    net::SchemefulSite site(top_frame_origin->ToUrlOrigin());
-    existing_top_frame_sites_in_cache_.insert(site);
-  }
-
   InstanceCounters::IncrementCounter(InstanceCounters::kResourceCounter);
 
   if (IsMainThread())
@@ -210,6 +205,10 @@ void Resource::CheckResourceIntegrity() {
     DCHECK(RuntimeEnabledFeatures::UnencodedDigestEnabled(feature_context));
     integrity_disposition_ =
         ResourceIntegrityDisposition::kFailedUnencodedDigest;
+    integrity_report_.AddConsoleErrorMessage(WTF::StrCat(
+        {"The resource '", Url().ElidedString(),
+         "' has an `unencoded-digest` header which asserts a digest which does "
+         "not match the resource's body."}));
     return;
   }
 
@@ -244,7 +243,7 @@ void Resource::CheckResourceIntegrity() {
         if (auto calculated_integrity_hash =
                 SubresourceIntegrity::GetSubresourceIntegrityHash(Data(),
                                                                   algorithm)) {
-          integrity_hashes.insert(algorithm, calculated_integrity_hash.value());
+          integrity_hashes.insert(algorithm, calculated_integrity_hash);
         }
       }
     }
@@ -273,14 +272,14 @@ void Resource::MarkClientFinished(ResourceClient* client) {
 }
 
 void Resource::AppendData(
-    absl::variant<SegmentedBuffer, base::span<const char>> data) {
+    std::variant<SegmentedBuffer, base::span<const char>> data) {
   DCHECK(!IsCacheValidator());
   DCHECK(!ErrorOccurred());
-  if (absl::holds_alternative<SegmentedBuffer>(data)) {
-    AppendDataImpl(std::move(absl::get<SegmentedBuffer>(data)));
+  if (std::holds_alternative<SegmentedBuffer>(data)) {
+    AppendDataImpl(std::move(std::get<SegmentedBuffer>(data)));
   } else {
-    CHECK(absl::holds_alternative<base::span<const char>>(data));
-    AppendDataImpl(absl::get<base::span<const char>>(data));
+    CHECK(std::holds_alternative<base::span<const char>>(data));
+    AppendDataImpl(std::get<base::span<const char>>(data));
   }
 }
 
@@ -334,7 +333,7 @@ void Resource::TriggerNotificationForFinishObservers(
     return;
 
   auto* new_collections =
-      MakeGarbageCollected<HeapHashSet<WeakMember<ResourceFinishObserver>>>(
+      MakeGarbageCollected<GCedHeapHashSet<WeakMember<ResourceFinishObserver>>>(
           std::move(finish_observers_));
   finish_observers_.clear();
 
@@ -928,7 +927,7 @@ void Resource::OnMemoryDump(WebMemoryDumpLevelOfDetail level_of_detail,
     String url_to_report = Url().GetString();
     if (url_to_report.length() > kMaxURLReportLength) {
       url_to_report.Truncate(kMaxURLReportLength);
-      url_to_report = url_to_report + "...";
+      url_to_report = WTF::StrCat({url_to_report, "..."});
     }
     dump->AddString("url", "", url_to_report);
 
@@ -940,10 +939,10 @@ void Resource::OnMemoryDump(WebMemoryDumpLevelOfDetail level_of_detail,
       client_names.push_back(client->DebugName());
     ResourceClientWalker<ResourceClient> walker2(clients_awaiting_callback_);
     while (ResourceClient* client = walker2.Next())
-      client_names.push_back("(awaiting) " + client->DebugName());
+      client_names.push_back(WTF::StrCat({"(awaiting) ", client->DebugName()}));
     ResourceClientWalker<ResourceClient> walker3(finished_clients_);
     while (ResourceClient* client = walker3.Next())
-      client_names.push_back("(finished) " + client->DebugName());
+      client_names.push_back(WTF::StrCat({"(finished) ", client->DebugName()}));
     std::sort(client_names.begin(), client_names.end(),
               WTF::CodeUnitCompareLessThan);
 
@@ -964,7 +963,7 @@ void Resource::OnMemoryDump(WebMemoryDumpLevelOfDetail level_of_detail,
     dump->AddString("ResourceClient", "", builder.ToString());
   }
 
-  const String overhead_name = dump_name + "/metadata";
+  const String overhead_name = WTF::StrCat({dump_name, "/metadata"});
   WebMemoryAllocatorDump* overhead_dump =
       memory_dump->CreateMemoryAllocatorDump(overhead_name);
   overhead_dump->AddScalar("size", "bytes", OverheadSize());
@@ -973,10 +972,10 @@ void Resource::OnMemoryDump(WebMemoryDumpLevelOfDetail level_of_detail,
 }
 
 String Resource::GetMemoryDumpName() const {
-  return String::Format(
-             "web_cache/%s_resources/",
-             ResourceTypeToString(GetType(), Options().initiator_info.name)) +
-         String::Number(InspectorId());
+  return WTF::StrCat(
+      {"web_cache/",
+       ResourceTypeToString(GetType(), Options().initiator_info.name),
+       "_resources/", String::Number(InspectorId())});
 }
 
 void Resource::SetCachePolicyBypassingCache() {
@@ -1291,12 +1290,6 @@ bool Resource::IsLoadEventBlockingResourceType() const {
 // static
 void Resource::SetClockForTesting(const base::Clock* clock) {
   g_clock_for_testing = clock;
-}
-
-bool Resource::AppendTopFrameSiteForMetrics(const SecurityOrigin& origin) {
-  net::SchemefulSite site(origin.ToUrlOrigin());
-  auto result = existing_top_frame_sites_in_cache_.insert(site);
-  return !result.second;
 }
 
 void Resource::SetIsAdResource() {

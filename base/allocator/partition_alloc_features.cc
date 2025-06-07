@@ -160,9 +160,15 @@ BASE_FEATURE(kPartitionAllocEventuallyZeroFreedMemory,
              "PartitionAllocEventuallyZeroFreedMemory",
              FEATURE_DISABLED_BY_DEFAULT);
 
+// Evaluated and positive stability and peformance-wise on Linux-based systems,
+// disabled elsewhere (for now). Does not apply to Windows.
 BASE_FEATURE(kPartitionAllocFewerMemoryRegions,
              "PartitionAllocFewerMemoryRegions",
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS)
+             FEATURE_ENABLED_BY_DEFAULT);
+#else
              FEATURE_DISABLED_BY_DEFAULT);
+#endif
 #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
 BASE_FEATURE(kPartitionAllocBackupRefPtr,
@@ -186,7 +192,7 @@ BASE_FEATURE_ENUM_PARAM(BackupRefPtrEnabledProcesses,
                         kBackupRefPtrEnabledProcessesParam,
                         &kPartitionAllocBackupRefPtr,
                         kPAFeatureEnabledProcessesStr,
-#if PA_BUILDFLAG(IS_MAC) && PA_BUILDFLAG(PA_ARCH_CPU_ARM64)
+#if PA_BUILDFLAG(IS_ANDROID)
                         BackupRefPtrEnabledProcesses::kNonRenderer,
 #else
                         BackupRefPtrEnabledProcesses::kAllProcesses,
@@ -273,16 +279,15 @@ BASE_FEATURE(kPartitionAllocPermissiveMte,
 #endif
 );
 
-// Note: Do not use the prepared macro to implement following FeatureParams
-// as of no need for a local cache.
-constinit const FeatureParam<bool> kBackupRefPtrAsanEnableDereferenceCheckParam{
-    &kPartitionAllocBackupRefPtr, "asan-enable-dereference-check", true};
-constinit const FeatureParam<bool> kBackupRefPtrAsanEnableExtractionCheckParam{
-    &kPartitionAllocBackupRefPtr, "asan-enable-extraction-check",
-    false};  // Not much noise at the moment to enable by default.
-constinit const FeatureParam<bool>
-    kBackupRefPtrAsanEnableInstantiationCheckParam{
-        &kPartitionAllocBackupRefPtr, "asan-enable-instantiation-check", true};
+BASE_FEATURE(kAsanBrpDereferenceCheck,
+             "AsanBrpDereferenceCheck",
+             FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kAsanBrpExtractionCheck,
+             "AsanBrpExtractionCheck",      // Not much noise at the moment to
+             FEATURE_DISABLED_BY_DEFAULT);  // enable by default.
+BASE_FEATURE(kAsanBrpInstantiationCheck,
+             "AsanBrpInstantiationCheck",
+             FEATURE_ENABLED_BY_DEFAULT);
 
 // If enabled, switches the bucket distribution to a denser one.
 //
@@ -467,12 +472,6 @@ BASE_FEATURE(kPartitionAllocDisableBRPInBufferPartition,
              "PartitionAllocDisableBRPInBufferPartition",
              FEATURE_DISABLED_BY_DEFAULT);
 
-#if PA_BUILDFLAG(USE_FREELIST_DISPATCHER)
-BASE_FEATURE(kUsePoolOffsetFreelists,
-             "PartitionAllocUsePoolOffsetFreelists",
-             FEATURE_ENABLED_BY_DEFAULT);
-#endif
-
 BASE_FEATURE(kPartitionAllocAdjustSizeWhenInForeground,
              "PartitionAllocAdjustSizeWhenInForeground",
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
@@ -481,14 +480,14 @@ BASE_FEATURE(kPartitionAllocAdjustSizeWhenInForeground,
              FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
-BASE_FEATURE(kPartitionAllocUseSmallSingleSlotSpans,
-             "PartitionAllocUseSmallSingleSlotSpans",
-             FEATURE_ENABLED_BY_DEFAULT);
-
 #if PA_CONFIG(ENABLE_SHADOW_METADATA)
 BASE_FEATURE(kPartitionAllocShadowMetadata,
              "PartitionAllocShadowMetadata",
+#if BUILDFLAG(IS_LINUX)
+             FEATURE_ENABLED_BY_DEFAULT);
+#else
              FEATURE_DISABLED_BY_DEFAULT);
+#endif
 
 constexpr FeatureParam<ShadowMetadataEnabledProcesses>::Option
     kShadowMetadataEnabledProcessesOptions[] = {
@@ -503,5 +502,11 @@ constinit const FeatureParam<ShadowMetadataEnabledProcesses>
         ShadowMetadataEnabledProcesses::kRendererOnly,
         &kShadowMetadataEnabledProcessesOptions};
 #endif  // PA_CONFIG(ENABLE_SHADOW_METADATA)
+
+#if PA_BUILDFLAG(ENABLE_PARTITION_LOCK_PRIORITY_INHERITANCE)
+BASE_FEATURE(kPartitionAllocUsePriorityInheritanceLocks,
+             "PartitionAllocUsePriorityInheritanceLocks",
+             FEATURE_DISABLED_BY_DEFAULT);
+#endif  // PA_BUILDFLAG(ENABLE_PARTITION_LOCK_PRIORITY_INHERITANCE)
 
 }  // namespace base::features

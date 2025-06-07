@@ -19,7 +19,7 @@
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/country_type.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/strike_databases/address_suggestion_strike_database.h"
 #include "components/autofill/core/browser/strike_databases/autofill_profile_migration_strike_database.h"
 #include "components/autofill/core/browser/strike_databases/autofill_profile_save_strike_database.h"
@@ -142,8 +142,9 @@ class AddressDataManager : public AutofillWebDataServiceObserverOnUISequence {
   // Updates |profile| which already exists in the web database.
   virtual void UpdateProfile(const AutofillProfile& profile);
 
-  // Removes the profile by `guid`.
-  virtual void RemoveProfile(const std::string& guid);
+  // Tivial wrapper that simply calls `RemoveProfileImpl()`.
+  void RemoveProfile(const std::string& guid,
+                     bool is_deduplication_initiated = false);
 
   // Removes all local profiles modified on or after `delete_begin` and strictly
   // before `delete_end`. Used for browsing data deletion purposes.
@@ -153,11 +154,6 @@ class AddressDataManager : public AutofillWebDataServiceObserverOnUISequence {
   // Determines whether the logged in user (if any) is eligible to store
   // Autofill address profiles to their account.
   virtual bool IsEligibleForAddressAccountStorage() const;
-
-  // Users based in unsupported countries and profiles with a country value set
-  // to an unsupported country are not eligible for account storage. This
-  // function determines if the `country_code` is eligible.
-  bool IsCountryEligibleForAccountStorage(std::string_view country_code) const;
 
   // Migrates a given kLocalOrSyncable `profile` to kAccount. This has multiple
   // side-effects for the profile:
@@ -169,7 +165,7 @@ class AddressDataManager : public AutofillWebDataServiceObserverOnUISequence {
   void MigrateProfileToAccount(const AutofillProfile& profile);
 
   // Asynchronously loads all `AutofillProfile`s (from all record types) into
-  // the class's state. See `synced_local_profiles_` and `account_profiles_`.
+  // `profiles_`.
   virtual void LoadProfiles();
 
   // Updates the `profile`'s use count and use date in the database.
@@ -381,6 +377,12 @@ class AddressDataManager : public AutofillWebDataServiceObserverOnUISequence {
 
   // Called when `prefs::kAutofillProfileEnabled` changed.
   void OnAutofillProfilePrefChanged();
+
+  // Removes the profile by `guid`. If `is_deduplication_initiated` is true and
+  // the profile is coming from the account, it will be removed from the local
+  // database and marked `invisible_in_autofill` on the server.
+  virtual void RemoveProfileImpl(const std::string& guid,
+                                 bool is_deduplication_initiated);
 
   base::ObserverList<Observer> observers_;
 

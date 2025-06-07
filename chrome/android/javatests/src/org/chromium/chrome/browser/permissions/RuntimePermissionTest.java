@@ -20,7 +20,6 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.MaxAndroidSdkLevel;
 import org.chromium.chrome.browser.download.DownloadItem;
@@ -34,7 +33,6 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.R;
 import org.chromium.components.offline_items_collection.ContentId;
 import org.chromium.components.permissions.DismissalType;
-import org.chromium.components.permissions.PermissionsAndroidFeatureList;
 import org.chromium.content_public.common.ContentSwitches;
 import org.chromium.ui.base.DeviceFormFactor;
 
@@ -137,7 +135,6 @@ public class RuntimePermissionTest {
     @MediumTest
     @Feature({"RuntimePermissions", "MediaPermissions"})
     @CommandLineFlags.Add(ContentSwitches.USE_FAKE_DEVICE_FOR_MEDIA_STREAM)
-    @Features.EnableFeatures(PermissionsAndroidFeatureList.ONE_TIME_PERMISSION)
     @DisableIf.Device(DeviceFormFactor.TABLET) // crbug.com/41486136
     public void testAllowRuntimeMicrophoneOneTime() throws Exception {
         String[] requestablePermission = new String[] {Manifest.permission.RECORD_AUDIO};
@@ -241,8 +238,10 @@ public class RuntimePermissionTest {
     @MediumTest
     @Feature({"RuntimePermissions", "Downloads"})
     @MaxAndroidSdkLevel(
-            value = Build.VERSION_CODES.Q,
-            reason = "WRITE_EXTERNAL_STORAGE is not supported starting in Android R")
+            value = Build.VERSION_CODES.P,
+            reason =
+                    "WRITE_EXTERNAL_STORAGE is not supported starting in Android R and Q requires a"
+                        + " workaround")
     public void testDenyRuntimeDownload() throws Exception {
         DownloadObserver observer =
                 new DownloadObserver() {
@@ -555,6 +554,7 @@ public class RuntimePermissionTest {
     @MediumTest
     @Feature({"RuntimePermissions", "MediaPermissions"})
     @CommandLineFlags.Add(ContentSwitches.USE_FAKE_DEVICE_FOR_MEDIA_STREAM)
+    @DisabledTest(message = "crbug.com/325085976")
     public void testRuntimeMediaPromptHistogramSystemDeny() throws Exception {
         String[] requestablePermission = new String[] {Manifest.permission.CAMERA};
         mTestAndroidPermissionDelegate =

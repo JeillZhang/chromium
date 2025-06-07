@@ -7,6 +7,7 @@
 #include "base/functional/callback.h"
 #include "components/supervised_user/core/browser/proto/parent_access_callback.pb.h"
 #include "components/supervised_user/core/browser/supervised_user_utils.h"
+#include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "url/gurl.h"
@@ -21,15 +22,36 @@ bool HasNavigatedToTerminalVerificationUrl(
 }  // namespace
 
 ParentAccessDialogResultObserver::ParentAccessDialogResultObserver(
-    content::WebContents* web_contents,
     LocalApprovalResultCallback url_approval_result_callback)
-    : content::WebContentsObserver(web_contents),
-      url_approval_result_callback_(std::move(url_approval_result_callback)) {}
+    : url_approval_result_callback_(std::move(url_approval_result_callback)) {}
 
-ParentAccessDialogResultObserver::~ParentAccessDialogResultObserver() = default;
+ParentAccessDialogResultObserver::~ParentAccessDialogResultObserver() {
+  // url_approval_result_callback_ might have been executed on
+  // `DidFinishNavigation` if a response has been received from PACP.
+  if (!url_approval_result_callback_.is_null()) {
+    std::move(url_approval_result_callback_)
+        // If there is not result set, then the dialog must have been closed
+        // through a cancellation action (Close button, Escape press,
+        // interstitial destruction).
+        .Run(result_.value_or(supervised_user::LocalApprovalResult::kCanceled),
+             error_type_);
+  }
+}
+
+void ParentAccessDialogResultObserver::StartObserving(
+    content::WebContents* contents) {
+  CHECK(contents);
+  Observe(contents);
+}
 
 void ParentAccessDialogResultObserver::StopObserving() {
   Observe(nullptr);
+}
+
+void ParentAccessDialogResultObserver::SetResultToError(
+    supervised_user::LocalWebApprovalErrorType error_type) {
+  error_type_ = error_type;
+  result_ = supervised_user::LocalApprovalResult::kError;
 }
 
 void ParentAccessDialogResultObserver::DidStartNavigation(
@@ -46,6 +68,8 @@ void ParentAccessDialogResultObserver::DidStartNavigation(
   if (encoded_callback.value().empty()) {
     // The `result` query param was empty.
     result_ = supervised_user::LocalApprovalResult::kError;
+    error_type_ =
+        supervised_user::LocalWebApprovalErrorType::kPacpEmptyResponse;
     return;
   }
   supervised_user::ParentAccessCallbackParsedResult callback_result =
@@ -56,8 +80,18 @@ void ParentAccessDialogResultObserver::DidStartNavigation(
   // This will be handled when the navigation completes.
   if (callback_result.GetError().has_value()) {
     result_ = supervised_user::LocalApprovalResult::kError;
-    // TODO(crbug.com/385354582): Add metrics on the error type we
-    // encountered.
+    switch (callback_result.GetError().value()) {
+      case supervised_user::ParentAccessWidgetError::kDecodingError:
+        error_type_ = supervised_user::LocalWebApprovalErrorType::
+            kFailureToDecodePacpResponse;
+        break;
+      case supervised_user::ParentAccessWidgetError::kParsingError:
+        error_type_ = supervised_user::LocalWebApprovalErrorType::
+            kFailureToParsePacpResponse;
+        break;
+      default:
+        break;
+    }
     return;
   }
   CHECK(callback_result.GetCallback().has_value());
@@ -73,8 +107,8 @@ void ParentAccessDialogResultObserver::DidStartNavigation(
     // once PACP returns it for the approval flow.
     default:
       result_ = supervised_user::LocalApprovalResult::kError;
-      // TODO(crbug.com/385354582): Add logging and handling of unexpected
-      // messages.
+      error_type_ =
+          supervised_user::LocalWebApprovalErrorType::kUnexpectedPacpResponse;
       break;
   }
 }
@@ -86,7 +120,5 @@ void ParentAccessDialogResultObserver::DidFinishNavigation(
     return;
   }
   CHECK(!url_approval_result_callback_.is_null());
-  std::move(url_approval_result_callback_).Run(result_.value());
-  result_ = std::nullopt;
-  url_approval_result_callback_.Reset();
+  std::move(url_approval_result_callback_).Run(result_.value(), error_type_);
 }

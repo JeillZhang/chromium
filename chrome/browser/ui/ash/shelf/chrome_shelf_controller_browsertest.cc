@@ -1248,12 +1248,12 @@ IN_PROC_BROWSER_TEST_F(ShelfWebAppBrowserTest, AppIDForPWA) {
   registration_waiter.AwaitRegistration();
 
   // Install PWA.
-  web_app::SetAutoAcceptPWAInstallConfirmationForTesting(true);
+  auto auto_accept_pwa_install_confirmation =
+      web_app::SetAutoAcceptPWAInstallConfirmationForTesting();
   web_app::WebAppTestInstallWithOsHooksObserver install_observer(profile());
   install_observer.BeginListening();
   chrome::ExecuteCommand(browser(), IDC_INSTALL_PWA);
   const webapps::AppId app_id = install_observer.Wait();
-  web_app::SetAutoAcceptPWAInstallConfirmationForTesting(false);
 
   // Find the native window for the app.
   gfx::NativeWindow native_window = gfx::NativeWindow();
@@ -2445,12 +2445,12 @@ IN_PROC_BROWSER_TEST_F(ShelfWebAppBrowserTest,
   ASSERT_TRUE(AddTabAtIndex(1, url, ui::PAGE_TRANSITION_LINK));
   registration_waiter.AwaitRegistration();
   // Install PWA.
-  web_app::SetAutoAcceptPWAInstallConfirmationForTesting(true);
+  auto auto_accept_pwa_install_confirmation =
+      web_app::SetAutoAcceptPWAInstallConfirmationForTesting();
   web_app::WebAppTestInstallWithOsHooksObserver install_observer(profile());
   install_observer.BeginListening();
   chrome::ExecuteCommand(browser(), IDC_INSTALL_PWA);
   const webapps::AppId app_id = install_observer.Wait();
-  web_app::SetAutoAcceptPWAInstallConfirmationForTesting(false);
 
   ash::ShelfID shelf_id(app_id);
   EXPECT_FALSE(ChromeShelfController::instance()->IsPinned(shelf_id));
@@ -2760,11 +2760,11 @@ IN_PROC_BROWSER_TEST_F(HotseatShelfAppBrowserTest, EnableChromeVox) {
   speech_monitor.Call([this]() {
     // Disable earcons (https://crbug.com/396507).
     const std::string script(R"JS(
-        let module = await import('/chromevox/background/chromevox.js');
+        let module = await import('/chromevox/mv2/background/chromevox.js');
         module.ChromeVox.earcons.playEarcon = function() {};
-        module = await import('/chromevox/background/chromevox_state.js');
+        module = await import('/chromevox/mv2/background/chromevox_state.js');
         let ChromeVoxState = module.ChromeVoxState;
-        module = await import('/chromevox/background/chromevox_range.js');
+        module = await import('/chromevox/mv2/background/chromevox_range.js');
         let ChromeVoxRange = module.ChromeVoxRange;
 
         await ChromeVoxState.ready();

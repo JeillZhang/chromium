@@ -12,8 +12,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.graphics.drawable.Drawable;
 
-import androidx.test.filters.SmallTest;
-
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -44,7 +42,7 @@ import java.util.List;
 public class TabListEditorSelectionActionUnitTest {
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
-    @Mock private SelectionDelegate<Integer> mSelectionDelegate;
+    @Mock private SelectionDelegate<TabListEditorItemSelectionId> mSelectionDelegate;
     @Mock private ActionDelegate mDelegate;
     @Mock private Profile mProfile;
     @Mock private TabGroupModelFilter mGroupFilter;
@@ -66,7 +64,6 @@ public class TabListEditorSelectionActionUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testInherentActionProperties() {
         Assert.assertEquals(
                 R.id.tab_list_editor_selection_menu_item,
@@ -89,18 +86,16 @@ public class TabListEditorSelectionActionUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testTitleStateChange() {
         // For this test we will assume there are 2 tabs.
-        List<Integer> selectedTabIds = new ArrayList<>();
+        List<TabListEditorItemSelectionId> selectedItemIds = new ArrayList<>();
 
         // 0 tabs of 2 selected.
         when(mDelegate.areAllTabsSelected()).thenReturn(false);
-        mAction.onSelectionStateChange(selectedTabIds);
+        mAction.onSelectionStateChange(selectedItemIds);
         Assert.assertEquals(
                 R.string.tab_selection_editor_select_all,
-                mAction.getPropertyModel()
-                        .get(TabListEditorActionProperties.TITLE_RESOURCE_ID));
+                mAction.getPropertyModel().get(TabListEditorActionProperties.TITLE_RESOURCE_ID));
         Assert.assertEquals(
                 true, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         Assert.assertEquals(
@@ -111,12 +106,11 @@ public class TabListEditorSelectionActionUnitTest {
                 mAction.getPropertyModel().get(TabListEditorActionProperties.ICON);
 
         // 1 tab of 2 selected.
-        selectedTabIds.add(0);
-        mAction.onSelectionStateChange(selectedTabIds);
+        selectedItemIds.add(TabListEditorItemSelectionId.createTabId(0));
+        mAction.onSelectionStateChange(selectedItemIds);
         Assert.assertEquals(
                 R.string.tab_selection_editor_select_all,
-                mAction.getPropertyModel()
-                        .get(TabListEditorActionProperties.TITLE_RESOURCE_ID));
+                mAction.getPropertyModel().get(TabListEditorActionProperties.TITLE_RESOURCE_ID));
         Assert.assertEquals(
                 true, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         Assert.assertEquals(
@@ -126,13 +120,12 @@ public class TabListEditorSelectionActionUnitTest {
                 mAction.getPropertyModel().get(TabListEditorActionProperties.ICON));
 
         // 2 tabs of 2 selected.
-        selectedTabIds.add(1);
+        selectedItemIds.add(TabListEditorItemSelectionId.createTabId(1));
         when(mDelegate.areAllTabsSelected()).thenReturn(true);
-        mAction.onSelectionStateChange(selectedTabIds);
+        mAction.onSelectionStateChange(selectedItemIds);
         Assert.assertEquals(
                 R.string.tab_selection_editor_deselect_all,
-                mAction.getPropertyModel()
-                        .get(TabListEditorActionProperties.TITLE_RESOURCE_ID));
+                mAction.getPropertyModel().get(TabListEditorActionProperties.TITLE_RESOURCE_ID));
         Assert.assertEquals(
                 true, mAction.getPropertyModel().get(TabListEditorActionProperties.ENABLED));
         Assert.assertEquals(
@@ -143,40 +136,37 @@ public class TabListEditorSelectionActionUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testSelectedAll_FromNoneSelected() {
-        List<Integer> selectedTabIds = new ArrayList<>();
+        List<TabListEditorItemSelectionId> selectedItemIds = new ArrayList<>();
         when(mDelegate.areAllTabsSelected()).thenReturn(false);
 
-        mAction.onSelectionStateChange(selectedTabIds);
+        mAction.onSelectionStateChange(selectedItemIds);
         mAction.perform();
         verify(mDelegate).selectAll();
     }
 
     @Test
-    @SmallTest
     public void testSelectedAll_FromSomeSelected() {
-        List<Integer> selectedTabIds = new ArrayList<>();
-        selectedTabIds.add(5);
-        selectedTabIds.add(3);
-        selectedTabIds.add(7);
+        List<TabListEditorItemSelectionId> selectedItemIds = new ArrayList<>();
+        selectedItemIds.add(TabListEditorItemSelectionId.createTabId(5));
+        selectedItemIds.add(TabListEditorItemSelectionId.createTabId(3));
+        selectedItemIds.add(TabListEditorItemSelectionId.createTabId(7));
         when(mDelegate.areAllTabsSelected()).thenReturn(false);
 
-        mAction.onSelectionStateChange(selectedTabIds);
+        mAction.onSelectionStateChange(selectedItemIds);
         mAction.perform();
         verify(mDelegate).selectAll();
     }
 
     @Test
-    @SmallTest
     public void testDeselectedAll_FromAllSelected() {
-        List<Integer> selectedTabIds = new ArrayList<>();
-        selectedTabIds.add(5);
-        selectedTabIds.add(3);
-        selectedTabIds.add(7);
+        List<TabListEditorItemSelectionId> selectedItemIds = new ArrayList<>();
+        selectedItemIds.add(TabListEditorItemSelectionId.createTabId(5));
+        selectedItemIds.add(TabListEditorItemSelectionId.createTabId(3));
+        selectedItemIds.add(TabListEditorItemSelectionId.createTabId(7));
         when(mDelegate.areAllTabsSelected()).thenReturn(true);
 
-        mAction.onSelectionStateChange(selectedTabIds);
+        mAction.onSelectionStateChange(selectedItemIds);
         mAction.perform();
         verify(mDelegate).deselectAll();
     }

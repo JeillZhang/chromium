@@ -30,7 +30,6 @@
 #include "net/base/schemeful_site.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
-#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -79,8 +78,7 @@ class GetStorageKeysTask
   friend class base::RefCountedThreadSafe<GetStorageKeysTask>;
   ~GetStorageKeysTask();
 
-  void OnStorageKeysObtained(blink::mojom::StorageType type,
-                             const std::set<blink::StorageKey>& storage_keys);
+  void OnStorageKeysObtained(const std::set<blink::StorageKey>& storage_keys);
 
   void OnUsageAndQuotaObtained(const blink::StorageKey& storage_key,
                                blink::mojom::QuotaStatusCode status_code,
@@ -115,14 +113,11 @@ void GetStorageKeysTask::Run() {
   content::GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE,
       base::BindOnce(
-          &QuotaManager::GetStorageKeysForType, quota_manager_,
-          blink::mojom::StorageType::kTemporary,
-          base::BindOnce(&GetStorageKeysTask::OnStorageKeysObtained, this,
-                         blink::mojom::StorageType::kTemporary)));
+          &QuotaManager::GetAllStorageKeys, quota_manager_,
+          base::BindOnce(&GetStorageKeysTask::OnStorageKeysObtained, this)));
 }
 
 void GetStorageKeysTask::OnStorageKeysObtained(
-    blink::mojom::StorageType type,
     const std::set<blink::StorageKey>& storage_keys) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   num_callbacks_to_wait_ = storage_keys.size();
@@ -130,7 +125,7 @@ void GetStorageKeysTask::OnStorageKeysObtained(
 
   for (const blink::StorageKey& storage_key : storage_keys) {
     quota_manager_->GetUsageAndQuota(
-        storage_key, type,
+        storage_key,
         base::BindOnce(&GetStorageKeysTask::OnUsageAndQuotaObtained, this,
                        storage_key));
   }
@@ -296,8 +291,7 @@ void AwQuotaManagerBridge::DeleteAllDataFramework(JNIEnv* env) {
   // (Legacy) Clear all web storage data except cookies.
   uint32_t remove_mask = StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
                          StoragePartition::REMOVE_DATA_MASK_INDEXEDDB |
-                         StoragePartition::REMOVE_DATA_MASK_LOCAL_STORAGE |
-                         StoragePartition::REMOVE_DATA_MASK_WEBSQL;
+                         StoragePartition::REMOVE_DATA_MASK_LOCAL_STORAGE;
   GetStoragePartition()->ClearData(
       remove_mask, StoragePartition::QUOTA_MANAGED_STORAGE_MASK_TEMPORARY,
       blink::StorageKey(), base::Time(), base::Time::Max(), base::DoNothing());
@@ -312,8 +306,7 @@ void AwQuotaManagerBridge::DeleteOriginFramework(
   StoragePartition* storage_partition = GetStoragePartition();
   // All (temporary) QuotaClient types.
   uint32_t remove_mask = StoragePartition::REMOVE_DATA_MASK_FILE_SYSTEMS |
-                         StoragePartition::REMOVE_DATA_MASK_INDEXEDDB |
-                         StoragePartition::REMOVE_DATA_MASK_WEBSQL;
+                         StoragePartition::REMOVE_DATA_MASK_INDEXEDDB;
   storage_partition->ClearDataForOrigin(
       remove_mask, StoragePartition::QUOTA_MANAGED_STORAGE_MASK_TEMPORARY,
       GURL(origin_string), base::DoNothing());
@@ -384,7 +377,6 @@ void AwQuotaManagerBridge::GetUsageAndQuotaForOrigin(
           &QuotaManager::GetUsageAndQuota, GetQuotaManager(),
           blink::StorageKey::CreateFirstParty(
               url::Origin::Create(GURL(origin_string))),
-          blink::mojom::StorageType::kTemporary,
           base::BindOnce(&OnUsageAndQuotaObtained, std::move(ui_callback))));
 }
 

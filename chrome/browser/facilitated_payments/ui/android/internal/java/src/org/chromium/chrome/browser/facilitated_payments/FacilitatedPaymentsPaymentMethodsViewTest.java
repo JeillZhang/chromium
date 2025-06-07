@@ -12,15 +12,16 @@ import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.assertNotNull;
 
 import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
-import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.DISMISS_HANDLER;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.FopSelectorProperties.SCREEN_ITEMS;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.ItemType.BANK_ACCOUNT;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.ItemType.CONTINUE_BUTTON;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.ItemType.EWALLET;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SCREEN;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SCREEN_VIEW_MODEL;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SURVIVES_NAVIGATION;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.ERROR_SCREEN;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.FOP_SELECTOR;
+import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.PIX_ACCOUNT_LINKING_PROMPT;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.SequenceScreen.PROGRESS_SCREEN;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.UI_EVENT_LISTENER;
 import static org.chromium.chrome.browser.facilitated_payments.FacilitatedPaymentsPaymentMethodsProperties.VISIBLE_STATE;
@@ -41,10 +42,12 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.mockito.quality.Strictness;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -146,10 +149,12 @@ public final class FacilitatedPaymentsPaymentMethodsViewTest {
     @Rule
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
 
+    @Mock private FacilitatedPaymentsPaymentMethodsComponent.Delegate mDelegateMock;
+
     private BottomSheetController mBottomSheetController;
     private BottomSheetTestSupport mSheetTestSupport;
-    private FacilitatedPaymentsPaymentMethodsView mView;
     private FacilitatedPaymentsPaymentMethodsMediator mMediator;
+    private FacilitatedPaymentsPaymentMethodsView mView;
     private PropertyModel mModel;
 
     @Before
@@ -168,12 +173,16 @@ public final class FacilitatedPaymentsPaymentMethodsViewTest {
                             new PropertyModel.Builder(
                                             FacilitatedPaymentsPaymentMethodsProperties.ALL_KEYS)
                                     .with(VISIBLE_STATE, HIDDEN)
-                                    .with(DISMISS_HANDLER, (Integer unused) -> {})
                                     .with(UI_EVENT_LISTENER, (Integer unused) -> {})
                                     .build();
                     mView =
                             new FacilitatedPaymentsPaymentMethodsView(
                                     mActivityTestRule.getActivity(), mBottomSheetController);
+                    mMediator.initialize(
+                            ContextUtils.getApplicationContext(),
+                            mModel,
+                            mDelegateMock,
+                            mActivityTestRule.getProfile(false));
                     PropertyModelChangeProcessor.create(
                             mModel,
                             mView,
@@ -260,14 +269,16 @@ public final class FacilitatedPaymentsPaymentMethodsViewTest {
 
         assertThat(getSheetItems().getChildCount(), is(2));
 
-        String expectedBankAccountSummary1 = String.format("Pix  •  %s ••••%s", "Checking", "1111");
         assertThat(getBankAccountNameAt(0).getText(), is("bankName1"));
-        assertThat(getBankAccountSummaryAt(0).getText(), is(expectedBankAccountSummary1));
+        assertThat(getBankAccountPaymentRailAt(0).getText(), is("Pix  •  "));
+        assertThat(getBankAccountTypeAt(0).getText(), is("Checking"));
+        assertThat(getBankAccountNumberAt(0).getText(), is("••••1111"));
         assertThat(getBankAccountAdditionalInfoAt(0).getText(), is("Limit per Pix R$ 500"));
 
-        String expectedBankAccountSummary2 = String.format("Pix  •  %s ••••%s", "Savings", "2222");
         assertThat(getBankAccountNameAt(1).getText(), is("bankName2"));
-        assertThat(getBankAccountSummaryAt(1).getText(), is(expectedBankAccountSummary2));
+        assertThat(getBankAccountPaymentRailAt(1).getText(), is("Pix  •  "));
+        assertThat(getBankAccountTypeAt(1).getText(), is("Savings"));
+        assertThat(getBankAccountNumberAt(1).getText(), is("••••2222"));
         assertThat(getBankAccountAdditionalInfoAt(1).getText(), is("Limit per Pix R$ 500"));
     }
 
@@ -594,6 +605,77 @@ public final class FacilitatedPaymentsPaymentMethodsViewTest {
                 is(true));
     }
 
+    @Test
+    @MediumTest
+    public void testPixAccountLinkingPromptShown() {
+        runOnUiThreadBlocking(
+                () -> {
+                    mModel.set(SCREEN, PIX_ACCOUNT_LINKING_PROMPT);
+                    mModel.set(VISIBLE_STATE, SHOWN);
+                });
+        BottomSheetTestSupport.waitForOpen(mBottomSheetController);
+
+        // Verify that the Pix account linking prompt is shown.
+        assertThat(
+                containsViewWithId(
+                        (ViewGroup) mView.getContentView(), R.id.pix_account_linking_prompt),
+                is(true));
+    }
+
+    @Test
+    @MediumTest
+    public void testPixAccountLinkingPromptContents() {
+        runOnUiThreadBlocking(
+                () -> {
+                    mModel.set(SCREEN, PIX_ACCOUNT_LINKING_PROMPT);
+                    mModel.set(VISIBLE_STATE, SHOWN);
+                });
+        BottomSheetTestSupport.waitForOpen(mBottomSheetController);
+
+        ImageView productIcon = mView.getContentView().findViewById(R.id.product_icon);
+        assertNotNull(productIcon);
+
+        TextView title = mView.getContentView().findViewById(R.id.title);
+        assertThat(title.getText(), is("Pay with Pix directly in Chrome"));
+
+        TextView valuePropMessage1 = mView.getContentView().findViewById(R.id.value_prop_message_1);
+        assertThat(valuePropMessage1.getText(), is("Enable Pix by linking your account quickly"));
+        assertNotNull(valuePropMessage1.getCompoundDrawablesRelative()[0]);
+        TextView valuePropMessage2 = mView.getContentView().findViewById(R.id.value_prop_message_2);
+        assertThat(valuePropMessage2.getText(), is("Pay in Chrome without using your bank app"));
+        assertNotNull(valuePropMessage2.getCompoundDrawablesRelative()[0]);
+        TextView valuePropMessage3 = mView.getContentView().findViewById(R.id.value_prop_message_3);
+        assertThat(valuePropMessage3.getText(), is("Encryption protects your personal info"));
+        assertNotNull(valuePropMessage3.getCompoundDrawablesRelative()[0]);
+
+        ButtonCompat acceptButton = mView.getContentView().findViewById(R.id.accept_button);
+        assertThat(acceptButton.getText(), is("Enable Pix in Wallet"));
+        ButtonCompat declineButton = mView.getContentView().findViewById(R.id.decline_button);
+        assertThat(declineButton.getText(), is("No thanks"));
+    }
+
+    @Test
+    @MediumTest
+    public void testViewLifecycleCanBeManipulatedByTheModel() {
+        // Verify that the view's initial state does not survive page navigations (does not have a
+        // custom lifecycle).
+        assertThat(mView.hasCustomLifecycle(), is(false));
+
+        runOnUiThreadBlocking(
+                () -> {
+                    mModel.set(SURVIVES_NAVIGATION, true);
+                });
+
+        assertThat(mView.hasCustomLifecycle(), is(true));
+
+        runOnUiThreadBlocking(
+                () -> {
+                    mModel.set(SURVIVES_NAVIGATION, false);
+                });
+
+        assertThat(mView.hasCustomLifecycle(), is(false));
+    }
+
     private RecyclerView getSheetItems() {
         return mView.getContentView().findViewById(R.id.sheet_item_list);
     }
@@ -606,8 +688,16 @@ public final class FacilitatedPaymentsPaymentMethodsViewTest {
         return getSheetItems().getChildAt(index).findViewById(R.id.bank_name);
     }
 
-    private TextView getBankAccountSummaryAt(int index) {
-        return getSheetItems().getChildAt(index).findViewById(R.id.bank_account_summary);
+    private TextView getBankAccountPaymentRailAt(int index) {
+        return getSheetItems().getChildAt(index).findViewById(R.id.bank_account_payment_rail);
+    }
+
+    private TextView getBankAccountTypeAt(int index) {
+        return getSheetItems().getChildAt(index).findViewById(R.id.bank_account_type);
+    }
+
+    private TextView getBankAccountNumberAt(int index) {
+        return getSheetItems().getChildAt(index).findViewById(R.id.bank_account_number);
     }
 
     private TextView getBankAccountAdditionalInfoAt(int index) {

@@ -4,6 +4,7 @@
 
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
+#include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/test/browser_test.h"
@@ -13,21 +14,14 @@
 #include "extensions/test/test_extension_dir.h"
 #include "net/dns/mock_host_resolver.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/extensions/extension_platform_apitest.h"
-#else
-#include "chrome/browser/extensions/extension_apitest.h"
+#if !BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/ui_test_utils.h"
 #endif
 
 namespace extensions {
 
-#if BUILDFLAG(IS_ANDROID)
-using ExtensionCspApiTest = ExtensionPlatformApiTest;
-#else
 using ExtensionCspApiTest = ExtensionApiTest;
-#endif
 
 IN_PROC_BROWSER_TEST_F(ExtensionCspApiTest, ContentSecurityPolicy) {
   ASSERT_TRUE(StartEmbeddedTestServer());
@@ -193,7 +187,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCspApiTest,
   console_observer.SetPattern("Refused to load the script '*");
 
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), extension->GetResourceURL("page.html")));
+      browser(), extension->ResolveExtensionURL("page.html")));
   ASSERT_TRUE(result_catcher.GetNextResult()) << result_catcher.message();
 
   EXPECT_EQ(2u, console_observer.messages().size());

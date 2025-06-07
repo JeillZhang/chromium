@@ -4,8 +4,10 @@
 
 #include "chrome/browser/ui/color/material_chrome_color_mixer.h"
 
+#include "base/feature_list.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/color/chrome_color_provider_utils.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/compose/buildflags.h"
 #include "ui/color/color_id.h"
@@ -33,6 +35,18 @@ void ApplyDefaultChromeRefreshToolbarColors(ui::ColorMixer& mixer,
   mixer[kColorAppMenuHighlightSeverityLow] = {kColorAppMenuHighlightDefault};
   mixer[kColorAppMenuHighlightSeverityMedium] = {kColorAppMenuHighlightDefault};
   mixer[kColorAppMenuHighlightSeverityHigh] = {kColorAppMenuHighlightDefault};
+
+  if (base::FeatureList::IsEnabled(
+          features::kEnableAppMenuButtonColorsForDefaultAvatarButtonStates)) {
+    mixer[kColorAvatarButtonHighlightDefaultForeground] = {
+        kColorAppMenuExpandedForegroundDefault};
+    mixer[kColorAvatarButtonHighlightDefault] = {kColorAppMenuHighlightDefault};
+  }
+
+  mixer[kColorAvatarButtonHighlightManagementForeground] = {
+      kColorAvatarButtonHighlightDefaultForeground};
+  mixer[kColorAvatarButtonHighlightManagement] = {
+      kColorAvatarButtonHighlightDefault};
 }
 
 }  // namespace
@@ -113,20 +127,11 @@ void AddMaterialChromeColorMixer(ui::ColorProvider* provider,
 
   // Profile Menu colors.
   mixer[kColorProfileMenuBackground] = {ui::kColorSysSurface};
-  mixer[kColorProfileMenuHeaderBackground] = {ui::kColorSysTonalContainer};
   mixer[kColorProfileMenuIdentityInfoBackground] = {ui::kColorSysSurface3};
   mixer[kColorProfileMenuIdentityInfoTitle] = {ui::kColorSysOnSurface};
   mixer[kColorProfileMenuIdentityInfoSubtitle] = {ui::kColorSysOnSurfaceSubtle};
-  mixer[kColorProfileMenuHeaderLabel] = {ui::kColorSysOnTonalContainer};
-  mixer[kColorProfileMenuIconButton] = {ui::kColorSysOnTonalContainer};
-  mixer[kColorProfileMenuIconButtonBackground] = {ui::kColorSysTonalContainer};
-  mixer[kColorProfileMenuIconButtonBackgroundHovered] = {
-      ui::kColorSysStateHoverOnSubtle};
-  mixer[kColorProfileMenuSyncErrorIcon] = {ui::kColorSysError};
-  mixer[kColorProfileMenuSyncIcon] = {ui::kColorMenuIcon};
-  mixer[kColorProfileMenuSyncInfoBackground] = {ui::kColorSysNeutralContainer};
-  mixer[kColorProfileMenuSyncOffIcon] = {ui::kColorMenuIcon};
-  mixer[kColorProfileMenuSyncPausedIcon] = {ui::kColorSysPrimary};
+  mixer[kColorProfileMenuSyncPromoButtonBackground] = {
+      ui::kColorSysTonalContainer};
 
   // Signin bubble colors. Main background color uses the same color as the
   // profle menu background.
@@ -138,6 +143,14 @@ void AddMaterialChromeColorMixer(ui::ColorProvider* provider,
   mixer[kColorBatchUploadBackground] = {kColorProfileMenuBackground};
   mixer[kColorBatchUploadDataBackground] = {ui::kColorSysSurface3};
   mixer[kColorBatchUploadDataSeparator] = {ui::kColorSysOnHeaderDivider};
+
+  // BNPL Issuer dialog color tokens
+  mixer[kColorBnplIssuerLabelForeground] = {ui::kColorLabelForeground};
+  mixer[kColorBnplIssuerLabelForegroundDisabled] = {
+      ui::kColorLabelForegroundDisabled};
+  mixer[kColorBnplIssuerLinkedIneligibleBackground] = {ui::kColorSysSurface2};
+  mixer[kColorBnplIssuerLinkedPillBackground] = {ui::kColorBadgeBackground};
+  mixer[kColorBnplIssuerLinkedPillForeground] = {ui::kColorBadgeForeground};
 
   // Tab Search colors.
   mixer[kColorTabSearchButtonBackground] = {ui::kColorSysSurface2};
@@ -161,6 +174,9 @@ void AddMaterialChromeColorMixer(ui::ColorProvider* provider,
   mixer[kColorTabSearchSecondaryForeground] = {ui::kColorSysOnSurfaceSubtle};
   mixer[kColorTabSearchSelected] = {ui::kColorSysPrimary};
   mixer[kColorTabSearchScrollbarThumb] = {ui::kColorSysPrimary};
+
+  // Split View Empty State colors.
+  mixer[kColorSplitViewBackground] = {ui::kColorSysSurface2};
 
   // Side Panel colors.
   mixer[kColorSidePanelBackground] = {ui::kColorSysBaseContainer};
@@ -263,16 +279,19 @@ void AddMaterialChromeColorMixer(ui::ColorProvider* provider,
       ui::kColorSysOnTonalContainer};
   mixer[kColorAppMenuChipInkDropHover] = {ui::kColorSysStateHoverOnSubtle};
   mixer[kColorAppMenuChipInkDropRipple] = {ui::kColorSysStateRipplePrimary};
-  mixer[kColorAvatarButtonHighlightNormal] = {ui::kColorSysTonalContainer};
+  if (!base::FeatureList::IsEnabled(
+          features::kEnableAppMenuButtonColorsForDefaultAvatarButtonStates)) {
+    mixer[kColorAvatarButtonHighlightDefault] = {ui::kColorSysTonalContainer};
+    mixer[kColorAvatarButtonHighlightDefaultForeground] = {
+        ui::kColorSysOnTonalContainer};
+  }
   mixer[kColorAvatarButtonHighlightSyncPaused] = {
-      kColorAvatarButtonHighlightNormal};
+      kColorAvatarButtonHighlightDefault};
   mixer[kColorAvatarButtonHighlightSigninPaused] = {
-      kColorAvatarButtonHighlightNormal};
+      kColorAvatarButtonHighlightDefault};
   mixer[kColorAvatarButtonHighlightSyncError] = {ui::kColorSysErrorContainer};
   mixer[kColorAvatarButtonHighlightIncognito] = {ui::kColorSysBaseContainer};
-  mixer[kColorAvatarButtonHighlightNormalForeground] = {
-      ui::kColorSysOnTonalContainer};
-  mixer[kColorAvatarButtonHighlightDefaultForeground] = {
+  mixer[kColorAvatarButtonHighlightGuestForeground] = {
       ui::kColorSysOnSurfaceSecondary};
   mixer[kColorAvatarButtonHighlightSyncErrorForeground] = {
       ui::kColorSysOnErrorContainer};

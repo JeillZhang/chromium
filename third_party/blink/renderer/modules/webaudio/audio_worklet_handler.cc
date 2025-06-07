@@ -2,13 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/modules/webaudio/audio_worklet_handler.h"
 
+#include "base/compiler_specific.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
@@ -51,7 +47,7 @@ AudioWorkletHandler::AudioWorkletHandler(
     String name,
     HashMap<String, scoped_refptr<AudioParamHandler>> param_handler_map,
     const AudioWorkletNodeOptions* options)
-    : AudioHandler(kNodeTypeAudioWorklet, node, sample_rate),
+    : AudioHandler(NodeType::kNodeTypeAudioWorklet, node, sample_rate),
       name_(name),
       param_handler_map_(param_handler_map),
       allow_denormal_in_processing_(base::FeatureList::IsEnabled(
@@ -161,10 +157,10 @@ void AudioWorkletHandler::ProcessInternal(uint32_t frames_to_process) {
     if (param_handler->HasSampleAccurateValues() &&
         param_handler->IsAudioRate()) {
       param_handler->CalculateSampleAccurateValues(
-          param_values->Data(), static_cast<uint32_t>(frames_to_process));
+          param_values->as_span().first(frames_to_process));
     } else {
       std::fill(param_values->Data(),
-                param_values->Data() + frames_to_process,
+                UNSAFE_TODO(param_values->Data() + frames_to_process),
                 param_handler->FinalValue());
     }
   }
@@ -174,7 +170,31 @@ void AudioWorkletHandler::ProcessInternal(uint32_t frames_to_process) {
   // won't be called again.
   if (!processor_->Process(inputs_, outputs_, param_value_map_) ||
       processor_->hasErrorOccurred()) {
-    FinishProcessorOnRenderThread();
+    // If the user-supplied code is not runnable (i.e. threw an exception)
+    // anymore after the process() call above. Invoke error on the main thread.
+    AudioWorkletProcessorErrorState error_state = processor_->GetErrorState();
+    if (error_state == AudioWorkletProcessorErrorState::kProcessError ||
+        error_state ==
+            AudioWorkletProcessorErrorState::kProcessMethodUndefinedError) {
+      PostCrossThreadTask(
+          *main_thread_task_runner_, FROM_HERE,
+          CrossThreadBindOnce(&AudioWorkletHandler::NotifyProcessorError,
+                              weak_ptr_factory_.GetWeakPtr(), error_state));
+    }
+
+    // After this point, the handler has no more pending activity and is ready
+    // for GC.
+    Context()->NotifySourceNodeFinishedProcessing(this);
+    processor_.Clear();
+    tail_time_ = 0;
+
+    // The processor is cleared, so queue a task to mark this handler (and its
+    // associated AudioWorkletNode) is ready for GC.
+    PostCrossThreadTask(
+        *main_thread_task_runner_, FROM_HERE,
+        CrossThreadBindOnce(
+            &AudioWorkletHandler::MarkProcessorInactiveOnMainThread,
+            weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -254,36 +274,6 @@ void AudioWorkletHandler::SetProcessorOnRenderThread(
             weak_ptr_factory_.GetWeakPtr(),
             AudioWorkletProcessorErrorState::kConstructionError));
   }
-}
-
-void AudioWorkletHandler::FinishProcessorOnRenderThread() {
-  DCHECK(Context()->IsAudioThread());
-
-  // If the user-supplied code is not runnable (i.e. threw an exception)
-  // anymore after the process() call above. Invoke error on the main thread.
-  AudioWorkletProcessorErrorState error_state = processor_->GetErrorState();
-  if (error_state == AudioWorkletProcessorErrorState::kProcessError ||
-      error_state ==
-          AudioWorkletProcessorErrorState::kProcessMethodUndefinedError) {
-    PostCrossThreadTask(
-        *main_thread_task_runner_, FROM_HERE,
-        CrossThreadBindOnce(&AudioWorkletHandler::NotifyProcessorError,
-                            weak_ptr_factory_.GetWeakPtr(), error_state));
-  }
-
-  // After this point, the handler has no more pending activity and is ready for
-  // GC.
-  Context()->NotifySourceNodeFinishedProcessing(this);
-  processor_.Clear();
-  tail_time_ = 0;
-
-  // The processor is cleared, so queue a task to mark this handler (and its
-  // associated AudioWorkletNode) is ready for GC.
-  PostCrossThreadTask(
-      *main_thread_task_runner_, FROM_HERE,
-      CrossThreadBindOnce(
-          &AudioWorkletHandler::MarkProcessorInactiveOnMainThread,
-          weak_ptr_factory_.GetWeakPtr()));
 }
 
 void AudioWorkletHandler::NotifyProcessorError(

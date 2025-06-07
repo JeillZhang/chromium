@@ -13,7 +13,6 @@
 #include "base/time/default_clock.h"
 #include "base/time/default_tick_clock.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_impl.h"
 #include "chrome/browser/download/download_request_limiter.h"
@@ -33,6 +32,7 @@
 #include "chrome/browser/status_icons/status_tray.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/testing_browser_process_platform_part.h"
+#include "components/application_locale_storage/application_locale_storage.h"
 #include "components/embedder_support/origin_trials/origin_trials_settings_storage.h"
 #include "components/metrics/metrics_service.h"
 #include "components/network_time/network_time_tracker.h"
@@ -58,20 +58,19 @@
 #endif
 
 #if BUILDFLAG(ENABLE_BACKGROUND_MODE)
-#include "chrome/browser/background/background_mode_manager.h"
+#include "chrome/browser/background/extensions/background_mode_manager.h"
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/apps/platform_apps/chrome_apps_browser_api_provider.h"
-#include "chrome/browser/extensions/chrome_extensions_browser_client.h"
 #include "chrome/browser/media_galleries/media_file_system_registry.h"
 #include "chrome/browser/ui/apps/chrome_app_window_client.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "components/storage_monitor/test_storage_monitor.h"
 #endif
 
-#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
-#include "chrome/browser/extensions/desktop_android/desktop_android_extensions_browser_client.h"
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+#include "chrome/browser/extensions/chrome_extensions_browser_client.h"
 #endif
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
@@ -89,12 +88,12 @@
 #endif  // BUILDFLAG(IS_CHROMEOS)
 #include "components/component_updater/component_updater_service.h"
 #include "components/keep_alive_registry/keep_alive_registry.h"
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 #include "components/enterprise/browser/controller/chrome_browser_cloud_management_controller.h"
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
 #endif
 
@@ -152,10 +151,8 @@ void TestingBrowserProcess::TearDownAndDeleteInstance() {
 }
 
 TestingBrowserProcess::TestingBrowserProcess()
-    : app_locale_("en"),
-      platform_part_(std::make_unique<TestingBrowserProcessPlatformPart>()),
-      os_crypt_async_(os_crypt_async::GetTestOSCryptAsyncForTesting()) {
-}
+    : platform_part_(std::make_unique<TestingBrowserProcessPlatformPart>()),
+      os_crypt_async_(os_crypt_async::GetTestOSCryptAsyncForTesting()) {}
 
 TestingBrowserProcess::~TestingBrowserProcess() {
   EXPECT_FALSE(local_state_);
@@ -173,6 +170,12 @@ TestingBrowserProcess::~TestingBrowserProcess() {
 }
 
 void TestingBrowserProcess::Init() {
+  features_ = GlobalFeatures::CreateGlobalFeatures();
+  features_->Init();
+
+  // Assume locale is initialized to "en" during initialization.
+  features_->application_locale_storage()->Set("en");
+
   // See comment in constructor.
   if (!network::TestNetworkConnectionTracker::HasInstance()) {
     test_network_connection_tracker_ =
@@ -181,17 +184,17 @@ void TestingBrowserProcess::Init() {
         test_network_connection_tracker_.get());
   }
 
-#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
-  extensions_browser_client_ =
-      std::make_unique<extensions::DesktopAndroidExtensionsBrowserClient>();
-  extensions::ExtensionsBrowserClient::Set(extensions_browser_client_.get());
-#elif BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
   extensions_browser_client_ =
       std::make_unique<extensions::ChromeExtensionsBrowserClient>();
+  extensions_browser_client_->Init();
+  extensions::ExtensionsBrowserClient::Set(extensions_browser_client_.get());
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions_browser_client_->AddAPIProvider(
       std::make_unique<chrome_apps::ChromeAppsBrowserAPIProvider>());
   extensions::AppWindowClient::Set(ChromeAppWindowClient::GetInstance());
-  extensions::ExtensionsBrowserClient::Set(extensions_browser_client_.get());
 #endif
 
   // Make sure permissions client has been set.
@@ -317,13 +320,13 @@ TestingBrowserProcess::browser_policy_connector() {
         chrome::DIR_POLICY_FILES, local_policy_path, true, false));
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     browser_policy_connector_ =
         std::make_unique<policy::BrowserPolicyConnectorAsh>();
 #else
     browser_policy_connector_ =
         std::make_unique<policy::ChromeBrowserPolicyConnector>();
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
     // Note: creating the ChromeBrowserPolicyConnector invokes BrowserThread::
     // GetTaskRunnerForThread(), which initializes a base::LazyInstance of
@@ -459,12 +462,16 @@ TestingBrowserProcess::background_printing_manager() {
 }
 
 const std::string& TestingBrowserProcess::GetApplicationLocale() {
-  return app_locale_;
+  CHECK(features_);
+  CHECK(features_->application_locale_storage());
+  return features_->application_locale_storage()->Get();
 }
 
 void TestingBrowserProcess::SetApplicationLocale(
     const std::string& actual_locale) {
-  app_locale_ = actual_locale;
+  CHECK(features_);
+  CHECK(features_->application_locale_storage());
+  return features_->application_locale_storage()->Set(actual_locale);
 }
 
 DownloadStatusUpdater* TestingBrowserProcess::download_status_updater() {
@@ -568,8 +575,16 @@ GlobalFeatures* TestingBrowserProcess::GetFeatures() {
 }
 
 void TestingBrowserProcess::CreateGlobalFeaturesForTesting() {
+  // To replace the GlobalFeatures, shutdown the default instance first.
+  CHECK(features_);
+  features_->Shutdown();
+  features_.reset();
+
   features_ = GlobalFeatures::CreateGlobalFeatures();
   features_->Init();
+
+  // Assume locale is initialized to "en" during initialization.
+  features_->application_locale_storage()->Set("en");
 }
 
 resource_coordinator::TabManager* TestingBrowserProcess::GetTabManager() {

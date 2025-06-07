@@ -20,11 +20,6 @@
     Boston, MA 02110-1301, USA.
 */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_GEOMETRY_LENGTH_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GEOMETRY_LENGTH_H_
 
@@ -33,6 +28,7 @@
 #include <optional>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/memory/stack_allocated.h"
 #include "base/notreached.h"
 #include "third_party/blink/renderer/platform/geometry/evaluation_input.h"
@@ -49,6 +45,10 @@ namespace blink {
 
 struct PixelsAndPercent {
   DISALLOW_NEW();
+
+  // The default constructor places this in an invalid state.
+  PixelsAndPercent() = default;
+
   explicit PixelsAndPercent(float pixels)
       : pixels(pixels),
         percent(0.0f),
@@ -88,10 +88,10 @@ struct PixelsAndPercent {
     return *this;
   }
 
-  float pixels;
-  float percent;
-  bool has_explicit_pixels;
-  bool has_explicit_percent;
+  float pixels = 0.f;
+  float percent = 0.f;
+  bool has_explicit_pixels = false;
+  bool has_explicit_percent = false;
 };
 
 class CalculationValue;
@@ -160,26 +160,26 @@ class PLATFORM_EXPORT Length {
     value_ = ClampTo<float>(v);
   }
 
-  explicit Length(scoped_refptr<const CalculationValue>);
+  explicit Length(const CalculationValue*);
 
   Length(const Length& length) {
-    memcpy(this, &length, sizeof(Length));
+    UNSAFE_TODO(memcpy(this, &length, sizeof(Length)));
     if (IsCalculated())
-      IncrementCalculatedRef();
+      IncrementCalculatedCount();
   }
 
   Length& operator=(const Length& length) {
     if (length.IsCalculated())
-      length.IncrementCalculatedRef();
+      length.IncrementCalculatedCount();
     if (IsCalculated())
-      DecrementCalculatedRef();
-    memcpy(this, &length, sizeof(Length));
+      DecrementCalculatedCount();
+    UNSAFE_TODO(memcpy(this, &length, sizeof(Length)));
     return *this;
   }
 
   ~Length() {
     if (IsCalculated())
-      DecrementCalculatedRef();
+      DecrementCalculatedCount();
   }
 
   bool operator==(const Length& o) const {
@@ -222,13 +222,6 @@ class PLATFORM_EXPORT Length {
   }
   static Length Flex(float value) { return Length(value, kFlex); }
 
-  // FIXME: Make this private (if possible) or at least rename it
-  // (http://crbug.com/432707).
-  inline float Value() const {
-    DCHECK(!IsCalculated());
-    return GetFloatValue();
-  }
-
   int IntValue() const {
     if (IsCalculated()) {
       NOTREACHED();
@@ -241,9 +234,12 @@ class PLATFORM_EXPORT Length {
     DCHECK_EQ(GetType(), kFixed);
     return GetFloatValue();
   }
-
   float Percent() const {
     DCHECK_EQ(GetType(), kPercent);
+    return GetFloatValue();
+  }
+  float Flex() const {
+    DCHECK_EQ(GetType(), kFlex);
     return GetFloatValue();
   }
 
@@ -254,7 +250,7 @@ class PLATFORM_EXPORT Length {
   // If |this| is calculated, returns the underlying |CalculationValue|. If not,
   // returns a |CalculationValue| constructed from |GetPixelsAndPercent()|. Hits
   // a DCHECK if |this| is not a specified value (e.g., 'auto').
-  scoped_refptr<const CalculationValue> AsCalculationValue() const;
+  const CalculationValue* AsCalculationValue() const;
 
   Length::Type GetType() const { return static_cast<Length::Type>(type_); }
   bool Quirk() const { return quirk_; }
@@ -300,10 +296,28 @@ class PLATFORM_EXPORT Length {
   bool HasMinIntrinsic() const { return IsMinIntrinsic(); }
   bool HasFitContent() const;
 
-  bool IsSpecified() const {
+  // CanConvertToCalculation() is true for any Lengths that are a fixed length,
+  // a percent, or a calc() expression.  Note that this *includes* calc-size()
+  // expressions that contain sizing keywords, which may not be what you want.
+  //
+  // Compare to HasOnlyFixedAndPercent.  (The difference is relevant only when
+  // sizing keywords may be present.)
+  //
+  // Note that in some contexts sizing keywords can be converted to
+  // calculation expressions, but this function does *not* return true for
+  // those cases; the caller is required to convert appropriately.
+  bool CanConvertToCalculation() const {
     return GetType() == kFixed || GetType() == kPercent ||
            GetType() == kCalculated;
   }
+
+  // HasOnlyFixedAndPercent() is true for any Lengths that are a fixed length,
+  // a percent, or calc() expressions that consist only of those.  (This
+  // excludes calc() expressions with calc-size() that depend on sizing
+  // keywords.)
+  // Compare to CanConvertToCalculation.  (The difference is relevant only
+  // when sizing keywords may be present.)
+  bool HasOnlyFixedAndPercent() const;
 
   bool IsCalculated() const { return GetType() == kCalculated; }
   bool IsCalculatedEqual(const Length&) const;
@@ -345,8 +359,8 @@ class PLATFORM_EXPORT Length {
   bool IsDeviceHeight() const { return GetType() == kDeviceHeight; }
 
   Length Blend(const Length& from, double progress, ValueRange range) const {
-    DCHECK(IsSpecified());
-    DCHECK(from.IsSpecified());
+    DCHECK(CanConvertToCalculation());
+    DCHECK(from.CanConvertToCalculation());
 
     if (progress == 0.0)
       return from;
@@ -366,12 +380,6 @@ class PLATFORM_EXPORT Length {
     return BlendSameTypes(from, progress, range);
   }
 
-  float GetFloatValue() const {
-    DCHECK(!IsNone());
-    DCHECK(!IsCalculated());
-    return value_;
-  }
-
   float NonNanCalculatedValue(float max_value, const EvaluationInput&) const;
 
   Length SubtractFromOneHundredPercent() const;
@@ -380,9 +388,19 @@ class PLATFORM_EXPORT Length {
 
   Length Zoom(double factor) const;
 
+  unsigned GetCalculatedCountForTest() const;
+
+  static wtf_size_t GetCalcHandleMapSizeForTest();
+
   WTF::String ToString() const;
 
  private:
+  float GetFloatValue() const {
+    DCHECK(!IsNone());
+    DCHECK(!IsCalculated());
+    return value_;
+  }
+
   Length BlendMixedTypes(const Length& from, double progress, ValueRange) const;
 
   Length BlendSameTypes(const Length& from, double progress, ValueRange) const;
@@ -391,8 +409,8 @@ class PLATFORM_EXPORT Length {
     DCHECK(IsCalculated());
     return calculation_handle_;
   }
-  void IncrementCalculatedRef() const;
-  void DecrementCalculatedRef() const;
+  void IncrementCalculatedCount() const;
+  void DecrementCalculatedCount() const;
 
   union {
     // If kType == kCalculated.

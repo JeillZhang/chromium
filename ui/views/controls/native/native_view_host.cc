@@ -12,6 +12,7 @@
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/views/controls/native/native_view_host_wrapper.h"
 #include "ui/views/painter.h"
 #include "ui/views/view_utils.h"
@@ -68,7 +69,7 @@ void NativeViewHost::SetParentAccessible(gfx::NativeViewAccessible accessible) {
 
 gfx::NativeViewAccessible NativeViewHost::GetParentAccessible() {
   if (!native_wrapper_) {
-    return nullptr;
+    return gfx::NativeViewAccessible();
   }
   return native_wrapper_->GetParentAccessible();
 }
@@ -94,7 +95,8 @@ void NativeViewHost::SetNativeViewSize(const gfx::Size& size) {
 }
 
 gfx::NativeView NativeViewHost::GetNativeViewContainer() const {
-  return native_view_ ? native_wrapper_->GetNativeViewContainer() : nullptr;
+  return native_view_ ? native_wrapper_->GetNativeViewContainer()
+                      : gfx::NativeView();
 }
 
 void NativeViewHost::NativeViewDestroyed() {
@@ -287,7 +289,7 @@ void NativeViewHost::Detach(bool destroyed) {
       ClearFocus();
     }
     native_wrapper_->NativeViewDetaching(destroyed);
-    native_view_ = nullptr;
+    native_view_ = gfx::NativeView();
   }
 }
 
@@ -297,8 +299,7 @@ void NativeViewHost::ClearFocus() {
     return;
   }
 
-  Widget::Widgets widgets;
-  Widget::GetAllChildWidgets(native_view(), &widgets);
+  Widget::Widgets widgets = Widget::GetAllChildWidgets(native_view());
   for (Widget* widget : widgets) {
     focus_manager->ViewRemoved(widget->GetRootView());
     if (!focus_manager->GetFocusedView()) {

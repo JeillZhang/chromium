@@ -37,6 +37,7 @@ bool IsSystemWebUIHost(std::string_view host) {
       kChromeUIBluetoothPairingHost,
       kChromeUIBorealisCreditsHost,
       kChromeUIBorealisInstallerHost,
+      kChromeUIBorealisMOTDHost,
       kChromeUICertificateManagerHost,
       kChromeUICloudUploadHost,
       kChromeUICrostiniCreditsHost,
@@ -73,6 +74,7 @@ base::span<const base::cstring_view> ChromeURLHosts() {
   static constexpr auto kChromeURLHosts = std::to_array<base::cstring_view>({
       kChromeUIAboutHost,
       kChromeUIAccessibilityHost,
+      kChromeUIActorInternalsHost,
 #if !BUILDFLAG(IS_ANDROID)
       kChromeUIAppServiceInternalsHost,
 #endif
@@ -194,6 +196,9 @@ base::span<const base::cstring_view> ChromeURLHosts() {
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
     BUILDFLAG(IS_CHROMEOS)
       kChromeUIConnectorsInternalsHost,
+#endif
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_DESKTOP_ANDROID)
       kChromeUIDiscardsHost,
 #endif
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
@@ -212,7 +217,7 @@ base::span<const base::cstring_view> ChromeURLHosts() {
 #if BUILDFLAG(ENABLE_NACL)
       kChromeUINaClHost,
 #endif
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
       kChromeUIExtensionsHost,
       kChromeUIExtensionsInternalsHost,
 #endif

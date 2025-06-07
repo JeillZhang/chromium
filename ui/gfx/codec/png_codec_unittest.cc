@@ -31,7 +31,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/libpng/png.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "third_party/skia/include/core/SkColorPriv.h"
 #include "third_party/skia/include/core/SkUnPreMultiply.h"
 #include "third_party/zlib/zlib.h"
 #include "ui/gfx/geometry/size.h"
@@ -783,7 +782,7 @@ TEST_P(PNGCodecTest, DecodeInterlacedRGBAtoSkBitmap_Transparent) {
   DecodeInterlacedRGBAtoSkBitmap(/*use_transparency=*/true);
 }
 
-TEST(PNGCodec, EncoderSavesImagesWithAllOpaquePixelsAsOpaque) {
+TEST_P(PNGCodecTest, EncoderSavesImagesWithAllOpaquePixelsAsOpaque) {
   constexpr int kWidth = 20;
   constexpr int kHeight = 20;
 

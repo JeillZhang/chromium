@@ -22,11 +22,13 @@ import android.os.Handler;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.Robolectric;
 import org.robolectric.annotation.Config;
 
@@ -42,6 +44,7 @@ import org.chromium.chrome.browser.status_indicator.StatusIndicatorCoordinator;
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class OfflineIndicatorControllerV2UnitTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private StatusIndicatorCoordinator mStatusIndicator;
     @Mock private ConnectivityDetector mConnectivityDetector;
     @Mock private OfflineDetector mOfflineDetector;
@@ -50,7 +53,7 @@ public class OfflineIndicatorControllerV2UnitTest {
     @Mock private OfflineIndicatorMetricsDelegate mMetricsDelegate;
 
     private Context mContext;
-    private ObservableSupplierImpl<Boolean> mIsUrlBarFocusedSupplier =
+    private final ObservableSupplierImpl<Boolean> mIsUrlBarFocusedSupplier =
             new ObservableSupplierImpl<>();
     private OfflineIndicatorControllerV2 mController;
     private long mElapsedTimeMs;
@@ -59,7 +62,6 @@ public class OfflineIndicatorControllerV2UnitTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         mContext = Robolectric.buildActivity(Activity.class).get();
         mContext.setTheme(R.style.Theme_BrowserUI_DayNight);
 

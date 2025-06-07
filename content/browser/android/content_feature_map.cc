@@ -22,20 +22,22 @@ namespace {
 // this array may either refer to features defined in the header of this file or
 // in other locations in the code base (e.g. content_features.h).
 const base::Feature* const kFeaturesExposedToJava[] = {
-    &blink::features::kCursorAnchorInfoMojoPipe,
     &blink::features::kDevicePosture,
+    &blink::features::kSecurePaymentConfirmationNetworkAndIssuerIcons,
     &blink::features::kSecurePaymentConfirmationBrowserBoundKeys,
-    &blink::features::kStylusRichGestures,
     &blink::features::kViewportSegments,
     &input::features::kInputOnViz,
+    &features::kAccessibilityDeprecateJavaNodeCache,
     &features::kAccessibilityDeprecateTypeAnnounce,
     &features::kAccessibilityIncludeLongClickAction,
     &features::kAccessibilityPageZoomV2,
+    &features::kAccessibilityPopulateSupplementalDescriptionApi,
     &features::kAccessibilityUnifiedSnapshots,
     &features::kAccessibilityManageBroadcastReceiverOnBackground,
     &features::kAndroidFallbackToNextSlot,
     &features::kAndroidOpenPdfInline,
     &features::kFedCm,
+    &features::kGroupRebindingForGroupImportance,
     &features::kHidePastePopupOnGSB,
     &features::kReduceGpuPriorityOnBackground,
     &features::kContinueGestureOnLosingFocus,
@@ -44,6 +46,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &features::kWebBluetoothNewPermissionsBackend,
     &features::kWebIdentityDigitalCredentials,
     &features::kBtmTtl,
+    &features::kSpareRendererProcessPriority,
 };
 
 // static

@@ -7,6 +7,7 @@
 
 #include "base/feature_list.h"
 #include "build/build_config.h"
+#include "build/buildflag.h"
 
 namespace switches {
 
@@ -26,11 +27,18 @@ inline constexpr char kDefaultListCountryOverride[] = "DEFAULT_EEA";
 inline constexpr char kEeaListCountryOverride[] = "EEA_ALL";
 
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
-// When the `country_codes::kCountryIDUnknown` is stored in prefs and this
+// When an invalid `country_codes::CountryId` is stored in prefs and this
 // feature is enabled the pref will be cleared allowing a valid country to be
 // set again.
 BASE_DECLARE_FEATURE(kClearPrefForUnknownCountry);
 #endif
+
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
+// Use finch permanent country instead of finch latest country for fetching
+// country ID.
+BASE_DECLARE_FEATURE(kUseFinchPermanentCountryForFetchCountryId);
+#endif
+
 }  // namespace switches
 
 #endif  // COMPONENTS_REGIONAL_CAPABILITIES_REGIONAL_CAPABILITIES_SWITCHES_H_

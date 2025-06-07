@@ -8,11 +8,16 @@
 #include <set>
 
 #include "base/base64.h"
+#include "base/containers/extend.h"
 #include "base/feature_list.h"
 #include "base/i18n/case_conversion.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/affiliations/core/browser/affiliation_utils.h"
+#include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/integrators/identity_credential/identity_credential_delegate.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
+#include "components/password_manager/content/common/web_ui_constants.h"
 #include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_driver.h"
@@ -22,6 +27,8 @@
 #include "components/password_manager/core/browser/ui/credential_ui_entry.h"
 #include "components/password_manager/core/browser/webauthn_credentials_delegate.h"
 #include "components/password_manager/core/common/password_manager_constants.h"
+#include "components/signin/public/base/consent_level.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/sync/base/features.h"
 #include "components/sync/service/sync_service.h"
 #include "components/sync/service/sync_user_settings.h"
@@ -29,6 +36,9 @@
 #include "url/gurl.h"
 
 namespace password_manager {
+
+const char kReauthPromoHistogramName[] =
+    "PasswordManager.PasswordFilling.ReauthPromo";
 
 namespace {
 
@@ -251,13 +261,60 @@ void AppendManualFallbackSuggestions(
   }
 }
 
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+// Entry that prompts users in pending state to signin to access passwords
+// in their account
+void CreateEntryForPendingStateSignin(std::vector<Suggestion>& suggestions) {
+  if (!suggestions.empty()) {
+    Suggestion separator(SuggestionType::kSeparator);
+    suggestions.push_back(std::move(separator));
+  }
+
+  Suggestion suggestion;
+  suggestion.main_text = Suggestion::Text(
+      l10n_util::GetStringUTF16(IDS_PASSWORD_MANAGER_PENDING_STATE),
+      Suggestion::Text::IsPrimary(true),
+      Suggestion::Text::ShouldTruncate(false));
+  suggestion.icon = Suggestion::Icon::kGoogle;
+  suggestion.type = SuggestionType::kPendingStateSignin;
+
+  suggestions.emplace_back(std::move(suggestion));
+}
+
+bool CanShowPendingStatePromo(const PasswordManagerClient& password_client) {
+  const bool is_sync_passwords_enabled =
+      password_client.GetSyncService() &&
+      password_manager::sync_util::HasChosenToSyncPasswords(
+          password_client.GetSyncService());
+
+  // Pending state promo should not be shown on the gaia sign in page or in the
+  // password manager
+  const bool is_external_url =
+      !gaia::HasGaiaSchemeHostPort(password_client.GetLastCommittedURL()) &&
+      password_client.GetLastCommittedURL().host_piece() !=
+          password_manager::kChromeUIPasswordManagerHost;
+
+  return password_client.GetIdentityManager()
+             ->HasAccountWithRefreshTokenInPersistentErrorState(
+                 password_client.GetIdentityManager()->GetPrimaryAccountId(
+                     signin::ConsentLevel::kSignin)) &&
+         is_sync_passwords_enabled && is_external_url;
+}
+
+void RecordPendingStatePromoHistogram(FillingReauthPromoShown sample) {
+  base::UmaHistogramEnumeration(kReauthPromoHistogramName, sample);
+}
+
+#endif
 }  // namespace
 
 PasswordSuggestionGenerator::PasswordSuggestionGenerator(
     PasswordManagerDriver* password_manager_driver,
-    PasswordManagerClient* password_client)
+    PasswordManagerClient* password_client,
+    autofill::AutofillClient* autofill_client)
     : password_manager_driver_(password_manager_driver),
-      password_client_{password_client} {}
+      password_client_{password_client},
+      autofill_client_{autofill_client} {}
 
 std::vector<Suggestion> PasswordSuggestionGenerator::GetSuggestionsForDomain(
     base::optional_ref<const autofill::PasswordFormFillData> fill_data,
@@ -265,7 +322,8 @@ std::vector<Suggestion> PasswordSuggestionGenerator::GetSuggestionsForDomain(
     const std::u16string& username_filter,
     OffersGeneration offers_generation,
     ShowPasswordSuggestions show_password_suggestions,
-    ShowWebAuthnCredentials show_webauthn_credentials) const {
+    ShowWebAuthnCredentials show_webauthn_credentials,
+    ShowIdentityCredentials show_identity_credentials) const {
   std::vector<Suggestion> suggestions;
 
   // Add WebAuthn credentials suitable for an ongoing request if available.
@@ -283,7 +341,7 @@ std::vector<Suggestion> PasswordSuggestionGenerator::GetSuggestionsForDomain(
       uses_passkeys = true;
 #endif
       std::ranges::transform(
-          *delegate->GetPasskeys(), std::back_inserter(suggestions),
+          *delegate->GetPasskeys().value(), std::back_inserter(suggestions),
           [&page_favicon](const auto& passkey) {
             Suggestion suggestion(
                 base::UTF16ToUTF8(ToUsernameString(passkey.username())),
@@ -299,8 +357,24 @@ std::vector<Suggestion> PasswordSuggestionGenerator::GetSuggestionsForDomain(
     }
   }
 
+  // Add federated identity credentials.
+  const autofill::IdentityCredentialDelegate* identity_credential_delegate =
+      autofill_client_->GetIdentityCredentialDelegate();
+  if (show_identity_credentials && identity_credential_delegate) {
+    base::Extend(suggestions,
+                 identity_credential_delegate->GetVerifiedAutofillSuggestions(
+                     autofill::FieldType::PASSWORD));
+  }
+
   if (!fill_data.has_value() && !uses_passkeys && suggestions.empty()) {
     // Probably the credential was deleted in the mean time.
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+    if (CanShowPendingStatePromo(*password_client_)) {
+      RecordPendingStatePromoHistogram(FillingReauthPromoShown::kShownAlone);
+      CreateEntryForPendingStateSignin(suggestions);
+    }
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+
     return suggestions;
   }
 
@@ -321,7 +395,7 @@ std::vector<Suggestion> PasswordSuggestionGenerator::GetSuggestionsForDomain(
 #endif  //! BUILDFLAG(IS_IOS)
     if (passkey_from_another_device_in_autofill) {
       bool listed_passkeys = delegate->GetPasskeys().has_value() &&
-                             delegate->GetPasskeys()->size() > 0;
+                             delegate->GetPasskeys().value()->size() > 0;
       suggestions.emplace_back(
           CreatePasskeyFromAnotherDeviceEntry(listed_passkeys));
     }
@@ -335,6 +409,19 @@ std::vector<Suggestion> PasswordSuggestionGenerator::GetSuggestionsForDomain(
 
   // Add "Manage all passwords" link to settings.
   MaybeAppendManagePasswordsEntry(&suggestions);
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+  if (CanShowPendingStatePromo(*password_client_)) {
+    RecordPendingStatePromoHistogram(
+        suggestions.empty()
+            ? FillingReauthPromoShown::kShownAlone
+            : FillingReauthPromoShown::kShownWithOtherSuggestions);
+
+    CreateEntryForPendingStateSignin(suggestions);
+  } else if (!suggestions.empty()) {
+    RecordPendingStatePromoHistogram(FillingReauthPromoShown::kNotShown);
+  }
+#endif
 
   return suggestions;
 }

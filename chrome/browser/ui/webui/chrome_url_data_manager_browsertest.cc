@@ -7,7 +7,10 @@
 #include <string_view>
 #include <utility>
 
+#include "base/containers/contains.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/scoped_run_loop_timeout.h"
+#include "base/test/test_timeouts.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -24,6 +27,7 @@
 #include "components/nacl/common/buildflags.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/password_manager/core/common/password_manager_features.h"
+#include "components/regional_capabilities/regional_capabilities_switches.h"
 #include "components/search/ntp_features.h"
 #include "components/search_engines/search_engines_switches.h"
 #include "content/public/browser/navigation_details.h"
@@ -176,6 +180,16 @@ IN_PROC_BROWSER_TEST_F(ChromeURLDataManagerTest, LargeResourceScale) {
 class PrefService;
 #endif
 
+// URLs known to be slow to load leading to test flakiness.
+static constexpr const char* const kSlowChromeUrls[] = {
+#if BUILDFLAG(IS_LINUX)
+    "chrome://prefs-internals",
+#else
+    // Placeholder entry to prevent zero-sized array which causes template
+    // instantiation failures with std::ranges algorithms in base::Contains.
+    "",
+#endif
+};
 class ChromeURLDataManagerWebUITrustedTypesTest
     : public InProcessBrowserTest,
       public testing::WithParamInterface<const char*> {
@@ -199,6 +213,12 @@ class ChromeURLDataManagerWebUITrustedTypesTest
   }
 
   void CheckNoTrustedTypesViolation(std::string_view url) {
+    std::unique_ptr<base::test::ScopedRunLoopTimeout> timeout;
+    if (base::Contains(kSlowChromeUrls, url)) {
+      timeout = std::make_unique<base::test::ScopedRunLoopTimeout>(
+          FROM_HERE, GetSlowTestTimeout());
+    }
+
     const std::string kMessageFilter =
         "*Refused to create a TrustedTypePolicy*";
     content::WebContents* content =
@@ -213,6 +233,12 @@ class ChromeURLDataManagerWebUITrustedTypesTest
   }
 
   void CheckTrustedTypesEnabled(std::string_view url) {
+    std::unique_ptr<base::test::ScopedRunLoopTimeout> timeout;
+    if (base::Contains(kSlowChromeUrls, url)) {
+      timeout = std::make_unique<base::test::ScopedRunLoopTimeout>(
+          FROM_HERE, GetSlowTestTimeout());
+    }
+
     content::WebContents* content =
         browser()->tab_strip_model()->GetActiveWebContents();
     ASSERT_TRUE(embedded_test_server()->Start());
@@ -281,6 +307,12 @@ class ChromeURLDataManagerWebUITrustedTypesTest
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
  private:
+  // `BrowserTestBase::ProxyRunTestOnMainThreadLoop()` uses a reduced timeout
+  // which can cause some of these tests to be flaky.
+  static base::TimeDelta GetSlowTestTimeout() {
+    return TestTimeouts::test_launcher_timeout();
+  }
+
   base::test::ScopedFeatureList feature_list_;
 #if !BUILDFLAG(IS_CHROMEOS)
   policy::FakeBrowserDMTokenStorage fake_dm_token_storage_;
@@ -321,6 +353,7 @@ static constexpr const char* const kChromeUrls[] = {
     "chrome://credits",
 #endif
     "chrome://customize-chrome-side-panel.top-chrome",
+    "chrome://debug-webuis-disabled",
     "chrome://device-log",
     // TODO(crbug.com/40710256): Test failure due to excessive output.
     // "chrome://discards",
@@ -507,8 +540,9 @@ static constexpr const char* const kChromeUrls[] = {
 // "chrome://chrome-signin",
 #endif
 #if BUILDFLAG(ENABLE_DICE_SUPPORT) && !BUILDFLAG(IS_CHROMEOS)
-// TODO(crbug.com/40250068): Uncomment when TrustedTypes are enabled.
-// "chrome://chrome-signin/?reason=5",
+    // TODO(crbug.com/40250068): Uncomment when TrustedTypes are enabled.
+    // "chrome://chrome-signin/?reason=5",
+    "chrome://signout-confirmation",
 #endif
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
     "chrome://webuijserror",

@@ -14,6 +14,7 @@
 #include "base/containers/flat_map.h"
 #include "base/feature_list.h"
 #include "base/no_destructor.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
@@ -71,10 +72,6 @@ BASE_FEATURE(kFallbackToAudioTabMirroring,
 #else
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_CHROMEOS)
-
-BASE_FEATURE(kCastSilentlyRemoveVcOnNavigation,
-             "CastSilentlyRemoveVcOnNavigation",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 #endif  // !BUILDFLAG(IS_ANDROID)
 

@@ -19,8 +19,10 @@ MIXIN_GROUPS = {
     'gpu': [
         # ChromeOS amd64-generic omitted since it is run on GCE instances.
         # ChromeOS volteer omitted since it runs in Skylab.
+        # TODO(crbug.com/416556639): Remove Oreo and Pie related mixins.
         'chromium_nexus_5x_oreo',
         'chromium_pixel_2_pie',
+        'chromium_pixel_2_q',
         'gpu_nvidia_shield_tv_stable',
         'gpu_pixel_4_stable',
         'gpu_pixel_6_experimental',
@@ -30,6 +32,7 @@ MIXIN_GROUPS = {
         'gpu_samsung_s23_stable',
         'gpu_samsung_s24_stable',
         'linux_amd_rx_5500_xt',
+        'linux_amd_rx_7600_stable',
         'linux_intel_uhd_630_experimental',
         'linux_intel_uhd_630_stable',
         'linux_intel_uhd_770_stable',
@@ -39,19 +42,19 @@ MIXIN_GROUPS = {
         'mac_arm64_apple_m1_gpu_stable',
         'mac_arm64_apple_m2_retina_gpu_experimental',
         'mac_arm64_apple_m2_retina_gpu_stable',
+        'mac_arm64_apple_m3_retina_gpu_stable',
         'mac_mini_intel_gpu_experimental',
         'mac_mini_intel_gpu_stable',
         'mac_pro_amd_gpu',
         'mac_retina_amd_gpu_experimental',
         'mac_retina_amd_gpu_stable',
-        'mac_retina_nvidia_gpu_experimental',
-        'mac_retina_nvidia_gpu_stable',
         'win10_amd_rx_5500_xt_stable',
         'win10_intel_uhd_630_experimental',
         'win10_intel_uhd_630_stable',
         'win10_intel_uhd_770_stable',
         'win10_nvidia_gtx_1660_experimental',
         'win10_nvidia_gtx_1660_stable',
+        'win11_amd_rx_7600_stable',
         'win11_nvidia_rtx_4070_super_stable',
         'win11_qualcomm_adreno_690_stable',
     ],
@@ -113,7 +116,7 @@ def ParseArgs() -> argparse.Namespace:
   detection_modifiers.add_argument(
       '--random-chance-probability-threshold',
       type=float,
-      default=0.0005,
+      default=0.0001,
       help=('Used with the random chance detection method. Sets how unlikely '
             'it has to be that a bot randomly got at least as many failures as '
             'it did in order for it to be considered bad.'))

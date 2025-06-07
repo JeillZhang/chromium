@@ -88,10 +88,6 @@
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "third_party/blink/renderer/bindings/modules/v8/v8_public_key_credential_rp_entity.h"
-#endif
-
 namespace blink {
 
 namespace {
@@ -501,7 +497,7 @@ void OnRequestToken(std::unique_ptr<ScopedPromiseResolver> scoped_resolver,
       return;
     }
     case RequestTokenStatus::kError: {
-      if (!RuntimeEnabledFeatures::FedCmErrorEnabled() || !error) {
+      if (!error) {
         resolver->Reject(MakeGarbageCollected<DOMException>(
             DOMExceptionCode::kNetworkError, "Error retrieving a token."));
         return;
@@ -541,6 +537,8 @@ void OnPreventSilentAccessComplete(
 
 void OnGetComplete(std::unique_ptr<ScopedPromiseResolver> scoped_resolver,
                    RequiredOriginType required_origin_type,
+                   Mediation mediation,
+
                    CredentialManagerError error,
                    CredentialInfoPtr credential_info) {
   auto* resolver =
@@ -549,12 +547,20 @@ void OnGetComplete(std::unique_ptr<ScopedPromiseResolver> scoped_resolver,
   AssertSecurityRequirementsBeforeResponse(resolver, required_origin_type);
   if (error != CredentialManagerError::SUCCESS) {
     DCHECK(!credential_info);
+    if (mediation == Mediation::IMMEDIATE) {
+      UseCounter::Count(resolver->GetExecutionContext(),
+                        WebFeature::kCredentialsGetImmediateMediationFailure);
+    }
     resolver->Reject(CredentialManagerErrorToDOMException(error));
     return;
   }
   DCHECK(credential_info);
   UseCounter::Count(resolver->GetExecutionContext(),
                     WebFeature::kCredentialManagerGetReturnedCredential);
+  if (mediation == Mediation::IMMEDIATE) {
+    UseCounter::Count(resolver->GetExecutionContext(),
+                      WebFeature::kCredentialsGetImmediateMediationPasswordSuccess);
+  }
   resolver->Resolve(mojo::ConvertTo<Credential*>(std::move(credential_info)));
 }
 
@@ -645,8 +651,6 @@ void OnMakePublicKeyCredentialComplete(
     extension_outputs->setCredBlob(credential->cred_blob);
   }
   if (credential->echo_large_blob) {
-    DCHECK(
-        RuntimeEnabledFeatures::WebAuthenticationLargeBlobExtensionEnabled());
     AuthenticationExtensionsLargeBlobOutputs* large_blob_outputs =
         AuthenticationExtensionsLargeBlobOutputs::Create();
     large_blob_outputs->setSupported(credential->supports_large_blob);
@@ -772,6 +776,9 @@ void OnGetAssertionComplete(
     if (mediation == Mediation::CONDITIONAL) {
       UseCounter::Count(resolver->GetExecutionContext(),
                         WebFeature::kWebAuthnConditionalUiGetSuccess);
+    } else if (mediation == Mediation::IMMEDIATE) {
+      UseCounter::Count(resolver->GetExecutionContext(),
+                        WebFeature::kCredentialsGetImmediateMediationPublicKeySuccess);
     }
 
     auto* authenticator_response =
@@ -795,6 +802,10 @@ void OnGetAssertionComplete(
         authenticator_response, credential->authenticator_attachment,
         extension_outputs));
     return;
+  }
+  if (mediation == Mediation::IMMEDIATE) {
+    UseCounter::Count(resolver->GetExecutionContext(),
+                      WebFeature::kCredentialsGetImmediateMediationFailure);
   }
   DCHECK(!credential);
   AbortSignal* signal =
@@ -832,7 +843,7 @@ void OnAuthenticatorGetCredentialComplete(
   auto password_response =
       std::move(get_credential_response->get_password_response());
   OnGetComplete(std::move(scoped_resolver), RequiredOriginType::kSecure,
-                CredentialManagerError::SUCCESS, std::move(password_response));
+                mediation, CredentialManagerError::SUCCESS, std::move(password_response));
 }
 
 void OnSmsReceive(ScriptPromiseResolver<IDLNullable<Credential>>* resolver,
@@ -896,7 +907,9 @@ bool IsPaymentExtensionValid(const CredentialCreationOptions* options,
   // |AuthenticationCredentialsContainer::create|, which throws a
   // NotAllowedError rather than a SecurityError like the SPC spec currently
   // requires.
-  if (!IsSameSecurityOriginWithAncestors(
+  if (!RuntimeEnabledFeatures::
+          WebAuthenticationAlignErrorTypeForPaymentCredentialCreateEnabled() &&
+      !IsSameSecurityOriginWithAncestors(
           To<LocalDOMWindow>(resolver->GetExecutionContext())->GetFrame())) {
     bool has_user_activation = LocalFrame::ConsumeTransientUserActivation(
         To<LocalDOMWindow>(resolver->GetExecutionContext())->GetFrame(),
@@ -1012,7 +1025,7 @@ const char* validateGetPublicKeyCredentialPRFExtension(
 
   if (prf.hasEvalByCredential()) {
     for (const auto& pair : prf.evalByCredential()) {
-      Vector<char> cred_id;
+      Vector<uint8_t> cred_id;
       if (!pair.first.Is8Bit() ||
           !WTF::Base64UnpaddedURLDecode(pair.first, cred_id)) {
         return "'prf' extension contains invalid base64url data in "
@@ -1034,6 +1047,21 @@ const char* validateGetPublicKeyCredentialPRFExtension(
     }
   }
   return nullptr;
+}
+
+void EmitImmediateMediationUseCounters(
+    ExecutionContext* context,
+    const CredentialRequestOptions* options) {
+  CHECK(options->hasMediation() && options->mediation() == "immediate");
+  if (options->hasPublicKey() && options->password()) {
+    UseCounter::Count(
+        context,
+        WebFeature::kCredentialsGetImmediateMediationWithWebAuthnAndPasswords);
+  } else if (options->hasPublicKey()) {
+    UseCounter::Count(
+        context, WebFeature::kCredentialsGetImmediateMediationWithWebAuthnOnly);
+  }
+  // TODO(crbug.com/392549444): Add other combinations.
 }
 
 }  // namespace
@@ -1206,7 +1234,7 @@ DOMException* AuthenticatorStatusToDOMException(
           "to the credential manager.");
     case AuthenticatorStatus::IMMEDIATE_NOT_FOUND:
       return MakeGarbageCollected<DOMException>(
-          DOMExceptionCode::kNotFoundError,
+          DOMExceptionCode::kNotAllowedError,
           "No immediate discoverable credentials are found.");
   }
   return nullptr;
@@ -1359,8 +1387,6 @@ ScriptPromise<IDLNullable<Credential>> AuthenticationCredentialsContainer::get(
       options->federated()->providers().size() > 0 && !options->hasIdentity()) {
     UseCounter::Count(
         context, WebFeature::kCredentialManagerGetLegacyFederatedCredential);
-    requested_credential_types |=
-        static_cast<int>(mojom::blink::CredentialTypeFlags::kFederated);
   }
 
   if (options->hasPublicKey()) {
@@ -1375,15 +1401,12 @@ ScriptPromise<IDLNullable<Credential>> AuthenticationCredentialsContainer::get(
         static_cast<int>(mojom::blink::CredentialTypeFlags::kPassword);
   }
 
-  bool ambient_request_enabled = false;
+  // TODO(crbug.com/358119268): For prototyping, any conditionally-mediated
+  // request that contains both password and publicKey credential types is
+  // assumed to be ambient, when the flag is on. This will change.
   if (RuntimeEnabledFeatures::WebAuthenticationAmbientEnabled() &&
       options->hasPublicKey() && options->hasPassword() &&
       options->password() && options->mediation() == "conditional") {
-    // TODO(crbug.com/358119268): For prototyping we allow this for all
-    // conditionally-mediated requests that contain both credential types. This
-    // will change.
-    ambient_request_enabled = true;
-
     // Unsupported ambient credential types:
     if (options->hasOtp() || options->hasIdentity() ||
         (options->publicKey()->hasExtensions() &&
@@ -1446,8 +1469,6 @@ ScriptPromise<IDLNullable<Credential>> AuthenticationCredentialsContainer::get(
         return promise;
       }
       if (options->publicKey()->extensions()->hasLargeBlob()) {
-        DCHECK(RuntimeEnabledFeatures::
-                   WebAuthenticationLargeBlobExtensionEnabled());
         if (options->publicKey()->extensions()->largeBlob()->hasSupport()) {
           resolver->Reject(MakeGarbageCollected<DOMException>(
               DOMExceptionCode::kNotSupportedError,
@@ -1525,8 +1546,10 @@ ScriptPromise<IDLNullable<Credential>> AuthenticationCredentialsContainer::get(
       CredentialMetrics::From(script_state).RecordWebAuthnConditionalUiCall();
       mediation = Mediation::CONDITIONAL;
     } else if (options->mediation() == "immediate") {
-      if (RuntimeEnabledFeatures::WebAuthenticationImmediateGetEnabled()) {
+      if (RuntimeEnabledFeatures::WebAuthenticationImmediateGetEnabled(
+              context)) {
         mediation = Mediation::IMMEDIATE;
+        EmitImmediateMediationUseCounters(context, options);
       } else {
         resolver->Reject(MakeGarbageCollected<DOMException>(
             DOMExceptionCode::kNotSupportedError, "Not implemented"));
@@ -1579,11 +1602,8 @@ ScriptPromise<IDLNullable<Credential>> AuthenticationCredentialsContainer::get(
       resolver->Reject(MakeGarbageCollected<DOMException>(
           DOMExceptionCode::kNotSupportedError,
           "Required parameters missing in 'options.publicKey'."));
-      return promise;
     }
-    if (!ambient_request_enabled) {
-      return promise;
-    }
+    return promise;
   }
 
   if (options->hasOtp() && options->otp()->hasTransport()) {
@@ -1626,7 +1646,7 @@ ScriptPromise<IDLNullable<Credential>> AuthenticationCredentialsContainer::get(
     }
   }
   CredentialMediationRequirement requirement;
-  if (!ambient_request_enabled && options->mediation() == "conditional") {
+  if (options->mediation() == "conditional") {
     resolver->Reject(MakeGarbageCollected<DOMException>(
         DOMExceptionCode::kNotSupportedError,
         "Conditional mediation is not supported for this credential type"));
@@ -1640,22 +1660,20 @@ ScriptPromise<IDLNullable<Credential>> AuthenticationCredentialsContainer::get(
     UseCounter::Count(context,
                       WebFeature::kCredentialManagerGetMediationOptional);
     requirement = CredentialMediationRequirement::kOptional;
-  } else if (options->mediation() == "required") {
+  } else {
+    CHECK_EQ("required", options->mediation());
     UseCounter::Count(context,
                       WebFeature::kCredentialManagerGetMediationRequired);
-    requirement = CredentialMediationRequirement::kRequired;
-  } else {
-    CHECK_EQ("conditional", options->mediation());
     requirement = CredentialMediationRequirement::kRequired;
   }
 
   auto* credential_manager =
       CredentialManagerProxy::From(script_state)->CredentialManager();
   credential_manager->Get(
-      requirement, requested_credential_types, std::move(providers),
+      requirement, options->password(), std::move(providers),
       WTF::BindOnce(&OnGetComplete,
                     std::make_unique<ScopedPromiseResolver>(resolver),
-                    required_origin_type));
+                    required_origin_type, Mediation::MODAL));
 
   return promise;
 }
@@ -1892,10 +1910,13 @@ AuthenticationCredentialsContainer::create(
   // TODO(crbug.com/1512245): This check should be used for payment credentials
   // as well, but currently the SPC spec expects a SecurityError rather than
   // NotAllowedError.
+  bool has_payment_extension = options->publicKey()->hasExtensions() &&
+                               options->publicKey()->extensions()->hasPayment();
   if (!IsSameSecurityOriginWithAncestors(
           To<LocalDOMWindow>(resolver->GetExecutionContext())->GetFrame()) &&
-      (!options->publicKey()->hasExtensions() ||
-       !options->publicKey()->extensions()->hasPayment())) {
+      (RuntimeEnabledFeatures::
+           WebAuthenticationAlignErrorTypeForPaymentCredentialCreateEnabled() ||
+       !has_payment_extension)) {
     bool has_user_activation = LocalFrame::ConsumeTransientUserActivation(
         To<LocalDOMWindow>(resolver->GetExecutionContext())->GetFrame(),
         UserActivationUpdateSource::kRenderer);
@@ -2135,6 +2156,11 @@ void AuthenticationCredentialsContainer::GetForIdentity(
             context)) {
       UseCounter::Count(resolver->GetExecutionContext(),
                         WebFeature::kFedCmMultipleIdentityProviders);
+      if (identity_options.providers().size() > 10u) {
+        resolver->RejectWithTypeError(
+            "More than 10 providers are not allowed.");
+        return;
+      }
     } else {
       resolver->RejectWithTypeError(
           "Multiple providers specified but FedCmMultipleIdentityProviders "
@@ -2160,15 +2186,9 @@ void AuthenticationCredentialsContainer::GetForIdentity(
       UseCounter::Count(resolver->GetExecutionContext(),
                         WebFeature::kFedCmLoginHint);
     }
-    if (RuntimeEnabledFeatures::FedCmDomainHintEnabled() &&
-        provider->hasDomainHint()) {
+    if (provider->hasDomainHint()) {
       UseCounter::Count(resolver->GetExecutionContext(),
                         WebFeature::kFedCmDomainHint);
-    }
-
-    if (!provider->hasConfigURL()) {
-      resolver->RejectWithTypeError("Missing the provider's configURL.");
-      return;
     }
 
     mojom::blink::IdentityProviderRequestOptionsPtr identity_provider;
@@ -2237,12 +2257,15 @@ void AuthenticationCredentialsContainer::GetForIdentity(
 
   CredentialMediationRequirement mediation_requirement;
   if (options.mediation() == "conditional") {
-    resolver->Reject(MakeGarbageCollected<DOMException>(
-        DOMExceptionCode::kNotSupportedError,
-        "Conditional mediation is not supported for this credential type"));
-    return;
-  }
-  if (options.mediation() == "silent") {
+    if (RuntimeEnabledFeatures::FedCmAutofillEnabled()) {
+      mediation_requirement = CredentialMediationRequirement::kConditional;
+    } else {
+      resolver->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kNotSupportedError,
+          "Conditional mediation is not supported for this credential type"));
+      return;
+    }
+  } else if (options.mediation() == "silent") {
     mediation_requirement = CredentialMediationRequirement::kSilent;
   } else if (options.mediation() == "required") {
     mediation_requirement = CredentialMediationRequirement::kRequired;
@@ -2261,38 +2284,21 @@ void AuthenticationCredentialsContainer::GetForIdentity(
   }
 
   mojom::blink::RpMode rp_mode = mojom::blink::RpMode::kPassive;
-  if (blink::RuntimeEnabledFeatures::FedCmButtonModeEnabled(
-          resolver->GetExecutionContext())) {
-    auto v8_rp_mode = identity_options.mode();
-    // TODO(crbug.com/372198646): remove the debugging aid enums after shipping
-    // active mode.
-    if (v8_rp_mode ==
-            blink::V8IdentityCredentialRequestOptionsMode::Enum::kWidget ||
-        v8_rp_mode ==
-            blink::V8IdentityCredentialRequestOptionsMode::Enum::kButton) {
-      resolver->GetExecutionContext()->AddConsoleMessage(
-          MakeGarbageCollected<ConsoleMessage>(
-              mojom::blink::ConsoleMessageSource::kJavaScript,
-              mojom::blink::ConsoleMessageLevel::kWarning,
-              "The mode button/widget are renamed to active/passive "
-              "respectively and will be deprecated soon."));
+  auto v8_rp_mode = identity_options.mode();
+  rp_mode = mojo::ConvertTo<mojom::blink::RpMode>(v8_rp_mode);
+  if (rp_mode == mojom::blink::RpMode::kActive) {
+    if (identity_provider_ptrs.size() > 1u) {
+      resolver->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kInvalidStateError,
+          "Active mode is not currently supported with multiple identity "
+          "providers."));
+      return;
     }
-
-    rp_mode = mojo::ConvertTo<mojom::blink::RpMode>(v8_rp_mode);
-    if (rp_mode == mojom::blink::RpMode::kActive) {
-      if (identity_provider_ptrs.size() > 1u) {
-        resolver->Reject(MakeGarbageCollected<DOMException>(
-            DOMExceptionCode::kInvalidStateError,
-            "Active mode is not currently supported with multiple identity "
-            "providers."));
-        return;
-      }
-      if (mediation_requirement == CredentialMediationRequirement::kSilent) {
-        resolver->Reject(MakeGarbageCollected<DOMException>(
-            DOMExceptionCode::kNotSupportedError,
-            "mediation:silent is not supported in active mode"));
-        return;
-      }
+    if (mediation_requirement == CredentialMediationRequirement::kSilent) {
+      resolver->Reject(MakeGarbageCollected<DOMException>(
+          DOMExceptionCode::kNotSupportedError,
+          "mediation:silent is not supported in active mode"));
+      return;
     }
   }
 

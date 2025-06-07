@@ -213,7 +213,7 @@ class IntegrationTests : public ::testing::Test {
               << "Cached policy type is not a directory";
 
           base::FilePath cached_response_path =
-              name.AppendASCII("PolicyFetchResponse");
+              name.Append(FILE_PATH_LITERAL("PolicyFetchResponse"));
           ASSERT_TRUE(base::PathExists(cached_response_path));
           std::string cached_response_contents;
           ASSERT_TRUE(base::ReadFileToString(cached_response_path,
@@ -283,17 +283,17 @@ class IntegrationTests : public ::testing::Test {
   // Copies artifacts from the installed application (e.g. logs, crash dumps,
   // etc.) to ISOLATED_OUTDIR, if present.
   void CopyApplicationArtifacts() {
-    std::string isolated_outdir_str;
-    if (!base::Environment::Create()->GetVar("ISOLATED_OUTDIR",
-                                             &isolated_outdir_str)) {
+    std::optional<std::string> isolated_outdir_str =
+        base::Environment::Create()->GetVar("ISOLATED_OUTDIR");
+    if (!isolated_outdir_str.has_value()) {
       return;
     }
 
     std::optional<base::FilePath> install_dir = GetInstallDirectory();
     ASSERT_TRUE(install_dir);
     base::FilePath artifacts_dir =
-        base::FilePath::FromASCII(isolated_outdir_str)
-            .AppendASCII(base::StrCat(
+        base::FilePath::FromUTF8Unsafe(isolated_outdir_str.value())
+            .AppendUTF8(base::StrCat(
                 {testing::UnitTest::GetInstance()->current_test_suite()->name(),
                  ".",
                  testing::UnitTest::GetInstance()
@@ -308,16 +308,18 @@ class IntegrationTests : public ::testing::Test {
                                 const base::FilePath& artifacts_dir) {
     ASSERT_TRUE(base::CreateDirectory(artifacts_dir));
     base::FilePath log_path =
-        install_dir.AppendASCII("enterprise_companion.log");
+        install_dir.Append(FILE_PATH_LITERAL("enterprise_companion.log"));
     if (base::PathExists(log_path)) {
       ASSERT_TRUE(
           base::CopyFile(log_path, artifacts_dir.Append(log_path.BaseName())));
     }
 
-    base::FilePath crash_db_path = install_dir.AppendASCII("Crashpad");
+    base::FilePath crash_db_path =
+        install_dir.Append(FILE_PATH_LITERAL("Crashpad"));
     if (base::PathExists(crash_db_path)) {
       ASSERT_TRUE(base::CopyDirectory(
-          crash_db_path, artifacts_dir.AppendASCII("Crashpad"), true));
+          crash_db_path, artifacts_dir.Append(FILE_PATH_LITERAL("Crashpad")),
+          true));
     }
   }
 
@@ -806,6 +808,44 @@ TEST_F(IntegrationTests, GroupPolicyProxy_PacScript) {
       base::StringPrintf(
           "function FindProxyForURL(url, host) { return \"PROXY %s\"; }",
           ToProxyURL(dm_test_server_.GetServiceURL())));
+
+  SetDefaultPolicyFetchResponses();
+  ASSERT_NO_FATAL_FAILURE(StoreEnrollmentToken(kFakeEnrollmentToken));
+  ASSERT_NO_FATAL_FAILURE(GetTestMethods().Install());
+  ASSERT_NO_FATAL_FAILURE(LaunchApp());
+  ASSERT_NO_FATAL_FAILURE(WaitForServerStart());
+
+  test_server_.ExpectOnce(
+      {CreateEventLogMatcher(
+          test_server_,
+          {{proto::EnterpriseCompanionEvent::kBrowserEnrollmentEvent,
+            EnterpriseCompanionStatus::Success()},
+           {proto::EnterpriseCompanionEvent::kPolicyFetchEvent,
+            EnterpriseCompanionStatus::Success()}})},
+      CreateLogResponse());
+
+  EXPECT_TRUE(CreateAppFetchPolicies()->Run().ok());
+
+  ASSERT_NO_FATAL_FAILURE(ExpectDefaultPolicyValuesPersisted());
+}
+
+// The application should canonicalize proxy URLs sources from PAC scripts
+// containing special characters.
+TEST_F(IntegrationTests, GroupPolicyProxy_PacProxyRequiresCanonicalization) {
+  base::Value::Dict overrides = GetDefaultConstantsOverrides();
+  overrides.Set(kDMServerUrlKey, "http://dm.server.not_exist/dmapi");
+  ASSERT_NO_FATAL_FAILURE(InstallConstantsOverrides(overrides));
+  ASSERT_NO_FATAL_FAILURE(SetLocalProxyPolicies(
+      /*proxy_mode=*/"pac_script", test_server_.proxy_pac_url().spec(),
+      /*proxy_server=*/std::nullopt,
+      /*cloud_policy_overrides_platform_policy=*/std::nullopt));
+  // URL canonicalization should remove the leading zero width space.
+  test_server_.ExpectOnce(
+      {CreatePacUrlMatcher(test_server_)},
+      base::StringPrintf(
+          "function FindProxyForURL(url, host) { return \"PROXY %s\"; }",
+          base::StrCat(
+              {"\u200b", ToProxyURL(dm_test_server_.GetServiceURL())})));
 
   SetDefaultPolicyFetchResponses();
   ASSERT_NO_FATAL_FAILURE(StoreEnrollmentToken(kFakeEnrollmentToken));

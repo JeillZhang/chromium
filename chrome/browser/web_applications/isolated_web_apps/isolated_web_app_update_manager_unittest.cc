@@ -22,6 +22,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_expected_support.h"
@@ -53,7 +54,6 @@
 #include "chrome/browser/web_applications/isolated_web_apps/test/policy_generator.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/policy_test_utils.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/test_signed_web_bundle_builder.h"
-#include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest.h"
 #include "chrome/browser/web_applications/test/fake_web_app_database_factory.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
 #include "chrome/browser/web_applications/test/fake_web_app_ui_manager.h"
@@ -76,6 +76,7 @@
 #include "components/webapps/browser/installable/installable_metrics.h"
 #include "components/webapps/browser/uninstall_result_code.h"
 #include "components/webapps/common/web_app_id.h"
+#include "components/webapps/isolated_web_apps/update_channel.h"
 #include "content/public/common/content_features.h"
 #include "net/http/http_status_code.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
@@ -123,12 +124,6 @@ const UpdateChannel kBetaChannel = UpdateChannel::Create("beta").value();
 using UpdateDiscoveryTaskFuture =
     base::test::TestFuture<IsolatedWebAppUpdateDiscoveryTask::CompletionStatus>;
 
-MATCHER_P(IsDict, dict_matcher, "") {
-  return ExplainMatchResult(
-      Property("GetDict", &base::Value::GetDict, dict_matcher), arg,
-      result_listener);
-}
-
 class MockCommandScheduler : public WebAppCommandScheduler {
  public:
   using WebAppCommandScheduler::WebAppCommandScheduler;
@@ -139,9 +134,9 @@ class MockCommandScheduler : public WebAppCommandScheduler {
       (const IsolatedWebAppUrlInfo& url_info,
        std::unique_ptr<ScopedKeepAlive> optional_keep_alive,
        std::unique_ptr<ScopedProfileKeepAlive> optional_profile_keep_alive,
-       base::OnceCallback<
-           void(base::expected<void, IsolatedWebAppApplyUpdateCommandError>)>
-           callback,
+       base::OnceCallback<void(
+           base::expected<IsolatedWebAppApplyUpdateCommandSuccess,
+                          IsolatedWebAppApplyUpdateCommandError>)> callback,
        const base::Location& call_location),
       (override));
 
@@ -159,15 +154,15 @@ class MockCommandScheduler : public WebAppCommandScheduler {
   void DelegateToRealImpl() {
     ON_CALL(*this, ApplyPendingIsolatedWebAppUpdate)
         .WillByDefault(
-            [this](
-                const IsolatedWebAppUrlInfo& url_info,
-                std::unique_ptr<ScopedKeepAlive> optional_keep_alive,
-                std::unique_ptr<ScopedProfileKeepAlive>
-                    optional_profile_keep_alive,
-                base::OnceCallback<void(
-                    base::expected<
-                        void, IsolatedWebAppApplyUpdateCommandError>)> callback,
-                const base::Location& call_location) {
+            [this](const IsolatedWebAppUrlInfo& url_info,
+                   std::unique_ptr<ScopedKeepAlive> optional_keep_alive,
+                   std::unique_ptr<ScopedProfileKeepAlive>
+                       optional_profile_keep_alive,
+                   base::OnceCallback<void(
+                       base::expected<IsolatedWebAppApplyUpdateCommandSuccess,
+                                      IsolatedWebAppApplyUpdateCommandError>)>
+                       callback,
+                   const base::Location& call_location) {
               return this
                   ->WebAppCommandScheduler::ApplyPendingIsolatedWebAppUpdate(
                       url_info, std::move(optional_keep_alive),
@@ -475,10 +470,10 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateMockTimeTest,
 
   EXPECT_THAT(
       UpdateDiscoveryLog(),
-      UnorderedElementsAre(IsDict(DictionaryHasValue(
-          "result", base::Value("Success::kUpdateFoundAndDryRunSuccessful")))));
-  EXPECT_THAT(UpdateApplyLog(), UnorderedElementsAre(IsDict(DictionaryHasValue(
-                                    "result", base::Value("Success")))));
+      UnorderedElementsAre(DictionaryHasValue(
+          "result", base::Value("Success::kUpdateFoundAndDryRunSuccessful"))));
+  EXPECT_THAT(UpdateApplyLog(), UnorderedElementsAre(DictionaryHasValue(
+                                    "result", base::Value("Success"))));
 }
 
 TEST_F(IsolatedWebAppUpdateManagerUpdateMockTimeTest,
@@ -503,8 +498,8 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateMockTimeTest,
   AssertAppInstalledAtVersion(GetIwa1WebBundleId(), base::Version("1.0.0"));
 
   EXPECT_THAT(UpdateDiscoveryLog(),
-              UnorderedElementsAre(IsDict(DictionaryHasValue(
-                  "result", base::Value("Success::kNoUpdateFound")))));
+              UnorderedElementsAre(DictionaryHasValue(
+                  "result", base::Value("Success::kNoUpdateFound"))));
   EXPECT_THAT(UpdateApplyLog(), IsEmpty());
 }
 
@@ -530,10 +525,10 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateMockTimeTest,
 
   EXPECT_THAT(
       UpdateDiscoveryLog(),
-      UnorderedElementsAre(IsDict(DictionaryHasValue(
-          "result", base::Value("Success::kUpdateFoundAndDryRunSuccessful")))));
-  EXPECT_THAT(UpdateApplyLog(), UnorderedElementsAre(IsDict(DictionaryHasValue(
-                                    "result", base::Value("Success")))));
+      UnorderedElementsAre(DictionaryHasValue(
+          "result", base::Value("Success::kUpdateFoundAndDryRunSuccessful"))));
+  EXPECT_THAT(UpdateApplyLog(), UnorderedElementsAre(DictionaryHasValue(
+                                    "result", base::Value("Success"))));
 
   test_update_server().AddBundle(CreateIwa1Bundle("3.0.0"));
 
@@ -609,10 +604,10 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateMockTimeTest,
 
   AssertAppInstalledAtVersion(GetIwa1WebBundleId(), base::Version("1.0.0"));
 
-  EXPECT_THAT(UpdateDiscoveryLog(),
-              UnorderedElementsAre(IsDict(DictionaryHasValue(
-                  "result",
-                  base::Value("Error::kUpdateManifestNoApplicableVersion")))));
+  EXPECT_THAT(
+      UpdateDiscoveryLog(),
+      UnorderedElementsAre(DictionaryHasValue(
+          "result", base::Value("Error::kUpdateManifestNoApplicableVersion"))));
   EXPECT_THAT(UpdateDiscoveryLog(), SizeIs(1));
   EXPECT_THAT(UpdateApplyLog(), IsEmpty());
 }
@@ -640,8 +635,8 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateMockTimeTest,
 
   EXPECT_THAT(
       UpdateDiscoveryLog(),
-      UnorderedElementsAre(IsDict(DictionaryHasValue(
-          "result", base::Value("Success::kUpdateFoundAndDryRunSuccessful")))));
+      UnorderedElementsAre(DictionaryHasValue(
+          "result", base::Value("Success::kUpdateFoundAndDryRunSuccessful"))));
   EXPECT_THAT(UpdateDiscoveryLog(), SizeIs(1));
   EXPECT_THAT(UpdateApplyLog(), SizeIs(1));
 }
@@ -817,8 +812,8 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateTest,
 
   EXPECT_THAT(
       UpdateDiscoveryLog(),
-      UnorderedElementsAre(IsDict(DictionaryHasValue(
-          "result", base::Value("Success::kUpdateFoundAndDryRunSuccessful")))));
+      UnorderedElementsAre(DictionaryHasValue(
+          "result", base::Value("Success::kUpdateFoundAndDryRunSuccessful"))));
   EXPECT_THAT(UpdateApplyLog(), IsEmpty());
 
   fake_ui_manager().SetNumWindowsForApp(GetAppId(GetIwa1WebBundleId()), 0);
@@ -849,18 +844,17 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateTest,
     EXPECT_THAT(
         update_discovery_log,
         UnorderedElementsAre(
-            IsDict(DictionaryHasValue(
+            DictionaryHasValue(
                 "result",
-                base::Value("Success::kUpdateFoundAndDryRunSuccessful"))),
-            IsDict(DictionaryHasValue(
+                base::Value("Success::kUpdateFoundAndDryRunSuccessful")),
+            DictionaryHasValue(
                 "result",
-                base::Value("Success::kUpdateFoundAndDryRunSuccessful")))));
+                base::Value("Success::kUpdateFoundAndDryRunSuccessful"))));
 
-    EXPECT_THAT(
-        update_apply_log,
-        UnorderedElementsAre(
-            IsDict(DictionaryHasValue("result", base::Value("Success"))),
-            IsDict(DictionaryHasValue("result", base::Value("Success")))));
+    EXPECT_THAT(update_apply_log,
+                UnorderedElementsAre(
+                    DictionaryHasValue("result", base::Value("Success")),
+                    DictionaryHasValue("result", base::Value("Success"))));
 
     std::vector<base::Value*> times(
         {update_discovery_log[0].GetDict().Find("start_time"),
@@ -919,7 +913,6 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateTest,
   AssertAppNotInstalled(iwa_to_uninstall);
 }
 
-// TODO(crbug.com/338380813): The test is flaky on asan ChromeOS builder.
 TEST_F(IsolatedWebAppUpdateManagerUpdateTest, StopsWaitingIfIwaIsUninstalled) {
   InitialIwaBundleForceInstall(CreateIwa1Bundle("1.0.0"));
 
@@ -930,8 +923,8 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateTest, StopsWaitingIfIwaIsUninstalled) {
   AssertAppDiscoveryTaskSuccessful(GetIwa1WebBundleId());
 
   EXPECT_THAT(UpdateApplyWaiters(),
-              UnorderedElementsAre(IsDict(DictionaryHasValue(
-                  "app_id", base::Value(GetAppId(GetIwa1WebBundleId()))))));
+              UnorderedElementsAre(DictionaryHasValue(
+                  "app_id", base::Value(GetAppId(GetIwa1WebBundleId())))));
 
   AssertAppInstalledAtVersion(GetIwa1WebBundleId(), base::Version("1.0.0"));
 
@@ -947,7 +940,6 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateTest, StopsWaitingIfIwaIsUninstalled) {
   EXPECT_THAT(UpdateApplyLog(), IsEmpty());
 }
 
-// TODO(crbug.com/326527744): This test is flaky on asan ChromeOS builder.
 TEST_F(IsolatedWebAppUpdateManagerUpdateTest,
        StopsNonStartedUpdateApplyTasksIfIwaIsUninstalled) {
   InitialIwaBundleForceInstall(CreateIwa1Bundle("1.0.0"));
@@ -966,18 +958,18 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateTest,
   EXPECT_THAT(
       UpdateDiscoveryLog(),
       UnorderedElementsAre(
-          IsDict(DictionaryHasValue(
+          DictionaryHasValue(
               "result",
-              base::Value("Success::kUpdateFoundAndDryRunSuccessful"))),
-          IsDict(DictionaryHasValue(
+              base::Value("Success::kUpdateFoundAndDryRunSuccessful")),
+          DictionaryHasValue(
               "result",
-              base::Value("Success::kUpdateFoundAndDryRunSuccessful")))));
+              base::Value("Success::kUpdateFoundAndDryRunSuccessful"))));
   EXPECT_THAT(UpdateApplyWaiters(),
               UnorderedElementsAre(
-                  IsDict(DictionaryHasValue(
-                      "app_id", base::Value(GetAppId(GetIwa1WebBundleId())))),
-                  IsDict(DictionaryHasValue(
-                      "app_id", base::Value(GetAppId(GetIwa2WebBundleId()))))));
+                  DictionaryHasValue(
+                      "app_id", base::Value(GetAppId(GetIwa1WebBundleId()))),
+                  DictionaryHasValue(
+                      "app_id", base::Value(GetAppId(GetIwa2WebBundleId())))));
 
   // Wait for the update apply task of either app 1 or app 2 to start.
   base::test::TestFuture<IsolatedWebAppUrlInfo> future;
@@ -1003,9 +995,8 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateTest,
   WebAppTestUninstallObserver uninstall_observer(profile());
   uninstall_observer.BeginListeningAndWait({GetAppId(iwa_to_uninstall)});
 
-  EXPECT_THAT(UpdateApplyTasks(),
-              UnorderedElementsAre(IsDict(
-                  DictionaryHasValue("app_id", base::Value(iwa_to_keep)))));
+  EXPECT_THAT(UpdateApplyTasks(), UnorderedElementsAre(DictionaryHasValue(
+                                      "app_id", base::Value(iwa_to_keep))));
   EXPECT_THAT(UpdateApplyLog(), IsEmpty());
 }
 
@@ -1206,7 +1197,11 @@ TEST_F(IsolatedWebAppUpdateManagerUpdateTest, UpdateDiscoveryTaskFails) {
 
 TEST_F(IsolatedWebAppUpdateManagerUpdateTest, UpdateApplyTaskSuccess) {
   base::HistogramTester histogram_tester;
-  IsolatedWebAppUpdateApplyTask::CompletionStatus status = base::ok();
+  IsolatedWebAppUpdateApplyTask::CompletionStatus status =
+      IsolatedWebAppApplyUpdateCommandSuccess(
+          IsolatedWebAppApplyUpdateCommandSuccess(
+              base::Version("1.0.0"),
+              IwaStorageOwnedBundle{"iwa1", /*dev_mode=*/false}));
 
   update_manager().TrackResultOfUpdateApplyTaskForTesting(status);
 

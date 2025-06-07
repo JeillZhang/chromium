@@ -55,11 +55,38 @@ def __filegroups(ctx):
         if not toolchain:
             continue
         print("toolchain = %s" % toolchain)
-        fg[toolchain + ":headers"] = {
-            "type": "glob",
-            # TODO: Avoid using "*" to include only required files.
-            "includes": ["*"],
-        }
+        if toolchain == "/usr":
+            # cros chroot ebuild.
+            fg[toolchain + ":headers"] = {
+                "type": "glob",
+                "includes": [
+                    "include/*.h",
+                    "include/*/*.h",
+                    "include/*/*/*.h",
+                    "include/*/*/*/*.h",
+                    "include/c++/*/*",
+                    "bin/ccache",
+                    "bin/*clang*",
+                    "bin/sysroot_wrapper*",
+                    "lib",
+                    "lib64/*.so.*",
+                    "lib64/clang/*/include/*",
+                    "lib64/clang/*/include/*/*",
+                    "lib64/*/include/*.h",
+                ],
+            }
+            fg["/lib64:solibs"] = {
+                "type": "glob",
+                "includes": [
+                    "*.so.*",
+                ],
+            }
+        else:
+            fg[toolchain + ":headers"] = {
+                "type": "glob",
+                # TODO: Avoid using "*" to include only required files.
+                "includes": ["*"],
+            }
         fg[path.join(toolchain, "bin") + ":llddeps"] = {
             "type": "glob",
             "includes": [
@@ -91,7 +118,7 @@ def __filegroups(ctx):
         }
         fg[path.join(toolchain, "usr/lib64") + ":libs"] = {
             "type": "glob",
-            "includes": ["*.so", "*.so.*", "*.a", "*.o"],
+            "includes": ["*.so", "*.so.*", "*.a", "*.o", "cfi_ignorelist.txt"],
         }
         fg[path.join(toolchain, "usr/armv7a-cros-linux-gnueabihf") + ":libs"] = {
             "type": "glob",
@@ -143,33 +170,77 @@ def __step_config(ctx, step_config):
 
     cros_target_cxx = cros_args.get("cros_target_cxx")
     if cros_target_cxx:
-        step_config["rules"].extend([
-            {
-                "name": "clang-cros/cxx",
-                "action": "(.*_)?cxx",
-                "command_prefix": path.join("../../", cros_target_cxx),
-                "remote": True,
-                # fast-deps is not safe with cros toolchain. crbug.com/391160876
-                "no_fast_deps": True,
-                "canonicalize_dir": True,
-                "timeout": "5m",
-            },
-        ])
+        if path.isabs(cros_target_cxx):
+            # cros chroot ebuild
+            step_config["rules"].extend([
+                {
+                    "name": "clang-cros/cxx",
+                    "action": "(.*_)?cxx",
+                    "remote": True,
+                    "inputs": [
+                        cros_target_cxx,
+                    ],
+                    # fast-deps is not safe with cros toolchain. crbug.com/391160876
+                    "no_fast_deps": True,
+                    "timeout": "5m",
+                },
+            ])
+            step_config["input_deps"].update({
+                cros_target_cxx: [
+                    "/lib",
+                    "/lib64:solibs",
+                ],
+            })
+        else:
+            step_config["rules"].extend([
+                {
+                    "name": "clang-cros/cxx",
+                    "action": "(.*_)?cxx",
+                    "command_prefix": path.join("../../", cros_target_cxx),
+                    "remote": True,
+                    # fast-deps is not safe with cros toolchain. crbug.com/391160876
+                    "no_fast_deps": True,
+                    "canonicalize_dir": True,
+                    "timeout": "5m",
+                },
+            ])
 
     cros_target_cc = cros_args.get("cros_target_cc")
-    if cros_target_cxx:
-        step_config["rules"].extend([
-            {
-                "name": "clang-cros/cc",
-                "action": "(.*_)?cc",
-                "command_prefix": path.join("../../", cros_target_cc),
-                "remote": True,
-                # fast-deps is not safe with cros toolchain. crbug.com/391160876
-                "no_fast_deps": True,
-                "canonicalize_dir": True,
-                "timeout": "5m",
-            },
-        ])
+    if cros_target_cc:
+        if path.isabs(cros_target_cc):
+            # cros chroot ebuild
+            step_config["rules"].extend([
+                {
+                    "name": "clang-cros/cc",
+                    "action": "(.*_)?cc",
+                    "remote": True,
+                    "inputs": [
+                        cros_target_cc,
+                    ],
+                    # fast-deps is not safe with cros toolchain. crbug.com/391160876
+                    "no_fast_deps": True,
+                    "timeout": "5m",
+                },
+            ])
+            step_config["input_deps"].update({
+                cros_target_cc: [
+                    "/lib",
+                    "/lib64:solibs",
+                ],
+            })
+        else:
+            step_config["rules"].extend([
+                {
+                    "name": "clang-cros/cc",
+                    "action": "(.*_)?cc",
+                    "command_prefix": path.join("../../", cros_target_cc),
+                    "remote": True,
+                    # fast-deps is not safe with cros toolchain. crbug.com/391160876
+                    "no_fast_deps": True,
+                    "canonicalize_dir": True,
+                    "timeout": "5m",
+                },
+            ])
 
     cros_target_ar = cros_args.get("cros_target_ar")
     if cros_target_ar:
@@ -189,7 +260,7 @@ def __step_config(ctx, step_config):
                     "*.pak",
                     "*.py",
                 ],
-                "handler": "clang_alink",
+                "handler": "lld_thin_archive",
                 "remote": config.get(ctx, "remote-link"),
                 "canonicalize_dir": True,
                 "timeout": "5m",
@@ -249,7 +320,7 @@ def __step_config(ctx, step_config):
                     "*.pak",
                     "*.py",
                 ],
-                "handler": "clang_alink",
+                "handler": "lld_thin_archive",
                 "remote": config.get(ctx, "remote-link"),
                 "canonicalize_dir": True,
                 "timeout": "5m",

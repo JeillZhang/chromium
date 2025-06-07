@@ -7,9 +7,16 @@
 
 #import <Foundation/Foundation.h>
 
+#import <memory>
+#import <optional>
+
+#import "base/functional/callback_forward.h"
 #import "base/ios/block_types.h"
+#import "components/signin/public/browser/web_signin_tracker.h"
+#import "ios/chrome/app/change_profile_continuation.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 
+class AccountReconcilor;
 @class AuthenticationFlow;
 class AuthenticationService;
 class ChromeAccountManagerService;
@@ -31,6 +38,8 @@ typedef NS_ENUM(NSInteger, ConsistencyPromoSigninMediatorError) {
   ConsistencyPromoSigninMediatorErrorTimeout,
   // Generic error.
   ConsistencyPromoSigninMediatorErrorGeneric,
+  // Auth error.
+  ConsistencyPromoSigninMediatorErrorAuth,
 };
 
 // Delegate for ConsistencyPromoSigninMediator.
@@ -60,7 +69,22 @@ typedef NS_ENUM(NSInteger, ConsistencyPromoSigninMediatorError) {
 // Called if there is sign-in error.
 - (void)consistencyPromoSigninMediator:(ConsistencyPromoSigninMediator*)mediator
                         errorDidHappen:
-                            (ConsistencyPromoSigninMediatorError)error;
+                            (ConsistencyPromoSigninMediatorError)error
+                          withIdentity:(id<SystemIdentity>)identity;
+
+// Called to create a WebSigninTracker object during the web sign-in flow.
+- (std::unique_ptr<signin::WebSigninTracker>)
+    trackWebSigninWithIdentityManager:(signin::IdentityManager*)identityManager
+                    accountReconcilor:(AccountReconcilor*)accountReconcilor
+                        signinAccount:(const CoreAccountId&)signin_account
+                         withCallback:
+                             (const base::RepeatingCallback<void(
+                                  signin::WebSigninTracker::Result)>*)callback
+                          withTimeout:
+                              (const std::optional<base::TimeDelta>&)timeout;
+
+// Returns a ChangeProfileContinuation.
+- (ChangeProfileContinuation)changeProfileContinuation;
 
 @end
 
@@ -74,6 +98,7 @@ typedef NS_ENUM(NSInteger, ConsistencyPromoSigninMediatorError) {
         (ChromeAccountManagerService*)accountManagerService
             authenticationService:(AuthenticationService*)authenticationService
                   identityManager:(signin::IdentityManager*)identityManager
+                accountReconcilor:(AccountReconcilor*)accountReconcilor
                   userPrefService:(PrefService*)userPrefService
                       accessPoint:(signin_metrics::AccessPoint)accessPoint;
 

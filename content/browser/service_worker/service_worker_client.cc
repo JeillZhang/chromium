@@ -5,17 +5,20 @@
 #include "content/browser/service_worker/service_worker_client.h"
 
 #include <set>
+#include <variant>
 
+#include "base/check_is_test.h"
 #include "base/containers/adapters.h"
 #include "base/containers/contains.h"
+#include "base/debug/alias.h"
 #include "base/debug/crash_logging.h"
-#include "base/functional/overloaded.h"
 #include "base/notreached.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/types/optional_util.h"
 #include "base/uuid.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/loader/navigation_url_loader_impl.h"
+#include "content/browser/preloading/prefetch/prefetch_features.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/service_worker/service_worker_container_host.h"
@@ -34,6 +37,7 @@
 #include "services/network/public/cpp/single_request_url_loader_factory.h"
 #include "services/network/public/cpp/url_loader_factory_builder.h"
 #include "services/network/public/cpp/wrapper_shared_url_loader_factory.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/service_worker/service_worker_scope_match.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_running_status_callback.mojom.h"
@@ -123,15 +127,35 @@ class ServiceWorkerClient::ServiceWorkerRunningStatusObserver final
 ServiceWorkerClient::ServiceWorkerClient(
     base::WeakPtr<ServiceWorkerContextCore> context,
     bool is_parent_frame_secure,
-    FrameTreeNodeId frame_tree_node_id)
+    FrameTreeNodeId ongoing_navigation_frame_tree_node_id)
     : context_(std::move(context)),
       owner_(context_->service_worker_client_owner()),
       create_time_(base::TimeTicks::Now()),
       client_uuid_(base::Uuid::GenerateRandomV4().AsLowercaseString()),
       is_parent_frame_secure_(is_parent_frame_secure),
+      is_initiated_by_prefetch_(false),
       client_info_(ServiceWorkerClientInfo()),
       process_id_for_worker_client_(ChildProcessHost::kInvalidUniqueID),
-      ongoing_navigation_frame_tree_node_id_(frame_tree_node_id) {
+      ongoing_navigation_frame_tree_node_id_(
+          ongoing_navigation_frame_tree_node_id) {
+  DCHECK(context_);
+}
+
+ServiceWorkerClient::ServiceWorkerClient(
+    base::WeakPtr<ServiceWorkerContextCore> context,
+    bool is_parent_frame_secure,
+    scoped_refptr<network::SharedURLLoaderFactory>
+        network_url_loader_factory_for_prefetch)
+    : context_(std::move(context)),
+      owner_(context_->service_worker_client_owner()),
+      create_time_(base::TimeTicks::Now()),
+      client_uuid_(base::Uuid::GenerateRandomV4().AsLowercaseString()),
+      is_parent_frame_secure_(is_parent_frame_secure),
+      is_initiated_by_prefetch_(true),
+      client_info_(ServiceWorkerClientInfo()),
+      process_id_for_worker_client_(ChildProcessHost::kInvalidUniqueID),
+      network_url_loader_factory_for_prefetch_(
+          std::move(network_url_loader_factory_for_prefetch)) {
   DCHECK(context_);
 }
 
@@ -144,6 +168,7 @@ ServiceWorkerClient::ServiceWorkerClient(
       create_time_(base::TimeTicks::Now()),
       client_uuid_(base::Uuid::GenerateRandomV4().AsLowercaseString()),
       is_parent_frame_secure_(true),
+      is_initiated_by_prefetch_(false),
       client_info_(client_info),
       process_id_for_worker_client_(process_id) {
   DCHECK(context_);
@@ -405,8 +430,8 @@ void ServiceWorkerClient::ClaimedByRegistration(
 blink::mojom::ServiceWorkerClientType ServiceWorkerClient::GetClientType()
     const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return absl::visit(
-      base::Overloaded(
+  return std::visit(
+      absl::Overload(
           [](GlobalRenderFrameHostId render_frame_host_id) {
             return blink::mojom::ServiceWorkerClientType::kWindow;
           },
@@ -421,13 +446,13 @@ blink::mojom::ServiceWorkerClientType ServiceWorkerClient::GetClientType()
 
 bool ServiceWorkerClient::IsContainerForWindowClient() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return absl::holds_alternative<GlobalRenderFrameHostId>(client_info_);
+  return std::holds_alternative<GlobalRenderFrameHostId>(client_info_);
 }
 
 bool ServiceWorkerClient::IsContainerForWorkerClient() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  return absl::holds_alternative<blink::DedicatedWorkerToken>(client_info_) ||
-         absl::holds_alternative<blink::SharedWorkerToken>(client_info_);
+  return std::holds_alternative<blink::DedicatedWorkerToken>(client_info_) ||
+         std::holds_alternative<blink::SharedWorkerToken>(client_info_);
 }
 
 ServiceWorkerClientInfo ServiceWorkerClient::GetServiceWorkerClientInfo()
@@ -475,6 +500,9 @@ ServiceWorkerClient::CommitResponse(
       base::PassKey<ServiceWorkerClient>(), AsWeakPtr(), container_info,
       policy_container_policies, std::move(coep_reporter),
       std::move(dip_reporter), std::move(ukm_source_id));
+
+  // `network_url_loader_factory_for_prefetch_` is no longer used after commit.
+  network_url_loader_factory_for_prefetch_.reset();
 
   TransitionToClientPhase(ClientPhase::kResponseCommitted);
 
@@ -610,9 +638,18 @@ blink::StorageKey ServiceWorkerClient::CalculateStorageKeyForUpdateUrls(
 
   const url::Origin origin = url::Origin::Create(url);
 
-  const std::optional<blink::StorageKey> storage_key = absl::visit(
-      base::Overloaded(
+  const std::optional<blink::StorageKey> storage_key = std::visit(
+      absl::Overload(
           [&](GlobalRenderFrameHostId render_frame_host_id) {
+            if (is_initiated_by_prefetch_) {
+              // Falls back to the `CreateFromOriginAndIsolationInfo()` case
+              // below.
+              // Navigation isn't served by prefetch if the key for prefetch
+              // calculated here is wrong/mismatching, checked at
+              // `PrefetchURLLoaderInterceptor::OnGetPrefetchComplete()`.
+              // https://crbug.com/413207408.
+              return std::optional<blink::StorageKey>(std::nullopt);
+            }
             // We use `ongoing_navigation_frame_tree_node_id_` instead of
             // `render_frame_host_id` because this method is called before
             // response commit.
@@ -757,7 +794,7 @@ bool ServiceWorkerClient::is_execution_ready() const {
 GlobalRenderFrameHostId ServiceWorkerClient::GetRenderFrameHostId() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(IsContainerForWindowClient());
-  return absl::get<GlobalRenderFrameHostId>(client_info_);
+  return std::get<GlobalRenderFrameHostId>(client_info_);
 }
 
 int ServiceWorkerClient::GetProcessId() const {
@@ -771,8 +808,12 @@ int ServiceWorkerClient::GetProcessId() const {
 NavigationRequest* ServiceWorkerClient::GetOngoingNavigationRequestBeforeCommit(
     base::PassKey<StoragePartitionImpl>) const {
   DCHECK(IsContainerForWindowClient());
-  DCHECK(ongoing_navigation_frame_tree_node_id_);
   DCHECK(!GetRenderFrameHostId());
+
+  // For Window clients for prefetch,
+  // `GetOngoingNavigationRequestBeforeCommit()` isn't called at all, because
+  // prefetching requests don't set `URLLoaderNetworkServiceObserver`.
+  CHECK(!is_initiated_by_prefetch_);
 
   // It is safe to use `ongoing_navigation_frame_tree_node_id_` to obtain the
   // corresponding navigation request without being concerned about the case
@@ -792,6 +833,9 @@ NavigationRequest* ServiceWorkerClient::GetOngoingNavigationRequestBeforeCommit(
 std::string ServiceWorkerClient::GetFrameTreeNodeTypeStringBeforeCommit()
     const {
   CHECK(!is_response_committed());
+  // TODO(https://crbug.com/40947546): If needed, assign a proper metrics name
+  // for clients for prefetch where `ongoing_navigation_frame_tree_node_id` is
+  // null.
   if (FrameTreeNode* frame_tree_node = FrameTreeNode::GloballyFindByID(
           ongoing_navigation_frame_tree_node_id_)) {
     CHECK(IsContainerForWindowClient());
@@ -803,6 +847,14 @@ std::string ServiceWorkerClient::GetFrameTreeNodeTypeStringBeforeCommit()
 
 const std::string& ServiceWorkerClient::client_uuid() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return client_uuid_;
+}
+
+std::string ServiceWorkerClient::client_uuid_for_resulting_client_id() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (is_initiated_by_prefetch_) {
+    return "";
+  }
   return client_uuid_;
 }
 
@@ -1170,6 +1222,12 @@ void ServiceWorkerClient::FlushFeatures() {
   }
 }
 
+void ServiceWorkerClient::SetNetworkURLLoaderFactoryForTesting(
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+  CHECK_IS_TEST();
+  network_url_loader_factory_override_for_testing_ = url_loader_factory;
+}
+
 scoped_refptr<network::SharedURLLoaderFactory>
 ServiceWorkerClient::CreateNetworkURLLoaderFactory(
     CreateNetworkURLLoaderFactoryType type,
@@ -1177,6 +1235,22 @@ ServiceWorkerClient::CreateNetworkURLLoaderFactory(
     const network::ResourceRequest& resource_request) {
   CHECK(!is_response_committed());
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (network_url_loader_factory_override_for_testing_) {
+    CHECK_IS_TEST();
+    return network_url_loader_factory_override_for_testing_;
+  }
+
+  if (is_initiated_by_prefetch_) {
+    // We skip `WillCreateURLLoaderFactory` below, because it is already
+    // included in `network_url_loader_factory_for_prefetch_` (see
+    // `PrefetchNetworkContext::CreateNewURLLoaderFactory()`).
+    // We also skip `CreateURLLoaderHandlerForServiceWorkerNavigationPreload`,
+    // because this is a prefetch request and don't have to consult with search
+    // prefetch cache via
+    // `CreateURLLoaderHandlerForServiceWorkerNavigationPreload`.
+    return network_url_loader_factory_for_prefetch_;
+  }
 
   switch (type) {
     case CreateNetworkURLLoaderFactoryType::kNavigationPreload:
@@ -1211,6 +1285,11 @@ ServiceWorkerClient::CreateNetworkURLLoaderFactory(
     // The navigation was cancelled. Just drop the request. Otherwise, we might
     // go to network without consulting the embedder first, which would break
     // guarantees.
+    //
+    // TODO(https://crbug.com/40947546): Clients for prefetch (where
+    // `ongoing_navigation_frame_tree_node_id` is null) also fall into this case
+    // and thus don't support navigationPreload and race network requests. Fix
+    // this.
     mojo::PendingRemote<network::mojom::URLLoaderFactory> network_factory;
     return base::MakeRefCounted<network::WrapperSharedURLLoaderFactory>(
         std::move(network_factory));

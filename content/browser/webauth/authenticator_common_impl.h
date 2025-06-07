@@ -55,6 +55,7 @@ namespace client_capabilities {
 
 // This is the subset of client capabilities computed by the browser. See also
 // //third_party/blink/renderer/modules/credentialmanagement/public_key_credential.cc.
+inline constexpr char kConditionalCreate[] = "conditionalCreate";
 inline constexpr char kConditionalGet[] = "conditionalGet";
 inline constexpr char kHybridTransport[] = "hybridTransport";
 inline constexpr char kPasskeyPlatformAuthenticator[] =
@@ -62,6 +63,7 @@ inline constexpr char kPasskeyPlatformAuthenticator[] =
 inline constexpr char kUserVerifyingPlatformAuthenticator[] =
     "userVerifyingPlatformAuthenticator";
 inline constexpr char kRelatedOrigins[] = "relatedOrigins";
+inline constexpr char kImmediateGet[] = "immediateGet";
 
 }  // namespace client_capabilities
 
@@ -284,8 +286,17 @@ class CONTENT_EXPORT AuthenticatorCommonImpl : public AuthenticatorCommon {
   // Begins a timeout at the beginning of a request.
   void BeginRequestTimeout(std::optional<base::TimeDelta> timeout);
 
-  // Runs when timer expires and cancels all issued requests to a U2fDevice.
+  // Called when a request times out. This is for options.timeout parameter.
   void OnTimeout();
+
+  // Begins a timeout at the beginning of an immediate mediation request.
+  void BeginImmediateRequestTimeout();
+
+  // Called when an immediate mediation request times out.
+  void OnImmediateTimeout();
+
+  // Cancels the immediate mediation timer when the UI is shown.
+  void CancelImmediateTimeout();
 
   // Cancels the currently pending request (if any) with the supplied status.
   void CancelWithStatus(blink::mojom::AuthenticatorStatus status);

@@ -9,7 +9,7 @@
 #include <string>
 
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
 #include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_profile.h"
@@ -53,7 +53,10 @@ std::unique_ptr<TemplateURL> CreateTestTemplateURL(
     bool safe_for_autoreplace = false,
     TemplateURLData::PolicyOrigin policy_origin =
         TemplateURLData::PolicyOrigin::kNoPolicy,
-    int prepopulate_id = 999999);
+    int prepopulate_id = 999999,
+    int starter_pack_id = 0,
+    TemplateURLData::ActiveStatus is_active =
+        TemplateURLData::ActiveStatus::kTrue);
 
 class TemplateURLServiceTestUtil : public TemplateURLServiceObserver {
  public:

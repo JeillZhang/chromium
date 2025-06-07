@@ -20,12 +20,11 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/browser_app_launcher.h"
-#include "chrome/browser/extensions/bookmark_app_util.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_ui_util.h"
 #include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/apps/app_info_dialog.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -33,6 +32,7 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow.h"
 #include "chrome/browser/ui/tab_dialogs.h"
+#include "chrome/browser/ui/views/apps/app_info_dialog/app_info_dialog_container.h"
 #include "chrome/browser/ui/webui/app_home/app_home.mojom-shared.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/browser/web_applications/extension_status_utils.h"
@@ -44,7 +44,6 @@
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
-#include "chrome/browser/web_applications/web_app_sync_bridge.h"
 #include "chrome/browser/web_applications/web_app_ui_manager.h"
 #include "chrome/browser/web_applications/web_app_utils.h"
 #include "chrome/common/chrome_features.h"
@@ -54,6 +53,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/webapps/browser/uninstall_result_code.h"
 #include "content/public/browser/web_ui.h"
+#include "extensions/browser/bookmark_app_util.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "net/base/url_util.h"
@@ -80,13 +80,6 @@ const char kDeprecationDialogQueryString[] = "showDeletionDialog";
 // Query string for showing the force installed apps deprecation dialog.
 // Should match with kChromeUIAppsWithForceInstalledDeprecationDialogURL.
 const char kForceInstallDialogQueryString[] = "showForceInstallDialog";
-
-// The Youtube app is incorrectly hardcoded to be a 'bookmark app'. However, it
-// is a platform app.
-// TODO(crbug.com/40124309): Remove this hack once the youtube app is fixed.
-bool IsYoutubeExtension(const std::string& extension_id) {
-  return extension_id == extension_misc::kYoutubeAppId;
-}
 
 }  // namespace
 
@@ -188,8 +181,7 @@ void AppHomePageHandler::LaunchAppInternal(
           app_id,
           {web_app::proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE,
            web_app::proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION,
-           web_app::proto::InstallState::INSTALLED_WITH_OS_INTEGRATION}) &&
-      !IsYoutubeExtension(app_id)) {
+           web_app::proto::InstallState::INSTALLED_WITH_OS_INTEGRATION})) {
     type = extensions::Manifest::Type::TYPE_HOSTED_APP;
     full_launch_url = registrar.GetAppStartUrl(app_id);
     launch_container = web_app::ConvertDisplayModeToAppLaunchContainer(
@@ -442,9 +434,6 @@ void AppHomePageHandler::FillWebAppInfoList(
   web_app::WebAppRegistrar& registrar = web_app_provider_->registrar_unsafe();
 
   for (const webapps::AppId& web_app_id : registrar.GetAppIds()) {
-    if (IsYoutubeExtension(web_app_id)) {
-      continue;
-    }
     result->emplace_back(CreateAppInfoPtrFromWebApp(web_app_id));
   }
 }
@@ -678,8 +667,7 @@ void AppHomePageHandler::UninstallApp(const std::string& app_id) {
           app_id,
           {web_app::proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE,
            web_app::proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION,
-           web_app::proto::InstallState::INSTALLED_WITH_OS_INTEGRATION}) &&
-      !IsYoutubeExtension(app_id)) {
+           web_app::proto::InstallState::INSTALLED_WITH_OS_INTEGRATION})) {
     UninstallWebApp(app_id);
     return;
   }
@@ -696,8 +684,7 @@ void AppHomePageHandler::ShowAppSettings(const std::string& app_id) {
           app_id,
           {web_app::proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE,
            web_app::proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION,
-           web_app::proto::InstallState::INSTALLED_WITH_OS_INTEGRATION}) &&
-      !IsYoutubeExtension(app_id)) {
+           web_app::proto::InstallState::INSTALLED_WITH_OS_INTEGRATION})) {
     ShowWebAppSettings(app_id);
     return;
   }
@@ -720,8 +707,7 @@ void AppHomePageHandler::CreateAppShortcut(const std::string& app_id,
           app_id,
           {web_app::proto::InstallState::SUGGESTED_FROM_ANOTHER_DEVICE,
            web_app::proto::InstallState::INSTALLED_WITHOUT_OS_INTEGRATION,
-           web_app::proto::InstallState::INSTALLED_WITH_OS_INTEGRATION}) &&
-      !IsYoutubeExtension(app_id)) {
+           web_app::proto::InstallState::INSTALLED_WITH_OS_INTEGRATION})) {
     CreateWebAppShortcut(app_id, std::move(callback));
     return;
   }

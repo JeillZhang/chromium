@@ -7,20 +7,20 @@
 #include <vector>
 
 #include "base/check_deref.h"
+#include "base/strings/string_util.h"
 #include "build/build_config.h"
+#include "chrome/browser/extensions/extension_browsertest.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/common/extension.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/extensions/extension_platform_browsertest.h"
-#else
+#if !BUILDFLAG(IS_ANDROID)
 #include "base/command_line.h"
 #include "base/containers/to_vector.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/api/settings_overrides/settings_overrides_api.h"
-#include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/external_provider_manager.h"
 #include "chrome/browser/prefs/session_startup_pref.h"  // nogncheck
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/search.h"
@@ -31,6 +31,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/search_test_utils.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/default_search_manager.h"
@@ -46,6 +47,7 @@
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/common/features/feature_channel.h"
+#include "extensions/common/switches.h"
 #endif
 
 namespace extensions {
@@ -293,8 +295,12 @@ class ExtensionsDisabledWithSettingsOverrideAPI : public ExtensionBrowserTest {
     const char* test_name =
         testing::UnitTest::GetInstance()->current_test_info()->name();
     if (!base::StartsWith(test_name, "PRE_", base::CompareCase::SENSITIVE)) {
-      command_line->AppendSwitch(::switches::kDisableExtensions);
+      command_line->AppendSwitch(switches::kDisableExtensions);
     }
+  }
+
+  ExternalProviderManager* external_provider_manager() {
+    return ExternalProviderManager::Get(profile());
   }
 
  private:
@@ -318,12 +324,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionsDisabledWithSettingsOverrideAPI,
   ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
   TestExtensionRegistryObserver observer(registry);
   auto provider = std::make_unique<MockExternalProvider>(
-      extension_service(), mojom::ManifestLocation::kExternalPref);
+      external_provider_manager(), mojom::ManifestLocation::kExternalPref);
   provider->UpdateOrAddExtension(
       kExternalId, "2.1",
       test_data_dir_.AppendASCII("api_test/settings_overrides/homepage.crx"));
-  extension_service()->AddProviderForTesting(std::move(provider));
-  extension_service()->CheckForExternalUpdates();
+  external_provider_manager()->AddProviderForTesting(std::move(provider));
+  external_provider_manager()->CheckForExternalUpdates();
   scoped_refptr<const Extension> extension = observer.WaitForExtensionLoaded();
   EXPECT_EQ(kExternalId, extension->id());
 }
@@ -340,11 +346,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsDisabledWithSettingsOverrideAPI,
 
 #else
 
-#if BUILDFLAG(IS_ANDROID)
-using ExtensionSettingsOverrideTest = ExtensionPlatformBrowserTest;
-#else
 using ExtensionSettingsOverrideTest = ExtensionBrowserTest;
-#endif
 
 IN_PROC_BROWSER_TEST_F(ExtensionSettingsOverrideTest,
                        SettingsOverridesDisallowed) {

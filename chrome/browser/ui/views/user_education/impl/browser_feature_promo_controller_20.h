@@ -57,12 +57,11 @@ class BrowserFeaturePromoController20
   ~BrowserFeaturePromoController20() override;
 
  protected:
-  FRIEND_TEST_ALL_PREFIXES(BrowserFeaturePromoController20ActivationUiTest,
-                           CanShowPromoForElement);
+  friend class BrowserFeaturePromoController20CanShowPromoForElementUiTest;
 
   // FeaturePromoController:
   ui::ElementContext GetAnchorContext() const override;
-  bool CanShowPromoForElement(
+  user_education::FeaturePromoResult CanShowPromoForElement(
       ui::TrackedElement* anchor_element) const override;
   const ui::AcceleratorProvider* GetAcceleratorProvider() const override;
   std::u16string GetTutorialScreenReaderHint() const override;

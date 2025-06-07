@@ -13,6 +13,7 @@ class ScopedClosureRunner;
 }
 @protocol BadgeItem;
 class GURL;
+enum class NotificationOptInAccessPoint;
 
 // Protocol for commands that will be handled by the BrowserCoordinator.
 // TODO(crbug.com/41427057) : Rename this protocol to one that is more
@@ -110,12 +111,18 @@ class GURL;
 - (void)showEnhancedSafeBrowsingPromo;
 - (void)dismissEnhancedSafeBrowsingPromo;
 
-// If an animation for navigating back is necessary, animates, navigate
-// back and return YES. Otherwise, do nothing and return NO.
-- (BOOL)navigateBackWithAnimationIfNeeded;
+// Shows and dismisses the Search What You See promo.
+- (void)showSearchWhatYouSeePromo;
+- (void)dismissSearchWhatYouSeePromo;
 
-// Animates the navigation to a lens overlay result page item URL.
-- (void)animateLensOverlayNavigationToURL:(GURL)URL;
+// Shows the notifications opt-in view from `accessPoint`.
+- (void)showNotificationsOptInFromAccessPoint:
+            (NotificationOptInAccessPoint)accessPoint
+                           baseViewController:
+                               (UIViewController*)baseViewController;
+
+// Dismisses the notifications opt-in view.
+- (void)dismissNotificationsOptIn;
 
 @end
 

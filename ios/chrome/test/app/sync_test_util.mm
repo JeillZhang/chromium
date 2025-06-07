@@ -12,6 +12,7 @@
 #import "base/functional/bind.h"
 #import "base/memory/ptr_util.h"
 #import "base/path_service.h"
+#import "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/test/ios/wait_util.h"
@@ -24,6 +25,7 @@
 #import "components/keyed_service/core/service_access_type.h"
 #import "components/metrics/demographics/demographic_metrics_test_utils.h"
 #import "components/saved_tab_groups/internal/saved_tab_group_sync_bridge.h"
+#import "components/saved_tab_groups/internal/shared_tab_group_data_sync_bridge.h"
 #import "components/saved_tab_groups/public/saved_tab_group.h"
 #import "components/saved_tab_groups/public/saved_tab_group_tab.h"
 #import "components/sync/base/data_type.h"
@@ -32,6 +34,7 @@
 #import "components/sync/engine/loopback_server/loopback_server_entity.h"
 #import "components/sync/protocol/device_info_specifics.pb.h"
 #import "components/sync/protocol/session_specifics.pb.h"
+#import "components/sync/protocol/sync_entity.pb.h"
 #import "components/sync/protocol/sync_enums.pb.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_service_impl.h"
@@ -52,6 +55,7 @@
 #import "ios/chrome/browser/history/model/history_service_factory.h"
 #import "ios/chrome/browser/shared/model/paths/paths.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
+#import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/sync/model/device_info_sync_service_factory.h"
 #import "ios/chrome/browser/sync/model/sync_service_factory.h"
 #import "ios/chrome/browser/synced_sessions/model/distant_session.h"
@@ -109,7 +113,8 @@ syncer::KeyParamsForTesting AddSyncPassphraseInternal(
 }
 
 // Adds SavedTabGroup `specifics` to the fake server.
-void AddDataToFakeServer(const sync_pb::SavedTabGroupSpecifics& specifics) {
+void AddSavedTabGroupDataToFakeServer(
+    const sync_pb::SavedTabGroupSpecifics& specifics) {
   sync_pb::EntitySpecifics group_entity_specifics;
   sync_pb::SavedTabGroupSpecifics* group_specifics =
       group_entity_specifics.mutable_saved_tab_group();
@@ -124,6 +129,36 @@ void AddDataToFakeServer(const sync_pb::SavedTabGroupSpecifics& specifics) {
           "non_unique_name", client_tag, group_entity_specifics,
           /*creation_time=*/creation_time,
           /*last_modified_time=*/update_time));
+}
+
+// Adds SharedTabGroupData `specifics` to the fake server.
+void AddSharedTabGroupDataToFakeServer(
+    const sync_pb::SharedTabGroupDataSpecifics& specifics,
+    int64_t creation_time,
+    const syncer::CollaborationId& collaboration_id) {
+  sync_pb::EntitySpecifics group_entity_specifics;
+  sync_pb::SharedTabGroupDataSpecifics* group_specifics =
+      group_entity_specifics.mutable_shared_tab_group_data();
+  group_specifics->CopyFrom(specifics);
+
+  // `client_tag` should be the same value as
+  // `SharedTabGroupDataSyncBridge::GetClientTag()`.
+  std::string client_tag = specifics.guid() + "|" + collaboration_id.value();
+  int64_t update_time = group_specifics->update_time_windows_epoch_micros();
+
+  sync_pb::SyncEntity::CollaborationMetadata metadata;
+  metadata.set_collaboration_id(collaboration_id.value());
+
+  std::string gaia_id =
+      base::SysNSStringToUTF8([FakeSystemIdentity fakeIdentity3].gaiaID);
+  metadata.mutable_creation_attribution()->set_obfuscated_gaia_id(gaia_id);
+  metadata.mutable_last_update_attribution()->set_obfuscated_gaia_id(gaia_id);
+
+  gSyncFakeServer->InjectEntity(
+      syncer::PersistentUniqueClientEntity::CreateFromSharedSpecificsForTesting(
+          "non_unique_name", client_tag, group_entity_specifics,
+          /*creation_time=*/creation_time,
+          /*last_modified_time=*/update_time, metadata));
 }
 
 }  // namespace
@@ -411,6 +446,14 @@ void AddTypedURLToClient(const GURL& url, base::Time visitTimestamp) {
                           history::SOURCE_BROWSED, false);
 }
 
+void SetPageTitle(const GURL& url, const std::u16string& title) {
+  ProfileIOS* profile = chrome_test_util::GetOriginalProfile();
+  history::HistoryService* historyService =
+      ios::HistoryServiceFactory::GetForProfile(
+          profile, ServiceAccessType::EXPLICIT_ACCESS);
+  historyService->SetPageTitle(url, title);
+}
+
 void AddHistoryVisitToFakeSyncServer(const GURL& url) {
   sync_pb::EntitySpecifics entitySpecifics;
   sync_pb::HistorySpecifics* history = entitySpecifics.mutable_history();
@@ -518,7 +561,7 @@ void AddSyncPassphrase(const std::string& sync_passphrase) {
   AddSyncPassphraseInternal(sync_passphrase);
 }
 
-void AddCollaboration(const std::string& collaboration_id) {
+void AddCollaboration(const syncer::CollaborationId& collaboration_id) {
   gSyncFakeServer->AddCollaboration(collaboration_id);
 }
 
@@ -534,15 +577,33 @@ void AddBookmarkWithSyncPassphrase(const std::string& sync_passphrase) {
 }
 
 void AddGroupToFakeServer(const tab_groups::SavedTabGroup& group) {
-  AddDataToFakeServer(
+  AddSavedTabGroupDataToFakeServer(
       tab_groups::SavedTabGroupSyncBridge::SavedTabGroupToSpecificsForTest(
           group));
 }
 
 void AddTabToFakeServer(const tab_groups::SavedTabGroupTab& tab) {
-  AddDataToFakeServer(
+  AddSavedTabGroupDataToFakeServer(
       tab_groups::SavedTabGroupSyncBridge::SavedTabGroupTabToSpecificsForTest(
           tab));
+}
+
+void AddSharedTabToFakeServer(const tab_groups::SavedTabGroupTab& tab,
+                              const syncer::CollaborationId& collaboration_id) {
+  // `unique_position` is currently not used in tests.
+  sync_pb::SharedTabGroupDataSpecifics specifics;
+  specifics.set_guid(tab.saved_tab_guid().AsLowercaseString());
+  specifics.mutable_tab()->set_url(tab.url().spec());
+  specifics.mutable_tab()->set_title(base::UTF16ToUTF8(tab.title()));
+  specifics.mutable_tab()->set_shared_tab_group_guid(
+      tab.saved_group_guid().AsLowercaseString());
+  specifics.set_update_time_windows_epoch_micros(
+      tab.update_time().ToDeltaSinceWindowsEpoch().InMicroseconds());
+
+  AddSharedTabGroupDataToFakeServer(
+      specifics,
+      tab.creation_time().ToDeltaSinceWindowsEpoch().InMicroseconds(),
+      collaboration_id);
 }
 
 void DeleteTabOrGroupFromFakeServer(const base::Uuid& uuid) {
@@ -562,14 +623,18 @@ void DeleteTabOrGroupFromFakeServer(const base::Uuid& uuid) {
   }
 }
 
-void AddCollaborationGroupToFakeServer(const std::string& collaboration_id) {
+void AddCollaborationGroupToFakeServer(
+    const syncer::CollaborationId& collaboration_id) {
   const data_sharing::GroupId group_id =
-      data_sharing::GroupId(collaboration_id);
+      data_sharing::GroupId(collaboration_id.value());
   const sync_pb::CollaborationGroupSpecifics collab_specifics =
       MakeCollaborationGroupSpecifics(group_id, base::Time::Now());
 
   sync_pb::EntitySpecifics entity_specifics;
   *entity_specifics.mutable_collaboration_group() = collab_specifics;
+
+  sync_pb::SyncEntity::CollaborationMetadata metadata;
+  metadata.set_collaboration_id(collaboration_id.value());
 
   std::string client_tag = collab_specifics.collaboration_id();
   int64_t creation_time =
@@ -579,7 +644,7 @@ void AddCollaborationGroupToFakeServer(const std::string& collaboration_id) {
   gSyncFakeServer->InjectEntity(
       syncer::PersistentUniqueClientEntity::CreateFromSharedSpecificsForTesting(
           "non_unique_name", client_tag, entity_specifics, creation_time,
-          update_time, collaboration_id));
+          update_time, metadata));
 }
 
 void DeleteSharedGroupFromFakeServer(const base::Uuid& uuid) {
@@ -597,6 +662,10 @@ void DeleteSharedGroupFromFakeServer(const base::Uuid& uuid) {
       return;
     }
   }
+}
+
+void DeleteAllEntitiesForDataType(syncer::DataType data_type) {
+  gSyncFakeServer->DeleteAllEntitiesForDataType(data_type);
 }
 
 }  // namespace chrome_test_util

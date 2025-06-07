@@ -11,7 +11,6 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/browser_process.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -22,14 +21,11 @@
 #include "chrome/browser/ui/omnibox/omnibox_tab_helper.h"
 #include "chrome/browser/ui/toasts/api/toast_id.h"
 #include "chrome/browser/ui/toasts/toast_controller.h"
-#include "chrome/browser/ui/toasts/toast_dismiss_menu_model.h"
 #include "chrome/browser/ui/toasts/toast_features.h"
-#include "chrome/browser/ui/toasts/toast_metrics.h"
 #include "chrome/browser/ui/toasts/toast_view.h"
 #include "chrome/browser/ui/views/frame/app_menu_button.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/star_view.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
@@ -61,6 +57,8 @@
 namespace {
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kFirstTab);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kSecondTab);
+DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(ui::test::PollingStateObserver<bool>,
+                                    kToastAnimation);
 
 class OmniboxInputWaiter : public OmniboxTabHelper::Observer {
  public:
@@ -122,9 +120,9 @@ class ToastControllerInteractiveTest : public InteractiveBrowserTest {
  public:
   void SetUp() override {
     feature_list_.InitWithFeatures(
-        {toast_features::kToastFramework, toast_features::kToastRefinements,
-         toast_features::kLinkCopiedToast, toast_features::kImageCopiedToast,
+        {toast_features::kLinkCopiedToast, toast_features::kImageCopiedToast,
          toast_features::kReadingListToast,
+         toast_features::kPinnedTabToastOnClose,
          plus_addresses::features::kPlusAddressesEnabled,
          plus_addresses::features::kPlusAddressFullFormFill},
         {});
@@ -146,12 +144,22 @@ class ToastControllerInteractiveTest : public InteractiveBrowserTest {
     return browser()->browser_window_features()->toast_controller();
   }
 
+
   auto ShowToast(ToastParams params) {
-    return Do(base::BindOnce(
-        [](ToastController* toast_controller, ToastParams toast_params) {
-          toast_controller->MaybeShowToast(std::move(toast_params));
-        },
-        GetToastController(), std::move(params)));
+    return Steps(
+        Do(base::BindOnce(
+            [](ToastController* toast_controller, ToastParams toast_params) {
+              toast_controller->MaybeShowToast(std::move(toast_params));
+            },
+            GetToastController(), std::move(params))),
+        PollState(kToastAnimation,
+                  [this]() {
+                    toasts::ToastView* toast_view =
+                        GetToastController()->GetToastViewForTesting();
+                    return toast_view && toast_view->is_animating_for_testing();
+                  }),
+        WaitForState(kToastAnimation, false),
+        StopObservingState(kToastAnimation));
   }
 
   auto FireToastCloseTimer() {
@@ -352,8 +360,16 @@ IN_PROC_BROWSER_TEST_F(ToastControllerInteractiveTest,
 // Tests that attempting to close the `ToastView` does not succeed while the
 // menu is open. If that happens, the `ToastView` is closed once the menu
 // closes.
+
+// TODO(crbug.com/398296825): Flaky on Windows builds.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ToastDoesNotCloseWhileMenuIsOpen \
+  DISABLED_ToastDoesNotCloseWhileMenuIsOpen
+#else
+#define MAYBE_ToastDoesNotCloseWhileMenuIsOpen ToastDoesNotCloseWhileMenuIsOpen
+#endif
 IN_PROC_BROWSER_TEST_F(ToastControllerInteractiveTest,
-                       ToastDoesNotCloseWhileMenuIsOpen) {
+                       MAYBE_ToastDoesNotCloseWhileMenuIsOpen) {
 #if BUILDFLAG(IS_OZONE)
   if (ui::OzonePlatform::GetPlatformNameForTest() == "wayland") {
     GTEST_SKIP() << "Flaky in Wayland due to way events are routed and bounds "
@@ -372,58 +388,6 @@ IN_PROC_BROWSER_TEST_F(ToastControllerInteractiveTest,
                   EnsurePresent(toasts::ToastView::kToastViewId),
                   MoveMouseTo(toasts::ToastView::kToastMenuButton),
                   ClickMouse(), WaitForHide(toasts::ToastView::kToastViewId));
-}
-
-// Tests that clicking the menu button twice closes the menu, but not the toast.
-IN_PROC_BROWSER_TEST_F(ToastControllerInteractiveTest, TwoClicksOnMenuButton) {
-#if BUILDFLAG(IS_OZONE)
-  if (ui::OzonePlatform::GetPlatformNameForTest() == "wayland") {
-    GTEST_SKIP() << "Flaky in Wayland due to way events are routed and bounds "
-                    "are reported";
-  }
-#endif
-  RunTestSequence(
-      ShowToast(ToastParams(ToastId::kLinkCopied)),
-      WaitForShow(toasts::ToastView::kToastViewId),
-      EnsurePresent(toasts::ToastView::kToastMenuButton),
-      PressButton(toasts::ToastView::kToastMenuButton),
-      WaitForShow(ToastDismissMenuModel::kToastDontShowAgainMenuItem),
-      CheckViewProperty(toasts::ToastView::kToastMenuButton,
-                        &views::Button::GetState,
-                        views::Button::ButtonState::STATE_PRESSED),
-      MoveMouseTo(toasts::ToastView::kToastMenuButton), ClickMouse(),
-      WaitForHide(ToastDismissMenuModel::kToastDontShowAgainMenuItem),
-      CheckViewProperty(toasts::ToastView::kToastMenuButton,
-                        &views::Button::GetState,
-                        testing::Ne(views::Button::ButtonState::STATE_PRESSED)),
-      EnsurePresent(toasts::ToastView::kToastMenuButton));
-}
-
-IN_PROC_BROWSER_TEST_F(ToastControllerInteractiveTest,
-                       DismissingToastPermanently) {
-  RunTestSequence(
-      ShowToast(ToastParams(ToastId::kLinkCopied)),
-      WaitForShow(toasts::ToastView::kToastViewId),
-      EnsurePresent(toasts::ToastView::kToastMenuButton),
-      PressButton(toasts::ToastView::kToastMenuButton),
-      WaitForShow(ToastDismissMenuModel::kToastDontShowAgainMenuItem),
-      SelectMenuItem(ToastDismissMenuModel::kToastDontShowAgainMenuItem),
-      WaitForHide(toasts::ToastView::kToastViewId),
-      ShowToast(ToastParams(ToastId::kLinkCopied)),
-      EnsureNotPresent(toasts::ToastView::kToastViewId));
-}
-
-IN_PROC_BROWSER_TEST_F(ToastControllerInteractiveTest,
-                       DismissingToastTemporarily) {
-  RunTestSequence(ShowToast(ToastParams(ToastId::kLinkCopied)),
-                  WaitForShow(toasts::ToastView::kToastViewId),
-                  EnsurePresent(toasts::ToastView::kToastMenuButton),
-                  PressButton(toasts::ToastView::kToastMenuButton),
-                  WaitForShow(ToastDismissMenuModel::kToastDismissMenuItem),
-                  SelectMenuItem(ToastDismissMenuModel::kToastDismissMenuItem),
-                  WaitForHide(toasts::ToastView::kToastViewId),
-                  ShowToast(ToastParams(ToastId::kLinkCopied)),
-                  WaitForShow(toasts::ToastView::kToastViewId));
 }
 
 IN_PROC_BROWSER_TEST_F(ToastControllerInteractiveTest,
@@ -602,4 +566,26 @@ IN_PROC_BROWSER_TEST_F(ToastControllerInteractiveTest,
     EXPECT_TRUE(
         toast_controller->MaybeShowToast(ToastParams(ToastId::kLinkCopied)));
   }
+}
+
+IN_PROC_BROWSER_TEST_F(ToastControllerInteractiveTest,
+                       ShowPinnedTabToastOnTabCloseViaKeyboardShortcut) {
+  ui::Accelerator close_tab_accelerator;
+  ASSERT_TRUE(BrowserView::GetBrowserViewForBrowser(browser())->GetAccelerator(
+      IDC_CLOSE_TAB, &close_tab_accelerator));
+
+  RunTestSequence(
+      // Add a pinned tab.
+      InstrumentTab(kFirstTab), WaitForShow(kFirstTab),
+      AddInstrumentedTab(kSecondTab, GetURL()),
+      SelectTab(kTabStripElementId, 0),
+      Do([&]() { browser()->tab_strip_model()->SetTabPinned(0, true); }),
+      // Expect that closing the tab with an accelerator will show a toast.
+      SendAccelerator(kBrowserViewElementId, close_tab_accelerator),
+      WaitForShow(toasts::ToastView::kToastViewId),
+      CheckResult([&]() { return browser()->tab_strip_model()->count(); }, 2),
+      // Expect that we can close the tab by pressing the accelerator again.
+      SendAccelerator(kBrowserViewElementId, close_tab_accelerator),
+      WaitForHide(toasts::ToastView::kToastViewId),
+      CheckResult([&]() { return browser()->tab_strip_model()->count(); }, 1));
 }

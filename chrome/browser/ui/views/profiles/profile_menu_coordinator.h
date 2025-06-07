@@ -10,6 +10,10 @@
 
 class ProfileMenuViewBase;
 
+namespace signin_metrics {
+enum class AccessPoint;
+}  // namespace signin_metrics
+
 // Handles the lifetime and showing/hidden state of the profile menu bubble.
 // Owned by the associated browser.
 class ProfileMenuCoordinator : public BrowserUserData<ProfileMenuCoordinator> {
@@ -17,7 +21,13 @@ class ProfileMenuCoordinator : public BrowserUserData<ProfileMenuCoordinator> {
   ~ProfileMenuCoordinator() override;
 
   // Shows the the profile bubble for this browser.
-  void Show(bool is_source_accelerator);
+  //
+  // If `explicit_signin_access_point` is set, the signin (or sync) flow will be
+  // started with this access point. Otherwise, the default access point will be
+  // used (`signin_metrics::AccessPoint::kAvatarBubbleSignIn*`).
+  void Show(bool is_source_accelerator,
+            std::optional<signin_metrics::AccessPoint>
+                explicit_signin_access_point = std::nullopt);
 
   // Returns true if the bubble is currently showing for the owning browser.
   bool IsShowing() const;

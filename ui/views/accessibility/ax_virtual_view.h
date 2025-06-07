@@ -104,7 +104,7 @@ class VIEWS_EXPORT AXVirtualView : public ViewAccessibility,
   }
   AXVirtualView* virtual_parent_view() { return virtual_parent_view_; }
 
-  ui::AXPlatformNode* ax_platform_node() { return ax_platform_node_; }
+  ui::AXPlatformNode* ax_platform_node() { return ax_platform_node_.get(); }
 
   // Returns true if |view| is contained within the hierarchy of this
   // AXVirtualView, even as an indirect descendant. Will return true if |view|
@@ -200,6 +200,7 @@ class VIEWS_EXPORT AXVirtualView : public ViewAccessibility,
   // `ViewAccessibility` overrides.
   void NotifyEvent(ax::mojom::Event event_type,
                    bool send_native_event) override;
+  void NotifyDataChanged() override;
   void UpdateFocusableState() override;
   void UpdateInvisibleState() override;
   void OnWidgetClosing(Widget* widget) override;
@@ -248,9 +249,7 @@ class VIEWS_EXPORT AXVirtualView : public ViewAccessibility,
   void UpdateParentViewIsDrawnRecursive(const views::View* initial_view,
                                         bool parent_view_is_drawn);
 
-  // We own this, but it is reference-counted on some platforms so we can't use
-  // a unique_ptr. It is destroyed in the destructor.
-  raw_ptr<ui::AXPlatformNode> ax_platform_node_;
+  ui::AXPlatformNode::Pointer ax_platform_node_;
 
   // Weak. Owns us if not nullptr.
   // Either |parent_view_| or |virtual_parent_view_| should be set but not both.

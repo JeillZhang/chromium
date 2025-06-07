@@ -7,6 +7,7 @@
 
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "base/memory/raw_ref.h"
@@ -16,11 +17,9 @@
 #include "components/supervised_user/core/browser/proto/families_common.pb.h"
 #include "components/supervised_user/core/browser/proto/parent_access_callback.pb.h"
 #include "components/supervised_user/core/common/supervised_user_constants.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "url/gurl.h"
 
 class GURL;
-class PrefService;
 
 namespace supervised_user {
 
@@ -29,6 +28,7 @@ enum class FilteringBehaviorReason {
   DEFAULT = 0,
   ASYNC_CHECKER = 1,
   MANUAL = 2,
+  FILTER_DISABLED = 3,
 };
 
 // Details degarding how a particular filtering classification was arrived at.
@@ -48,6 +48,9 @@ enum class FilteringBehavior : int {
   kBlock = 2,
   kInvalid = 3,
 };
+
+// Declaration for gtest: defining in prod code is not required.
+void PrintTo(FilteringBehavior behavior, std::ostream* os);
 
 // Whether the migration of existing extensions to parent-approved needs to be
 // executed, when the feature
@@ -83,7 +86,7 @@ class ParentAccessCallbackParsedResult {
       const std::string& encoded_parent_access_callback_proto);
 
  private:
-  absl::variant<
+  std::variant<
       kids::platform::parentaccess::client::proto::ParentAccessCallback,
       ParentAccessWidgetError>
       result_;
@@ -99,9 +102,6 @@ std::string FamilyRoleToString(kidsmanagement::FamilyRole role);
 
 // Strips user-specific tokens in a URL to generalize it.
 GURL NormalizeUrl(const GURL& url);
-
-// Check if web filtering prefs are set to default values.
-bool AreWebFilterPrefsDefault(const PrefService& pref_service);
 
 // Given a list of records that map to the supervision state of primary
 // accounts on the user's device, emits metrics that reflect the FamilyLink

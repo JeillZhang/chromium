@@ -69,18 +69,17 @@ extern const char kLastPolicyCheckTime[];
 #endif
 #if BUILDFLAG(IS_IOS)
 extern const char kUserPolicyNotificationWasShown[];
+extern const char kSyncDisabledAlertShown[];
 #endif
 extern const char kForceGoogleSafeSearch[];
 extern const char kForceYouTubeRestrict[];
 extern const char kHideWebStoreIcon[];
 extern const char kIncognitoModeAvailability[];
-extern const char kKeyboardFocusableScrollersEnabled[];
 extern const char kStandardizedBrowserZoomEnabled[];
 extern const char kPolicyTestPageEnabled[];
 extern const char kHasDismissedPolicyPagePromotionBanner[];
 extern const char kAllowBackForwardCacheForCacheControlNoStorePageEnabled[];
 extern const char kLocalTestPoliciesForNextStartup[];
-extern const char kMutationEventsEnabled[];
 extern const char kCSSCustomStateDeprecatedSyntaxEnabled[];
 extern const char kSelectParserRelaxationEnabled[];
 extern const char kForcePermissionPolicyUnloadDefaultEnabled[];
@@ -89,6 +88,12 @@ extern const char kDownloadRestrictions[];
 extern const char kAlwaysOnVpnPreConnectUrlAllowlist[];
 extern const char kFloatingWorkspaceEnabled[];
 #endif
+extern const char kBuiltInAIAPIsEnabled[];
+#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN) || \
+    BUILDFLAG(IS_MAC)
+extern const char kPasswordManagerBlocklist[];
+#endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) ||
+        // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 }  // namespace policy_prefs
 }  // namespace policy
 

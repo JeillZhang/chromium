@@ -75,6 +75,14 @@ public final class EventConstants {
     /** The keyboard accessory was swiped to reveal more suggestions. */
     public static final String KEYBOARD_ACCESSORY_BAR_SWIPED = "keyboard_accessory_bar_swiped";
 
+    /** The keyboard accessory was used to fill home and work address data into a form. */
+    public static final String KEYBOARD_ACCESSORY_HOME_AND_WORK_ADDRESS_AUTOFILLED =
+            "keyboard_accessory_home_and_work_address_autofilled";
+
+    /** The keyboard accessory was used to fill loyalty card info into a form. */
+    public static final String KEYBOARD_ACCESSORY_LOYALTY_CARDS_AUTOFILLED =
+            "keyboard_accessory_loyalty_cards_autofilled";
+
     /** The keyboard accessory was used to create a new plus address. */
     public static final String KEYBOARD_ACCESSORY_PLUS_ADDRESS_CREATE_SUGGESTION =
             "keyboard_accessory_plus_address_create_suggestion";
@@ -138,6 +146,10 @@ public final class EventConstants {
     /** AdaptiveButtonInTopToolbarCustomization new tab events. */
     public static final String ADAPTIVE_TOOLBAR_CUSTOMIZATION_NEW_TAB_OPENED =
             "adaptive_toolbar_customization_new_tab_opened";
+
+    /** AdaptiveButtonInTopToolbarCustomization open in browser events. */
+    public static final String ADAPTIVE_TOOLBAR_CUSTOMIZATION_OPEN_IN_BROWSER_OPENED =
+            "adaptive_toolbar_customization_open_in_browser_opened";
 
     /** AdaptiveButtonInTopToolbarCustomization share events. */
     public static final String ADAPTIVE_TOOLBAR_CUSTOMIZATION_SHARE_OPENED =
@@ -218,6 +230,14 @@ public final class EventConstants {
 
     /** IPH dialog of RTL gesture navigation dialog is shown. */
     public static final String RTL_GESTURE_NAVIGATION_DIALOG_SHOW = "rtl_gesture_iph_show";
+
+    /** An app menu pdf page download event. */
+    public static final String APP_MENU_PDF_PAGE_DOWNLOADED = "app_menu_pdf_page_downloaded";
+
+    public static final String ADAPTIVE_TOOLBAR_PAGE_SUMMARY_WEB_USED =
+            "adaptive_toolbar_page_summary_web_used";
+    public static final String ADAPTIVE_TOOLBAR_PAGE_SUMMARY_PDF_USED =
+            "adaptive_toolbar_page_summary_pdf_used";
 
     /** Do not instantiate. */
     private EventConstants() {}

@@ -17,8 +17,8 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/ash/components/login/auth/public/auth_failure.h"
 #include "chromeos/ash/components/login/session/session_termination_manager.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "chromeos/dbus/power/fake_power_manager_client.h"
-#include "components/policy/core/common/device_local_account_type.h"
 #include "components/reporting/client/mock_report_queue.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user_names.h"
@@ -107,9 +107,9 @@ class LoginLogoutTestHelper {
         return CreateGuestProfile();
       case user_manager::UserType::kPublicAccount:
         return CreatePublicAccountProfile();
-      case user_manager::UserType::kKioskApp:
+      case user_manager::UserType::kKioskChromeApp:
         return CreateKioskAppProfile();
-      case user_manager::UserType::kWebKioskApp:
+      case user_manager::UserType::kKioskWebApp:
         return CreateWebKioskAppProfile();
       default:
         NOTREACHED();
@@ -339,9 +339,9 @@ INSTANTIATE_TEST_SUITE_P(All,
                                LoginLogoutSessionType::GUEST_SESSION},
                               {user_manager::UserType::kPublicAccount,
                                LoginLogoutSessionType::PUBLIC_ACCOUNT_SESSION},
-                              {user_manager::UserType::kKioskApp,
+                              {user_manager::UserType::kKioskChromeApp,
                                LoginLogoutSessionType::KIOSK_SESSION},
-                              {user_manager::UserType::kWebKioskApp,
+                              {user_manager::UserType::kKioskWebApp,
                                LoginLogoutSessionType::KIOSK_SESSION}}));
 
 class LoginFailureReporterTest : public ::testing::TestWithParam<AuthFailure> {

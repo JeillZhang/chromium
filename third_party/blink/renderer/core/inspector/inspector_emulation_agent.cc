@@ -9,14 +9,20 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_theme_engine.h"
 #include "third_party/blink/public/web/web_render_theme.h"
+#include "third_party/blink/renderer/core/css/document_style_environment_variables.h"
+#include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/css/vision_deficiency.h"
 #include "third_party/blink/renderer/core/exported/web_view_impl.h"
+#include "third_party/blink/renderer/core/frame/browser_controls.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
+#include "third_party/blink/renderer/core/frame/visual_viewport.h"
+#include "third_party/blink/renderer/core/frame/web_frame_widget_impl.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/inspector/dev_tools_emulator.h"
 #include "third_party/blink/renderer/core/inspector/locale_controller.h"
 #include "third_party/blink/renderer/core/inspector/protocol/dom.h"
+#include "third_party/blink/renderer/core/inspector/protocol/emulation.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
@@ -32,6 +38,46 @@
 #include "third_party/blink/renderer/platform/theme/web_theme_engine_helper.h"
 
 namespace blink {
+
+namespace {
+
+void SetOrUnsetVariable(DocumentStyleEnvironmentVariables& variables,
+                        UADefinedVariable variable,
+                        std::optional<int> value) {
+  if (value.has_value()) {
+    variables.SetVariable(variable,
+                          StyleEnvironmentVariables::FormatPx(*value));
+  } else {
+    variables.RemoveVariable(variable);
+  }
+}
+
+void ApplySafeAreaInsetOverride(
+    LocalFrame* frame,
+    const protocol::Emulation::SafeAreaInsets& insets) {
+  if (Document* document = frame->GetDocument()) {
+    DocumentStyleEnvironmentVariables& vars =
+        document->GetStyleEngine().EnsureEnvironmentVariables();
+    SetOrUnsetVariable(vars, UADefinedVariable::kSafeAreaInsetTop,
+                       insets.getTop());
+    SetOrUnsetVariable(vars, UADefinedVariable::kSafeAreaMaxInsetTop,
+                       insets.getTopMax());
+    SetOrUnsetVariable(vars, UADefinedVariable::kSafeAreaInsetLeft,
+                       insets.getLeft());
+    SetOrUnsetVariable(vars, UADefinedVariable::kSafeAreaMaxInsetLeft,
+                       insets.getLeftMax());
+    SetOrUnsetVariable(vars, UADefinedVariable::kSafeAreaInsetBottom,
+                       insets.getBottom());
+    SetOrUnsetVariable(vars, UADefinedVariable::kSafeAreaMaxInsetBottom,
+                       insets.getBottomMax());
+    SetOrUnsetVariable(vars, UADefinedVariable::kSafeAreaInsetRight,
+                       insets.getRight());
+    SetOrUnsetVariable(vars, UADefinedVariable::kSafeAreaMaxInsetRight,
+                       insets.getRightMax());
+  }
+}
+
+}  // namespace
 
 InspectorEmulationAgent::InspectorEmulationAgent(
     WebLocalFrameImpl* web_local_frame_impl,
@@ -49,6 +95,8 @@ InspectorEmulationAgent::InspectorEmulationAgent(
       emulated_media_features_(&agent_state_, /*default_value=*/WTF::String()),
       emulated_vision_deficiency_(&agent_state_,
                                   /*default_value=*/WTF::String()),
+      os_text_scale_emulation_enabled_(&agent_state_, /*default_value=*/false),
+      emulated_os_text_scale_(&agent_state_, /*default_value=*/1),
       navigator_platform_override_(&agent_state_,
                                    /*default_value=*/WTF::String()),
       hardware_concurrency_override_(&agent_state_, /*default_value=*/0),
@@ -69,7 +117,11 @@ InspectorEmulationAgent::InspectorEmulationAgent(
       timezone_id_override_(&agent_state_, /*default_value=*/WTF::String()),
       disabled_image_types_(&agent_state_, /*default_value=*/false),
       cpu_throttling_rate_(&agent_state_, /*default_value=*/1),
-      automation_override_(&agent_state_, /*default_value=*/false) {}
+      automation_override_(&agent_state_, /*default_value=*/false),
+      safe_area_insets_override_(&agent_state_,
+                                 /*default_value=*/std::vector<uint8_t>()),
+      small_viewport_height_difference_override_(&agent_state_,
+                                                 /*default_value=*/0.0) {}
 
 InspectorEmulationAgent::~InspectorEmulationAgent() = default;
 
@@ -121,15 +173,30 @@ void InspectorEmulationAgent::Restore() {
   setEmulatedMedia(emulated_media_.Get(), std::move(features));
   if (!emulated_vision_deficiency_.Get().IsNull())
     setEmulatedVisionDeficiency(emulated_vision_deficiency_.Get());
+  if (os_text_scale_emulation_enabled_.Get()) {
+    setEmulatedOSTextScale(emulated_os_text_scale_.Get());
+  }
   auto status_or_rgba = protocol::DOM::RGBA::ReadFrom(
       default_background_color_override_rgba_.Get());
   if (status_or_rgba.ok())
     setDefaultBackgroundColorOverride(std::move(status_or_rgba).value());
-  setFocusEmulationEnabled(emulate_focus_.Get());
+  if (emulate_focus_.Get()) {
+    setFocusEmulationEnabled(true);
+  }
+
   if (emulate_auto_dark_mode_.Get())
     setAutoDarkModeOverride(auto_dark_mode_override_.Get());
   if (!timezone_id_override_.Get().IsNull())
     setTimezoneOverride(timezone_id_override_.Get());
+  auto status_or_insets = protocol::Emulation::SafeAreaInsets::ReadFrom(
+      safe_area_insets_override_.Get());
+  if (status_or_insets.ok()) {
+    setSafeAreaInsetsOverride(std::move(status_or_insets).value());
+  }
+  if (double difference = small_viewport_height_difference_override_.Get()) {
+    web_local_frame_->FrameWidgetImpl()->SetBrowserControlsTopHeightOverride(
+        difference);
+  }
 
   if (virtual_time_policy_.Get().IsNull())
     return;
@@ -183,8 +250,11 @@ protocol::Response InspectorEmulationAgent::disable() {
       std::make_unique<protocol::Array<protocol::Emulation::MediaFeature>>());
   if (!emulated_vision_deficiency_.Get().IsNull())
     setEmulatedVisionDeficiency(String("none"));
+  setEmulatedOSTextScale(std::nullopt);
   setCPUThrottlingRate(1);
-  setFocusEmulationEnabled(false);
+  if (emulate_focus_.Get()) {
+    setFocusEmulationEnabled(false);
+  }
   if (emulate_auto_dark_mode_.Get()) {
     setAutoDarkModeOverride(std::nullopt);
   }
@@ -192,6 +262,14 @@ protocol::Response InspectorEmulationAgent::disable() {
   setDefaultBackgroundColorOverride(nullptr);
   disabled_image_types_.Clear();
   return protocol::Response::Success();
+}
+
+void InspectorEmulationAgent::DidCommitLoadForLocalFrame(LocalFrame* frame) {
+  auto status_or_insets = protocol::Emulation::SafeAreaInsets::ReadFrom(
+      safe_area_insets_override_.Get());
+  if (status_or_insets.ok()) {
+    ApplySafeAreaInsetOverride(frame, *std::move(status_or_insets).value());
+  }
 }
 
 protocol::Response InspectorEmulationAgent::resetPageScaleFactor() {
@@ -254,9 +332,9 @@ protocol::Response InspectorEmulationAgent::setTouchEmulationEnabled(
     return response;
   int max_points = max_touch_points.value_or(1);
   if (max_points < 1 || max_points > WebTouchEvent::kTouchesLengthCap) {
-    String msg =
-        "Touch points must be between 1 and " +
-        String::Number(static_cast<uint16_t>(WebTouchEvent::kTouchesLengthCap));
+    String msg = WTF::StrCat({"Touch points must be between 1 and ",
+                              String::Number(static_cast<uint16_t>(
+                                  WebTouchEvent::kTouchesLengthCap))});
     return protocol::Response::InvalidParams(msg.Utf8());
   }
   touch_event_emulation_enabled_.Set(enabled);
@@ -382,6 +460,27 @@ protocol::Response InspectorEmulationAgent::setEmulatedVisionDeficiency(
   return response;
 }
 
+protocol::Response InspectorEmulationAgent::setEmulatedOSTextScale(
+    std::optional<double> scale) {
+  protocol::Response response = AssertPage();
+  if (!response.IsSuccess()) {
+    return response;
+  }
+  if (scale.has_value()) {
+    os_text_scale_emulation_enabled_.Set(true);
+    emulated_os_text_scale_.Set(scale.value());
+    GetWebViewImpl()
+        ->GetDevToolsEmulator()
+        ->SetEmulatedAccessibilityFontScaleFactor(scale.value());
+  } else {
+    os_text_scale_emulation_enabled_.Set(false);
+    GetWebViewImpl()
+        ->GetDevToolsEmulator()
+        ->ResetEmulatedAccessibilityFontScaleFactor();
+  }
+  return response;
+}
+
 protocol::Response InspectorEmulationAgent::setCPUThrottlingRate(double rate) {
   protocol::Response response = AssertPage();
   if (!response.IsSuccess())
@@ -396,9 +495,6 @@ protocol::Response InspectorEmulationAgent::setFocusEmulationEnabled(
   protocol::Response response = AssertPage();
   if (!response.IsSuccess())
     return response;
-  if (enabled == emulate_focus_.Get()) {
-    return response;
-  }
   emulate_focus_.Set(enabled);
   GetWebViewImpl()->GetPage()->GetFocusController().SetFocusEmulationEnabled(
       enabled);
@@ -502,7 +598,7 @@ AtomicString InspectorEmulationAgent::OverrideAcceptImageHeader(
     // and is expected to be always ending with `image/*,*/*;q=xxx`, therefore,
     // to remove a type we replace `image/x,` with empty string. Only webp and
     // avif types can be disabled.
-    header.Replace(String(type + ","), "");
+    header.Replace(WTF::StrCat({type, ","}), "");
   }
   return AtomicString(header);
 }
@@ -584,6 +680,33 @@ protocol::Response InspectorEmulationAgent::setDefaultBackgroundColorOverride(
   int alpha = static_cast<int>(lroundf(255.0f * rgba->getA(1.0f)));
   GetWebViewImpl()->SetBaseBackgroundColorOverrideForInspector(
       Color(rgba->getR(), rgba->getG(), rgba->getB(), alpha).Rgb());
+  return protocol::Response::Success();
+}
+
+protocol::Response InspectorEmulationAgent::setSafeAreaInsetsOverride(
+    std::unique_ptr<protocol::Emulation::SafeAreaInsets> insets) {
+  protocol::Response response = AssertPage();
+  if (!response.IsSuccess()) {
+    return response;
+  }
+  safe_area_insets_override_.Set(insets->Serialize());
+
+  for (Frame* frame = GetWebViewImpl()->GetPage()->MainFrame(); frame;
+       frame = frame->Tree().TraverseNext()) {
+    if (auto* local_frame = DynamicTo<LocalFrame>(frame)) {
+      ApplySafeAreaInsetOverride(local_frame, *insets);
+
+      if (!local_frame->IsLocalRoot()) {
+        continue;
+      }
+
+      auto* frame_impl = WebLocalFrameImpl::FromFrame(local_frame);
+      if (auto* widget = frame_impl->FrameWidgetImpl()) {
+        widget->UpdateLifecycle(WebLifecycleUpdate::kAll,
+                                DocumentUpdateReason::kInspector);
+      }
+    }
+  }
   return protocol::Response::Success();
 }
 
@@ -695,6 +818,7 @@ protocol::Response InspectorEmulationAgent::setUserAgentOverride(
     ua_metadata_override_->architecture = ua_metadata.getArchitecture().Ascii();
     ua_metadata_override_->model = ua_metadata.getModel().Ascii();
     ua_metadata_override_->mobile = ua_metadata.getMobile();
+    ua_metadata_override_->form_factors = default_ua_metadata.form_factors;
 
     if (ua_metadata.hasBitness()) {
       ua_metadata_override_->bitness = ua_metadata.getBitness("").Ascii();
@@ -846,7 +970,7 @@ protocol::Response InspectorEmulationAgent::setDisabledImageTypes(
   for (protocol::Emulation::DisabledImageType type : *disabled_types) {
     if (DisabledImageTypeEnum::Avif == type ||
         DisabledImageTypeEnum::Webp == type) {
-      disabled_image_types_.Set(prefix + type, true);
+      disabled_image_types_.Set(WTF::StrCat({prefix, type}), true);
       continue;
     }
     disabled_image_types_.Clear();
@@ -860,6 +984,46 @@ protocol::Response InspectorEmulationAgent::setAutomationOverride(
   if (enabled)
     InnerEnable();
   automation_override_.Set(enabled);
+  return protocol::Response::Success();
+}
+
+protocol::Response
+InspectorEmulationAgent::setSmallViewportHeightDifferenceOverride(
+    int difference) {
+  protocol::Response response = AssertPage();
+  if (!response.IsSuccess()) {
+    return response;
+  }
+
+  if (!web_local_frame_->IsOutermostMainFrame()) {
+    return protocol::Response::ServerError(
+        "Operation is only supported for the main frame");
+  }
+
+  cc::BrowserControlsParams browser_controls_params =
+      GetWebViewImpl()->GetBrowserControls().Params();
+  // Use same scale as in LocalFrameView::LargeViewportSizeForViewportUnits().
+  gfx::Size viewport_size =
+      GetWebViewImpl()->GetPage()->GetVisualViewport().Size();
+  gfx::SizeF small_viewport_size =
+      web_local_frame_->GetFrameView()->SmallViewportSizeForViewportUnits();
+  float scale = viewport_size.width() && small_viewport_size.width()
+                    ? viewport_size.width() / small_viewport_size.width()
+                    : 1.0;
+  float scaled_difference = difference * scale;
+  browser_controls_params.top_controls_height = scaled_difference;
+
+  // Storing the scaled value allows us to easily apply the override in
+  // `Restore()`.
+  small_viewport_height_difference_override_.Set(scaled_difference);
+
+  GetWebViewImpl()->MainFrameViewWidget()->SetBrowserControlsTopHeightOverride(
+      scaled_difference);
+  // Ensure the override is applied immediately without having to wait for
+  // `WebFrameWidgetImpl::UpdateVisualProperties()` to be called.
+  GetWebViewImpl()->ResizeWithBrowserControls(
+      GetWebViewImpl()->Size(), viewport_size, browser_controls_params);
+
   return protocol::Response::Success();
 }
 

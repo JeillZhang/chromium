@@ -14,7 +14,6 @@
 #include "base/base64url.h"
 #include "base/containers/span.h"
 #include "base/containers/to_vector.h"
-#include "base/functional/overloaded.h"
 #include "base/json/json_reader.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
@@ -39,7 +38,7 @@
 #include "components/unexportable_keys/unexportable_key_service_impl.h"
 #include "components/unexportable_keys/unexportable_key_task_manager.h"
 #include "components/variations/scoped_variations_ids_provider.h"
-#include "crypto/scoped_mock_unexportable_key_provider.h"
+#include "crypto/scoped_fake_unexportable_key_provider.h"
 #include "crypto/unexportable_key.h"
 #include "net/base/net_errors.h"
 #include "net/cookies/canonical_cookie.h"
@@ -51,6 +50,7 @@
 #include "services/network/test/test_url_loader_factory.h"
 #include "services/network/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace {
 using RefreshTestFuture =
@@ -202,8 +202,8 @@ class BoundSessionRefreshCookieFetcherImplTest : public ::testing::Test {
       network::mojom::CookieAccessDetails::Type access_type) {
     std::vector<network::mojom::CookieAccessDetailsPtr> cookie_access_details;
     cookie_access_details.emplace_back(network::mojom::CookieAccessDetails::New(
-        access_type, kGaiaUrl, url::Origin(), net::SiteForCookies(),
-        CreateReportedCookies(cookies_), std::nullopt,
+        access_type, kGaiaUrl, url::Origin(), url::Origin(),
+        net::SiteForCookies(), CreateReportedCookies(cookies_), std::nullopt,
         /*is_ad_tagged=*/false, net::CookieSettingOverrides()));
     fetcher_->OnCookiesAccessed(std::move(cookie_access_details));
   }
@@ -236,10 +236,10 @@ class BoundSessionRefreshCookieFetcherImplTest : public ::testing::Test {
       // Response producing a `kConnectionError` is necessarily the last one as
       // it terminates the fetch.
       int net_error = std::visit(
-          base::Overloaded{[](net::Error error) -> int { return error; },
-                           [](net::HttpStatusCode http_code) -> int {
-                             return net::ERR_HTTP_RESPONSE_CODE_FAILURE;
-                           }},
+          absl::Overload{[](net::Error error) -> int { return error; },
+                         [](net::HttpStatusCode http_code) -> int {
+                           return net::ERR_HTTP_RESPONSE_CODE_FAILURE;
+                         }},
           *responses.rbegin());
       expected_net_error_buckets.emplace_back(-net_error, /*count=*/1);
     }
@@ -252,7 +252,7 @@ class BoundSessionRefreshCookieFetcherImplTest : public ::testing::Test {
     bool received_challenge = false;
     for (const auto& response : responses) {
       int value = std::visit(
-          base::Overloaded{
+          absl::Overload{
               [](net::Error error) -> int { return error; },
               [](net::HttpStatusCode http_code) -> int { return http_code; }},
           response);
@@ -295,7 +295,7 @@ class BoundSessionRefreshCookieFetcherImplTest : public ::testing::Test {
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
-  crypto::ScopedMockUnexportableKeyProvider scoped_key_provider_;
+  crypto::ScopedFakeUnexportableKeyProvider scoped_key_provider_;
   unexportable_keys::UnexportableKeyTaskManager unexportable_key_task_manager_{
       crypto::UnexportableKeyProvider::Config()};
   unexportable_keys::UnexportableKeyServiceImpl unexportable_key_service_;

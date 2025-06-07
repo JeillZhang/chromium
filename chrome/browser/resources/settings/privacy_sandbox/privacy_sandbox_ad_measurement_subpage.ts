@@ -4,6 +4,7 @@
 
 import '/shared/settings/prefs/prefs.js';
 import '../controls/settings_toggle_button.js';
+import '../icons.html.js';
 import '../settings_columned_section.css.js';
 import '../settings_shared.css.js';
 
@@ -39,13 +40,6 @@ export class SettingsPrivacySandboxAdMeasurementSubpageElement extends
   static get properties() {
     return {
       /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-      /**
        * If true, the Ads API UX Enhancement should be shown.
        */
       shouldShowV2_: {
@@ -58,6 +52,7 @@ export class SettingsPrivacySandboxAdMeasurementSubpageElement extends
     };
   }
 
+  declare private shouldShowV2_: boolean;
   private metricsBrowserProxy_: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
 

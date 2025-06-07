@@ -22,7 +22,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager_observer.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/version_info/version_info.h"
@@ -62,7 +62,7 @@ class WindowedNetworkObserver {
 
   ~WindowedNetworkObserver() = default;
 
-  // Waits for a network request with the |expected_upload_data_|.
+  // Waits for a network request with the `expected_upload_data_`.
   void Wait() {
     message_loop_runner_->Run();
     interceptor_.reset();
@@ -116,19 +116,6 @@ class WindowedNetworkObserver {
 
 class AutofillServerTest : public InProcessBrowserTest {
  public:
-  AutofillServerTest() {
-    scoped_feature_list_.InitWithFeatures(
-        // Enabled.
-        {features::test::kAutofillServerCommunication,
-         features::kAutofillUseCAAddressModel,
-         features::kAutofillUseFRAddressModel,
-         features::kAutofillUseITAddressModel,
-         features::kAutofillUseNLAddressModel
-        },
-        // Disabled.
-        {});
-  }
-
   void SetUpOnMainThread() override {
     InProcessBrowserTest::SetUpOnMainThread();
 
@@ -184,7 +171,8 @@ class AutofillServerTest : public InProcessBrowserTest {
 
  private:
   test::AutofillBrowserTestEnvironment autofill_test_environment_;
-  base::test::ScopedFeatureList scoped_feature_list_;
+  base::test::ScopedFeatureList scoped_feature_list_{
+      features::test::kAutofillServerCommunication};
   content::ContentMockCertVerifier cert_verifier_;
   std::map<std::string, std::string> pages_;
 };

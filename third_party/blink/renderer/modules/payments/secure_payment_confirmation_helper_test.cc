@@ -18,6 +18,8 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_authentication_extensions_prf_values.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_network_or_issuer_information.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_payment_credential_instrument.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_payment_entity_logo.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_public_key_credential_parameters.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_secure_payment_confirmation_request.h"
 #include "third_party/blink/renderer/modules/payments/payment_test_helper.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -27,7 +29,14 @@ namespace blink {
 
 namespace {
 
+static const char PUBLIC_KEY_CREDENTIAL_TYPE_STRING[] = "public-key";
+
 static const uint8_t kPrfInputData[] = {1, 2, 3, 4, 5, 6};
+
+constexpr char kPngImageDataUrl[] =
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVQYlWNk+M/"
+    "wn4GBgYGJAQoAHhgCAh6X4CYAAAAASUVORK5CYII=";
 
 WTF::Vector<uint8_t> CreateVector(base::span<const uint8_t> buffer) {
   WTF::Vector<uint8_t> vector;
@@ -52,6 +61,21 @@ static AuthenticationExtensionsPRFInputs* CreatePrfInputs(
       AuthenticationExtensionsPRFInputs::Create(isolate);
   prf_inputs->setEval(prf_values);
   return prf_inputs;
+}
+
+// Matches a PublicKeyCredentialParameters with the given type and algorithm.
+testing::Matcher<
+    const mojo::InlinedStructPtr<mojom::blink::PublicKeyCredentialParameters>>
+EqPublicKeyCredentialParameters(mojom::blink::PublicKeyCredentialType type,
+                                int32_t algorithm_identifier) {
+  return testing::Pointee(testing::AllOf(
+      testing::Field("type",
+                     &blink::mojom::blink::PublicKeyCredentialParameters::type,
+                     type),
+      testing::Field("algorithm_identifier",
+                     &blink::mojom::blink::PublicKeyCredentialParameters::
+                         algorithm_identifier,
+                     algorithm_identifier)));
 }
 
 }  // namespace
@@ -106,6 +130,14 @@ TEST(SecurePaymentConfirmationHelperTest, Parse_OptionalFields) {
   issuerInfo->setIcon("https://bank.example/icon.png");
   request->setIssuerInfo(issuerInfo);
 
+  PaymentEntityLogo* logo1 = PaymentEntityLogo::Create(scope.GetIsolate());
+  logo1->setUrl("https://entity1.example/icon.png");
+  logo1->setLabel("Label 1");
+  PaymentEntityLogo* logo2 = PaymentEntityLogo::Create(scope.GetIsolate());
+  logo2->setUrl(kPngImageDataUrl);
+  logo2->setLabel("Label 2");
+  request->setPaymentEntitiesLogos({logo1, logo2});
+
   ScriptValue script_value(scope.GetIsolate(),
                            ToV8Traits<SecurePaymentConfirmationRequest>::ToV8(
                                scope.GetScriptState(), request));
@@ -127,6 +159,11 @@ TEST(SecurePaymentConfirmationHelperTest, Parse_OptionalFields) {
   EXPECT_EQ(parsed_request->issuer_info->name, "Issuer Name");
   EXPECT_EQ(parsed_request->issuer_info->icon.GetString(),
             "https://bank.example/icon.png");
+
+  // This field is behind a default-disabled flag, however when set directly
+  // into the request as above it will still be present and we can test that the
+  // mojo parsing works correctly.
+  EXPECT_EQ(parsed_request->payment_entities_logos.size(), 2u);
 }
 
 // Test that parsing a SecurePaymentConfirmationRequest with an empty
@@ -571,6 +608,132 @@ TEST(SecurePaymentConfirmationHelperTest, Parse_InvalidIssuerIcon) {
   EXPECT_TRUE(scope.GetExceptionState().HadException());
   EXPECT_EQ(ESErrorType::kTypeError,
             scope.GetExceptionState().CodeAs<ESErrorType>());
+}
+
+// Test that parsing a SecurePaymentConfirmationRequest with a PaymentEntityLogo
+// entry that has an empty url throws.
+TEST(SecurePaymentConfirmationHelperTest, Parse_EmptyPaymentEntityLogoUrl) {
+  test::TaskEnvironment task_environment;
+  V8TestingScope scope;
+  SecurePaymentConfirmationRequest* request =
+      CreateSecurePaymentConfirmationRequest(scope);
+
+  PaymentEntityLogo* logo = PaymentEntityLogo::Create(scope.GetIsolate());
+  logo->setUrl("");
+  logo->setLabel("Label");
+  request->setPaymentEntitiesLogos({logo});
+
+  ScriptValue script_value(scope.GetIsolate(),
+                           ToV8Traits<SecurePaymentConfirmationRequest>::ToV8(
+                               scope.GetScriptState(), request));
+  SecurePaymentConfirmationHelper::ParseSecurePaymentConfirmationData(
+      script_value, *scope.GetExecutionContext(), scope.GetExceptionState());
+  EXPECT_TRUE(scope.GetExceptionState().HadException());
+  EXPECT_EQ(ESErrorType::kTypeError,
+            scope.GetExceptionState().CodeAs<ESErrorType>());
+}
+
+// Test that parsing a SecurePaymentConfirmationRequest with a PaymentEntityLogo
+// entry that has an invalid url throws.
+TEST(SecurePaymentConfirmationHelperTest, Parse_InvalidPaymentEntityLogoUrl) {
+  test::TaskEnvironment task_environment;
+  V8TestingScope scope;
+  SecurePaymentConfirmationRequest* request =
+      CreateSecurePaymentConfirmationRequest(scope);
+
+  PaymentEntityLogo* logo = PaymentEntityLogo::Create(scope.GetIsolate());
+  logo->setUrl("thisisnotaurl");
+  logo->setLabel("Label");
+  request->setPaymentEntitiesLogos({logo});
+
+  ScriptValue script_value(scope.GetIsolate(),
+                           ToV8Traits<SecurePaymentConfirmationRequest>::ToV8(
+                               scope.GetScriptState(), request));
+  SecurePaymentConfirmationHelper::ParseSecurePaymentConfirmationData(
+      script_value, *scope.GetExecutionContext(), scope.GetExceptionState());
+  EXPECT_TRUE(scope.GetExceptionState().HadException());
+  EXPECT_EQ(ESErrorType::kTypeError,
+            scope.GetExceptionState().CodeAs<ESErrorType>());
+}
+
+// Test that parsing a SecurePaymentConfirmationRequest with a PaymentEntityLogo
+// entry that has a url with a disallowed protocol throws.
+TEST(SecurePaymentConfirmationHelperTest,
+     Parse_DisallowedProtocolPaymentEntityLogoUrl) {
+  test::TaskEnvironment task_environment;
+  V8TestingScope scope;
+  SecurePaymentConfirmationRequest* request =
+      CreateSecurePaymentConfirmationRequest(scope);
+
+  PaymentEntityLogo* logo = PaymentEntityLogo::Create(scope.GetIsolate());
+  logo->setUrl("blob://blob.foo.com/logo.png");
+  logo->setLabel("Label");
+  request->setPaymentEntitiesLogos({logo});
+
+  ScriptValue script_value(scope.GetIsolate(),
+                           ToV8Traits<SecurePaymentConfirmationRequest>::ToV8(
+                               scope.GetScriptState(), request));
+  SecurePaymentConfirmationHelper::ParseSecurePaymentConfirmationData(
+      script_value, *scope.GetExecutionContext(), scope.GetExceptionState());
+  EXPECT_TRUE(scope.GetExceptionState().HadException());
+  EXPECT_EQ(ESErrorType::kTypeError,
+            scope.GetExceptionState().CodeAs<ESErrorType>());
+}
+
+// Test that parsing a SecurePaymentConfirmationRequest with a PaymentEntityLogo
+// entry that has an empty label throws.
+TEST(SecurePaymentConfirmationHelperTest, Parse_EmptyPaymentEntityLogoLabel) {
+  test::TaskEnvironment task_environment;
+  V8TestingScope scope;
+  SecurePaymentConfirmationRequest* request =
+      CreateSecurePaymentConfirmationRequest(scope);
+
+  PaymentEntityLogo* logo = PaymentEntityLogo::Create(scope.GetIsolate());
+  logo->setUrl("https://entity.example/icon.png");
+  logo->setLabel("");
+  request->setPaymentEntitiesLogos({logo});
+
+  ScriptValue script_value(scope.GetIsolate(),
+                           ToV8Traits<SecurePaymentConfirmationRequest>::ToV8(
+                               scope.GetScriptState(), request));
+  SecurePaymentConfirmationHelper::ParseSecurePaymentConfirmationData(
+      script_value, *scope.GetExecutionContext(), scope.GetExceptionState());
+  EXPECT_TRUE(scope.GetExceptionState().HadException());
+  EXPECT_EQ(ESErrorType::kTypeError,
+            scope.GetExceptionState().CodeAs<ESErrorType>());
+}
+
+// Test that parsing a SecurePaymentConfirmationRequest converts the browser
+// bound public key credential parameters.
+TEST(SecurePaymentConfirmationHelperTest, Parse_BrowserBroundPubKeyCredParams) {
+  test::TaskEnvironment task_environment;
+  V8TestingScope scope;
+  SecurePaymentConfirmationRequest* request =
+      CreateSecurePaymentConfirmationRequest(scope);
+  auto request_cred_params =
+      HeapVector<Member<PublicKeyCredentialParameters>>();
+  PublicKeyCredentialParameters* cred_param_1 =
+      PublicKeyCredentialParameters::Create(scope.GetIsolate());
+  cred_param_1->setType(PUBLIC_KEY_CREDENTIAL_TYPE_STRING);
+  // See https://www.iana.org/assignments/cose/cose.xhtml for algorithm
+  // codes.
+  cred_param_1->setAlg(-9); /* -9 is "Unassigned" */
+  request_cred_params.push_back(std::move(cred_param_1));
+  request->setBrowserBoundPubKeyCredParams(std::move(request_cred_params));
+
+  // browserBoundPubKeyCredParams() are behind the
+  // SecurePaymentConfirmationBrowserBoundKeys runtime features flag. This test
+  // needs the flag's status at "test" or greater.
+  ScriptValue script_value(scope.GetIsolate(),
+                           ToV8Traits<SecurePaymentConfirmationRequest>::ToV8(
+                               scope.GetScriptState(), request));
+  ::payments::mojom::blink::SecurePaymentConfirmationRequestPtr parsed_request =
+      SecurePaymentConfirmationHelper::ParseSecurePaymentConfirmationData(
+          script_value, *scope.GetExecutionContext(), ASSERT_NO_EXCEPTION);
+
+  EXPECT_THAT(parsed_request->browser_bound_pub_key_cred_params,
+              testing::ElementsAre(EqPublicKeyCredentialParameters(
+                  blink::mojom::PublicKeyCredentialType::PUBLIC_KEY, -9)));
 }
 
 }  // namespace blink

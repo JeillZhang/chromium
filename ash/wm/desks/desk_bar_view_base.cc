@@ -27,7 +27,6 @@
 #include "ash/wm/desks/desk_mini_view_animations.h"
 #include "ash/wm/desks/desk_name_view.h"
 #include "ash/wm/desks/desk_preview_view.h"
-#include "ash/wm/desks/desk_profiles_button.h"
 #include "ash/wm/desks/desks_constants.h"
 #include "ash/wm/desks/desks_util.h"
 #include "ash/wm/desks/templates/saved_desk_metrics_util.h"
@@ -143,7 +142,7 @@ void MaybeSetupBackgroundView(DeskBarViewBase* bar_view) {
       chromeos::features::IsSystemBlurEnabled()
           ? static_cast<ui::ColorId>(kColorAshShieldAndBase80)
           : cros_tokens::kCrosSysSystemBaseElevatedOpaque;
-  view->SetBackground(views::CreateThemedSolidBackground(background_color_id));
+  view->SetBackground(views::CreateSolidBackground(background_color_id));
 }
 
 }  // namespace
@@ -1934,7 +1933,7 @@ void DeskBarViewBase::MaybeUpdateDeskActionButtonTooltips() {
     // The combine desks button only exists if the feature is disabled. The
     // context menu button that would appear in its place does not need to
     // update its tooltip as it doesn't use a formatted string.
-    if (!features::IsSavedDeskUiRevampEnabled()) {
+    if (!features::IsForestFeatureEnabled()) {
       desk_action_view->combine_desks_button()->UpdateTooltip(
           combine_desk_tooltip);
     }

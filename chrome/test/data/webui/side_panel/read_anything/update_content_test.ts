@@ -3,19 +3,22 @@
 // found in the LICENSE file.
 import 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 
-import {BrowserProxy, ToolbarEvent} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
+import {BrowserProxy, SpeechBrowserProxyImpl, ToolbarEvent, VoiceLanguageController} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 import type {AppElement} from 'chrome-untrusted://read-anything-side-panel.top-chrome/read_anything.js';
 import {assertEquals, assertFalse, assertTrue} from 'chrome-untrusted://webui-test/chai_assert.js';
 import {microtasksFinished} from 'chrome-untrusted://webui-test/test_util.js';
 
-import {createSpeechSynthesisVoice, emitEvent} from './common.js';
+import {emitEvent, mockMetrics, setupBasicSpeech} from './common.js';
 import {FakeReadingMode} from './fake_reading_mode.js';
 import {FakeTreeBuilder} from './fake_tree_builder.js';
 import {TestColorUpdaterBrowserProxy} from './test_color_updater_browser_proxy.js';
+import type {TestMetricsBrowserProxy} from './test_metrics_browser_proxy.js';
+import {TestSpeechBrowserProxy} from './test_speech_browser_proxy.js';
 
 suite('UpdateContent', () => {
   let app: AppElement;
   let readingMode: FakeReadingMode;
+  let metrics: TestMetricsBrowserProxy;
 
   const textNodeIds = [3, 5, 7, 9];
   const texts = [
@@ -25,12 +28,16 @@ suite('UpdateContent', () => {
     'That\'s ancient history, been there, done that!',
   ];
 
-  setup(async () => {
+  setup(() => {
     // Clearing the DOM should always be done first.
     document.body.innerHTML = window.trustedTypes!.emptyHTML;
     BrowserProxy.setInstance(new TestColorUpdaterBrowserProxy());
     readingMode = new FakeReadingMode();
     chrome.readingMode = readingMode as unknown as typeof chrome.readingMode;
+    const speech = new TestSpeechBrowserProxy();
+    SpeechBrowserProxyImpl.setInstance(speech);
+    VoiceLanguageController.setInstance(new VoiceLanguageController());
+    metrics = mockMetrics();
 
     // Don't use await createApp() when using a FakeTree, as it seems to cause
     // flakiness.
@@ -39,7 +46,7 @@ suite('UpdateContent', () => {
     new FakeTreeBuilder()
         .root(1)
         .addTag(2, /* parentId= */ 1, 'p')
-        .addText(textNodeIds[0]!!, /* parentId= */ 2, texts[0]!)
+        .addText(textNodeIds[0]!, /* parentId= */ 2, texts[0]!)
         .addTag(4, /* parentId= */ 1, 'p')
         .addText(textNodeIds[1]!, /* parentId= */ 4, texts[1]!)
         .addTag(6, /* parentId= */ 1, 'p')
@@ -48,11 +55,7 @@ suite('UpdateContent', () => {
         .addText(textNodeIds[3]!, /* parentId= */ 8, texts[3]!)
         .build(readingMode);
 
-    app.enabledLangs = ['en-US'];
-
-    const selectedVoice =
-        createSpeechSynthesisVoice({lang: 'en', name: 'Kristi'});
-    return emitEvent(app, ToolbarEvent.VOICE, {detail: {selectedVoice}});
+    setupBasicSpeech(speech);
   });
 
   test('playable if done with distillation', async () => {
@@ -69,6 +72,16 @@ suite('UpdateContent', () => {
     await microtasksFinished();
 
     assertFalse(app.$.toolbar.isReadAloudPlayable);
+  });
+
+  test('logs speech stop if called while speech active', async () => {
+    emitEvent(app, ToolbarEvent.PLAY_PAUSE);
+    app.updateContent();
+    await microtasksFinished();
+
+    assertEquals(
+        chrome.readingMode.unexpectedUpdateContentStopSource,
+        await metrics.whenCalled('recordSpeechStopSource'));
   });
 
   test('hides loading page', async () => {

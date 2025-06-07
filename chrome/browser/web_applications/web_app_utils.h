@@ -10,11 +10,8 @@
 #include <set>
 #include <string>
 #include <tuple>
-#include <vector>
 
-#include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
-#include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
+#include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
 #include "chrome/browser/web_applications/web_app_management_type.h"
 #include "components/services/app_service/public/cpp/file_handler.h"
@@ -39,19 +36,6 @@ class BrowserContext;
 }
 
 namespace web_app {
-
-namespace error_page {
-// |alternative_error_page_params| dictionary key values in the
-// |AlternativeErrorPageOverrideInfo| mojom struct.
-const char kMessage[] = "web_app_error_page_message";
-const char kAppShortName[] = "app_short_name";
-const char kIconUrl[] = "icon_url";
-const char kSupplementaryIcon[] = "supplementary_icon";
-
-// This must match the HTML element id of the svg to show as a supplementary
-// icon on the default offline error page.
-const char16_t kOfflineIconId[] = u"offlineIcon";
-}  // namespace error_page
 
 // These functions return true if the WebAppProvider is allowed
 // for a given profile. This does not consider 'original' profiles. Returns
@@ -153,7 +137,7 @@ bool IsInScope(const GURL& url, const GURL& scope);
 // Returns whether the `login_mode` should force a start at OS login.
 bool IsRunOnOsLoginModeEnabledForAutostart(RunOnOsLoginMode login_mode);
 
-constexpr char kAppSettingsPageEntryPointsHistogramName[] =
+inline constexpr char kAppSettingsPageEntryPointsHistogramName[] =
     "WebApp.AppSettingsPage.EntryPoints";
 
 // These are used in histograms, do not remove/renumber entries. If you're
@@ -169,21 +153,6 @@ enum class AppSettingsPageEntryPoint {
   kSiteDataDialog = 5,
   kMaxValue = kSiteDataDialog,
 };
-
-// When user_display_mode indicates a user preference for opening in
-// a browser tab, we open in a browser tab. If the developer has specified
-// the app should utilize more advanced display modes and/or fallback chain,
-// attempt honor those preferences. Otherwise, we open in a standalone
-// window (for app_display_mode 'standalone' or 'fullscreen'), or a minimal-ui
-// window (for app_display_mode 'browser' or 'minimal-ui').
-//
-// |is_isolated| overrides browser display mode for Isolated Web Apps because
-// they can't be open as a tab.
-DisplayMode ResolveEffectiveDisplayMode(
-    DisplayMode app_display_mode,
-    const std::vector<DisplayMode>& app_display_mode_overrides,
-    mojom::UserDisplayMode user_display_mode,
-    bool is_isolated);
 
 apps::LaunchContainer ConvertDisplayModeToAppLaunchContainer(
     DisplayMode display_mode);
@@ -202,6 +171,10 @@ content::mojom::AlternativeErrorPageOverrideInfoPtr ConstructWebAppErrorPage(
     std::u16string supplementary_icon);
 
 bool IsValidScopeForLinkCapturing(const GURL& scope);
+
+// Resets all content settings for the given `app_scope` to their default
+// values.
+void ResetAllContentSettingsForWebApp(Profile* profile, const GURL& app_scope);
 
 // TODO(http://b/331208955): Remove after migration.
 // Returns whether |app_id| will soon refer to a system web app given |sources|.

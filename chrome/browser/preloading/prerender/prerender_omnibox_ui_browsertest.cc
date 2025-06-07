@@ -10,6 +10,8 @@
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/path_service.h"
+#include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -604,9 +606,8 @@ class PrerenderOmniboxSearchSuggestionUIBrowserTest
       : prerender_helper_(base::BindRepeating(
             &PrerenderOmniboxUIBrowserTest::GetActiveWebContents,
             base::Unretained(this))) {
-    scoped_feature_list_.InitWithFeatures(
-        {features::kSupportSearchSuggestionForPrerender2},
-        {kSearchPrefetchOnlyAllowDefaultMatchPreloading});
+    scoped_feature_list_.InitAndDisableFeature(
+        kSearchPrefetchOnlyAllowDefaultMatchPreloading);
   }
 
   void SetUpOnMainThread() override {

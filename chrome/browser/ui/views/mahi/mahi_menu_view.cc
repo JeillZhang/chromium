@@ -8,9 +8,11 @@
 #include <memory>
 #include <string>
 
+#include "base/check_deref.h"
 #include "base/check_is_test.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ref.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "chrome/browser/ui/ash/editor_menu/utils/pre_target_handler.h"
@@ -26,6 +28,7 @@
 #include "chromeos/components/mahi/public/cpp/mahi_web_contents_manager.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "chromeos/ui/vector_icons/vector_icons.h"
+#include "components/application_locale_storage/application_locale_storage.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/accessibility/ax_enums.mojom-shared.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -97,17 +100,17 @@ void StyleMenuButton(views::LabelButton* button, const gfx::VectorIcon& icon) {
   button->SetImageModel(views::Button::ButtonState::STATE_DISABLED,
                         ui::ImageModel::FromVectorIcon(
                             icon, ui::kColorSysStateDisabled, kButtonHeight));
-  button->SetTextColorId(views::LabelButton::ButtonState::STATE_NORMAL,
-                         ui::kColorSysOnSurface);
-  button->SetTextColorId(views::LabelButton::ButtonState::STATE_DISABLED,
-                         ui::kColorSysStateDisabled);
+  button->SetTextColor(views::LabelButton::ButtonState::STATE_NORMAL,
+                       ui::kColorSysOnSurface);
+  button->SetTextColor(views::LabelButton::ButtonState::STATE_DISABLED,
+                       ui::kColorSysStateDisabled);
   button->SetImageLabelSpacing(kButtonImageLabelSpacing);
 
   auto color_id = button->GetEnabled() ? ui::kColorSysTonalOutline
                                        : ui::kColorButtonBorderDisabled;
   button->SetBorder(views::CreatePaddedBorder(
-      views::CreateThemedRoundedRectBorder(kButtonBorderThickness,
-                                           kButtonCornerRadius, color_id),
+      views::CreateRoundedRectBorder(kButtonBorderThickness,
+                                     kButtonCornerRadius, color_id),
       kButtonPadding));
 }
 
@@ -199,11 +202,15 @@ class MahiMenuView::MenuTextfieldController
   base::WeakPtr<MahiMenuView> menu_view_;
 };
 
-MahiMenuView::MahiMenuView(ButtonStatus button_status, Surface surface)
+MahiMenuView::MahiMenuView(
+    const ApplicationLocaleStorage* application_locale_storage,
+    ButtonStatus button_status,
+    Surface surface)
     : chromeos::editor_menu::PreTargetHandlerView(
           chromeos::editor_menu::CardType::kMahiDefaultMenu),
+      application_locale_storage_(CHECK_DEREF(application_locale_storage)),
       surface_(surface) {
-  SetBackground(views::CreateThemedRoundedRectBackground(
+  SetBackground(views::CreateRoundedRectBackground(
       ui::kColorPrimaryBackground,
       views::LayoutProvider::Get()->GetCornerRadiusMetric(
           views::ShapeContextTokens::kMenuRadius)));
@@ -232,7 +239,7 @@ MahiMenuView::MahiMenuView(ButtonStatus button_status, Surface surface)
       header_left_container->AddChildView(std::make_unique<views::Label>(
           l10n_util::GetStringUTF16(IDS_ASH_MAHI_MENU_TITLE),
           views::style::CONTEXT_DIALOG_TITLE, views::style::STYLE_HEADLINE_5));
-  header_label->SetEnabledColorId(ui::kColorSysOnSurface);
+  header_label->SetEnabledColor(ui::kColorSysOnSurface);
   header_label->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT);
   header_label->GetViewAccessibility().SetRole(ax::mojom::Role::kHeading);
 
@@ -338,6 +345,7 @@ MahiMenuView::~MahiMenuView() {
 
 // static
 views::UniqueWidgetPtr MahiMenuView::CreateWidget(
+    const ApplicationLocaleStorage* application_locale_storage,
     const gfx::Rect& anchor_view_bounds,
     const ButtonStatus& button_status,
     Surface surface) {
@@ -355,8 +363,9 @@ views::UniqueWidgetPtr MahiMenuView::CreateWidget(
 
   views::UniqueWidgetPtr widget =
       std::make_unique<MahiMenuWidget>(std::move(params));
-  MahiMenuView* mahi_menu_view = widget->SetContentsView(
-      std::make_unique<MahiMenuView>(button_status, surface));
+  MahiMenuView* mahi_menu_view =
+      widget->SetContentsView(std::make_unique<MahiMenuView>(
+          application_locale_storage, button_status, surface));
   mahi_menu_view->UpdateBounds(anchor_view_bounds);
 
   return widget;
@@ -378,7 +387,8 @@ void MahiMenuView::UpdateBounds(const gfx::Rect& anchor_view_bounds) {
   // TODO(b/318733414): Move `editor_menu::GetEditorMenuBounds` to a common
   // place for use
   GetWidget()->SetBounds(editor_menu::GetEditorMenuBounds(
-      anchor_view_bounds, this, editor_menu::CardType::kMahiDefaultMenu));
+      anchor_view_bounds, this, application_locale_storage_->Get(),
+      editor_menu::CardType::kMahiDefaultMenu));
 }
 
 void MahiMenuView::OnWidgetVisibilityChanged(views::Widget* widget,
@@ -463,7 +473,7 @@ std::unique_ptr<views::FlexLayoutView> MahiMenuView::CreateInputContainer() {
   auto input_container =
       views::Builder<views::FlexLayoutView>()
           .SetOrientation(views::LayoutOrientation::kHorizontal)
-          .SetBackground(views::CreateThemedRoundedRectBackground(
+          .SetBackground(views::CreateRoundedRectBackground(
               ui::kColorSysStateHoverOnSubtle, kInputContainerCornerRadius))
           .SetCrossAxisAlignment(views::LayoutAlignment::kCenter)
           .SetProperty(views::kMarginsKey,

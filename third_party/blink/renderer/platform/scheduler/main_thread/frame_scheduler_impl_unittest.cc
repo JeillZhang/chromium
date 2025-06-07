@@ -30,7 +30,6 @@
 #include "base/unguessable_token.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/switches.h"
 #include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
@@ -987,7 +986,7 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(TaskType::kJavascriptTimerDelayedLowNesting,
                     TaskType::kJavascriptTimerDelayedHighNesting),
     [](const testing::TestParamInfo<TaskType>& info) {
-      return TaskTypeNames::TaskTypeToString(info.param);
+      return TaskTypeNames::TaskTypeToString(info.param).value;
     });
 
 TEST_F(FrameSchedulerImplTest, FreezeForegroundOnlyTasks) {
@@ -1541,7 +1540,7 @@ TEST_F(FrameSchedulerImplTest, ThrottledTaskTypes) {
   for (TaskType task_type : kAllFrameTaskTypes) {
     SCOPED_TRACE(testing::Message()
                  << "TaskType is "
-                 << TaskTypeNames::TaskTypeToString(task_type));
+                 << TaskTypeNames::TaskTypeToString(task_type).value);
     switch (task_type) {
       case TaskType::kIdleTask:
       case TaskType::kInternalContentCapture:
@@ -2914,7 +2913,7 @@ INSTANTIATE_TEST_SUITE_P(
             /* task_type=*/TaskType::kWebSchedulingPostedTask,
             /* is_intensive_throttling_expected=*/true}),
     [](const testing::TestParamInfo<IntensiveWakeUpThrottlingTestParam>& info) {
-      return TaskTypeNames::TaskTypeToString(info.param.task_type);
+      return TaskTypeNames::TaskTypeToString(info.param.task_type).value;
     });
 
 TEST_F(FrameSchedulerImplTestWithIntensiveWakeUpThrottlingPolicyOverride,
@@ -2934,24 +2933,13 @@ TEST_F(FrameSchedulerImplTestWithIntensiveWakeUpThrottlingPolicyOverride,
   EXPECT_FALSE(IsIntensiveWakeUpThrottlingEnabled());
 }
 
-class FrameSchedulerImplTestQuickIntensiveWakeUpThrottlingEnabled
-    : public FrameSchedulerImplTest {
- public:
-  FrameSchedulerImplTestQuickIntensiveWakeUpThrottlingEnabled()
-      : FrameSchedulerImplTest(
-            {features::kQuickIntensiveWakeUpThrottlingAfterLoading},
-            {}) {}
-};
-
-TEST_F(FrameSchedulerImplTestQuickIntensiveWakeUpThrottlingEnabled,
-       LoadingPageGracePeriod) {
+TEST_F(FrameSchedulerImplTest, LoadingPageGracePeriod) {
   EXPECT_EQ(
       base::Seconds(kIntensiveWakeUpThrottling_GracePeriodSeconds_Default),
       GetIntensiveWakeUpThrottlingGracePeriod(true));
 }
 
-TEST_F(FrameSchedulerImplTestQuickIntensiveWakeUpThrottlingEnabled,
-       LoadedPageGracePeriod) {
+TEST_F(FrameSchedulerImplTest, LoadedPageGracePeriod) {
   EXPECT_EQ(base::Seconds(
                 kIntensiveWakeUpThrottling_GracePeriodSecondsLoaded_Default),
             GetIntensiveWakeUpThrottlingGracePeriod(false));

@@ -27,7 +27,6 @@
 #include "components/user_education/common/feature_promo/impl/feature_promo_queue.h"
 #include "components/user_education/common/feature_promo/impl/feature_promo_queue_set.h"
 #include "components/user_education/common/feature_promo/impl/messaging_coordinator.h"
-#include "components/user_education/common/feature_promo/impl/precondition_data.h"
 #include "components/user_education/common/feature_promo/impl/precondition_list_provider.h"
 #include "components/user_education/common/product_messaging_controller.h"
 #include "components/user_education/common/user_education_data.h"
@@ -121,15 +120,13 @@ struct FeaturePromoController25::PromoData {
   FeaturePromoParams& params() { return eligible_promo->promo_params; }
 
   ui::TrackedElement* GetAnchorElement() {
-    const auto* const ref = internal::PreconditionData::Get(
-        eligible_promo->cached_data, AnchorElementPrecondition::kAnchorElement);
-    CHECK(ref) << "Expected anchor element precondition to have run.";
-    return ref->get();
+    return eligible_promo
+        ->cached_data[AnchorElementPrecondition::kAnchorElement]
+        .get();
   }
 
   std::unique_ptr<FeaturePromoLifecycle>& GetLifecycle() {
-    return *internal::PreconditionData::Get(eligible_promo->cached_data,
-                                            LifecyclePrecondition::kLifecycle);
+    return eligible_promo->cached_data[LifecyclePrecondition::kLifecycle];
   }
 
   const base::Feature& GetFeature() const {
@@ -219,6 +216,7 @@ void FeaturePromoController25::MaybeShowPromo(FeaturePromoParams params) {
       current_promo()->iph_feature() == &params.feature.get()) {
     PostShowPromoResult(std::move(params.show_promo_result_callback),
                         FeaturePromoResult::kAlreadyQueued);
+    return;
   }
 
   params.show_promo_result_callback = base::BindOnce(
@@ -353,8 +351,7 @@ FeaturePromoResult FeaturePromoController25::ShowPromo(PromoData& promo_data) {
   const base::Feature& feature = promo_data.GetFeature();
   const bool in_demo_mode =
       (GetFeatureEngagementDemoFeatureName() == feature.name);
-  auto* const index = internal::PreconditionData::Get(
-      promo_data.eligible_promo->cached_data,
+  auto* const index = promo_data.eligible_promo->cached_data.GetIfPresent(
       AnchorElementPrecondition::kRotatingPromoIndex);
   auto* display_spec = spec;
   if (index && index->has_value()) {
@@ -363,14 +360,14 @@ FeaturePromoResult FeaturePromoController25::ShowPromo(PromoData& promo_data) {
   }
 
   // Construct the parameters for the promotion.
-  ShowPromoBubbleParams show_params;
-  show_params.spec = display_spec;
-  show_params.anchor_element = anchor_element;
-  show_params.body_format = std::move(promo_data.params().body_params);
-  show_params.screen_reader_format =
+  FeaturePromoSpecification::BuildHelpBubbleParams build_params;
+  build_params.spec = display_spec;
+  build_params.anchor_element = anchor_element;
+  build_params.body_format = std::move(promo_data.params().body_params);
+  build_params.screen_reader_format =
       std::move(promo_data.params().screen_reader_params);
-  show_params.title_format = std::move(promo_data.params().title_params);
-  show_params.can_snooze = promo_data.GetLifecycle()->CanSnooze();
+  build_params.title_format = std::move(promo_data.params().title_params);
+  build_params.can_snooze = promo_data.GetLifecycle()->CanSnooze();
 
   // If the session policy allows overriding the current promo, abort it.
   if (current_promo()) {
@@ -382,13 +379,14 @@ FeaturePromoResult FeaturePromoController25::ShowPromo(PromoData& promo_data) {
                  : FeaturePromoClosedReason::kOverrideForPrecedence);
   }
 
-  // If the session policy allows overriding other help bubbles, close them.
-  CloseHelpBubbleIfPresent(anchor_element->context());
-
   // TODO(crbug.com/40200981): Currently this must be called before
   // ShouldTriggerHelpUI() below. See bug for details.
-  show_params.screen_reader_prompt_available =
-      CheckScreenReaderPromptAvailable(promo_data.for_demo || in_demo_mode);
+  if (build_params.spec->promo_type() !=
+      FeaturePromoSpecification::PromoType::kCustomUi) {
+    build_params.screen_reader_prompt_available =
+        CheckExtendedPropertiesPromptAvailable(promo_data.for_demo ||
+                                               in_demo_mode);
+  }
 
   // When not explicitly for a demo, notify the tracker that the promo is
   // starting. Since this is also one of the preconditions for the promo,
@@ -398,11 +396,14 @@ FeaturePromoResult FeaturePromoController25::ShowPromo(PromoData& promo_data) {
     return FeaturePromoResult::kBlockedByConfig;
   }
 
+  // If the session policy allows overriding other help bubbles, close them.
+  CloseHelpBubbleIfPresent(anchor_element->context());
+
   // Store the current promo.
   set_current_promo(std::move(lifecycle));
 
   // Try to show the bubble and bail out if we cannot.
-  auto bubble = ShowPromoBubbleImpl(std::move(show_params));
+  auto bubble = ShowPromoBubbleImpl(std::move(build_params));
   if (!bubble) {
     set_current_promo(nullptr);
     if (!promo_data.for_demo) {
@@ -580,16 +581,22 @@ void FeaturePromoController25::AddPreconditionProviders(
            const FeaturePromoParams& params) {
           FeaturePromoPreconditionList list;
           if (auto* const ptr = controller.get()) {
+            // First ensure that the feature is enabled.
             list.AddPrecondition(
                 std::make_unique<FeatureEnabledPrecondition>(*params.feature));
-            list.AddPrecondition(
-                std::make_unique<MeetsFeatureEngagementCriteriaPrecondition>(
-                    *params.feature, *ptr->feature_engagement_tracker()));
+            // Next verify that the feature has not been dismissed and is not
+            // blocked by other profile-based considerations.
             const bool for_demo =
                 ptr->demo_feature_name_ == spec.feature()->name;
             list.AddPrecondition(std::make_unique<LifecyclePrecondition>(
                 ptr->CreateLifecycleFor(spec, params), for_demo));
-            // Required state doesn't take the current promo into account.
+            // Next, verify that the promo is not excluded by any events or
+            // additional conditions.
+            list.AddPrecondition(
+                std::make_unique<MeetsFeatureEngagementCriteriaPrecondition>(
+                    *params.feature, *ptr->feature_engagement_tracker()));
+            // Finally, verify that the promo is eligible to show based on
+            // session policy.
             list.AddPrecondition(std::make_unique<SessionPolicyPrecondition>(
                 ptr->session_policy(),
                 ptr->session_policy()->GetPromoPriorityInfo(spec),

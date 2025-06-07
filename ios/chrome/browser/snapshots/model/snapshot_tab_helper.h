@@ -10,7 +10,6 @@
 #import "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
-#include "ios/chrome/browser/snapshots/model/snapshot_id.h"
 #include "ios/web/public/web_state_observer.h"
 #include "ios/web/public/web_state_user_data.h"
 
@@ -73,9 +72,6 @@ class SnapshotTabHelper : public web::WebStateObserver,
   // Instructs the helper not to snapshot content for the next page load event.
   void IgnoreNextLoad();
 
-  // Returns the ID to use for the snapshot.
-  SnapshotID GetSnapshotID() const;
-
  private:
   friend class web::WebStateUserData<SnapshotTabHelper>;
 
@@ -105,8 +101,6 @@ class SnapshotTabHelper : public web::WebStateObserver,
   // Used to ensure `UpdateSnapshotWithCallback()` is not run when this object
   // is destroyed.
   base::WeakPtrFactory<SnapshotTabHelper> weak_ptr_factory_{this};
-
-  WEB_STATE_USER_DATA_KEY_DECL();
 };
 
 #endif  // IOS_CHROME_BROWSER_SNAPSHOTS_MODEL_SNAPSHOT_TAB_HELPER_H_

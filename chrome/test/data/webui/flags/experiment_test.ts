@@ -16,40 +16,44 @@ suite('ExperimentTest', function() {
   let experiment: ExperimentElement;
   let browserProxy: TestFlagsBrowserProxy;
 
-  const experimentWithOptions: Feature = {
-    'description': 'available feature description',
-    'internal_name': 'available-feature',
-    'is_default': true,
-    'name': 'available feature',
-    'enabled': true,
-    'options': [
-      {
-        'description': 'Default',
-        'internal_name': 'available-feature@0',
-        'selected': false,
-      },
-      {
-        'description': 'Enabled',
-        'internal_name': 'available-feature@1',
-        'selected': false,
-      },
-      {
-        'description': 'Disabled',
-        'internal_name': 'available-feature@2',
-        'selected': false,
-      },
-    ],
-    'supported_platforms': ['Windows'],
-  };
+  function createExperimentWithOptions(): Feature {
+    return {
+      'description': 'available feature description',
+      'internal_name': 'available-feature',
+      'is_default': true,
+      'name': 'available feature',
+      'enabled': true,
+      'options': [
+        {
+          'description': 'Default',
+          'internal_name': 'available-feature@0',
+          'selected': false,
+        },
+        {
+          'description': 'Enabled',
+          'internal_name': 'available-feature@1',
+          'selected': false,
+        },
+        {
+          'description': 'Disabled',
+          'internal_name': 'available-feature@2',
+          'selected': false,
+        },
+      ],
+      'supported_platforms': ['Windows'],
+    };
+  }
 
-  const experimentWithoutOptions: Feature = {
-    'description': 'available feature description',
-    'internal_name': 'available-feature',
-    'is_default': true,
-    'name': 'available feature',
-    'enabled': true,
-    'supported_platforms': ['Windows'],
-  };
+  function createExperimentWithoutOptions(): Feature {
+    return {
+      'description': 'available feature description',
+      'internal_name': 'available-feature',
+      'is_default': true,
+      'name': 'available feature',
+      'enabled': true,
+      'supported_platforms': ['Windows'],
+    };
+  }
 
   function hasBeforePseudoElement(element: HTMLElement): boolean {
     const styles = window.getComputedStyle(element, '::before');
@@ -71,7 +75,7 @@ suite('ExperimentTest', function() {
   });
 
   test('ExperimentWithOptions_Layout', async function() {
-    experiment.data = experimentWithOptions;
+    experiment.data = createExperimentWithOptions();
     document.body.appendChild(experiment);
     await microtasksFinished();
 
@@ -80,10 +84,10 @@ suite('ExperimentTest', function() {
     assertTrue(isVisible(experimentName));
     assertTrue(isVisible(experiment.getRequiredElement('.description')));
     assertTrue(isVisible(experiment.getRequiredElement('.platforms')));
-    assertFalse(!!experiment.shadowRoot!.querySelector('.links-container'));
+    assertFalse(!!experiment.shadowRoot.querySelector('.links-container'));
     assertTrue(isVisible(experiment.getRequiredElement('.permalink')));
-    assertFalse(!!experiment.shadowRoot!.querySelector('.textarea-container'));
-    assertFalse(!!experiment.shadowRoot!.querySelector('.input-container'));
+    assertFalse(!!experiment.shadowRoot.querySelector('.textarea-container'));
+    assertFalse(!!experiment.shadowRoot.querySelector('.input-container'));
 
     const select = experiment.getRequiredElement('select');
     assertTrue(isVisible(select));
@@ -108,7 +112,7 @@ suite('ExperimentTest', function() {
   });
 
   test('ExperimentWithOptions_Change', async function() {
-    experiment.data = experimentWithOptions;
+    experiment.data = createExperimentWithOptions();
     document.body.appendChild(experiment);
     await microtasksFinished();
 
@@ -117,14 +121,25 @@ suite('ExperimentTest', function() {
     const whenFired = eventToPromise('select-change', select);
     await simulateUserInput(select, 1);
 
-    return Promise.all([
+    await Promise.all([
       browserProxy.whenCalled('selectExperimentalFeature'),
       whenFired,
     ]);
+
+    assertEquals(1, select.selectedIndex);
+    const experimentName = experiment.getRequiredElement('.experiment-name');
+    assertTrue(hasBeforePseudoElement(experimentName));
+
+    // Reset to original value (simulating what happens when "Reset all" is
+    // clicked on the parent).
+    experiment.data = createExperimentWithOptions();
+    await microtasksFinished();
+    assertEquals(0, select.selectedIndex);
+    assertFalse(hasBeforePseudoElement(experimentName));
   });
 
   test('ExperimentWithoutOptions_Layout', async function() {
-    experiment.data = experimentWithoutOptions;
+    experiment.data = createExperimentWithoutOptions();
     document.body.appendChild(experiment);
     await microtasksFinished();
 
@@ -133,10 +148,10 @@ suite('ExperimentTest', function() {
     assertTrue(isVisible(experimentName));
     assertTrue(isVisible(experiment.getRequiredElement('.description')));
     assertTrue(isVisible(experiment.getRequiredElement('.platforms')));
-    assertFalse(!!experiment.shadowRoot!.querySelector('.links-container'));
+    assertFalse(!!experiment.shadowRoot.querySelector('.links-container'));
     assertTrue(isVisible(experiment.getRequiredElement('.permalink')));
-    assertFalse(!!experiment.shadowRoot!.querySelector('.textarea-container'));
-    assertFalse(!!experiment.shadowRoot!.querySelector('.input-container'));
+    assertFalse(!!experiment.shadowRoot.querySelector('.textarea-container'));
+    assertFalse(!!experiment.shadowRoot.querySelector('.input-container'));
 
     const select = experiment.getRequiredElement('select');
     assertTrue(isVisible(select));
@@ -156,7 +171,7 @@ suite('ExperimentTest', function() {
   });
 
   test('ExperimentWithoutOptions_Change', async function() {
-    experiment.data = experimentWithoutOptions;
+    experiment.data = createExperimentWithoutOptions();
     document.body.appendChild(experiment);
     await microtasksFinished();
 
@@ -165,10 +180,21 @@ suite('ExperimentTest', function() {
     const whenFired = eventToPromise('select-change', select);
     await simulateUserInput(select, 0);
 
-    return Promise.all([
+    await Promise.all([
       browserProxy.whenCalled('enableExperimentalFeature'),
       whenFired,
     ]);
+
+    assertEquals(0, select.selectedIndex);
+    const experimentName = experiment.getRequiredElement('.experiment-name');
+    assertTrue(hasBeforePseudoElement(experimentName));
+
+    // Reset to original value (simulating what happens when "Reset all" is
+    // clicked on the parent).
+    experiment.data = createExperimentWithoutOptions();
+    await microtasksFinished();
+    assertEquals(1, select.selectedIndex);
+    assertFalse(hasBeforePseudoElement(experimentName));
   });
 
   test('UnavailableExperiment', async function() {
@@ -189,10 +215,10 @@ suite('ExperimentTest', function() {
     assertTrue(isVisible(experimentName));
     assertTrue(isVisible(experiment.getRequiredElement('.description')));
     assertTrue(isVisible(experiment.getRequiredElement('.platforms')));
-    assertFalse(!!experiment.shadowRoot!.querySelector('.links-container'));
+    assertFalse(!!experiment.shadowRoot.querySelector('.links-container'));
     assertTrue(isVisible(experiment.getRequiredElement('.permalink')));
-    assertFalse(!!experiment.shadowRoot!.querySelector('.textarea-container'));
-    assertFalse(!!experiment.shadowRoot!.querySelector('.input-container'));
+    assertFalse(!!experiment.shadowRoot.querySelector('.textarea-container'));
+    assertFalse(!!experiment.shadowRoot.querySelector('.input-container'));
 
     const actions = experiment.getRequiredElement('.experiment-actions');
     assertTrue(!!actions);
@@ -234,7 +260,7 @@ suite('ExperimentTest', function() {
     assertTrue(isVisible(experiment));
     assertTrue(isVisible(experiment.getRequiredElement('.links-container')));
 
-    const links = experiment.shadowRoot!.querySelectorAll<HTMLAnchorElement>(
+    const links = experiment.shadowRoot.querySelectorAll<HTMLAnchorElement>(
         '.links-container a');
     assertEquals(1, links.length);
     const linkElement = links[0]!;
@@ -256,10 +282,10 @@ suite('ExperimentTest', function() {
     await microtasksFinished();
 
     assertTrue(isVisible(experiment));
-    assertFalse(!!experiment.shadowRoot!.querySelector('.textarea-container'));
+    assertFalse(!!experiment.shadowRoot.querySelector('.textarea-container'));
 
     const inputContainer =
-        experiment.shadowRoot!.querySelector<HTMLInputElement>(
+        experiment.shadowRoot.querySelector<HTMLInputElement>(
             '.input-container');
     assertTrue(!!inputContainer);
     assertTrue(isVisible(inputContainer));
@@ -292,10 +318,10 @@ suite('ExperimentTest', function() {
     await microtasksFinished();
 
     assertTrue(isVisible(experiment));
-    assertFalse(!!experiment.shadowRoot!.querySelector('.input-container'));
+    assertFalse(!!experiment.shadowRoot.querySelector('.input-container'));
 
     const textareaContainer =
-        experiment.shadowRoot!.querySelector<HTMLInputElement>(
+        experiment.shadowRoot.querySelector<HTMLInputElement>(
             '.textarea-container');
     assertTrue(!!textareaContainer);
     assertTrue(isVisible(textareaContainer));
@@ -343,6 +369,7 @@ suite('ExperimentTest', function() {
   });
 
   test('Match', async function() {
+    const experimentWithoutOptions = createExperimentWithoutOptions();
     experiment.data = experimentWithoutOptions;
     document.body.appendChild(experiment);
     await microtasksFinished();
@@ -367,8 +394,8 @@ suite('ExperimentTest', function() {
 
     function assertNoHighlightsShown() {
       cloneQueries.forEach((query, i) => {
-        assertFalse(!!experiment.shadowRoot!.querySelector(query));
-        assertTrue(!!experiment.shadowRoot!.querySelector(originalQueries[i]!));
+        assertFalse(!!experiment.shadowRoot.querySelector(query));
+        assertTrue(!!experiment.shadowRoot.querySelector(originalQueries[i]!));
       });
     }
 
@@ -379,11 +406,11 @@ suite('ExperimentTest', function() {
       cloneQueries.forEach((query, i) => {
         // Check that original nodes have been removed.
         const originalNode =
-            experiment.shadowRoot!.querySelector(originalQueries[i]!);
+            experiment.shadowRoot.querySelector(originalQueries[i]!);
         assertFalse(!!originalNode);
 
         // Check that clone nodes have been added.
-        const cloneNode = experiment.shadowRoot!.querySelector(query);
+        const cloneNode = experiment.shadowRoot.querySelector(query);
         assertTrue(!!cloneNode);
 
         if (i === expectedHitIndex) {

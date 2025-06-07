@@ -120,12 +120,13 @@ Element* TreeScope::getElementById(const AtomicString& element_id) const {
 
 const HeapVector<Member<Element>>& TreeScope::GetAllElementsById(
     const AtomicString& element_id) const {
-  DEFINE_STATIC_LOCAL(Persistent<HeapVector<Member<Element>>>, empty_vector,
-                      (MakeGarbageCollected<HeapVector<Member<Element>>>()));
+  using Holder = DisallowNewWrapper<HeapVector<Member<Element>>>;
+  DEFINE_STATIC_LOCAL(Persistent<Holder>, empty_holder,
+                      (MakeGarbageCollected<Holder>()));
   if (element_id.empty())
-    return *empty_vector;
+    return empty_holder->Value();
   if (!elements_by_id_)
-    return *empty_vector;
+    return empty_holder->Value();
   return elements_by_id_->GetAllElementsById(element_id, *this);
 }
 
@@ -258,15 +259,12 @@ Element* TreeScope::HitTestPoint(double x,
   HitTestResult result =
       HitTestInDocument(&RootNode().GetDocument(), x, y, request);
   if (request.AllowsChildFrameContent()) {
-    return HitTestPointInternal(result.InnerNode(),
-                                HitTestPointType::kInternal);
+    return ElementForHitTest(result.InnerNode(), HitTestPointType::kInternal);
   }
-  return HitTestPointInternal(result.InnerNode(),
-                              HitTestPointType::kWebExposed);
+  return ElementForHitTest(result.InnerNode(), HitTestPointType::kWebExposed);
 }
 
-Element* TreeScope::HitTestPointInternal(Node* node,
-                                         HitTestPointType type) const {
+Element* TreeScope::ElementForHitTest(Node* node, HitTestPointType type) const {
   if (!node || node->IsDocumentNode())
     return nullptr;
   Element* element;
@@ -305,7 +303,7 @@ HeapVector<Member<Element>> TreeScope::ElementsFromHitTestResult(
     Node* node = rect_based_node.Get();
     if (!node->IsElementNode() && !ShouldAcceptNonElementNode(*node))
       continue;
-    node = HitTestPointInternal(node, HitTestPointType::kWebExposed);
+    node = ElementForHitTest(node, HitTestPointType::kWebExposed);
     // Prune duplicate entries. A pseduo ::before content above its parent
     // node should only result in a single entry.
     if (node == last_node)
@@ -577,9 +575,9 @@ Element* TreeScope::AdjustedFocusedElement() const {
   // https://github.com/flackr/carousel/tree/main/scroll-marker#what-is-the-documentactiveelement-of-a-focused-pseudo-element
   if (auto* scroll_marker = DynamicTo<ScrollMarkerPseudoElement>(element)) {
     CHECK(scroll_marker->ScrollMarkerGroup());
-    element = scroll_marker->ScrollMarkerGroup()->UltimateOriginatingElement();
+    element = &scroll_marker->ScrollMarkerGroup()->UltimateOriginatingElement();
   } else if (auto* pseudo_element = DynamicTo<PseudoElement>(element)) {
-    element = pseudo_element->UltimateOriginatingElement();
+    element = &pseudo_element->UltimateOriginatingElement();
   }
 
   CHECK(!element->IsPseudoElement());

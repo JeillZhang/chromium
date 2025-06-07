@@ -34,6 +34,10 @@ std::string FillingProductToString(FillingProduct filling_product) {
       return "PlusAddresses";
     case FillingProduct::kAutofillAi:
       return "AutofillAi";
+    case FillingProduct::kLoyaltyCard:
+      return "LoyaltyCard";
+    case FillingProduct::kIdentityCredential:
+      return "IdentityCredential";
   };
   NOTREACHED();
 }
@@ -54,7 +58,6 @@ FillingProduct GetFillingProductFromSuggestionType(SuggestionType type) {
     case SuggestionType::kManageCreditCard:
     case SuggestionType::kSaveAndFillCreditCardEntry:
     case SuggestionType::kScanCreditCard:
-    case SuggestionType::kShowAccountCards:
     case SuggestionType::kVirtualCreditCardEntry:
       return FillingProduct::kCreditCard;
     case SuggestionType::kMerchantPromoCodeEntry:
@@ -73,6 +76,7 @@ FillingProduct GetFillingProductFromSuggestionType(SuggestionType type) {
     case SuggestionType::kViewPasswordDetails:
     case SuggestionType::kWebauthnCredential:
     case SuggestionType::kWebauthnSignInWithAnotherDevice:
+    case SuggestionType::kPendingStateSignin:
       return FillingProduct::kPassword;
     case SuggestionType::kComposeDisable:
     case SuggestionType::kComposeGoToSettings:
@@ -95,11 +99,14 @@ FillingProduct GetFillingProductFromSuggestionType(SuggestionType type) {
     case SuggestionType::kTitle:
     case SuggestionType::kUndoOrClear:
       return FillingProduct::kNone;
-    case SuggestionType::kAutofillAiError:
-    case SuggestionType::kAutofillAiLoadingState:
     case SuggestionType::kFillAutofillAi:
     case SuggestionType::kManageAutofillAi:
       return FillingProduct::kAutofillAi;
+    case SuggestionType::kLoyaltyCardEntry:
+    case SuggestionType::kManageLoyaltyCard:
+      return FillingProduct::kLoyaltyCard;
+    case SuggestionType::kIdentityCredential:
+      return FillingProduct::kIdentityCredential;
   }
   NOTREACHED();
 }
@@ -128,6 +135,8 @@ FillingProduct GetFillingProductFromFieldTypeGroup(
       return FillingProduct::kIban;
     case kAutofillAi:
       return FillingProduct::kAutofillAi;
+    case kLoyaltyCard:
+      return FillingProduct::kLoyaltyCard;
   }
   NOTREACHED();
 }

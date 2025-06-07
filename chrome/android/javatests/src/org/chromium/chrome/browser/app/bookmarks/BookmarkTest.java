@@ -14,6 +14,7 @@ import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
 
+import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
@@ -84,6 +85,8 @@ import org.chromium.chrome.browser.app.metrics.LaunchCauseMetrics;
 import org.chromium.chrome.browser.bookmarks.BookmarkDelegate;
 import org.chromium.chrome.browser.bookmarks.BookmarkListEntry;
 import org.chromium.chrome.browser.bookmarks.BookmarkManagerCoordinator;
+import org.chromium.chrome.browser.bookmarks.BookmarkManagerOpener;
+import org.chromium.chrome.browser.bookmarks.BookmarkManagerOpenerImpl;
 import org.chromium.chrome.browser.bookmarks.BookmarkManagerProperties;
 import org.chromium.chrome.browser.bookmarks.BookmarkManagerTestingDelegate;
 import org.chromium.chrome.browser.bookmarks.BookmarkModel;
@@ -96,6 +99,7 @@ import org.chromium.chrome.browser.bookmarks.BookmarkUiState.BookmarkUiMode;
 import org.chromium.chrome.browser.bookmarks.BookmarkUtils;
 import org.chromium.chrome.browser.bookmarks.ImprovedBookmarkRow;
 import org.chromium.chrome.browser.bookmarks.PowerBookmarkUtils;
+import org.chromium.chrome.browser.bookmarks.bar.BookmarkBarUtils;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactoryJni;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -105,9 +109,11 @@ import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.ui.signin.signin_promo.SigninPromoCoordinator;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
 import org.chromium.chrome.test.util.ActivityTestUtils;
 import org.chromium.chrome.test.util.BookmarkTestUtil;
 import org.chromium.chrome.test.util.MenuUtils;
@@ -143,6 +149,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /** Tests for the bookmark manager. */
 @RunWith(ChromeJUnit4ClassRunner.class)
@@ -162,7 +170,8 @@ public class BookmarkTest {
     private static final int TEST_PORT = 12345;
 
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
@@ -176,6 +185,7 @@ public class BookmarkTest {
     @Mock private ShoppingServiceFactory.Natives mShoppingServiceFactoryJniMock;
     @Captor private ArgumentCaptor<SyncStateChangedListener> mSyncStateChangedListenerCaptor;
 
+    private final BookmarkManagerOpener mBookmarkManagerOpener = new BookmarkManagerOpenerImpl();
     private BookmarkModel mBookmarkModel;
     // Constant but can only be initialized after parameterized test runner setup because this would
     // trigger native load / CommandLineFlag setup.
@@ -202,7 +212,7 @@ public class BookmarkTest {
         CommerceFeatureUtilsJni.setInstanceForTesting(mCommerceFeatureUtilsJniMock);
         doReturn(false).when(mCommerceFeatureUtilsJniMock).isShoppingListEligible(anyLong());
 
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mActivityTestRule.startOnBlankPage();
         runOnUiThreadBlocking(
                 () -> {
                     mBookmarkModel = mActivityTestRule.getActivity().getBookmarkModelForTesting();
@@ -210,7 +220,10 @@ public class BookmarkTest {
                 });
 
         // Use a custom port so the links are consistent for render tests.
-        mActivityTestRule.getEmbeddedTestServerRule().setServerPort(TEST_PORT);
+        mActivityTestRule
+                .getActivityTestRule()
+                .getEmbeddedTestServerRule()
+                .setServerPort(TEST_PORT);
         mTestServer = mActivityTestRule.getTestServer();
         mTestUrlA = new GURL("http://a.com");
         mTestPage = new GURL(mTestServer.getURL(TEST_PAGE_URL_GOOGLE));
@@ -270,7 +283,7 @@ public class BookmarkTest {
     @SmallTest
     public void testAddBookmarkToOtherFolder() {
         mActivityTestRule.loadUrl(mTestPage);
-        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule);
+        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule.getActivityTestRule());
         // Set default folder as "Other Folder".
         runOnUiThreadBlocking(
                 () -> {
@@ -327,7 +340,7 @@ public class BookmarkTest {
     @Test
     @SmallTest
     public void testUrlComposition() {
-        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule);
+        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule.getActivityTestRule());
         runOnUiThreadBlocking(
                 () -> {
                     BookmarkId mobileId = mBookmarkModel.getMobileFolderId();
@@ -354,10 +367,10 @@ public class BookmarkTest {
 
         runOnUiThreadBlocking(
                 () -> {
-                    BookmarkUtils.showBookmarkManager(
+                    mBookmarkManagerOpener.showBookmarkManager(
                             mActivityTestRule.getActivity(),
-                            mBookmarkModel.getMobileFolderId(),
-                            mActivityTestRule.getProfile(false));
+                            mActivityTestRule.getProfile(false),
+                            mBookmarkModel.getMobileFolderId());
                 });
 
         BookmarkTestUtil.waitForBookmarkActivity();
@@ -376,7 +389,7 @@ public class BookmarkTest {
         BookmarkTestUtil.waitForBookmarkModelLoaded();
 
         assertEquals(BookmarkUiMode.FOLDER, mDelegate.getCurrentUiMode());
-        assertEquals("chrome-native://bookmarks/folder/3", BookmarkUtils.getLastUsedUrl());
+        assertEquals("chrome-native://bookmarks/folder/3", mBookmarkManagerOpener.getLastUsedUrl());
     }
 
     @Test
@@ -457,6 +470,7 @@ public class BookmarkTest {
     @Test
     @MediumTest
     @Restriction({DeviceFormFactor.PHONE})
+    @DisabledTest(message = "crbug.com/411305260")
     public void testOpenFromReadingListAndNavigateBack() throws Exception {
         openBookmarkManager();
         runOnUiThreadBlocking(
@@ -1229,9 +1243,25 @@ public class BookmarkTest {
 
     @Test
     @MediumTest
+    public void testTopLevelFolders() throws Exception {
+        // NOTE: Hide promos to ensure top level-folders will fit the viewport.
+        SigninPromoCoordinator.disablePromoForTesting();
+        BookmarkPromoHeader.forcePromoVisibilityForTesting(false);
+        openBookmarkManager();
+        onViewWaiting(allOf(withText("Mobile bookmarks"), isDisplayed()));
+        onViewWaiting(allOf(withText("Reading list"), isDisplayed()));
+        onView(withText("Bookmarks bar"))
+                .check(
+                        BookmarkBarUtils.isFeatureEnabled(mActivityTestRule.getActivity())
+                                ? matches(isDisplayed())
+                                : doesNotExist());
+    }
+
+    @Test
+    @MediumTest
     public void testTopLevelFolderUpdateAfterSync() throws Exception {
         // Set up the test and open the bookmark manager to the Mobile Bookmarks folder.
-        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule);
+        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule.getActivityTestRule());
         openBookmarkManager();
 
         // Add a bookmark to the Other Bookmarks folder.
@@ -1250,10 +1280,27 @@ public class BookmarkTest {
         }
         runOnUiThreadBlocking(getTestingDelegate()::simulateSignInForTesting);
 
+        final List<String> expectedTopLevelFolders =
+                new ArrayList<>(List.of("Mobile bookmarks", "Other bookmarks", "Reading list"));
+
+        if (BookmarkBarUtils.isFeatureEnabled(mActivityTestRule.getActivity())) {
+            expectedTopLevelFolders.add(1, "Bookmarks bar");
+        }
+
+        final String expectedTopLevelFoldersStr =
+                IntStream.range(0, expectedTopLevelFolders.size())
+                        .mapToObj(
+                                i -> {
+                                    final var folder = expectedTopLevelFolders.get(i);
+                                    final var isLast = i == expectedTopLevelFolders.size() - 1;
+                                    final var conjunction = isLast ? "and " : "";
+                                    return String.format("%s\"%s\"", conjunction, folder);
+                                })
+                        .collect(Collectors.joining(", "));
+
         assertEquals(
-                "Expected promo, \"Mobile bookmarks\", \"Other bookmarks\" and \"Reading list\""
-                        + " folder to appear!",
-                3,
+                String.format("Expected promo, %s folder to appear!", expectedTopLevelFoldersStr),
+                expectedTopLevelFolders.size(),
                 getBookmarkCount());
     }
 
@@ -1742,7 +1789,7 @@ public class BookmarkTest {
 
     private boolean isItemPresentInBookmarkList(final String expectedTitle) {
         return ThreadUtils.runOnUiThreadBlocking(
-                new Callable<Boolean>() {
+                new Callable<>() {
                     @Override
                     public Boolean call() {
                         for (int i = 0; i < getBookmarkCount(); i++) {
@@ -1848,7 +1895,7 @@ public class BookmarkTest {
      */
     private static View getViewWithText(final ViewGroup viewGroup, final String expectedText) {
         return ThreadUtils.runOnUiThreadBlocking(
-                new Callable<View>() {
+                new Callable<>() {
                     @Override
                     public View call() {
                         ArrayList<View> outViews = new ArrayList<>();
@@ -1943,12 +1990,12 @@ public class BookmarkTest {
 
     private BookmarkId addBookmark(final String title, GURL url, BookmarkId parent)
             throws ExecutionException {
-        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule);
+        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule.getActivityTestRule());
         return runOnUiThreadBlocking(() -> mBookmarkModel.addBookmark(parent, 0, title, url));
     }
 
     private BookmarkId addBookmark(final String title, final GURL url) throws ExecutionException {
-        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule);
+        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule.getActivityTestRule());
         return runOnUiThreadBlocking(
                 () ->
                         mBookmarkModel.addBookmark(
@@ -1956,7 +2003,7 @@ public class BookmarkTest {
     }
 
     private BookmarkId addFolder(final String title) throws ExecutionException {
-        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule);
+        BookmarkTestUtil.readPartnerBookmarks(mActivityTestRule.getActivityTestRule());
         return runOnUiThreadBlocking(
                 () ->
                         mBookmarkModel.addFolder(

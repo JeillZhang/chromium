@@ -10,7 +10,7 @@
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
 #include "base/metrics/histogram_functions.h"
-#include "base/not_fatal_until.h"
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/app/vector_icons/vector_icons.h"
@@ -27,8 +27,8 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/download/bubble/download_bubble_navigation_handler.h"
 #include "chrome/browser/ui/views/download/bubble/download_bubble_row_list_view.h"
-#include "chrome/browser/ui/views/download/bubble/download_toolbar_button_view.h"
 #include "chrome/browser/ui/views/download/download_shelf_context_menu_view.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/grit/generated_resources.h"
@@ -446,7 +446,7 @@ DownloadBubbleRowView::DownloadBubbleRowView(
   quick_action_holder_->SetVisible(false);
   quick_action_holder_->SetProperty(views::kViewIgnoredByLayoutKey, true);
   quick_action_holder_->SetBackground(
-      views::CreateThemedSolidBackground(ui::kColorDialogBackground));
+      views::CreateSolidBackground(ui::kColorDialogBackground));
 
   subpage_icon_holder_ =
       AddChildView(std::make_unique<views::FlexLayoutView>());
@@ -510,7 +510,7 @@ views::View::Views DownloadBubbleRowView::GetChildrenInZOrder() {
   auto children = views::View::GetChildrenInZOrder();
   const auto move_child_to_top = [&](View* child) {
     auto it = std::ranges::find(children, child);
-    CHECK(it != children.end(), base::NotFatalUntil::M130);
+    CHECK(it != children.end());
     std::rotate(it, it + 1, children.end());
   };
   move_child_to_top(transparent_button_);
@@ -548,7 +548,7 @@ bool DownloadBubbleRowView::OnMouseDragged(const ui::MouseEvent& event) {
           navigation_handler_->PreventDialogCloseOnDeactivate();
     }
     DragDownloadItem(info_->model()->GetDownloadItem(), &file_icon_,
-                     widget ? widget->GetNativeView() : nullptr);
+                     widget ? widget->GetNativeView() : gfx::NativeView());
     // DragDownloadItem returns when the drag is over.
     // `this` may be deleted by now!
   }
@@ -747,7 +747,7 @@ void DownloadBubbleRowView::UpdateLabels() {
         {primary_label_->GetText(), secondary_label_->GetText()}, u" "));
   }
 
-  secondary_label_->SetEnabledColorId(info_->secondary_text_color());
+  secondary_label_->SetEnabledColor(info_->secondary_text_color());
 }
 
 void DownloadBubbleRowView::RecordMetricsOnUpdate() {

@@ -67,8 +67,7 @@ class ToolbarRowView : public views::View {
 
  public:
   ToolbarRowView() {
-    SetBackground(
-        views::CreateThemedSolidBackground(ui::kColorDialogBackground));
+    SetBackground(views::CreateSolidBackground(ui::kColorDialogBackground));
   }
 
   ToolbarRowView(const ToolbarRowView&) = delete;
@@ -179,7 +178,7 @@ void SimpleWebViewDialog::Init() {
   location_bar_model_ = std::make_unique<LocationBarModelImpl>(
       this, content::kMaxURLDisplayChars);
 
-  SetBackground(views::CreateThemedSolidBackground(ui::kColorDialogBackground));
+  SetBackground(views::CreateSolidBackground(ui::kColorDialogBackground));
 
   // Back/Forward buttons.
   auto back = std::make_unique<views::ImageButton>(base::BindRepeating(
@@ -336,7 +335,7 @@ std::unique_ptr<views::WidgetDelegate>
 SimpleWebViewDialog::MakeWidgetDelegate() {
   auto delegate = std::make_unique<views::WidgetDelegate>();
   delegate->SetInitiallyFocusedView(web_view_);
-  delegate->SetOwnedByWidget(true);
+  delegate->SetOwnedByWidget(views::WidgetDelegate::OwnedByWidgetPassKey());
   return delegate;
 }
 

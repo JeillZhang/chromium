@@ -6,6 +6,7 @@
 #define COMPONENTS_VARIATIONS_SEED_READER_WRITER_H_
 
 #include <string>
+#include <string_view>
 
 #include "base/component_export.h"
 #include "base/files/file_path.h"
@@ -34,12 +35,47 @@ const char kSeedFilesGroup[] = "SeedFiles_V7";
 // Represents a seed and its storage format where clients using
 // seed-file-based seeds store compressed data and those using
 // local-state-based seeds store compressed, base64 encoded data.
+// It also stores other seed-related info.
 struct StoredSeed {
   enum class StorageFormat { kCompressed, kCompressedAndBase64Encoded };
 
+  // The storage format of the seed. Seed-file-based seeds are compressed while
+  // local-state-based seeds are compressed and base64 encoded.
   StorageFormat storage_format;
+  // The seed data.
   std::string_view data;
+  // base64-encoded signature of the seed.
+  std::string_view signature;
+  // The milestone with which the seed was fetched
+  int milestone = 0;
+  // Date used for study date checks. Is a server-provided timestamp.
+  // On some platforms, on the first run, it's set to a client-provided
+  // timestamp until the server-provided timestamp is fetched. (See
+  // ChromeFeatureListCreator::SetupInitialPrefs())
+  base::Time seed_date;
 };
+
+// Groups the data from a seed and other seed-related info that is validated
+// and ready to be stored in a seed file or local state. This struct is passed
+// by value, so it must be copyable and lightweight.
+struct ValidatedSeedInfo {
+  std::string_view compressed_seed_data;
+  std::string_view base64_seed_data;
+  std::string_view signature;
+  int milestone = 0;
+  base::Time seed_date;
+};
+
+struct SeedFieldsPrefs {
+  const char* seed;
+  const char* signature;
+  const char* milestone;
+  const char* seed_date;
+};
+
+COMPONENT_EXPORT(VARIATIONS)
+extern const SeedFieldsPrefs kRegularSeedFieldsPrefs;
+COMPONENT_EXPORT(VARIATIONS) extern const SeedFieldsPrefs kSafeSeedFieldsPrefs;
 
 // Handles reading and writing seeds to disk.
 class COMPONENT_EXPORT(VARIATIONS) SeedReaderWriter
@@ -50,9 +86,9 @@ class COMPONENT_EXPORT(VARIATIONS) SeedReaderWriter
   // Android Webview intentionally uses an empty path as it uses only local
   // state to store seeds.
   // `seed_filename` is the base name of a file in which seed data is stored.
-  // `seed_pref` is a variations pref (kVariationsCompressedSeed or
-  // kVariationsSafeCompressed) denoting the type of seed handled by this
-  // SeedReaderWriter.
+  // `fields_prefs` is a variations pref struct (kRegularSeedFieldsPrefs or
+  // kSafeSeedFieldsPrefs) denoting the prefs for the fields for the type of
+  // seed being stored.
   // `channel` describes the release channel of the browser.
   // `entropy_providers` is used to provide entropy when setting up the seed
   // file field trial. If null, the client will not participate in the
@@ -61,7 +97,7 @@ class COMPONENT_EXPORT(VARIATIONS) SeedReaderWriter
   SeedReaderWriter(PrefService* local_state,
                    const base::FilePath& seed_file_dir,
                    base::FilePath::StringViewType seed_filename,
-                   std::string_view seed_pref,
+                   const SeedFieldsPrefs& fields_prefs,
                    version_info::Channel channel,
                    const EntropyProviders* entropy_providers,
                    scoped_refptr<base::SequencedTaskRunner> file_task_runner =
@@ -74,14 +110,15 @@ class COMPONENT_EXPORT(VARIATIONS) SeedReaderWriter
 
   ~SeedReaderWriter() override;
 
-  // Schedules a write of `base64_seed_data` to local state. For some clients
-  // (see ShouldUseSeedFile()), also schedules a write of `compressed_seed_data`
-  // to a seed file.
-  void StoreValidatedSeed(std::string_view compressed_seed_data,
-                          std::string_view base64_seed_data);
+  // Schedules a write of `compressed_seed_data` to a seed file for some
+  // clients (see ShouldUseSeedFile()) and schedules a write of
+  // `base64_seed_data` to local state for all other clients. Also stores other
+  // seed-related info.
+  void StoreValidatedSeedInfo(ValidatedSeedInfo seed_info);
 
-  // Clears seed data by overwriting it with an empty string.
-  void ClearSeed();
+  // Clears seed data and other seed-related info. The following fields are
+  // cleared: seed data, signature, milestone, and seed date.
+  void ClearSeedInfo();
 
   // Returns stored seed data.
   StoredSeed GetSeedData() const;
@@ -89,34 +126,60 @@ class COMPONENT_EXPORT(VARIATIONS) SeedReaderWriter
   // Overrides the timer used for scheduling writes with `timer_override`.
   void SetTimerForTesting(base::OneShotTimer* timer_override);
 
+  // Updates the seed date.
+  void SetSeedDate(base::Time server_date_fetched);
+
+  // Returns true if a write is scheduled but has not yet completed.
+  bool HasPendingWrite() const;
+
  private:
+  // TODO(crbug.com/380465790): Represents the seed and other related info.
+  // This info will be stored together in the SeedFile. Once all the
+  // seed-related info is stored in the struct, change it to a proto and use it
+  // to serialize and deserialize the data.
+  struct SeedInfo {
+    std::string data;
+    std::string signature;
+    int milestone = 0;
+    base::Time seed_date;
+  };
+
   // Returns the serialized data to be written to disk. This is done
   // asynchronously during the write process.
   base::ImportantFileWriter::BackgroundDataProducerCallback
   GetSerializedDataProducerForBackgroundSequence() override;
 
-  // Schedules `seed_data` to be written using `seed_writer_`.
-  void ScheduleSeedFileWrite(std::string_view seed_data);
+  // Schedules `seed_info` to be written using `seed_writer_`. If you want to
+  // clear the seed file, use ScheduleSeedFileClear() instead.
+  void ScheduleSeedFileWrite(ValidatedSeedInfo seed_info);
+
+  // Schedules `seed_info` to be cleared using `seed_writer_`.
+  void ScheduleSeedFileClear();
 
   // Schedules the deletion of a seed file.
   void DeleteSeedFile();
 
   // Reads seed data from a seed file, and if the read is successful,
-  // populates `seed_data_`. May also schedule a seed file write for some
+  // populates `seed_info_`. May also schedule a seed file write for some
   // clients on the first run and for clients that are in the seed file
   // experiment's treatment group for the first time. If `seed_pref_` is present
   // in `local state_`, additionally clears it.
   void ReadSeedFile();
 
+  // Schedules a write of `base64_seed_data` to `local_state_`. Fields with
+  // zero/empty values will be ignored. If you want to clear the seed file, use
+  // ScheduleSeedFileClear() instead.
+  void ScheduleLocalStateWrite(ValidatedSeedInfo seed_info);
+
   // Returns true if a seed file should be used.
   bool ShouldUseSeedFile() const;
 
-  // Pref service used to persist seeds.
+  // Pref service used to persist seeds and seed-related info.
   raw_ptr<PrefService> local_state_;
 
-  // A variations pref (kVariationsCompressedSeed or kVariationsSafeCompressed)
-  // denoting the type of seed handled by this SeedReaderWriter.
-  std::string_view seed_pref_;
+  // Prefs used to store the seed and related info in local state.
+  // TODO(crbug.com/380465790): Remove once the info is stored in the SeedFile.
+  const raw_ref<const SeedFieldsPrefs> fields_prefs_;
 
   // Task runner for IO-related operations.
   const scoped_refptr<base::SequencedTaskRunner> file_task_runner_;
@@ -124,9 +187,10 @@ class COMPONENT_EXPORT(VARIATIONS) SeedReaderWriter
   // Helper for safely writing a seed. Null if a seed file path is not given.
   std::unique_ptr<base::ImportantFileWriter> seed_writer_;
 
-  // The compressed seed data. Used to store a seed applied during field trial
-  // setup or a seed fetched from a variations server.
-  std::string seed_data_;
+  // Stored seed info. Used to store a seed applied during field trial
+  // setup or a seed fetched from a variations server. Also stores other
+  // seed-related info.
+  SeedInfo seed_info_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 };

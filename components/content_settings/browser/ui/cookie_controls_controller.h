@@ -17,9 +17,11 @@
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/common/cookie_blocking_3pcd_status.h"
 #include "components/content_settings/core/common/cookie_controls_enforcement.h"
-#include "components/content_settings/core/common/tracking_protection_feature.h"
+#include "components/content_settings/core/common/cookie_controls_state.h"
 #include "components/fingerprinting_protection_filter/browser/fingerprinting_protection_observer.h"
 #include "components/fingerprinting_protection_filter/browser/fingerprinting_protection_web_contents_helper.h"
+#include "components/ip_protection/common/ip_protection_status.h"
+#include "components/ip_protection/common/ip_protection_status_observer.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/privacy_sandbox/tracking_protection_settings.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -54,12 +56,20 @@ class CookieControlsController final
   // Called when the fingerprinting protection filter has blocked a subresource.
   void OnSubresourceBlocked();
 
+  // Called when IP Protection has proxied a subresource for the first time on
+  // the current primary page.
+  void OnFirstSubresourceProxiedOnCurrentPrimaryPage();
+
   // Called when the UI is closing.
   void OnUiClosing();
 
-  // Called when the user clicks on the button to enable/disable cookie
+  // Called when the user clicks on the toggle to enable/disable cookie
   // blocking.
   void OnCookieBlockingEnabledForSite(bool block_third_party_cookies);
+
+  // Called when the user clicks on the button to change their tracking
+  // protections state for the current site.
+  void OnTrackingProtectionsChangedForSite();
 
   // Called when the entry point for cookie controls was animated.
   void OnEntryPointAnimated();
@@ -67,10 +77,13 @@ class CookieControlsController final
   // Returns whether any ACT features should be shown.
   bool ShowActFeatures();
 
-  // Returns whether the cookie blocking setting for the current site was
-  // changed by the user via user bypass.
-  bool HasUserChangedCookieBlockingForSite();
-  void SetUserChangedCookieBlockingForSite(bool changed);
+  // Record UMA for toggling ACT User Bypass.
+  void RecordActMetrics(bool pause_protections);
+
+  // Returns whether the user has changed their protections state via user
+  // bypass.
+  bool StateChangedViaBypass();
+  void SetStateChangedViaBypass(bool changed);
 
   void AddObserver(CookieControlsObserver* obs);
   void RemoveObserver(CookieControlsObserver* obs);
@@ -81,19 +94,15 @@ class CookieControlsController final
 
  private:
   struct Status {
-    Status(bool controls_visible,
-           bool protections_on,
+    Status(CookieControlsState controls_state,
            CookieControlsEnforcement enforcement,
            CookieBlocking3pcdStatus blocking_status,
-           base::Time expiration,
-           std::vector<TrackingProtectionFeature> features);
+           base::Time expiration);
     ~Status();
-    bool controls_visible;
-    bool protections_on;
+    CookieControlsState controls_state;
     CookieControlsEnforcement enforcement;
     CookieBlocking3pcdStatus blocking_status;
     base::Time expiration;
-    std::vector<TrackingProtectionFeature> features;
   };
 
   // The observed WebContents changes during the lifetime of the
@@ -105,7 +114,8 @@ class CookieControlsController final
       : public content_settings::PageSpecificContentSettings::SiteDataObserver,
         public content::WebContentsObserver,
         public fingerprinting_protection_filter::
-            FingerprintingProtectionObserver {
+            FingerprintingProtectionObserver,
+        public ip_protection::IpProtectionStatusObserver {
    public:
     TabObserver(CookieControlsController* cookie_controls,
                 content::WebContents* web_contents);
@@ -126,6 +136,9 @@ class CookieControlsController final
 
     // fingerprinting_protection_filter::FingerprintingProtectionObserver:
     void OnSubresourceBlocked() override;
+
+    // ip_protection::IpProtectionStatusObserver:
+    void OnFirstSubresourceProxiedOnCurrentPrimaryPage() const override;
 
    private:
     raw_ptr<CookieControlsController> cookie_controls_;
@@ -149,6 +162,10 @@ class CookieControlsController final
             FingerprintingProtectionWebContentsHelper,
         fingerprinting_protection_filter::FingerprintingProtectionObserver>
         fpf_observation_{this};
+
+    base::ScopedObservation<ip_protection::IpProtectionStatus,
+                            ip_protection::IpProtectionStatusObserver>
+        ip_protection_observation_{this};
   };
 
   // Returns whether to update the TRACKING_PROTECTION content setting.
@@ -160,15 +177,10 @@ class CookieControlsController final
 
   Status GetStatus(content::WebContents* web_contents);
 
-  std::vector<TrackingProtectionFeature> CreateTrackingProtectionFeatureList(
-      CookieControlsEnforcement enforcement,
-      bool cookies_allowed,
-      bool act_exception);
-
   CookieControlsEnforcement GetEnforcementForThirdPartyCookieBlocking(
       CookieBlocking3pcdStatus status,
       const GURL url,
-      SettingInfo info,
+      const SettingInfo& info,
       bool cookies_allowed);
 
   bool ShowIpProtection() const;
@@ -191,6 +203,9 @@ class CookieControlsController final
   // Returns whether at least one subresource has been blocked on this page.
   bool GetIsSubresourceBlocked() const;
 
+  // Returns whether at least one subresource has been proxied on this page.
+  bool GetIsSubresourceProxied() const;
+
   // Returns the number of allowed third-party sites with cookies.
   int GetAllowedThirdPartyCookiesSitesCount() const;
 
@@ -205,11 +220,9 @@ class CookieControlsController final
   bool SiteDataAccessed(int third_party_allowed_sites,
                         int third_party_blocked_sites);
 
-  bool ShouldHighlightUserBypass(bool protections_on);
-  bool ShouldUserBypassIconBeVisible(
-      std::vector<TrackingProtectionFeature> features,
-      bool protections_on,
-      bool controls_visible);
+  bool ShouldHighlightUserBypass(CookieControlsState controls_state);
+  bool ShouldUserBypassIconBeVisible(CookieControlsState controls_state);
+  bool SiteDataAccessAttempted();
   content::WebContents* GetWebContents() const;
 
   std::unique_ptr<TabObserver> tab_observer_;
@@ -232,7 +245,7 @@ class CookieControlsController final
       cookie_observation_{this};
 
   bool should_reload_ = false;
-  bool user_changed_cookie_blocking_ = false;
+  bool user_changed_ub_state_ = false;
 
   // The number of page reloads in last 30 seconds.
   int recent_reloads_count_ = 0;

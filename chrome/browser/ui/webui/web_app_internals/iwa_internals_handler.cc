@@ -4,9 +4,10 @@
 
 #include "chrome/browser/ui/webui/web_app_internals/iwa_internals_handler.h"
 
+#include <variant>
+
 #include "base/containers/map_util.h"
 #include "base/containers/to_vector.h"
-#include "base/functional/overloaded.h"
 #include "base/strings/stringprintf.h"
 #include "base/types/expected_macros.h"
 #include "base/types/optional_util.h"
@@ -23,7 +24,6 @@
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_manager.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolation_data.h"
-#include "chrome/browser/web_applications/isolated_web_apps/key_distribution/iwa_key_distribution_info_provider.h"
 #include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest.h"
 #include "chrome/browser/web_applications/isolated_web_apps/update_manifest/update_manifest_fetcher.h"
 #include "chrome/browser/web_applications/locks/app_lock.h"
@@ -31,9 +31,12 @@
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
+#include "chrome/browser/web_applications/web_app_sync_bridge.h"
+#include "components/webapps/isolated_web_apps/iwa_key_distribution_info_provider.h"
 #include "content/public/browser/file_select_listener.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents_delegate.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace web_app {
 
@@ -225,11 +228,11 @@ class IwaInternalsHandler::IwaManifestInstallUpdateHandler
   // Retrieves the pending request for `app_id` and erases the entry from the
   // requests map. If there's no matching entry for `app_id`, returns an
   // unexpected.
-  base::expected<Handler::UpdateDevProxyIsolatedWebAppCallback, absl::monostate>
+  base::expected<Handler::UpdateDevProxyIsolatedWebAppCallback, std::monostate>
   ConsumeUpdateRequest(const webapps::AppId& app_id) {
     auto itr = update_requests_.find(app_id);
     if (itr == update_requests_.end()) {
-      return base::unexpected(absl::monostate());
+      return base::unexpected(std::monostate());
     }
 
     auto callback = std::move(itr->second);
@@ -324,8 +327,23 @@ void IwaInternalsHandler::InstallIsolatedWebAppFromBundleUrl(
     ::mojom::InstallFromBundleUrlParamsPtr params,
     Handler::InstallIsolatedWebAppFromBundleUrlCallback callback) {
   if (!WebAppProvider::GetForWebApps(profile())) {
-    std::move(callback).Run(::mojom::InstallIsolatedWebAppResult::NewError(
-        "WebAppProvider not supported for current profile."));
+    SendError(std::move(callback),
+              "WebAppProvider not supported for current profile.");
+    return;
+  }
+  if (!params->update_info) {
+    SendError(std::move(callback),
+             "Update info is required for this operation.");
+    return;
+  }
+  if (!params->update_info->update_manifest_url.is_valid()) {
+    SendError(std::move(callback),
+              "Update manifest URL is not a valid GURL.");
+    return;
+  }
+  if (params->update_info->update_channel.empty()) {
+    SendError(std::move(callback),
+              "Update channel is required for this operation.");
     return;
   }
   ScopedTempWebBundleFile::Create(
@@ -448,7 +466,7 @@ void IwaInternalsHandler::GetIsolatedWebAppDevModeAppInfo(
       continue;
     }
 
-    base::expected<IwaSourceDevMode, absl::monostate> source =
+    base::expected<IwaSourceDevMode, std::monostate> source =
         IwaSourceDevMode::FromStorageLocation(profile()->GetPath(),
                                               app.isolation_data()->location());
     if (!source.has_value()) {
@@ -461,8 +479,8 @@ void IwaInternalsHandler::GetIsolatedWebAppDevModeAppInfo(
       pinned_version = pinned_versions_[app.app_id()].GetString();
     }
     bool allow_downgrades = app_ids_allowing_downgrades_.contains(app.app_id());
-    absl::visit(
-        base::Overloaded{
+    std::visit(
+        absl::Overload{
             [&](const IwaSourceBundleDevMode& source) {
               dev_mode_apps.emplace_back(::mojom::IwaDevModeAppInfo::New(
                   app.app_id(), app.untranslated_name(),
@@ -553,7 +571,7 @@ void IwaInternalsHandler::ApplyDevModeUpdate(
 void IwaInternalsHandler::RotateKey(
     const std::string& web_bundle_id,
     const std::optional<std::vector<uint8_t>>& public_key) {
-  IwaKeyDistributionInfoProvider::GetInstance()->RotateKeyForDevMode(
+  IwaKeyDistributionInfoProvider::GetInstance().RotateKeyForDevMode(
       base::PassKey<IwaInternalsHandler>(), web_bundle_id, public_key);
 }
 
@@ -745,6 +763,12 @@ void IwaInternalsHandler::OnInstalledIsolatedWebAppInDevModeFromWebBundle(
                       "channel.");
                 }
 
+                GURL update_manifest_url = update_info->update_manifest_url;
+                if (!update_manifest_url.is_valid()) {
+                  return ::mojom::InstallIsolatedWebAppResult::NewError(
+                      "Something went wrong while setting the update "
+                      "manifest url.");
+                }
                 web_app->SetIsolationData(
                     web_app::IsolationData::Builder(*web_app->isolation_data())
                         .SetUpdateManifestUrl(update_info->update_manifest_url)

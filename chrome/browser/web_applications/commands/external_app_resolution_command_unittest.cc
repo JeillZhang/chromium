@@ -14,6 +14,7 @@
 #include "base/containers/to_vector.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/test_future.h"
@@ -1185,7 +1186,6 @@ TEST_F(ExternalAppResolutionCommandTest,
   }
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_LACROS)
 TEST_F(ExternalAppResolutionCommandTest, SuccessWithUninstallAndReplace) {
   GURL old_app_url("http://old-app.com");
   const webapps::AppId old_app =
@@ -1218,14 +1218,13 @@ TEST_F(ExternalAppResolutionCommandTest, SuccessWithUninstallAndReplace) {
   EXPECT_EQ(proto::INSTALLED_WITH_OS_INTEGRATION,
             registrar().GetInstallState(*result.app_id));
 
-  std::optional<proto::WebAppOsIntegrationState> os_state =
+  std::optional<proto::os_state::WebAppOsIntegration> os_state =
       registrar().GetAppCurrentOsIntegrationState(*result.app_id);
   ASSERT_TRUE(os_state.has_value());
   EXPECT_TRUE(os_state->has_shortcut());
   EXPECT_EQ(os_state->run_on_os_login().run_on_os_login_mode(),
-            proto::RunOnOsLoginMode::WINDOWED);
+            proto::os_state::RunOnOsLogin::MODE_WINDOWED);
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS_LACROS)
 
 TEST_F(ExternalAppResolutionCommandTest, WriteDataToDiskFailed) {
   ExternalInstallOptions install_options(

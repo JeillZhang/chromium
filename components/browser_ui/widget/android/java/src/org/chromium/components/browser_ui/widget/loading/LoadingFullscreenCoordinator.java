@@ -5,6 +5,7 @@
 package org.chromium.components.browser_ui.widget.loading;
 
 import android.app.Activity;
+import android.view.View;
 import android.view.ViewGroup;
 
 import androidx.annotation.ColorInt;
@@ -12,6 +13,7 @@ import androidx.annotation.ColorInt;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
+import org.chromium.components.browser_ui.widget.R;
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
 import org.chromium.components.browser_ui.widget.scrim.ScrimProperties;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -40,29 +42,39 @@ public class LoadingFullscreenCoordinator {
      * Start showing the loading screen.
      *
      * @param onFinishCallback The callback to call when the loading screen exits.
+     * @param animate If the screen should animate.
      */
-    public void startLoading(Runnable onFinishCallback) {
+    public void startLoading(Runnable onFinishCallback, boolean animate) {
         @ColorInt int backgroundColor = SemanticColorUtils.getDefaultBgColor(mActivity);
-        Runnable onClickRunnable =
-                () -> {
+        View.OnClickListener cancelButtonClickListener =
+                (view) -> {
                     onFinishCallback.run();
                 };
+        mContainer
+                .findViewById(R.id.loading_cancel_button)
+                .setOnClickListener(cancelButtonClickListener);
+
+        // Do not stack two loading screens.
+        if (mPropertyModel != null) {
+            closeLoadingScreen();
+        }
 
         mPropertyModel =
                 new PropertyModel.Builder(ScrimProperties.ALL_KEYS)
                         .with(ScrimProperties.ANCHOR_VIEW, mContainer)
                         .with(ScrimProperties.SHOW_IN_FRONT_OF_ANCHOR_VIEW, false)
                         .with(ScrimProperties.BACKGROUND_COLOR, backgroundColor)
-                        .with(ScrimProperties.CLICK_DELEGATE, onClickRunnable)
                         .build();
 
-        mScrimManager.showScrim(mPropertyModel);
+        mScrimManager.showScrim(mPropertyModel, animate);
+        mContainer.setVisibility(View.VISIBLE);
     }
 
     /** Close the loading screen that's showing. */
     public void closeLoadingScreen() {
         if (mPropertyModel != null) {
             mScrimManager.hideScrim(mPropertyModel, /* animate= */ true);
+            mContainer.setVisibility(View.GONE);
         }
     }
 

@@ -75,9 +75,7 @@ class FakeChromeUserManager : public user_manager::UserManagerImpl {
   user_manager::UserList GetUnlockUsers() const override;
   const AccountId& GetLastSessionActiveAccountId() const override;
   void UserLoggedIn(const AccountId& account_id,
-                    const std::string& user_id_hash,
-                    bool browser_restart,
-                    bool is_child) override;
+                    const std::string& user_id_hash) override;
   bool EnsureUser(const AccountId& account_id,
                   user_manager::UserType user_type,
                   bool is_ephemeral) override;
@@ -106,8 +104,8 @@ class FakeChromeUserManager : public user_manager::UserManagerImpl {
   bool IsLoggedInAsChildUser() const override;
   bool IsLoggedInAsManagedGuestSession() const override;
   bool IsLoggedInAsGuest() const override;
-  bool IsLoggedInAsKioskApp() const override;
-  bool IsLoggedInAsWebKioskApp() const override;
+  bool IsLoggedInAsKioskChromeApp() const override;
+  bool IsLoggedInAsKioskWebApp() const override;
   bool IsLoggedInAsKioskIWA() const override;
   bool IsLoggedInAsAnyKioskApp() const override;
   bool IsLoggedInAsStub() const override;

@@ -13,17 +13,17 @@
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/optimization_guide/core/optimization_guide_decider.h"
-#include "components/optimization_guide/core/optimization_guide_decision.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decider.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decision.h"
+#include "components/optimization_guide/core/hints/optimization_metadata.h"
+#include "components/optimization_guide/core/model_execution/model_execution_features_controller.h"
+#include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "components/optimization_guide/core/optimization_guide_model_provider.h"
 #include "components/optimization_guide/core/optimization_guide_on_device_capability_provider.h"
-#include "components/optimization_guide/core/optimization_metadata.h"
 #import "components/optimization_guide/optimization_guide_buildflags.h"
 #include "components/optimization_guide/proto/hints.pb.h"
 #include "ios/chrome/browser/download/model/background_service/background_download_service_factory.h"
 #include "url/gurl.h"
-#include "components/optimization_guide/core/model_execution/model_execution_features_controller.h"
-#include "components/optimization_guide/core/optimization_guide_model_executor.h"
 
 namespace leveldb_proto {
 class ProtoDatabaseProvider;
@@ -55,6 +55,7 @@ class BrowserList;
 class OptimizationGuideLogger;
 class OptimizationGuideNavigationData;
 class PrefService;
+class TabResumptionMediatorProxy;
 
 // A BrowserState keyed service that is used to own the underlying Optimization
 // Guide components. This is a rough copy of the OptimizationGuideKeyedService
@@ -186,6 +187,7 @@ class OptimizationGuideService
   friend class OptimizationGuideServiceTest;
   friend class OptimizationGuideTabHelper;
   friend class OptimizationGuideTestAppInterfaceWrapper;
+  friend class TabResumptionMediatorProxy;
 
   // Notifies `hints_manager_` that the navigation associated with
   // `navigation_data` has started or redirected.
@@ -235,6 +237,10 @@ class OptimizationGuideService
   // Manages the state of the on-device model.
   scoped_refptr<optimization_guide::OnDeviceModelComponentStateManager>
       on_device_model_state_manager_;
+
+  // Downloads other model assets for on-device execution.
+  std::unique_ptr<optimization_guide::OnDeviceAssetManager>
+      on_device_asset_manager_;
 
 #endif
 

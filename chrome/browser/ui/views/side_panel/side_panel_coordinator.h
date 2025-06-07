@@ -87,6 +87,7 @@ class SidePanelCoordinator final : public TabStripModelObserver,
   void OpenInNewTab() override;
   void UpdatePinState() override;
   std::optional<SidePanelEntry::Id> GetCurrentEntryId() const override;
+  int GetCurrentEntryDefaultContentWidth() const override;
   bool IsSidePanelShowing() const override;
   bool IsSidePanelEntryShowing(
       const SidePanelEntry::Key& entry_key) const override;
@@ -192,11 +193,6 @@ class SidePanelCoordinator final : public TabStripModelObserver,
                                views::View* starting_from) override;
 
   // PinnedToolbarActionsModel::Observer:
-  void OnActionAddedLocally(const actions::ActionId& id) override {}
-  void OnActionRemovedLocally(const actions::ActionId& id) override {}
-  void OnActionMovedLocally(const actions::ActionId& id,
-                            int from_index,
-                            int to_index) override {}
   void OnActionsChanged() override;
 
   SidePanelRegistry* GetActiveContextualRegistry() const;

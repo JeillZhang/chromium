@@ -20,6 +20,7 @@
 #include "ash/public/cpp/system/toast_data.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/root_window_controller.h"
+#include "ash/scanner/scanner_metrics.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/style/ash_color_id.h"
@@ -47,6 +48,7 @@
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/chromeos_buildflags.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/prefs/pref_service.h"
 #include "components/vector_icons/vector_icons.h"
@@ -60,6 +62,10 @@
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/widget/widget.h"
+
+#if !BUILDFLAG(IS_CHROMEOS_DEVICE)
+#include "ash/examples/test_app_window.h"
+#endif
 
 namespace ash {
 namespace debug {
@@ -337,8 +343,10 @@ void HandleShowSystemNudge() {
 }
 
 void HandleStartSunfishSession() {
-  if (IsSunfishSessionAllowed() &&
+  if (CanShowSunfishOrScannerUi() &&
       !Shell::Get()->session_controller()->IsUserSessionBlocked()) {
+    RecordScannerFeatureUserState(
+        ScannerFeatureUserState::kSunfishSessionStartedFromDebugShortcut);
     CaptureModeController::Get()->StartSunfishSession();
   }
 }
@@ -453,6 +461,11 @@ void PerformDebugActionIfEnabled(AcceleratorAction action) {
       break;
     case AcceleratorAction::kDebugToggleVideoConferenceCameraTrayIcon:
       HandleToggleVideoConferenceCameraTrayIcon();
+      break;
+    case AcceleratorAction::kDebugShowTestWindow:
+#if !BUILDFLAG(IS_CHROMEOS_DEVICE)
+      OpenTestAppWindow(/*client_controlled=*/false);
+#endif
       break;
     default:
       break;

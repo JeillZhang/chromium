@@ -6,6 +6,7 @@ assert(is_win || is_mac || is_linux || is_chromeos || is_android)
 
 import("//build/config/ozone.gni")
 import("//build/config/ui.gni")
+import("//chrome/common/features.gni")
 import("//content/public/common/features.gni")
 import("//third_party/webrtc/webrtc.gni")
 
@@ -92,7 +93,6 @@ source_set("webrtc") {
     "//base",
     "//build:android_buildflags",
     "//build:buildflag_header_h",
-    "//build:chromeos_buildflags",
     "//chrome/browser:browser_public_dependencies",
     "//chrome/browser/profiles:profile",
     "//chrome/common:mojo_bindings",
@@ -129,8 +129,10 @@ source_set("webrtc") {
     "//chrome/browser/media/prefs",
     "//chrome/browser/permissions/system",
     "//chrome/browser/picture_in_picture",
+    "//chrome/browser/policy:policy_util",
     "//chrome/browser/profiles:profile_util",
     "//chrome/browser/safe_browsing",
+    "//chrome/browser/status_icons:status_icons",
     "//chrome/browser/ui:ui_features",
     "//chrome/common",
     "//chrome/common:channel_info",
@@ -193,6 +195,7 @@ source_set("webrtc") {
     deps += [
       "//chrome/browser/ui:browser_list",
       "//chrome/browser/ui/tabs:tab_strip",
+      "//chrome/browser/ui/web_applications",
       "//extensions/browser",
       "//extensions/browser/kiosk",
       "//extensions/common",
@@ -209,6 +212,9 @@ source_set("webrtc") {
       "display_media_access_handler.h",
     ]
     deps += [ "//chrome/browser/ui:url_identity" ]
+    if (enable_glic) {
+      deps += [ "//chrome/browser/glic" ]
+    }
   }
 
   if (is_mac) {

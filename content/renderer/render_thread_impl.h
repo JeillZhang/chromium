@@ -30,10 +30,10 @@
 #include "base/process/process.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_log.h"
 #include "base/trace_event/typed_macros.h"
 #include "base/types/pass_key.h"
 #include "build/build_config.h"
-#include "cc/tiles/gpu_image_decode_cache.h"
 #include "content/child/child_thread_impl.h"
 #include "content/common/agent_scheduling_group.mojom.h"
 #include "content/common/content_export.h"
@@ -77,7 +77,6 @@ class WaitableEvent;
 }
 
 namespace cc {
-class RasterContextProviderWrapper;
 class RasterDarkModeFilter;
 }  // namespace cc
 
@@ -107,10 +106,6 @@ class RenderThreadObserver;
 class RendererBlinkPlatformImpl;
 class VariationsRenderThreadObserver;
 
-#if BUILDFLAG(IS_ANDROID)
-class StreamTextureFactory;
-#endif
-
 #if BUILDFLAG(IS_WIN)
 class DCOMPTextureFactory;
 class OverlayStateServiceProvider;
@@ -126,7 +121,8 @@ class CONTENT_EXPORT RenderThreadImpl
     : public RenderThread,
       public ChildThreadImpl,
       public mojom::Renderer,
-      public viz::mojom::CompositingModeWatcher {
+      public viz::mojom::CompositingModeWatcher,
+      public base::trace_event::TraceLog::AsyncEnabledStateObserver {
  public:
   static RenderThreadImpl* current();
 
@@ -157,6 +153,10 @@ class CONTENT_EXPORT RenderThreadImpl
   IPC::SyncChannel* GetChannel() override;
   std::string GetLocale() override;
 
+  // base::trace_event::TraceLog::AsyncEnabledStateObserver implementation:
+  void OnTraceLogEnabled() override;
+  void OnTraceLogDisabled() override;
+
 #if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
   IPC::SyncMessageFilter* GetSyncMessageFilter() override;
   void AddRoute(int32_t routing_id, IPC::Listener* listener) override;
@@ -177,8 +177,6 @@ class CONTENT_EXPORT RenderThreadImpl
   int PostTaskToAllWebWorkers(base::RepeatingClosure closure) override;
   base::WaitableEvent* GetShutdownEvent() override;
   int32_t GetClientId() override;
-  void SetRendererProcessType(
-      blink::scheduler::WebRendererProcessType type) override;
   blink::WebString GetUserAgent() override;
   const blink::UserAgentMetadata& GetUserAgentMetadata() override;
   void WriteIntoTrace(
@@ -225,8 +223,6 @@ class CONTENT_EXPORT RenderThreadImpl
       base::OnceCallback<void(scoped_refptr<gpu::GpuChannelHost>)>;
   void EstablishGpuChannel(EstablishGpuChannelCallback callback);
 
-  gpu::GpuMemoryBufferManager* GetGpuMemoryBufferManager();
-
   blink::AssociatedInterfaceRegistry* GetAssociatedInterfaceRegistry();
 
   base::DiscardableMemoryAllocator* GetDiscardableMemoryAllocatorForTest()
@@ -253,11 +249,6 @@ class CONTENT_EXPORT RenderThreadImpl
   blink::URLLoaderThrottleProvider* url_loader_throttle_provider() const {
     return url_loader_throttle_provider_.get();
   }
-
-#if BUILDFLAG(IS_ANDROID)
-  scoped_refptr<StreamTextureFactory> GetStreamTexureFactory();
-  bool EnableStreamTextureCopy();
-#endif
 
 #if BUILDFLAG(IS_WIN)
   scoped_refptr<DCOMPTextureFactory> GetDCOMPTextureFactory();
@@ -292,7 +283,7 @@ class CONTENT_EXPORT RenderThreadImpl
 
   // Returns a worker context provider that will be bound on the compositor
   // thread.
-  scoped_refptr<cc::RasterContextProviderWrapper>
+  scoped_refptr<viz::RasterContextProvider>
   SharedCompositorWorkerContextProvider(
       cc::RasterDarkModeFilter* dark_mode_filter);
 
@@ -445,6 +436,8 @@ class CONTENT_EXPORT RenderThreadImpl
   void SetIsCrossOriginIsolated(bool value) override;
   void SetIsWebSecurityDisabled(bool value) override;
   void SetIsIsolatedContext(bool value) override;
+  void SetWebUIResourceUrlToCodeCacheMap(
+      const base::flat_map<GURL, int>& resource_map) override;
   void OnMemoryPressure(
       base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
 
@@ -531,10 +524,6 @@ class CONTENT_EXPORT RenderThreadImpl
   // Thread to run the VideoFrameCompositor on.
   std::unique_ptr<base::Thread> video_frame_compositor_thread_;
 
-#if BUILDFLAG(IS_ANDROID)
-  scoped_refptr<StreamTextureFactory> stream_texture_factory_;
-#endif
-
 #if BUILDFLAG(IS_WIN)
   scoped_refptr<DCOMPTextureFactory> dcomp_texture_factory_;
   scoped_refptr<OverlayStateServiceProviderImpl>
@@ -548,8 +537,7 @@ class CONTENT_EXPORT RenderThreadImpl
   scoped_refptr<viz::RasterContextProvider>
       video_frame_compositor_context_provider_;
 
-  scoped_refptr<cc::RasterContextProviderWrapper>
-      shared_worker_context_provider_wrapper_;
+  scoped_refptr<viz::RasterContextProvider> shared_worker_context_provider_;
 
   scoped_refptr<gpu::ClientSharedImageInterface> shared_image_interface_;
 

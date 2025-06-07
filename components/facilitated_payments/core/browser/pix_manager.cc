@@ -12,14 +12,16 @@
 #include "base/functional/callback_helpers.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
-#include "components/autofill/core/browser/data_model/bank_account.h"
+#include "components/autofill/core/browser/data_model/payments/bank_account.h"
 #include "components/autofill/core/browser/payments/payments_util.h"
 #include "components/facilitated_payments/core/browser/facilitated_payments_client.h"
 #include "components/facilitated_payments/core/browser/network_api/facilitated_payments_network_interface.h"
+#include "components/facilitated_payments/core/browser/network_api/multiple_request_facilitated_payments_network_interface.h"
 #include "components/facilitated_payments/core/features/features.h"
 #include "components/facilitated_payments/core/metrics/facilitated_payments_metrics.h"
 #include "components/facilitated_payments/core/utils/facilitated_payments_ui_utils.h"
 #include "components/facilitated_payments/core/utils/facilitated_payments_utils.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decider.h"
 
 namespace payments::facilitated {
 namespace {
@@ -35,13 +37,12 @@ PixManager::PixManager(
     FacilitatedPaymentsApiClientCreator api_client_creator,
     optimization_guide::OptimizationGuideDecider* optimization_guide_decider)
     : client_(CHECK_DEREF(client)),
-      api_client_creator_(std::move(api_client_creator)),
+      api_client_creator_(api_client_creator),
       optimization_guide_decider_(optimization_guide_decider),
       initiate_payment_request_details_(
           std::make_unique<
               FacilitatedPaymentsInitiatePaymentRequestDetails>()) {
   DCHECK(optimization_guide_decider_);
-  RegisterPixAllowlist();
 }
 
 PixManager::~PixManager() {
@@ -83,12 +84,14 @@ void PixManager::OnPixCodeCopiedToClipboard(const GURL& render_frame_host_url,
                                base::TimeTicks::Now()));
 }
 
-void PixManager::RegisterPixAllowlist() const {
-  optimization_guide_decider_->RegisterOptimizationTypes(
-      {optimization_guide::proto::PIX_MERCHANT_ORIGINS_ALLOWLIST});
-}
-
 bool PixManager::IsMerchantAllowlisted(const GURL& url) const {
+  if (base::FeatureList::IsEnabled(
+          kDisableFacilitatedPaymentsMerchantAllowlist)) {
+    // If the merchant allowlist check is disabled, simply return true. This is
+    // mainly used for manual testing of new domains before being added to the
+    // allowlist.
+    return true;
+  }
   // Since the optimization guide decider integration corresponding to PIX
   // merchant lists are allowlists for the question "Can this site be
   // optimized?", a match on the allowlist answers the question with "yes".
@@ -129,13 +132,25 @@ void PixManager::OnPixCodeValidated(
     return;
   }
 
+  if (!payments_data_manager->IsAutofillPaymentMethodsEnabled()) {
+    LogPixFlowExitedReason(
+        PixFlowExitedReason::kAutofillPaymentMethodsDisabled);
+    return;
+  }
+
+  // Pix pref is shown only if the user has linked Pix accounts.
   if (!payments_data_manager->IsFacilitatedPaymentsPixUserPrefEnabled()) {
     LogPixFlowExitedReason(PixFlowExitedReason::kUserOptedOut);
     return;
   }
 
+  // If the user has no linked Pix accounts, initialize the Pix account linking
+  // flow.
   if (!payments_data_manager->HasMaskedBankAccounts()) {
     LogPixFlowExitedReason(PixFlowExitedReason::kNoLinkedAccount);
+    if (base::FeatureList::IsEnabled(kEnablePixAccountLinking)) {
+      client_->InitPixAccountLinkingFlow();
+    }
     return;
   }
 
@@ -160,7 +175,7 @@ void PixManager::OnPixCodeValidated(
 FacilitatedPaymentsApiClient* PixManager::GetApiClient() {
   if (!api_client_) {
     if (api_client_creator_) {
-      api_client_ = std::move(api_client_creator_).Run();
+      api_client_ = api_client_creator_.Run();
     }
   }
 
@@ -182,17 +197,15 @@ void PixManager::OnApiAvailabilityReceived(base::TimeTicks start_time,
 
   ShowPixPaymentPrompt(
       client_->GetPaymentsDataManager()->GetMaskedBankAccounts(),
-      base::BindOnce(&PixManager::OnPixPaymentPromptResult,
-                     weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&PixManager::OnPixAccountSelected,
+                     weak_ptr_factory_.GetWeakPtr(), base::TimeTicks::Now()));
 }
 
-void PixManager::OnPixPaymentPromptResult(bool is_prompt_accepted,
-                                          int64_t selected_instrument_id) {
-  if (!is_prompt_accepted) {
-    // The metric for the reason of this early-return is logged in `OnUiEvent`.
-    return;
-  }
-  LogPixFopSelected();
+void PixManager::OnPixAccountSelected(
+    base::TimeTicks fop_selector_shown_timestamp,
+    int64_t selected_instrument_id) {
+  LogPixFopSelectedAndLatency(base::TimeTicks::Now() -
+                              fop_selector_shown_timestamp);
   LogPixFopSelectorResultUkm(/*accepted=*/true, ukm_source_id_);
   ShowProgressScreen();
 
@@ -237,14 +250,29 @@ void PixManager::OnGetClientToken(base::TimeTicks start_time,
 }
 
 void PixManager::SendInitiatePaymentRequest() {
-  if (FacilitatedPaymentsNetworkInterface* payments_network_interface =
-          client_->GetFacilitatedPaymentsNetworkInterface()) {
-    LogInitiatePaymentAttempt(kPaymentsType);
-    payments_network_interface->InitiatePayment(
-        std::move(initiate_payment_request_details_),
-        base::BindOnce(&PixManager::OnInitiatePaymentResponseReceived,
-                       weak_ptr_factory_.GetWeakPtr(), base::TimeTicks::Now()),
-        client_->GetPaymentsDataManager()->app_locale());
+  if (base::FeatureList::IsEnabled(
+          kSupportMultipleServerRequestsForPixPayments)) {
+    if (auto* payments_network_interface =
+            client_->GetMultipleRequestFacilitatedPaymentsNetworkInterface()) {
+      LogInitiatePaymentAttempt(kPaymentsType);
+      payments_network_interface->InitiatePayment(
+          std::move(initiate_payment_request_details_),
+          base::BindOnce(&PixManager::OnInitiatePaymentResponseReceived,
+                         weak_ptr_factory_.GetWeakPtr(),
+                         base::TimeTicks::Now()),
+          client_->GetPaymentsDataManager()->app_locale());
+    }
+  } else {
+    if (auto* payments_network_interface =
+            client_->GetFacilitatedPaymentsNetworkInterface()) {
+      LogInitiatePaymentAttempt(kPaymentsType);
+      payments_network_interface->InitiatePayment(
+          std::move(initiate_payment_request_details_),
+          base::BindOnce(&PixManager::OnInitiatePaymentResponseReceived,
+                         weak_ptr_factory_.GetWeakPtr(),
+                         base::TimeTicks::Now()),
+          client_->GetPaymentsDataManager()->app_locale());
+    }
   }
 }
 
@@ -306,10 +334,12 @@ void PixManager::OnPurchaseActionResult(base::TimeTicks start_time,
       DismissPrompt();
       break;
   }
-  // Logs the general histograms.
+  // Log the general histograms.
   LogPixInitiatePurchaseActionResultAndLatency(
       result, base::TimeTicks::Now() - start_time);
   LogInitiatePurchaseActionResultUkm(result, ukm_source_id_);
+  LogPixTransactionResultAndLatency(
+      result, base::TimeTicks::Now() - pix_code_copied_timestamp_);
 }
 
 void PixManager::OnUiEvent(UiEvent ui_event_type) {
@@ -350,10 +380,10 @@ void PixManager::DismissPrompt() {
 
 void PixManager::ShowPixPaymentPrompt(
     base::span<const autofill::BankAccount> bank_account_suggestions,
-    base::OnceCallback<void(bool, int64_t)> on_user_decision_callback) {
+    base::OnceCallback<void(int64_t)> on_pix_account_selected) {
   ui_state_ = UiState::kFopSelector;
   client_->ShowPixPaymentPrompt(std::move(bank_account_suggestions),
-                                std::move(on_user_decision_callback));
+                                std::move(on_pix_account_selected));
 }
 
 void PixManager::ShowProgressScreen() {

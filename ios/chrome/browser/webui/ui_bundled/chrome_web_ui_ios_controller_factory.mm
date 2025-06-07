@@ -15,7 +15,6 @@
 #import "components/optimization_guide/optimization_guide_internals/webui/url_constants.h"
 #import "components/prefs/pref_service.h"
 #import "components/version_info/channel.h"
-#import "components/webui/chrome_urls/features.h"
 #import "components/webui/chrome_urls/pref_names.h"
 #import "ios/chrome/browser/commerce/model/shopping_service_factory.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
@@ -27,6 +26,7 @@
 #import "ios/chrome/browser/webui/ui_bundled/autofill_and_password_manager_internals/password_manager_internals_ui_ios.h"
 #import "ios/chrome/browser/webui/ui_bundled/chrome_urls/chrome_urls_ui.h"
 #import "ios/chrome/browser/webui/ui_bundled/crashes_ui.h"
+#import "ios/chrome/browser/webui/ui_bundled/data_sharing_internals/data_sharing_internals_ui.h"
 #import "ios/chrome/browser/webui/ui_bundled/download_internals_ui.h"
 #import "ios/chrome/browser/webui/ui_bundled/flags_ui.h"
 #import "ios/chrome/browser/webui/ui_bundled/gcm/gcm_internals_ui.h"
@@ -42,6 +42,7 @@
 #import "ios/chrome/browser/webui/ui_bundled/optimization_guide_internals/optimization_guide_internals_ui.h"
 #import "ios/chrome/browser/webui/ui_bundled/policy/policy_ui.h"
 #import "ios/chrome/browser/webui/ui_bundled/prefs_internals_ui.h"
+#import "ios/chrome/browser/webui/ui_bundled/profile_internals/profile_internals_ui.h"
 #import "ios/chrome/browser/webui/ui_bundled/signin_internals_ui_ios.h"
 #import "ios/chrome/browser/webui/ui_bundled/terms_ui.h"
 #import "ios/chrome/browser/webui/ui_bundled/translate_internals/translate_internals_ui.h"
@@ -82,11 +83,9 @@ std::unique_ptr<WebUIIOSController> NewWebUIIOS<commerce::CommerceInternalsUI>(
 }
 
 bool InternalDebugPagesEnabled() {
-  // Debug pages are enabled if the feature flag guarding placing them behind
-  // a pref is off, or if the pref is enabled.
-  return !base::FeatureList::IsEnabled(chrome_urls::kInternalOnlyUisPref) ||
-         GetApplicationContext()->GetLocalState()->GetBoolean(
-             chrome_urls::kInternalOnlyUisEnabled);
+  // Debug pages are enabled if the InternalOnlyUisEnabled pref is enabled.
+  return GetApplicationContext()->GetLocalState()->GetBoolean(
+      chrome_urls::kInternalOnlyUisEnabled);
 }
 
 // Returns a function that can be used to create the right type of WebUIIOS for
@@ -105,13 +104,10 @@ WebUIIOSFactoryFunction GetWebUIIOSFactoryFunction(const GURL& url) {
   if (url_host == kChromeUIAutofillInternalsHost) {
     return &NewWebUIIOS<AutofillInternalsUIIOS>;
   }
-  if (base::FeatureList::IsEnabled(chrome_urls::kInternalOnlyUisPref) &&
-      url_host == kChromeUIChromeURLsHost) {
-    // New ChromeUrlsUI is behind the kInternalOnlyUisPref feature flag.
+  if (url_host == kChromeUIChromeURLsHost) {
     return &NewWebUIIOS<chrome_urls::ChromeUrlsUI>;
   }
-  if (url_host == kChromeUIChromeURLsHost ||
-      url_host == kChromeUIHistogramHost || url_host == kChromeUICreditsHost) {
+  if (url_host == kChromeUIHistogramHost || url_host == kChromeUICreditsHost) {
     return &NewWebUIIOS<AboutUI>;
   }
   if (url_host == commerce::kChromeUICommerceInternalsHost) {
@@ -122,8 +118,13 @@ WebUIIOSFactoryFunction GetWebUIIOSFactoryFunction(const GURL& url) {
   if (url_host == kChromeUICrashesHost) {
     return &NewWebUIIOS<CrashesUI>;
   }
+  if (url_host == kChromeUIDataSharingInternalsHost) {
+    return &NewWebUIIOS<DataSharingInternalsUI>;
+  }
   if (url_host == kChromeUIDownloadInternalsHost) {
-    return &NewWebUIIOS<DownloadInternalsUI>;
+    return InternalDebugPagesEnabled()
+               ? &NewWebUIIOS<DownloadInternalsUI>
+               : &NewWebUIIOS<InternalDebugPagesDisabledUI>;
   }
   if (url_host == kChromeUIFlagsHost) {
     return &NewWebUIIOS<FlagsUI>;
@@ -140,7 +141,9 @@ WebUIIOSFactoryFunction GetWebUIIOSFactoryFunction(const GURL& url) {
                : &NewWebUIIOS<InternalDebugPagesDisabledUI>;
   }
   if (url_host == kChromeUILocalStateHost) {
-    return &NewWebUIIOS<LocalStateUI>;
+    return InternalDebugPagesEnabled()
+               ? &NewWebUIIOS<LocalStateUI>
+               : &NewWebUIIOS<InternalDebugPagesDisabledUI>;
   }
   if (url_host == kChromeUIManagementHost) {
     return &NewWebUIIOS<ManagementUI>;
@@ -165,6 +168,11 @@ WebUIIOSFactoryFunction GetWebUIIOSFactoryFunction(const GURL& url) {
   }
   if (url_host == kChromeUIPrefsInternalsHost) {
     return &NewWebUIIOS<PrefsInternalsUI>;
+  }
+  if (url.host_piece() == kChromeUIProfileInternalsHost) {
+    return InternalDebugPagesEnabled()
+               ? &NewWebUIIOS<ProfileInternalsUI>
+               : &NewWebUIIOS<InternalDebugPagesDisabledUI>;
   }
   if (url_host == kChromeUISignInInternalsHost) {
     return &NewWebUIIOS<SignInInternalsUIIOS>;

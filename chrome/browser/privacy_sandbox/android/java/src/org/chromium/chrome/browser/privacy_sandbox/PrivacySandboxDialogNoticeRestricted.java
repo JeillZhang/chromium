@@ -4,7 +4,7 @@
 
 package org.chromium.chrome.browser.privacy_sandbox;
 
-import android.content.Context;
+import android.app.Activity;
 import android.content.DialogInterface;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -12,34 +12,40 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
 import org.chromium.components.browser_ui.widget.ChromeDialog;
 import org.chromium.ui.widget.ButtonCompat;
 
 /** Dialog in the form of a notice shown for the Privacy Sandbox. */
+@NullMarked
 public class PrivacySandboxDialogNoticeRestricted extends ChromeDialog
         implements DialogInterface.OnShowListener {
     private final PrivacySandboxBridge mPrivacySandboxBridge;
-    private View mContentView;
+    private final View mContentView;
 
-    private ButtonCompat mMoreButton;
-    private LinearLayout mActionButtons;
-    private ScrollView mScrollView;
-    private @SurfaceType int mSurfaceType;
-    private View.OnClickListener mOnClickListener;
+    private final ButtonCompat mMoreButton;
+    private final LinearLayout mActionButtons;
+    private final ScrollView mScrollView;
+    private final @SurfaceType int mSurfaceType;
+    private final View.OnClickListener mOnClickListener;
     private boolean mShowMoreButtonForTesting;
 
     public PrivacySandboxDialogNoticeRestricted(
-            Context context,
+            Activity activity,
             PrivacySandboxBridge privacySandboxBridge,
             @SurfaceType int surfaceType,
             boolean showMoreButtonForTesting) {
-        super(context, R.style.ThemeOverlay_BrowserUI_Fullscreen);
+        super(
+                activity,
+                R.style.ThemeOverlay_BrowserUI_Fullscreen,
+                EdgeToEdgeUtils.isEdgeToEdgeEverywhereEnabled());
         mPrivacySandboxBridge = privacySandboxBridge;
         mSurfaceType = surfaceType;
         mShowMoreButtonForTesting = showMoreButtonForTesting;
         mContentView =
-                LayoutInflater.from(context)
+                LayoutInflater.from(activity)
                         .inflate(R.layout.privacy_sandbox_notice_restricted, null);
         setContentView(mContentView);
         mOnClickListener = getOnClickListener();

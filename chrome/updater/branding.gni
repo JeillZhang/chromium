@@ -19,6 +19,7 @@ if (is_chrome_branded) {
   mac_updater_bundle_identifier = "org.chromium.ChromiumUpdater"
   privileged_helper_bundle_name = "ChromiumUpdaterPrivilegedHelper"
   privileged_helper_name = "org.chromium.Chromium.UpdaterPrivilegedHelper"
+  updater_app_icon_path = "//chrome/app/theme/chromium/mac/app.icns"
   updater_company_full_name = "Chromium Authors"
   updater_company_short_name = "Chromium"
   updater_company_short_name_lowercase = "chromium"
@@ -31,6 +32,7 @@ if (is_chrome_branded) {
   updater_metainstaller_name = "Chromium Installer"
   mac_team_identifier = "PLACEHOLDER"
   updater_appid = "{6e8ffa8f-e7e2-4000-9884-589283c27015}"
+  browser_appid = "{5d8d08af-2df9-4da2-86c1-eac353a0ca32}"
   qualification_appid = "{43f3a046-04b3-4443-a770-d67dae90e440}"
   legacy_service_name_prefix = "cupdate"
   prefs_access_mutex = "{A6B9ECD5-772A-4D3F-BFEB-CF9340534A3E}"
@@ -105,4 +107,4 @@ if (is_chrome_branded) {
 
 # Chrome and Chromium share the same endpoints for now.
 update_check_url = "https://update.googleapis.com/service/update2/json"
-device_management_server_url = "https://m.google.com/devicemanagement/data/api"
+updater_event_logging_url = "https://play.googleapis.com/log"

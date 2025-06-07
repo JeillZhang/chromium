@@ -45,6 +45,7 @@ import org.chromium.components.omnibox.AutocompleteInput;
 import org.chromium.components.omnibox.AutocompleteMatch;
 import org.chromium.components.omnibox.AutocompleteMatchBuilder;
 import org.chromium.components.omnibox.OmniboxSuggestionType;
+import org.chromium.components.omnibox.SuggestTemplateInfoProto.SuggestTemplateInfo;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
@@ -89,6 +90,7 @@ public class BasicSuggestionProcessorUnitTest {
         map.put(OmniboxSuggestionType.HISTORY_URL, "HISTORY_URL");
         map.put(OmniboxSuggestionType.HISTORY_TITLE, "HISTORY_TITLE");
         map.put(OmniboxSuggestionType.HISTORY_BODY, "HISTORY_BODY");
+        map.put(OmniboxSuggestionType.HISTORY_KEYWORD, "HISTORY_KEYWORD");
         map.put(OmniboxSuggestionType.NAVSUGGEST, "NAVSUGGEST");
         map.put(OmniboxSuggestionType.SEARCH_WHAT_YOU_TYPED, "SEARCH_WHAT_YOU_TYPED");
         map.put(OmniboxSuggestionType.SEARCH_HISTORY, "SEARCH_HISTORY");
@@ -205,6 +207,7 @@ public class BasicSuggestionProcessorUnitTest {
             {OmniboxSuggestionType.HISTORY_URL, ICON_MAGNIFIER},
             {OmniboxSuggestionType.HISTORY_TITLE, ICON_MAGNIFIER},
             {OmniboxSuggestionType.HISTORY_BODY, ICON_MAGNIFIER},
+            {OmniboxSuggestionType.HISTORY_KEYWORD, ICON_MAGNIFIER},
             {OmniboxSuggestionType.NAVSUGGEST, ICON_MAGNIFIER},
             {OmniboxSuggestionType.SEARCH_WHAT_YOU_TYPED, ICON_MAGNIFIER},
             {OmniboxSuggestionType.SEARCH_HISTORY, ICON_HISTORY},
@@ -235,6 +238,7 @@ public class BasicSuggestionProcessorUnitTest {
             {OmniboxSuggestionType.HISTORY_URL, ICON_GLOBE},
             {OmniboxSuggestionType.HISTORY_TITLE, ICON_GLOBE},
             {OmniboxSuggestionType.HISTORY_BODY, ICON_GLOBE},
+            {OmniboxSuggestionType.HISTORY_KEYWORD, ICON_GLOBE},
             {OmniboxSuggestionType.NAVSUGGEST, ICON_GLOBE},
             {OmniboxSuggestionType.SEARCH_WHAT_YOU_TYPED, ICON_GLOBE},
             {OmniboxSuggestionType.SEARCH_HISTORY, ICON_GLOBE},
@@ -265,6 +269,7 @@ public class BasicSuggestionProcessorUnitTest {
             {OmniboxSuggestionType.HISTORY_URL, ICON_BOOKMARK},
             {OmniboxSuggestionType.HISTORY_TITLE, ICON_BOOKMARK},
             {OmniboxSuggestionType.HISTORY_BODY, ICON_BOOKMARK},
+            {OmniboxSuggestionType.HISTORY_KEYWORD, ICON_BOOKMARK},
             {OmniboxSuggestionType.NAVSUGGEST, ICON_BOOKMARK},
             {OmniboxSuggestionType.SEARCH_WHAT_YOU_TYPED, ICON_BOOKMARK},
             {OmniboxSuggestionType.SEARCH_HISTORY, ICON_BOOKMARK},
@@ -308,6 +313,19 @@ public class BasicSuggestionProcessorUnitTest {
             mProcessor.populateModel(mInput, mSuggestion, mModel, 0);
             Assert.assertTrue(mModel.get(SuggestionViewProperties.IS_SEARCH_SUGGESTION));
             assertSuggestionTypeAndIcon(testCase[0], testCase[1]);
+        }
+    }
+
+    @Test
+    public void getFallbackIconFromIconType_validIconForEachType() {
+        for (var iconType : SuggestTemplateInfo.IconType.values()) {
+            if (iconType == SuggestTemplateInfo.IconType.ICON_TYPE_UNSPECIFIED) {
+                Assert.assertEquals(
+                        0, mProcessor.getFallbackIconFromIconType(iconType.getNumber()));
+            } else {
+                Assert.assertNotEquals(
+                        0, mProcessor.getFallbackIconFromIconType(iconType.getNumber()));
+            }
         }
     }
 

@@ -26,13 +26,11 @@
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/browser/web_applications/web_app_registry_update.h"
-#include "chrome/browser/web_applications/web_app_sync_bridge.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/web_package/signed_web_bundles/signed_web_bundle_id.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
 #include "components/webapps/common/web_app_id.h"
-#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/navigation_simulator.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -43,6 +41,10 @@
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+#if !BUILDFLAG(IS_CHROMEOS)
+#include "content/public/common/content_features.h"
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 namespace web_app {
 namespace {
@@ -66,8 +68,11 @@ IsolatedWebAppBrowserTestHarness::IsolatedWebAppBrowserTestHarness() {
   // are tests that inherit from this class which depend on being able to start
   // without kControlledFrame in their feature list.
   iwa_scoped_feature_list_.InitWithFeatures(
-      {features::kIsolatedWebApps, features::kIsolatedWebAppDevMode,
-       blink::features::kUnrestrictedUsb},
+      {
+#if !BUILDFLAG(IS_CHROMEOS)
+          features::kIsolatedWebApps,
+#endif  // !BUILDFLAG(IS_CHROMEOS)
+          features::kIsolatedWebAppDevMode},
       {});
 }
 
@@ -128,6 +133,29 @@ UpdateDiscoveryTaskResultWaiter::~UpdateDiscoveryTaskResultWaiter() = default;
 void UpdateDiscoveryTaskResultWaiter::OnUpdateDiscoveryTaskCompleted(
     const webapps::AppId& app_id,
     IsolatedWebAppUpdateDiscoveryTask::CompletionStatus status) {
+  if (app_id != expected_app_id_) {
+    return;
+  }
+  std::move(callback_).Run(status);
+  observation_.Reset();
+}
+
+UpdateApplyTaskResultWaiter::UpdateApplyTaskResultWaiter(
+    WebAppProvider& provider,
+    const webapps::AppId expected_app_id,
+    TaskResultCallback callback)
+    : expected_app_id_(expected_app_id),
+      callback_(std::move(callback)),
+      provider_(provider) {
+  observation_.Observe(&provider.iwa_update_manager());
+}
+
+UpdateApplyTaskResultWaiter::~UpdateApplyTaskResultWaiter() = default;
+
+// IsolatedWebAppUpdateManager::Observer:
+void UpdateApplyTaskResultWaiter::OnUpdateApplyTaskCompleted(
+    const webapps::AppId& app_id,
+    IsolatedWebAppUpdateApplyTask::CompletionStatus status) {
   if (app_id != expected_app_id_) {
     return;
   }

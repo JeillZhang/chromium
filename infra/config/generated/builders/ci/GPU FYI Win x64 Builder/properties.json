@@ -206,6 +206,35 @@
           {
             "builder_id": {
               "bucket": "ci",
+              "builder": "Win11 FYI x64 Release (AMD RX 7600)",
+              "project": "chromium"
+            },
+            "builder_spec": {
+              "builder_group": "chromium.gpu.fyi",
+              "execution_mode": "TEST",
+              "legacy_chromium_config": {
+                "apply_configs": [
+                  "mb"
+                ],
+                "build_config": "Release",
+                "config": "chromium",
+                "target_bits": 64,
+                "target_platform": "win"
+              },
+              "legacy_gclient_config": {
+                "config": "chromium"
+              },
+              "parent": {
+                "bucket": "ci",
+                "builder": "GPU FYI Win x64 Builder",
+                "project": "chromium"
+              },
+              "run_tests_serially": true
+            }
+          },
+          {
+            "builder_id": {
+              "bucket": "ci",
               "builder": "Win11 FYI x64 Release (NVIDIA RTX 4070 Super)",
               "project": "chromium"
             },
@@ -274,6 +303,11 @@
         },
         {
           "bucket": "ci",
+          "builder": "Win11 FYI x64 Release (AMD RX 7600)",
+          "project": "chromium"
+        },
+        {
+          "bucket": "ci",
           "builder": "Win11 FYI x64 Release (NVIDIA RTX 4070 Super)",
           "project": "chromium"
         }
@@ -304,6 +338,10 @@
           "group": "tryserver.chromium.win"
         },
         {
+          "builder": "gpu-fyi-try-win11-amd-rel-64",
+          "group": "tryserver.chromium.win"
+        },
+        {
           "builder": "gpu-fyi-try-win11-nvidia-4070-rel-64",
           "group": "tryserver.chromium.win"
         }
@@ -311,18 +349,15 @@
       "targets_spec_directory": "src/infra/config/generated/builders/ci/GPU FYI Win x64 Builder/targets"
     }
   },
-  "$build/reclient": {
-    "instance": "rbe-chromium-trusted",
-    "metrics_project": "chromium-reclient-metrics",
-    "scandeps_server": true
-  },
   "$build/siso": {
     "configs": [
       "builder"
     ],
+    "enable_cloud_monitoring": true,
     "enable_cloud_profiler": true,
     "enable_cloud_trace": true,
     "experiments": [],
+    "metrics_project": "chromium-reclient-metrics",
     "project": "rbe-chromium-trusted",
     "remote_jobs": 250
   },

@@ -24,6 +24,7 @@
 #import "base/mac/mac_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/input/web_input_event_builders_mac.h"
 #include "components/remote_cocoa/app_shim/ns_view_ids.h"
@@ -34,6 +35,7 @@
 #include "content/common/features.h"
 #include "content/public/browser/browser_accessibility_state.h"
 #import "content/public/browser/render_widget_host_view_mac_delegate.h"
+#include "content/public/browser/scoped_accessibility_mode.h"
 #include "content/public/common/content_features.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "third_party/blink/public/common/features.h"
@@ -57,6 +59,7 @@
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/platform/platform_event_source.h"
 #include "ui/gfx/mac/coordinate_conversion.h"
+#include "ui/gfx/native_widget_types.h"
 
 using blink::WebGestureEvent;
 using blink::WebInputEvent;
@@ -113,11 +116,9 @@ class DummyHostHelper : public RenderWidgetHostNSViewHostHelper {
       const blink::WebMouseWheelEvent& web_event) override {}
   void ForwardMouseEvent(const blink::WebMouseEvent& web_event) override {}
   void ForwardWheelEvent(const blink::WebMouseWheelEvent& web_event) override {}
-  void GestureBegin(blink::WebGestureEvent begin_event,
-                    bool is_synthetically_injected) override {}
-  void GestureUpdate(blink::WebGestureEvent update_event) override {}
-  void GestureEnd(blink::WebGestureEvent end_event) override {}
-  void SmartMagnify(const blink::WebGestureEvent& web_event) override {}
+  void PinchEvent(blink::WebGestureEvent pinch_event,
+                  bool is_synthetically_injected) override {}
+  void SmartMagnifyEvent(const blink::WebGestureEvent& web_event) override {}
 };
 
 // Touch bar identifier.
@@ -183,8 +184,6 @@ void ExtractUnderlines(NSAttributedString* string,
 @property(getter=isAutomaticDashSubstitutionEnabled)
     BOOL automaticDashSubstitutionEnabled;
 
-- (void)processedWheelEvent:(const blink::WebMouseWheelEvent&)event
-                   consumed:(BOOL)consumed;
 - (void)keyEvent:(NSEvent*)theEvent wasKeyEquivalent:(BOOL)equiv;
 - (void)windowDidChangeScreenOrBackingProperties:(NSNotification*)notification;
 - (void)windowChangedGlobalFrame:(NSNotification*)notification;
@@ -359,6 +358,7 @@ void ExtractUnderlines(NSAttributedString* string,
   BOOL _shouldRequestTextSubstitutions;
   BOOL _substitutionWasApplied;
   bool _sonomaAccessibilityRefinementsAreActive;
+  std::unique_ptr<content::ScopedAccessibilityMode> _basic_accessibility_mode;
 }
 
 @synthesize markedRange = _markedRange;
@@ -731,11 +731,6 @@ void ExtractUnderlines(NSAttributedString* string,
     [self addCursorRect:[self visibleRect] cursor:_currentCursor];
 }
 
-- (void)processedWheelEvent:(const blink::WebMouseWheelEvent&)event
-                   consumed:(BOOL)consumed {
-  [_responderDelegate rendererHandledWheelEvent:event consumed:consumed];
-}
-
 - (void)processedGestureScrollEvent:(const blink::WebGestureEvent&)event
                            consumed:(BOOL)consumed {
   [_responderDelegate rendererHandledGestureScrollEvent:event
@@ -928,7 +923,11 @@ void ExtractUnderlines(NSAttributedString* string,
   }
 
   NSView* contentView = [window contentView];
-  NSView* view = [contentView hitTest:[theEvent locationInWindow]];
+  // hitTest: assumes using superview's coodinate.
+  NSPoint pointForHitTestInContentView =
+      [contentView.superview convertPoint:[theEvent locationInWindow]
+                                 fromView:nil];
+  NSView* view = [contentView hitTest:pointForHitTestInContentView];
   // Traverse the superview hierarchy as the hitTest will return the frontmost
   // view, such as an NSTextView, while nonWebContentView may be specified by
   // its parent view.
@@ -1538,31 +1537,6 @@ void ExtractUnderlines(NSAttributedString* string,
   }
 }
 
-- (void)handleBeginGestureWithEvent:(NSEvent*)event
-            isSyntheticallyInjected:(BOOL)isSyntheticallyInjected {
-  [_responderDelegate beginGestureWithEvent:event];
-
-  WebGestureEvent gestureBeginEvent(WebGestureEventBuilder::Build(event, self));
-
-  _hostHelper->GestureBegin(gestureBeginEvent, isSyntheticallyInjected);
-}
-
-- (void)handleEndGestureWithEvent:(NSEvent*)event {
-  [_responderDelegate endGestureWithEvent:event];
-
-  // On macOS 10.11+, the end event has type = NSEventTypeMagnify and phase =
-  // NSEventPhaseEnded. On macOS 10.10 and older, the event has type =
-  // NSEventTypeEndGesture.
-  if ([event type] == NSEventTypeMagnify ||
-      [event type] == NSEventTypeEndGesture) {
-    WebGestureEvent endEvent(WebGestureEventBuilder::Build(event, self));
-    endEvent.SetType(WebInputEvent::Type::kGesturePinchEnd);
-    endEvent.SetSourceDevice(blink::WebGestureDevice::kTouchpad);
-    endEvent.SetNeedsWheelEvent(true);
-    _hostHelper->GestureEnd(endEvent);
-  }
-}
-
 - (void)touchesMovedWithEvent:(NSEvent*)event {
   [_responderDelegate touchesMovedWithEvent:event];
 }
@@ -1582,7 +1556,7 @@ void ExtractUnderlines(NSAttributedString* string,
 - (void)smartMagnifyWithEvent:(NSEvent*)event {
   const WebGestureEvent& smartMagnifyEvent =
       WebGestureEventBuilder::Build(event, self);
-  _hostHelper->SmartMagnify(smartMagnifyEvent);
+  _hostHelper->SmartMagnifyEvent(smartMagnifyEvent);
 }
 
 - (void)showLookUpDictionaryOverlayFromRange:(NSRange)range {
@@ -1597,40 +1571,10 @@ void ExtractUnderlines(NSAttributedString* string,
   _host->LookUpDictionaryOverlayAtPoint(rootPoint);
 }
 
-// This method handles 2 different types of hardware events.
-// (Apple does not distinguish between them).
-//  a. Scrolling the middle wheel of a mouse.
-//  b. Swiping on the track pad.
-//
-// This method is responsible for 2 types of behavior:
-//  a. Scrolling the content of window.
-//  b. Navigating forwards/backwards in history.
-//
-// This is a brief description of the logic:
-//  1. If the content can be scrolled, scroll the content.
-//     (This requires a roundtrip to blink to determine whether the content
-//      can be scrolled.)
-//     Once this logic is triggered, the navigate logic cannot be triggered
-//     until the gesture finishes.
-//  2. If the user is making a horizontal swipe, start the navigate
-//     forward/backwards UI.
-//     Once this logic is triggered, the user can either cancel or complete
-//     the gesture. If the user completes the gesture, all remaining touches
-//     are swallowed, and not allowed to scroll the content. If the user
-//     cancels the gesture, all remaining touches are forwarded to the content
-//     scroll logic. The user cannot trigger the navigation logic again.
 - (void)scrollWheel:(NSEvent*)event {
-  if (event.phase == NSEventPhaseBegan) {
-    [self handleBeginGestureWithEvent:event isSyntheticallyInjected:NO];
-  }
-
-  if (event.phase == NSEventPhaseEnded ||
-      event.phase == NSEventPhaseCancelled) {
-    [self handleEndGestureWithEvent:event];
-  }
-
-  if (_responderDelegate &&
-      [_responderDelegate respondsToSelector:@selector(handleEvent:)]) {
+  // Consult with the delegate to see if it wants to handle the event. If the
+  // delegate has handled the event, it takes priority over the page scrolling.
+  if ([_responderDelegate respondsToSelector:@selector(handleEvent:)]) {
     BOOL handled = [_responderDelegate handleEvent:event];
     if (handled)
       return;
@@ -1640,7 +1584,7 @@ void ExtractUnderlines(NSAttributedString* string,
   // the event is received even when the mouse cursor is no longer over the view
   // when the scrolling ends (e.g. if the tab was switched). This is necessary
   // for ending rubber-banding in such cases.
-  if ([event phase] == NSEventPhaseBegan && !_endWheelMonitor) {
+  if (event.phase == NSEventPhaseBegan && !_endWheelMonitor) {
     _endWheelMonitor = [NSEvent
         addLocalMonitorForEventsMatchingMask:NSEventMaskScrollWheel
                                      handler:^(NSEvent* blockEvent) {
@@ -1650,7 +1594,8 @@ void ExtractUnderlines(NSAttributedString* string,
                                      }];
   }
 
-  // This is responsible for content scrolling!
+  // At this point, the delegate has passed on handling the event itself, so
+  // build a mouse wheel event, and pass it on to the renderer for processing.
   WebMouseWheelEvent webEvent = WebMouseWheelEventBuilder::Build(event, self);
   webEvent.rails_mode = _mouseWheelFilter.UpdateRailsMode(webEvent);
   _hostHelper->RouteOrProcessWheelEvent(webEvent);
@@ -1658,27 +1603,17 @@ void ExtractUnderlines(NSAttributedString* string,
 
 // Called repeatedly during a pinch gesture, with incremental change values.
 - (void)magnifyWithEvent:(NSEvent*)event {
-  if (event.phase == NSEventPhaseBegan) {
-    [self handleBeginGestureWithEvent:event isSyntheticallyInjected:NO];
+  [self magnifyWithEvent:event isSyntheticallyInjected:NO];
+}
+
+- (void)magnifyWithEvent:(NSEvent*)event
+    isSyntheticallyInjected:(BOOL)injected {
+  if (event.phase == NSEventPhaseMayBegin) {
     return;
   }
 
-  if (event.phase == NSEventPhaseEnded ||
-      event.phase == NSEventPhaseCancelled) {
-    [self handleEndGestureWithEvent:event];
-    return;
-  }
-
-  // If this conditional evaluates to true, and the function has not
-  // short-circuited from the previous block, then this event is a duplicate of
-  // a gesture event, and should be ignored.
-  if (event.phase == NSEventPhaseBegan || event.phase == NSEventPhaseEnded ||
-      event.phase == NSEventPhaseCancelled) {
-    return;
-  }
-
-  WebGestureEvent updateEvent = WebGestureEventBuilder::Build(event, self);
-  _hostHelper->GestureUpdate(updateEvent);
+  WebGestureEvent gestureEvent = WebGestureEventBuilder::Build(event, self);
+  _hostHelper->PinchEvent(gestureEvent, injected);
 }
 
 - (void)viewWillMoveToWindow:(NSWindow*)newWindow {
@@ -1756,7 +1691,7 @@ void ExtractUnderlines(NSAttributedString* string,
   auto* screen = display::Screen::GetScreen();
   const display::ScreenInfos newScreenInfos =
       screen->GetScreenInfosNearestDisplay(
-          screen->GetDisplayNearestView(self).id());
+          screen->GetDisplayNearestView(gfx::NativeView(self)).id());
   _host->OnScreenInfosChanged(newScreenInfos);
 }
 
@@ -2060,16 +1995,16 @@ void ExtractUnderlines(NSAttributedString* string,
 
 - (NSAccessibilityRole)accessibilityRole {
   if (_sonomaAccessibilityRefinementsAreActive) {
-    content::BrowserAccessibilityState* accessibility_state =
-        content::BrowserAccessibilityState::GetInstance();
-
     // When an AT asks the application object for its role, we activate
     // nativeAPI accessibility support. If the AT descends into the AX tree
-    // and arrives here (the web contents container), activate basic support
-    // so that the AT can descend further into the web content.
-    if (!accessibility_state->GetAccessibilityMode().has_mode(
-            ui::kAXModeBasic.flags())) {
-      accessibility_state->AddAccessibilityModeFlags(ui::kAXModeBasic);
+    // and arrives here (the web contents container), activate basic support for
+    // all web content in the process so that the AT can descend further into
+    // any web content it needs.
+    if (!_basic_accessibility_mode) {
+      _basic_accessibility_mode =
+          content::BrowserAccessibilityState::GetInstance()
+              ->CreateScopedModeForProcess(ui::kAXModeBasic |
+                                           ui::AXMode::kFromPlatform);
     }
   }
 
@@ -2403,9 +2338,10 @@ extern NSString* NSTextInputReplacementRangeAttributeName;
   if ([self isHandlingKeyDown] && !_isReconversionTriggered) {
     _setMarkedTextReplacementRange = gfx::Range(replacementRange);
   } else {
-    _host->ImeSetComposition(_markedText, _imeTextSpans,
-                             gfx::Range(replacementRange), newSelRange.location,
-                             NSMaxRange(newSelRange));
+    _host->ImeSetComposition(
+        _markedText, _imeTextSpans,
+        gfx::Range::FromPossiblyInvalidNSRange(replacementRange),
+        newSelRange.location, NSMaxRange(newSelRange));
   }
 
   [[self inputContext] invalidateCharacterCoordinates];
@@ -2491,6 +2427,21 @@ extern NSString* NSTextInputReplacementRangeAttributeName;
     _textToBeInserted.append(base::SysNSStringToUTF16(imText));
     _shouldRequestTextSubstitutions = YES;
   } else {
+    // Fix the issue that Apple intelligence's writing tools not working. The
+    // writing tools bubble will grab the focus from browser after the user
+    // clicks replace button in the bubble which causes the replaced text can
+    // not be inserted into browser IME since the content's NSView loses focus.
+    // Please note that this is a workaround fix and should be removed after the
+    // issue is finally fixed by Apple which is tracked via FB16872510.
+    NSResponder* firstResponder = [self.window firstResponder];
+    if ([firstResponder isKindOfClass:NSClassFromString(@"NSRemoteView")]) {
+      NSView* firstResponderView = (NSView*)firstResponder;
+      NSView* superView = firstResponderView.superview;
+      if ([superView isKindOfClass:NSClassFromString(@"WTWritingToolsView")]) {
+        [self becomeFirstResponder];
+      }
+    }
+
     // The user uses mouse or touch bar to select a word on the IME.
     gfx::Range replacementGfxRange =
         gfx::Range::FromPossiblyInvalidNSRange(replacementRange);

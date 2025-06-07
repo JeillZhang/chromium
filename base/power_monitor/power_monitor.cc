@@ -9,7 +9,7 @@
 #include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/power_monitor/power_monitor_source.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "power_observer.h"
 
@@ -61,13 +61,6 @@ bool PowerMonitor::AddPowerSuspendObserverAndReturnSuspendedState(
   AutoLock auto_lock(is_system_suspended_lock_);
   power_suspend_observers_->AddObserver(obs);
   return is_system_suspended_;
-}
-
-// static
-bool PowerMonitor::AddPowerStateObserverAndReturnOnBatteryState(
-    PowerStateObserver* obs) {
-  return AddPowerStateObserverAndReturnBatteryPowerStatus(obs) ==
-         PowerStateObserver::BatteryPowerStatus::kBatteryPower;
 }
 
 PowerStateObserver::BatteryPowerStatus
@@ -140,13 +133,6 @@ void PowerMonitor::SetCurrentThermalState(
   DCHECK(IsInitialized());
   source_->SetCurrentThermalState(state);
 }
-
-#if BUILDFLAG(IS_ANDROID)
-int PowerMonitor::GetRemainingBatteryCapacity() const {
-  DCHECK(IsInitialized());
-  return Source()->GetRemainingBatteryCapacity();
-}
-#endif  // BUILDFLAG(IS_ANDROID)
 
 void PowerMonitor::NotifyPowerStateChange(bool on_battery_power) {
   DCHECK(IsInitialized());

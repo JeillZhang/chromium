@@ -5,14 +5,18 @@
 #include "extensions/browser/core_browser_context_keyed_service_factories.h"
 
 #include "components/guest_view/buildflags/buildflags.h"
+#include "extensions/browser/api/web_request/web_request_event_router_factory.h"
+#include "extensions/browser/delayed_install_manager_factory.h"
 #include "extensions/browser/event_router_factory.h"
 #include "extensions/browser/extension_action_manager.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_prefs_factory.h"
 #include "extensions/browser/extension_prefs_helper_factory.h"
 #include "extensions/browser/extension_protocols.h"
+#include "extensions/browser/extension_registrar_factory.h"
 #include "extensions/browser/image_loader_factory.h"
 #include "extensions/browser/message_tracker.h"
+#include "extensions/browser/pending_extension_manager_factory.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/browser/process_manager_factory.h"
 #include "extensions/browser/renderer_startup_helper.h"
@@ -23,7 +27,6 @@
 #include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "extensions/browser/api/web_request/web_request_event_router_factory.h"
 #include "extensions/browser/extension_navigation_registry.h"
 #endif
 
@@ -43,16 +46,20 @@ void EnsureCoreBrowserContextKeyedServiceFactoriesBuilt() {
   AppWindowGeometryCache::Factory::GetInstance();
   AppWindowRegistry::Factory::GetInstance();
 #endif
+  DelayedInstallManagerFactory::GetInstance();
   EnsureExtensionURLLoaderFactoryShutdownNotifierFactoryBuilt();
   EventRouterFactory::GetInstance();
-  ExtensionActionManager::EnsureFactoryBuilt();
+  ExtensionActionManager::GetFactory();
   ExtensionFunction::EnsureShutdownNotifierFactoryBuilt();
   ExtensionPrefsFactory::GetInstance();
   ExtensionPrefsHelperFactory::GetInstance();
+  ExtensionRegistrarFactory::GetInstance();
   ImageLoaderFactory::GetInstance();
+  MessageTracker::GetFactory();
 #if BUILDFLAG(ENABLE_GUEST_VIEW)
   MimeHandlerStreamManager::EnsureFactoryBuilt();
 #endif
+  PendingExtensionManagerFactory::GetInstance();
   PermissionsManager::GetFactory();
   ProcessManagerFactory::GetInstance();
   RendererStartupHelperFactory::GetInstance();
@@ -62,9 +69,8 @@ void EnsureCoreBrowserContextKeyedServiceFactoriesBuilt() {
   UserScriptWorldConfigurationManager::GetFactory();
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   ExtensionNavigationRegistry::GetFactoryInstance();
-  WebRequestEventRouterFactory::GetInstance();
-  MessageTracker::GetFactory();
 #endif
+  WebRequestEventRouterFactory::GetInstance();
 }
 
 }  // namespace extensions

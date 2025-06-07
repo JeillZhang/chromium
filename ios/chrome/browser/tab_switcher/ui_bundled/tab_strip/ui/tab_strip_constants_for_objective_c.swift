@@ -11,6 +11,8 @@ import ios_chrome_browser_tab_switcher_ui_bundled_tab_strip_ui_swift_constants
     .tabStripGroupCellPrefixIdentifier
   public static let tabStripTabCellPrefixIdentifier = TabStripConstants.CollectionView
     .tabStripTabCellPrefixIdentifier
+  public static let height = TabStripConstants.CollectionView
+    .height
   public static let groupStrokeLineWidth = TabStripConstants.CollectionView.groupStrokeLineWidth
   public static let groupStrokeExtension = TabStripConstants.CollectionView.groupStrokeExtension
 }
@@ -20,9 +22,11 @@ import ios_chrome_browser_tab_switcher_ui_bundled_tab_strip_ui_swift_constants
   public static let fontSize = TabStripConstants.TabItem.fontSize
   public static let selectedZIndex = TabStripConstants.TabItem.selectedZIndex
   public static let horizontalSpacing = TabStripConstants.TabItem.horizontalSpacing
+  public static let maxWidth = TabStripConstants.TabItem.maxWidth
   public static let closeButtonAccessibilityIdentifier = TabStripConstants.TabItem
     .closeButtonAccessibilityIdentifier
-  public static let maxWidth = TabStripConstants.TabItem.maxWidth
+  public static let blueDotAccessibilityIdentifier = TabStripConstants.TabItem
+    .blueDotAccessibilityIdentifier
 }
 
 /// Bridge to access `TabStripConstants.GroupItem` from Objective-C code.
@@ -34,6 +38,8 @@ import ios_chrome_browser_tab_switcher_ui_bundled_tab_strip_ui_swift_constants
   public static let fontSize = TabStripConstants.GroupItem.fontSize
   public static let maxTitleWidth = TabStripConstants.GroupItem.maxTitleWidth
   public static let notificationDotSize = TabStripConstants.GroupItem.notificationDotSize
+  public static let notificationDotAccessibilityIdentifier = TabStripConstants.GroupItem
+    .notificationDotAccessibilityIdentifier
 }
 
 /// Bridge to access `TabStripConstants.StaticSeparator` from Objective-C code.

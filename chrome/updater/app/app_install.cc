@@ -21,6 +21,7 @@
 #include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/updater/activity.h"
+#include "chrome/updater/branded_constants.h"
 #include "chrome/updater/constants.h"
 #include "chrome/updater/external_constants.h"
 #include "chrome/updater/lock.h"
@@ -33,8 +34,8 @@
 #include "chrome/updater/tag.h"
 #include "chrome/updater/update_service.h"
 #include "chrome/updater/update_service_internal.h"
-#include "chrome/updater/update_usage_stats_task.h"
 #include "chrome/updater/updater_version.h"
+#include "chrome/updater/usage_stats_permissions.h"
 #include "chrome/updater/util/util.h"
 #include "components/prefs/pref_service.h"
 #include "components/update_client/protocol_definition.h"
@@ -124,7 +125,7 @@ void AppInstall::SendPing(int exit_code, base::OnceClosure callback) {
           base::BindOnce(
               [](base::OnceClosure callback, UpdaterScope scope,
                  int exit_code) {
-                if (exit_code == kErrorOk || !AreRawUsageStatsEnabled(scope)) {
+                if (exit_code == kErrorOk || !AnyAppEnablesUsageStats(scope)) {
                   std::move(callback).Run();
                   return;
                 }
@@ -139,7 +140,8 @@ void AppInstall::SendPing(int exit_code, base::OnceClosure callback) {
                         {
                             .event_type =
                                 update_client::protocol_request::kEventInstall,
-                            .result = 0,
+                            .result = update_client::protocol_request::
+                                kEventResultError,
                             .error_code = exit_code,
                         },
                         base::BindOnce(

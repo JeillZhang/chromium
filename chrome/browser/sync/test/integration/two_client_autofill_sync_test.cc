@@ -11,8 +11,8 @@
 #include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/data_quality/addresses/profile_token_quality.h"
 #include "components/autofill/core/browser/data_quality/addresses/profile_token_quality_test_api.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
@@ -175,7 +175,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest, AddProfile) {
 // other client when sync gets started.
 IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
                        AddProfile_BeforeSyncStart) {
-  ASSERT_TRUE(SetupClients()) << "SetupClients() failed";
+  ASSERT_TRUE(SetupClients());
 
   // Add the new autofill profile before starting sync.
   AddProfile(0, CreateAutofillProfile(PROFILE_HOMER));
@@ -189,7 +189,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
 // results in each client only having one profile after sync is started
 IN_PROC_BROWSER_TEST_F(TwoClientAutofillProfileSyncTest,
                        ClientsAddSameProfile) {
-  ASSERT_TRUE(SetupClients()) << "SetupClients() failed";
+  ASSERT_TRUE(SetupClients());
 
   // Add the same profile in the two clients.
   AddProfile(0, CreateUniqueAutofillProfile());

@@ -160,7 +160,7 @@ ArcSplashScreenDialogView::ArcSplashScreenDialogView(
     bool is_for_unresizable)
     : anchor_(anchor), close_callback_(std::move(close_callback)) {
   // Setup delegate.
-  set_background_color(cros_tokens::kCrosSysDialogContainer);
+  SetBackgroundColor(cros_tokens::kCrosSysDialogContainer);
   SetArrow(views::BubbleBorder::Arrow::BOTTOM_CENTER);
   SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   set_parent_window(parent);
@@ -210,7 +210,7 @@ ArcSplashScreenDialogView::ArcSplashScreenDialogView(
                        .Build());
   ash::TypographyProvider::Get()->StyleLabel(
       ash::TypographyToken::kCrosDisplay7, *title_label);
-  title_label->SetEnabledColorId(cros_tokens::kCrosSysOnSurface);
+  title_label->SetEnabledColor(cros_tokens::kCrosSysOnSurface);
 
   const raw_ptr<views::Label> body_label = AddChildView(
       views::Builder<views::Label>()  // Body
@@ -227,7 +227,7 @@ ArcSplashScreenDialogView::ArcSplashScreenDialogView(
           .Build());
   ash::TypographyProvider::Get()->StyleLabel(ash::TypographyToken::kCrosBody1,
                                              *body_label);
-  body_label->SetEnabledColorId(cros_tokens::kCrosSysOnSurfaceVariant);
+  body_label->SetEnabledColor(cros_tokens::kCrosSysOnSurfaceVariant);
 
   AddChildView(
       views::Builder<ash::PillButton>()  // Close button
@@ -288,7 +288,7 @@ void ArcSplashScreenDialogView::AddedToWidget() {
   const int kCornerRadius = 20;
   auto* const frame = GetBubbleFrameView();
   if (frame) {
-    frame->SetCornerRadius(kCornerRadius);
+    frame->SetRoundedCorners(gfx::RoundedCornersF(kCornerRadius));
   }
 }
 

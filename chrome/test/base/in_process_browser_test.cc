@@ -22,6 +22,7 @@
 #include "base/sampling_heap_profiler/poisson_allocation_sampler.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -29,7 +30,6 @@
 #include "base/test/test_switches.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/after_startup_task_utils.h"
 #include "chrome/browser/browser_features.h"
 #include "chrome/browser/browser_process.h"
@@ -47,7 +47,6 @@
 #include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/predictors/loading_predictor_config.h"
-#include "chrome/browser/privacy_sandbox/privacy_sandbox_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
@@ -109,7 +108,6 @@
 #if BUILDFLAG(IS_WIN)
 #include "base/win/scoped_com_initializer.h"
 #include "base/win/windows_version.h"
-#include "chrome/browser/os_crypt/app_bound_encryption_win.h"
 #include "components/version_info/version_info.h"
 #include "ui/base/win/atl_module.h"
 #endif
@@ -128,7 +126,7 @@
 #include "components/storage_monitor/test_storage_monitor.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_switches.h"
 #include "ash/public/cpp/test/shell_test_api.h"
 #include "ash/shell.h"
@@ -142,7 +140,7 @@
 #include "components/user_manager/user_names.h"
 #include "ui/display/display_switches.h"
 #include "ui/events/test/event_generator.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_OZONE)
 #include "ui/views/test/test_desktop_screen_ozone.h"
@@ -159,7 +157,7 @@
 
 namespace {
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 class FakeDeviceSyncImplFactory
     : public ash::device_sync::DeviceSyncImpl::Factory {
  public:
@@ -186,7 +184,7 @@ FakeDeviceSyncImplFactory* GetFakeDeviceSyncImplFactory() {
   static base::NoDestructor<FakeDeviceSyncImplFactory> factory;
   return factory.get();
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 class ChromeBrowserMainExtraPartsBrowserProcessInjection
@@ -294,7 +292,7 @@ InProcessBrowserTest::InProcessBrowserTest(
 }
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void InProcessBrowserTest::set_launch_browser_for_testing(
     std::unique_ptr<ash::full_restore::ScopedLaunchBrowserForTesting>
         launch_browser_for_testing) {
@@ -306,49 +304,36 @@ void InProcessBrowserTest::RunScheduledLayouts() {
 #if defined(TOOLKIT_VIEWS)
   views::Widget::Widgets widgets_to_layout;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // WidgetTest::GetAllWidgets() doesn't work for ChromeOS in a production
   // environment. We must get the Widgets ourself.
-  for (aura::Window* root_window : ash::Shell::GetAllRootWindows())
-    views::Widget::GetAllChildWidgets(root_window, &widgets_to_layout);
+  for (aura::Window* root_window : ash::Shell::GetAllRootWindows()) {
+    widgets_to_layout.merge(views::Widget::GetAllChildWidgets(root_window));
+  }
 #else
   widgets_to_layout = views::test::WidgetTest::GetAllWidgets();
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
-  for (views::Widget* widget : widgets_to_layout)
+  for (views::Widget* widget : widgets_to_layout) {
     widget->LayoutRootViewIfNecessary();
+  }
 #endif  // defined(TOOLKIT_VIEWS)
 }
 
 void InProcessBrowserTest::Initialize() {
   g_current_test = this;
-  base::FilePath src_dir;
-  CHECK(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &src_dir));
 
   // chrome::DIR_TEST_DATA isn't going to be setup until after we call
   // ContentMain. However that is after tests' constructors or SetUp methods,
   // which sometimes need it. So just override it.
-  CHECK(base::PathService::Override(chrome::DIR_TEST_DATA,
-                                    src_dir.Append(GetChromeTestDataDir())));
+  chrome_test_utils::OverrideChromeTestDataDir();
 
 #if BUILDFLAG(IS_MAC)
   bundle_swizzler_ = std::make_unique<ScopedBundleSwizzlerMac>();
 #endif
 
-  // The HTTPS test server must be setup here as different browser test suites
-  // have different bundle behavior on macOS, and the HTTPS test server
-  // constructor reads in the local test root cert. It might be possible
-  // to move this to BrowserTestBase in the future.
-  embedded_https_test_server_ = std::make_unique<net::EmbeddedTestServer>(
-      net::EmbeddedTestServer::TYPE_HTTPS);
-  // Default hostnames for the HTTPS test server. Test fixtures can call this
-  // with different hostnames (before starting the server) to override.
-  embedded_https_test_server_->SetCertHostnames(
-      {"example.com", "*.example.com", "foo.com", "*.foo.com", "bar.com",
-       "*.bar.com", "a.com", "*.a.com", "b.com", "*.b.com", "c.com",
-       "*.c.com"});
-
   embedded_test_server()->AddDefaultHandlers(GetChromeTestDataDir());
+  InitializeHTTPSTestServer();
   embedded_https_test_server().AddDefaultHandlers(GetChromeTestDataDir());
 
   // Force all buttons not overflow to prevent test flakiness.
@@ -378,19 +363,12 @@ void InProcessBrowserTest::Initialize() {
   create_services_subscription_ =
       BrowserContextDependencyManager::GetInstance()
           ->RegisterCreateServicesCallbackForTesting(base::BindRepeating(
-              &InProcessBrowserTest::SetupProtocolHandlerTestFactories,
+              &InProcessBrowserTest::OnWillCreateBrowserContextKeyedServices,
               base::Unretained(this)));
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   launch_browser_for_testing_ =
       std::make_unique<ash::full_restore::ScopedLaunchBrowserForTesting>();
-#endif
-
-#if BUILDFLAG(IS_WIN)
-  // Browser tests use a custom user data dir, which would normally result in
-  // App-Bound encryption being disabled, so in order to get full test coverage
-  // in browser tests, bypass this check.
-  os_crypt::SetNonStandardUserDataDirSupportedForTesting(/*supported=*/true);
 #endif
 }
 
@@ -439,7 +417,7 @@ void InProcessBrowserTest::SetUp() {
   ASSERT_TRUE(SetUpUserDataDirectory())
       << "Could not set up user data directory.";
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // No need to redirect log for test.
   command_line->AppendSwitch(switches::kDisableLoggingRedirect);
 
@@ -505,10 +483,8 @@ void InProcessBrowserTest::SetUp() {
   // access to all files here since browser_tests and interactive_ui_tests
   // rely on the ability to open any files via file: scheme.
   ChromeNetworkDelegate::EnableAccessToAllFilesForTesting(true);
-#endif  // BUILDFLAG(IS_CHROMEOS)
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-  // Device sync (for multidevice "Better Together") is ash specific.
+  // Device sync (for multidevice "Better Together") is ChromeOS specific.
   ash::device_sync::DeviceSyncImpl::Factory::SetCustomFactory(
       GetFakeDeviceSyncImplFactory());
 
@@ -519,7 +495,7 @@ void InProcessBrowserTest::SetUp() {
   // Disable the notification delay timer used to prevent non system
   // notifications from showing up right after login.
   ash::ShellTestApi::SetUseLoginNotificationDelayForTest(false);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Redirect the default download directory to a temporary directory.
   ASSERT_TRUE(default_download_dir_.CreateUniqueTempDir());
@@ -536,11 +512,6 @@ void InProcessBrowserTest::SetUp() {
   // Auto-redirect to the NTP, which can happen if remote content is enabled on
   // What's New for tests that simulate first run, is unexpected by most tests.
   whats_new::DisableRemoteContentForTests();
-
-  // The Privacy Sandbox service may attempt to show a modal prompt to the
-  // profile on browser start, which is unexpected by mosts tests. Tests which
-  // expect this can allow the prompt as desired.
-  PrivacySandboxService::SetPromptDisabledForTests(true);
 
 #if !BUILDFLAG(IS_ANDROID)
   // The Search Engine Choice service may attempt to show a modal dialog to the
@@ -584,7 +555,7 @@ void InProcessBrowserTest::TearDown() {
     ASSERT_TRUE(embedded_https_test_server().ShutdownAndWaitUntilComplete());
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   ash::device_sync::DeviceSyncImpl::Factory::SetCustomFactory(nullptr);
   launch_browser_for_testing_ = nullptr;
 #endif
@@ -645,6 +616,10 @@ void InProcessBrowserTest::SetUpLocalStatePrefService(
   local_state->SetString(prefs::kShortcutMigrationVersion,
                          std::string(version_info::GetVersionNumber()));
 #endif  // BUILDFLAG(IS_WIN);
+}
+
+Profile* InProcessBrowserTest::GetProfile() const {
+  return browser() ? browser()->profile() : nullptr;
 }
 
 void InProcessBrowserTest::CloseBrowserSynchronously(Browser* browser) {
@@ -782,7 +757,7 @@ Browser* InProcessBrowserTest::CreateBrowserForApp(const std::string& app_name,
 }
 #endif  // !BUILDFLAG(IS_MAC)
 
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
 Browser* InProcessBrowserTest::CreateGuestBrowser() {
   // Get Guest profile.
   ProfileManager* profile_manager = g_browser_process->profile_manager();
@@ -799,7 +774,7 @@ Browser* InProcessBrowserTest::CreateGuestBrowser() {
   AddBlankTabAndShow(browser);
   return browser;
 }
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
 
 void InProcessBrowserTest::AddBlankTabAndShow(Browser* browser) {
   content::WebContents* blank_tab = chrome::AddSelectedTabWithURL(
@@ -937,7 +912,13 @@ void InProcessBrowserTest::QuitBrowsers() {
 #endif
 }
 
-void InProcessBrowserTest::SetupProtocolHandlerTestFactories(
+void InProcessBrowserTest::OnWillCreateBrowserContextKeyedServices(
+    content::BrowserContext* context) {
+  SetUpProtocolHandlerTestFactories(context);
+  SetUpBrowserContextKeyedServices(context);
+}
+
+void InProcessBrowserTest::SetUpProtocolHandlerTestFactories(
     content::BrowserContext* context) {
   // Use TestProtocolHandlerRegistryDelegate to prevent OS integration during
   // the protocol registration process.

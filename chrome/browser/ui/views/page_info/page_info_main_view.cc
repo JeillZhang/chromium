@@ -37,8 +37,10 @@
 #include "components/page_info/page_info_ui_delegate.h"
 #include "components/permissions/permission_util.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
+#include "components/privacy_sandbox/tracking_protection_settings.h"
 #include "components/strings/grit/components_branded_strings.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/strings/grit/privacy_sandbox_strings.h"
 #include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -56,6 +58,7 @@
 #include "ui/views/controls/separator.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/flex_layout.h"
+#include "ui/views/vector_icons.h"
 #include "ui/views/view_class_properties.h"
 
 #if BUILDFLAG(FULL_SAFE_BROWSING)
@@ -63,6 +66,8 @@
 #endif
 
 namespace {
+
+using privacy_sandbox::IsTrackingProtectionsUi;
 
 constexpr int kMinPermissionRowHeight = 40;
 constexpr float kMaxPermissionRowCount = 10.5;
@@ -76,6 +81,8 @@ int GetSeparatorPadding() {
 }  // namespace
 
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(PageInfoMainView, kCookieButtonElementId);
+DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(PageInfoMainView,
+                                      kPrivacyAndSiteDataButtonElementId);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(PageInfoMainView, kMainLayoutElementId);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(PageInfoMainView, kPermissionsElementId);
 DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(PageInfoMainView,
@@ -193,22 +200,41 @@ void PageInfoMainView::SetCookieInfo(const CookiesNewInfo& cookie_info) {
     return;
   }
 
-  // Create a cookie button that opens a cookies subpage.
-  cookie_button_ =
-      site_settings_view_->AddChildView(std::make_unique<RichHoverButton>(
-          base::BindRepeating(&PageInfoNavigationHandler::OpenCookiesPage,
-                              base::Unretained(navigation_handler_)),
-          PageInfoViewFactory::GetImageModel(
-              vector_icons::kCookieChromeRefreshIcon),
-          l10n_util::GetStringUTF16(IDS_PAGE_INFO_COOKIES_HEADER),
-          /*subtitle_text=*/std::u16string(),
-          PageInfoViewFactory::GetOpenSubpageIcon()));
-  cookie_button_->SetID(
-      PageInfoViewFactory::VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_COOKIES_SUBPAGE);
-  cookie_button_->SetProperty(views::kElementIdentifierKey,
-                              kCookieButtonElementId);
-  cookie_button_->SetTooltipText(
-      l10n_util::GetStringUTF16(IDS_PAGE_INFO_COOKIES_TOOLTIP));
+  // If the TP UI is being shown then use the "Privacy and site data" treatment.
+  if (IsTrackingProtectionsUi(cookie_info.controls_state)) {
+    cookie_button_ =
+        site_settings_view_->AddChildView(std::make_unique<RichHoverButton>(
+            base::BindRepeating(
+                &PageInfoNavigationHandler::OpenPrivacyAndSiteDataPage,
+                base::Unretained(navigation_handler_)),
+            PageInfoViewFactory::GetImageModel(views::kEyeCrossedRefreshIcon),
+            l10n_util::GetStringUTF16(IDS_PAGE_INFO_PRIVACY_SITE_DATA_HEADER),
+            /*subtitle_text=*/std::u16string(),
+            PageInfoViewFactory::GetOpenSubpageIcon()));
+    cookie_button_->SetTooltipText(
+        l10n_util::GetStringUTF16(IDS_PAGE_INFO_PRIVACY_SITE_DATA_TOOLTIP));
+    cookie_button_->SetID(
+        PageInfoViewFactory::
+            VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_PRIVACY_SITE_DATA_SUBPAGE);
+    cookie_button_->SetProperty(views::kElementIdentifierKey,
+                                kPrivacyAndSiteDataButtonElementId);
+  } else {
+    cookie_button_ =
+        site_settings_view_->AddChildView(std::make_unique<RichHoverButton>(
+            base::BindRepeating(&PageInfoNavigationHandler::OpenCookiesPage,
+                                base::Unretained(navigation_handler_)),
+            PageInfoViewFactory::GetImageModel(
+                vector_icons::kCookieChromeRefreshIcon),
+            l10n_util::GetStringUTF16(IDS_PAGE_INFO_COOKIES_HEADER),
+            /*subtitle_text=*/std::u16string(),
+            PageInfoViewFactory::GetOpenSubpageIcon()));
+    cookie_button_->SetTooltipText(
+        l10n_util::GetStringUTF16(IDS_PAGE_INFO_COOKIES_TOOLTIP));
+    cookie_button_->SetID(
+        PageInfoViewFactory::VIEW_ID_PAGE_INFO_LINK_OR_BUTTON_COOKIES_SUBPAGE);
+    cookie_button_->SetProperty(views::kElementIdentifierKey,
+                                kCookieButtonElementId);
+  }
   cookie_button_->SetTitleTextStyleAndColor(views::style::STYLE_BODY_3_MEDIUM,
                                             kColorPageInfoForeground);
   cookie_button_->SetSubtitleTextStyleAndColor(
@@ -380,7 +406,7 @@ void PageInfoMainView::SetIdentityInfo(const IdentityInfo& identity_info) {
     // base::Unretained(navigation_handler_) is safe because navigation_handler_
     // is the bubble view which is the owner of this view and therefore will
     // always exist when this view exists.
-    connection_button_ = security_container_view_->AddChildView(
+    connection_button_ = security_container_view_->AddChildViewRaw(
         std::make_unique<RichHoverButton>(
             base::BindRepeating(&PageInfoNavigationHandler::OpenSecurityPage,
                                 base::Unretained(navigation_handler_)),
@@ -415,7 +441,7 @@ void PageInfoMainView::SetIdentityInfo(const IdentityInfo& identity_info) {
             page_info::kMerchantTrustEvaluationControlSurvey)) {
       ui_delegate_->GetMerchantTrustInfo(
           base::BindOnce(&PageInfoMainView::OnMerchantTrustDataFetched,
-                        weak_factory_.GetWeakPtr()));
+                         weak_factory_.GetWeakPtr()));
     }
   } else {
     security_content_view_ = security_container_view_->AddChildView(
@@ -625,6 +651,7 @@ std::unique_ptr<views::View> PageInfoMainView::CreateBubbleHeaderView() {
               views::BubbleFrameView::CreateCloseButton(
                   base::BindRepeating(&PageInfoNavigationHandler::CloseBubble,
                                       base::Unretained(navigation_handler_))))
+              .SetID(PageInfoViewFactory::VIEW_ID_PAGE_INFO_CLOSE_BUTTON)
               .SetVisible(true)
               .SetProperty(views::kCrossAxisAlignmentKey,
                            views::LayoutAlignment::kStart)
@@ -677,7 +704,7 @@ std::unique_ptr<views::View> PageInfoMainView::CreateAboutThisSiteButton(
 
 std::unique_ptr<views::View> PageInfoMainView::CreateAdPersonalizationButton() {
   auto ads_personalization_button = std::make_unique<RichHoverButton>(
-      base::BindRepeating(&PageInfoNavigationHandler::OpenCookiesPage,
+      base::BindRepeating(&PageInfoNavigationHandler::OpenAdPersonalizationPage,
                           base::Unretained(navigation_handler_)),
       PageInfoViewFactory::GetImageModel(vector_icons::kAdsClickIcon),
       l10n_util::GetStringUTF16(IDS_PAGE_INFO_AD_PRIVACY_HEADER),
@@ -697,17 +724,16 @@ std::unique_ptr<views::View> PageInfoMainView::CreateAdPersonalizationButton() {
 
 std::unique_ptr<views::View> PageInfoMainView::CreateMerchantTrustButton(
     page_info::MerchantData value) {
-  auto merchant_trust_button = std::make_unique<RichHoverButton>(
-      base::BindRepeating(&PageInfoNavigationHandler::OpenMerchantTrustPage,
-                          base::Unretained(navigation_handler_),
-                          page_info::MerchantBubbleOpenReferrer::kPageInfo),
-      PageInfoViewFactory::GetImageModel(vector_icons::kStorefrontIcon),
-      l10n_util::GetStringUTF16(IDS_PAGE_INFO_MERCHANT_TRUST_HEADER),
-      std::u16string(), PageInfoViewFactory::GetOpenSubpageIcon());
+  auto merchant_trust_button =
+      value.reviews_summary.empty()
+          ? CreateMerchantTrustLaunchButton(value.page_url)
+          : CreateMerchantTrustSubpageButton(value);
+
   merchant_trust_button->SetTitleTextStyleAndColor(
       views::style::STYLE_BODY_3_MEDIUM, kColorPageInfoForeground);
   merchant_trust_button->SetProperty(views::kElementIdentifierKey,
                                      kMerchantTrustElementId);
+
   auto* star_rating_view =
       merchant_trust_button->SetCustomView(std::make_unique<StarRatingView>());
   star_rating_view->SetRating(value.star_rating);
@@ -717,6 +743,36 @@ std::unique_ptr<views::View> PageInfoMainView::CreateMerchantTrustButton(
               IDS_PAGE_INFO_MERCHANT_TRUST_STAR_RATING_A11Y_DESCRIPTION),
           value.star_rating));
   return merchant_trust_button;
+}
+
+std::unique_ptr<RichHoverButton>
+PageInfoMainView::CreateMerchantTrustSubpageButton(
+    page_info::MerchantData value) {
+  auto button = std::make_unique<RichHoverButton>(
+      base::BindRepeating(&PageInfoNavigationHandler::OpenMerchantTrustPage,
+                          base::Unretained(navigation_handler_),
+                          page_info::MerchantBubbleOpenReferrer::kPageInfo),
+      PageInfoViewFactory::GetImageModel(vector_icons::kStorefrontIcon),
+      l10n_util::GetStringUTF16(IDS_PAGE_INFO_MERCHANT_TRUST_HEADER),
+      std::u16string(), PageInfoViewFactory::GetOpenSubpageIcon());
+
+  return button;
+}
+
+std::unique_ptr<RichHoverButton>
+PageInfoMainView::CreateMerchantTrustLaunchButton(GURL page_url) {
+  auto button = std::make_unique<RichHoverButton>(
+      base::BindRepeating(&PageInfoMainView::OpenMerchantTrustSidePanel,
+                          weak_factory_.GetWeakPtr(), page_url),
+      PageInfoViewFactory::GetImageModel(vector_icons::kStorefrontIcon),
+      l10n_util::GetStringUTF16(IDS_PAGE_INFO_MERCHANT_TRUST_HEADER),
+      std::u16string(), PageInfoViewFactory::GetLaunchIcon());
+  return button;
+}
+
+void PageInfoMainView::OpenMerchantTrustSidePanel(const GURL& url) {
+  ui_delegate_->OpenMerchantTrustSidePanel(url);
+  ui_delegate_->RecordMerchantTrustSidePanelOpened();
 }
 
 BEGIN_METADATA(PageInfoMainView)

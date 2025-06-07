@@ -60,6 +60,8 @@ target(tracing_lib_type, "cpp") {
     sources += [
       "perfetto/custom_event_recorder.cc",
       "perfetto/custom_event_recorder.h",
+      "perfetto/histogram_samples_data_source.cc",
+      "perfetto/histogram_samples_data_source.h",
       "perfetto/interning_index.h",
       "perfetto/metadata_data_source.cc",
       "perfetto/metadata_data_source.h",
@@ -124,7 +126,7 @@ target(tracing_lib_type, "cpp") {
     }
 
     public_deps += [
-      "//components/tracing:startup_tracing",
+      "//components/tracing:tracing_config",
       "//mojo/public/cpp/bindings",
       "//services/tracing/public/mojom",
     ]
@@ -134,7 +136,12 @@ target(tracing_lib_type, "cpp") {
       "//build:chromecast_buildflags",
       "//components/system_cpu:system_cpu",
       "//third_party/perfetto/protos/perfetto/trace/chrome:minimal_complete_lite",
+      "//third_party/snappy:snappy",
     ]
+
+    if (is_win) {
+      deps += [ "//components/tracing:tracing_etw" ]
+    }
 
     if (!(is_chromeos && target_cpu == "arm64" && current_cpu == "arm")) {
       deps += [ "//components/variations" ]

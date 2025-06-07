@@ -31,6 +31,7 @@
 #include "chrome/enterprise_companion/ipc_support.h"
 
 #if BUILDFLAG(IS_WIN)
+#include "base/i18n/icu_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/win/windows_version.h"
 #endif
@@ -161,6 +162,10 @@ int EnterpriseCompanionMain(int argc, const char* const* argv) {
   }
   InitializeCrashReporting();
 
+#if BUILDFLAG(IS_WIN)
+  CHECK(base::i18n::InitializeICU()) << "Failed to initialize ICU";
+#endif
+
   // Records a backtrace in the log, crashes the program, saves a crash dump,
   // and reports the crash.
   CHECK(!command_line->HasSwitch(kCrashMeSwitch))
@@ -177,7 +182,8 @@ int EnterpriseCompanionMain(int argc, const char* const* argv) {
 
 std::optional<base::FilePath> GetLogFilePath() {
   std::optional<base::FilePath> path = GetInstallDirectory();
-  return path ? path->AppendASCII("enterprise_companion.log") : path;
+  return path ? path->Append(FILE_PATH_LITERAL("enterprise_companion.log"))
+              : path;
 }
 
 }  // namespace enterprise_companion

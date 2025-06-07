@@ -7,17 +7,20 @@ import 'chrome://resources/mwc/@material/web/progress/circular-progress.js';
 import './cra/cra-button.js';
 import './cra/cra-icon.js';
 import './settings-row.js';
+import './spoken-message.js';
 
 import {
   css,
   html,
   nothing,
   PropertyDeclarations,
+  PropertyValues,
 } from 'chrome://resources/mwc/lit/index.js';
 
 import {i18n} from '../core/i18n.js';
 import {ModelState} from '../core/on_device_model/types.js';
 import {ReactiveLitElement} from '../core/reactive/lit.js';
+import {signal} from '../core/reactive/signal.js';
 import {LangPackInfo} from '../core/soda/language_info.js';
 import {
   assertExhaustive,
@@ -77,6 +80,18 @@ export class LanguageListItem extends ReactiveLitElement {
 
   sodaState: ModelState = {kind: 'unavailable'};
 
+  private readonly stateChanged = signal(false);
+
+  // Announces status in the next render cycle.
+  override updated(changedProperties: PropertyValues<this>): void {
+    const state = changedProperties.get('sodaState');
+    if (state === undefined || state.kind === 'unavailable') {
+      this.stateChanged.value = false;
+    } else {
+      this.stateChanged.value = true;
+    }
+  }
+
   private onDownload() {
     if (this.langPackInfo === null) {
       return;
@@ -121,6 +136,46 @@ export class LanguageListItem extends ReactiveLitElement {
     }
   }
 
+  private renderStatusMessage(): RenderResult {
+    if (!this.stateChanged.value) {
+      return nothing;
+    }
+    const kind = this.sodaState.kind;
+    const name = assertExists(this.langPackInfo).displayName;
+    switch (kind) {
+      case 'needsReboot':
+        return html`
+          <spoken-message slot="status" role="status" aria-live="polite">
+            ${i18n.languagePickerLanguageNeedsRebootStatusMessage(name)}
+          </spoken-message>
+        `;
+      case 'error':
+        return html`
+          <spoken-message slot="status" role="status" aria-live="polite">
+            ${i18n.languagePickerLanguageDownloadErrorStatusMessage(name)}
+          </spoken-message>
+        `;
+      case 'installing':
+        return html`
+          <spoken-message slot="status" role="status" aria-live="polite">
+            ${i18n.languagePickerLanguageDownloadStartedStatusMessage(name)}
+          </spoken-message>
+        `;
+      case 'installed':
+        return html`
+          <spoken-message slot="status" role="status" aria-live="polite">
+            ${i18n.languagePickerLanguageDownloadFinishedStatusMessage(name)}
+          </spoken-message>
+        `;
+      case 'notInstalled':
+        return nothing;
+      case 'unavailable':
+        return assertNotReached('SODA unavailable but the row is rendered');
+      default:
+        return assertExhaustive(kind);
+    }
+  }
+
   private renderDescriptionAndAction(): RenderResult {
     const name = assertExists(this.langPackInfo).displayName;
     const downloadButtonAriaLabel =
@@ -141,6 +196,13 @@ export class LanguageListItem extends ReactiveLitElement {
     switch (kind) {
       case 'notInstalled':
         return downloadButton;
+      case 'needsReboot':
+        return html`
+          <span slot="description" class="error">
+            ${i18n.languagePickerLanguageNeedsRebootDescription}
+          </span>
+          ${downloadButton}
+        `;
       case 'error':
         // Shows the download button for users to try again.
         return html`
@@ -192,6 +254,9 @@ export class LanguageListItem extends ReactiveLitElement {
       case 'notInstalled': {
         return i18n.languagePickerLanguageNotDownloadedAriaLabel(name);
       }
+      case 'needsReboot': {
+        return i18n.languagePickerLanguageNeedsRebootAriaLabel(name);
+      }
       case 'error': {
         return i18n.languagePickerLanguageDownloadErrorAriaLabel(name);
       }
@@ -241,6 +306,7 @@ export class LanguageListItem extends ReactiveLitElement {
             ${this.langPackInfo.displayName}
           </span>
           ${this.renderDescriptionAndAction()}
+          ${this.renderStatusMessage()}
         </settings-row>
         ${this.isFocusable() ? html`<md-focus-ring></md-focus-ring>` : nothing}
       </div>

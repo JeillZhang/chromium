@@ -8,6 +8,7 @@
 
 #include <string_view>
 
+#include "base/containers/map_util.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/metrics_hashes.h"
@@ -17,6 +18,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 
 namespace base {
 
@@ -24,8 +26,8 @@ HistogramTester::HistogramTester() {
   // Record any histogram data that exists when the object is created so it can
   // be subtracted later.
   for (const auto* const histogram : StatisticsRecorder::GetHistograms()) {
-    histograms_snapshot_[histogram->histogram_name()] =
-        histogram->SnapshotSamples();
+    InsertOrAssign(histograms_snapshot_, histogram->histogram_name(),
+                   histogram->SnapshotSamples());
   }
 }
 
@@ -156,6 +158,23 @@ std::vector<Bucket> HistogramTester::GetAllSamples(
   return samples;
 }
 
+absl::flat_hash_map<std::string, std::vector<Bucket>>
+HistogramTester::GetAllSamplesForPrefix(std::string_view prefix) const {
+  absl::flat_hash_map<std::string, std::vector<Bucket>> samples;
+
+  for (const HistogramBase* histogram : StatisticsRecorder::GetHistograms()) {
+    std::string_view histogram_name = histogram->histogram_name();
+    if (!StartsWith(histogram_name, prefix, CompareCase::SENSITIVE)) {
+      continue;
+    }
+    std::vector<Bucket> buckets = GetAllSamples(histogram_name);
+    if (!buckets.empty()) {
+      samples[histogram_name] = std::move(buckets);
+    }
+  }
+  return samples;
+}
+
 HistogramBase::Count32 HistogramTester::GetBucketCount(
     std::string_view name,
     HistogramBase::Sample32 sample) const {
@@ -205,7 +224,8 @@ HistogramTester::CountsMap HistogramTester::GetTotalCountsForPrefix(
         GetHistogramSamplesSinceCreation(histogram->histogram_name());
     // Omit unchanged histograms from the result.
     if (new_samples->TotalCount()) {
-      result[histogram->histogram_name()] = new_samples->TotalCount();
+      InsertOrAssign(result, histogram->histogram_name(),
+                     new_samples->TotalCount());
     }
   }
   return result;

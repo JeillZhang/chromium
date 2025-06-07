@@ -13,7 +13,6 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/path_service.h"
 #include "base/task/thread_pool.h"
-#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/buildflags.h"
@@ -32,6 +31,7 @@
 #include "chrome/browser/component_updater/pki_metadata_component_installer.h"
 #include "chrome/browser/component_updater/pnacl_component_installer.h"
 #include "chrome/browser/component_updater/privacy_sandbox_attestations_component_installer.h"
+#include "chrome/browser/component_updater/probabilistic_reveal_token_component_installer.h"
 #include "chrome/browser/component_updater/ssl_error_assistant_component_installer.h"
 #include "chrome/browser/component_updater/subresource_filter_component_installer.h"
 #include "chrome/browser/component_updater/tpcd_metadata_component_installer.h"
@@ -55,12 +55,6 @@
 #include "third_party/widevine/cdm/buildflags.h"
 #include "ui/accessibility/accessibility_features.h"
 
-#if BUILDFLAG(IS_WIN)
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-#include "chrome/browser/component_updater/third_party_module_list_component_installer_win.h"
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
-#endif  // BUILDFLAG(IS_WIN)
-
 #if BUILDFLAG(IS_MAC)
 #include "chrome/browser/component_updater/recovery_component_installer.h"
 #endif  // BUILDFLAG(IS_MAC)
@@ -83,6 +77,7 @@
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/apps/app_service/chrome_app_deprecation/chrome_app_deprecation.h"
 #include "chrome/browser/component_updater/smart_dim_component_installer.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -207,10 +202,6 @@ void RegisterComponentsForUpdate() {
   RegisterOriginTrialsComponent(cus);
   RegisterMediaEngagementPreloadComponent(cus, base::OnceClosure());
 
-#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  RegisterThirdPartyModuleListComponent(cus);
-#endif  // BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
-
   MaybeRegisterPKIMetadataComponent(cus);
 
   RegisterSafetyTipsComponent(cus);
@@ -219,7 +210,8 @@ void RegisterComponentsForUpdate() {
 #if BUILDFLAG(IS_CHROMEOS)
   RegisterSmartDimComponent(cus);
   RegisterAppProvisioningComponent(cus);
-#endif  // !BUILDFLAG(IS_CHROMEOS)
+  apps::chrome_app_deprecation::RegisterAllowlistComponentUpdater(cus);
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(USE_MINIKIN_HYPHENATION) && !BUILDFLAG(IS_ANDROID)
   RegisterHyphenationComponent(cus);
@@ -270,6 +262,8 @@ void RegisterComponentsForUpdate() {
     RegisterWasmTtsEngineComponent(cus);
   }
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
+  RegisterProbabilisticRevealTokenComponent(cus);
 }
 
 }  // namespace component_updater

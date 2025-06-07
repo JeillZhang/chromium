@@ -5,6 +5,7 @@
 #include "chrome/browser/sync/test/integration/sync_test_utils_android.h"
 
 #include <memory>
+#include <optional>
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
@@ -22,6 +23,11 @@
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
 #include "components/saved_tab_groups/public/android/tab_group_sync_conversions_bridge.h"
 #include "components/saved_tab_groups/public/types.h"
+#include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
+#include "components/signin/public/identity_manager/signin_constants.h"
+#include "google_apis/gaia/core_account_id.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "url/android/gurl_android.h"
 #include "url/gurl.h"
 
@@ -31,23 +37,35 @@
 
 namespace sync_test_utils_android {
 
-void SetUpAccountAndSignInForTesting() {
+namespace {
+
+AccountInfo GetFakeAccountInfo(
+    const std::string& username,
+    const std::optional<std::string>& hosted_domain) {
+  AccountInfo account_info;
+  account_info.email = username;
+  account_info.gaia = signin::GetTestGaiaIdForEmail(username);
+  account_info.account_id = CoreAccountId::FromGaiaId(account_info.gaia);
+  account_info =
+      signin::WithGeneratedUserInfo(account_info, /*given_name=*/"Fake");
+  account_info.hosted_domain =
+      hosted_domain.value_or(signin::constants::kNoHostedDomainFound);
+  return account_info;
+}
+
+}  // namespace
+
+void SetUpFakeAccountAndSignInForTesting(
+    const std::string& username,
+    const std::optional<std::string>& hosted_domain,
+    signin::ConsentLevel consent_level) {
   base::RunLoop run_loop;
   base::ThreadPool::PostTask(
       FROM_HERE, {base::MayBlock()}, base::BindLambdaForTesting([&]() {
         Java_SyncTestSigninUtils_setUpAccountAndSignInForTesting(
-            base::android::AttachCurrentThread());
-        run_loop.Quit();
-      }));
-  run_loop.Run();
-}
-
-void SetUpAccountAndSignInAndEnableSyncForTesting() {
-  base::RunLoop run_loop;
-  base::ThreadPool::PostTask(
-      FROM_HERE, {base::MayBlock()}, base::BindLambdaForTesting([&]() {
-        Java_SyncTestSigninUtils_setUpAccountAndSignInAndEnableSyncForTesting(
-            base::android::AttachCurrentThread());
+            base::android::AttachCurrentThread(),
+            GetFakeAccountInfo(username, hosted_domain),
+            static_cast<int>(consent_level));
         run_loop.Quit();
       }));
   run_loop.Run();
@@ -81,27 +99,14 @@ void TearDownFakeAuthForTesting() {
 }
 
 void SetUpLiveAccountAndSignInForTesting(const std::string& username,
-                                         const std::string& password) {
+                                         const std::string& password,
+                                         signin::ConsentLevel consent_level) {
   base::RunLoop run_loop;
   base::ThreadPool::PostTask(
       FROM_HERE, {base::MayBlock()}, base::BindLambdaForTesting([&]() {
         JNIEnv* env = base::android::AttachCurrentThread();
         Java_SyncTestSigninUtils_setUpLiveAccountAndSignInForTesting(
-            env, username, password);
-        run_loop.Quit();
-      }));
-  run_loop.Run();
-}
-
-void SetUpLiveAccountAndSignInAndEnableSyncForTesting(
-    const std::string& username,
-    const std::string& password) {
-  base::RunLoop run_loop;
-  base::ThreadPool::PostTask(
-      FROM_HERE, {base::MayBlock()}, base::BindLambdaForTesting([&]() {
-        JNIEnv* env = base::android::AttachCurrentThread();
-        Java_SyncTestSigninUtils_setUpLiveAccountAndSignInAndEnableSyncForTesting(
-            env, username, password);
+            env, username, password, static_cast<int>(consent_level));
         run_loop.Quit();
       }));
   run_loop.Run();

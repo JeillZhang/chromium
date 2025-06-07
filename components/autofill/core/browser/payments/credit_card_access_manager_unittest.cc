@@ -20,7 +20,7 @@
 #include "build/build_config.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/form_import/form_data_importer_test_api.h"
 #include "components/autofill/core/browser/foundations/test_autofill_client.h"
 #include "components/autofill/core/browser/foundations/test_autofill_driver.h"
@@ -1649,14 +1649,12 @@ TEST_F(CreditCardAccessManagerTest, FetchCreditCardUsesUnmaskedCardCache) {
   // version.
   FetchCreditCard(&masked_card);
 
-  histogram_tester.ExpectBucketCount("Autofill.UsedCachedServerCard", 1, 1);
   histogram_tester.ExpectUniqueSample(
       "Autofill.ServerCardUnmask.ServerCard.Result.UnspecifiedFlowType",
       autofill_metrics::ServerCardUnmaskResult::kLocalCacheHit, 1);
 
   FetchCreditCard(&masked_card);
 
-  histogram_tester.ExpectBucketCount("Autofill.UsedCachedServerCard", 2, 1);
   histogram_tester.ExpectUniqueSample(
       "Autofill.ServerCardUnmask.ServerCard.Result.UnspecifiedFlowType",
       autofill_metrics::ServerCardUnmaskResult::kLocalCacheHit, 2);
@@ -1673,7 +1671,6 @@ TEST_F(CreditCardAccessManagerTest, FetchCreditCardUsesUnmaskedCardCache) {
   masked_card.set_record_type(CreditCard::RecordType::kVirtualCard);
   FetchCreditCard(&masked_card);
 
-  histogram_tester.ExpectBucketCount("Autofill.UsedCachedVirtualCard", 1, 1);
   histogram_tester.ExpectUniqueSample(
       "Autofill.ServerCardUnmask.VirtualCard.Result.UnspecifiedFlowType",
       autofill_metrics::ServerCardUnmaskResult::kLocalCacheHit, 1);
@@ -1923,6 +1920,33 @@ TEST_F(CreditCardAccessManagerTest, CardInfoRetrievalEnrolledCardUnmasking) {
                 ->autofill_progress_dialog_type(),
             AutofillProgressDialogType::
                 kCardInfoRetrievalEnrolledUnmaskProgressDialog);
+}
+
+// Ensures the `kCardInfoRetrievalEnrolledUnmaskProgressDialog` is not set, even
+// if `kAutofillEnableCardInfoRuntimeRetrieval` is enabled, but
+// `card_info_retrieval_enrollment_state` is not enrolled.
+TEST_F(CreditCardAccessManagerTest,
+       CardInfoRetrievalEnrolledCardUnmaskingDisabled) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      /*enabled_features=*/{features::kAutofillEnableCardInfoRuntimeRetrieval},
+      /*disabled_features=*/{
+          features::kAutofillEnableFpanRiskBasedAuthentication});
+
+  base::HistogramTester histogram_tester;
+  CreditCard server_card = test::GetMaskedServerCard();
+  server_card.set_guid(kTestGUID);
+  server_card.set_card_info_retrieval_enrollment_state(
+      CreditCard::CardInfoRetrievalEnrollmentState::kRetrievalUnspecified);
+  personal_data().test_payments_data_manager().AddServerCreditCard(server_card);
+  const CreditCard* card =
+      personal_data().payments_data_manager().GetCreditCardByGUID(kTestGUID);
+
+  FetchCreditCard(card);
+
+  // Ensures CreditCardRiskBasedAuthenticator::Authenticate is not invoked.
+  ASSERT_FALSE(autofill_client_.GetPaymentsAutofillClient()
+                   ->risk_based_authentication_invoked());
 }
 
 // Ensures the virtual card risk-based unmasking response is handled correctly

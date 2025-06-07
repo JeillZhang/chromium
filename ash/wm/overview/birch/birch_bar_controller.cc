@@ -5,6 +5,7 @@
 #include "ash/wm/overview/birch/birch_bar_controller.h"
 
 #include "ash/birch/birch_model.h"
+#include "ash/birch/coral_util.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
@@ -25,6 +26,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
+#include "base/strings/utf_string_conversions.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "ui/base/mojom/menu_source_type.mojom-forward.h"
@@ -244,6 +246,10 @@ void BirchBarController::ToggleTemperatureUnits() {
 }
 
 void BirchBarController::ProvideFeedbackForCoral() {
+  if (!coral_util::IsCoralFeedbackAllowedByPolicy(GetPrefService())) {
+    return;
+  }
+
   base::Value::List root;
   for (auto& item : items_) {
     if (item->GetType() == BirchItemType::kCoral) {

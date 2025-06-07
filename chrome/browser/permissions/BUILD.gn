@@ -17,8 +17,6 @@ source_set("permissions") {
     "crowd_deny_preload_data.h",
     "crowd_deny_safe_browsing_request.cc",
     "crowd_deny_safe_browsing_request.h",
-    "genai_model_handler.cc",
-    "genai_model_handler.h",
     "notifications_engagement_service_factory.cc",
     "notifications_engagement_service_factory.h",
     "notifications_permission_revocation_config.cc",
@@ -40,6 +38,8 @@ source_set("permissions") {
     "permission_manager_factory.h",
     "permission_revocation_request.cc",
     "permission_revocation_request.h",
+    "permissions_aiv1_handler.cc",
+    "permissions_aiv1_handler.h",
     "prediction_based_permission_ui_selector.cc",
     "prediction_based_permission_ui_selector.h",
     "prediction_model_handler_provider.cc",
@@ -60,7 +60,6 @@ source_set("permissions") {
     "//chrome/browser:browser_public_dependencies",
     "//chrome/browser/media/webrtc",
     "//chrome/browser/permissions/system",
-    "//chrome/browser/resource_coordinator:tab_lifecycle_observer",
     "//chrome/browser/ui:browser_navigator_params_headers",
   ]
 
@@ -76,6 +75,7 @@ source_set("permissions") {
     "//chrome/browser/profiles:profiles",
     "//chrome/browser/safe_browsing",
     "//chrome/browser/search_engines",
+    "//chrome/browser/serial",
     "//chrome/browser/storage_access_api",
     "//chrome/browser/top_level_storage_access_api:permissions",
     "//chrome/browser/ui/hats",
@@ -85,9 +85,8 @@ source_set("permissions") {
     "//components/background_sync",
     "//components/content_settings/core/browser",
     "//components/content_settings/core/browser:cookie_settings",
-    "//components/embedder_support:browser_util",
+    "//components/embedder_support:permissions",
     "//components/google/core/common",
-    "//components/infobars/content",
     "//components/keyed_service/content",
     "//components/optimization_guide/core",
     "//components/optimization_guide/proto:optimization_guide_proto",
@@ -115,8 +114,6 @@ source_set("permissions") {
       "permission_blocked_dialog_controller_android.h",
       "permission_blocked_message_delegate_android.cc",
       "permission_blocked_message_delegate_android.h",
-      "permission_infobar_delegate_android.cc",
-      "permission_infobar_delegate_android.h",
       "permission_update_message_controller_android.cc",
       "permission_update_message_controller_android.h",
       "permission_update_message_delegate_android.cc",
@@ -129,7 +126,6 @@ source_set("permissions") {
 
     deps += [
       "//chrome/android:chrome_jni_headers",
-      "//components/infobars/android",
       "//components/messages/android",
       "//components/messages/android:feature_flags",
       "//ui/android",
@@ -141,7 +137,7 @@ source_set("permissions") {
   }
   allow_circular_includes_from = []
 
-  if (is_chromeos_ash) {
+  if (is_chromeos) {
     deps += [
       "//chrome/browser/ash/app_mode/isolated_web_app",
       "//chrome/browser/ash/app_mode/web_app",
@@ -182,6 +178,20 @@ proto_library("permissions_proto") {
   sources = [ "crowd_deny.proto" ]
 }
 
+source_set("test_support") {
+  testonly = true
+
+  sources = [
+    "system/mock_platform_handle.cc",
+    "system/mock_platform_handle.h",
+  ]
+
+  deps = [
+    ":permissions",
+    "//testing/gmock",
+  ]
+}
+
 source_set("unit_tests") {
   testonly = true
 
@@ -191,26 +201,26 @@ source_set("unit_tests") {
     "contextual_notification_permission_ui_selector_unittest.cc",
     "crowd_deny_preload_data_unittest.cc",
     "crowd_deny_safe_browsing_request_unittest.cc",
-    "genai_model_handler_unittest.cc",
     "notifications_engagement_service_unittest.cc",
     "permission_context_base_permissions_policy_unittest.cc",
-    "permission_revocation_request_unittests.cc",
+    "permission_revocation_request_unittest.cc",
     "permission_subscription_unittest.cc",
+    "permissions_aiv1_handler_unittest.cc",
     "prediction_based_permission_ui_selector_unittest.cc",
     "pref_based_quiet_permission_ui_selector_unittest.cc",
-    "system/mock_platform_handle.cc",
-    "system/mock_platform_handle.h",
   ]
 
   deps = [
     ":permissions",
     ":permissions_proto",
+    ":test_support",
     "//chrome/browser/content_settings:content_settings_factory",
     "//chrome/browser/optimization_guide:test_support",
     "//chrome/browser/permissions/system",
     "//chrome/browser/search_engines",
     "//chrome/test:test_support",
     "//components/optimization_guide/core:test_support",
+    "//components/permissions/prediction_service:prediction_service",
     "//components/site_engagement/content",
     "//components/ukm/content",
     "//components/unified_consent",
@@ -221,11 +231,9 @@ source_set("unit_tests") {
   if (is_android) {
     sources += [
       "permission_blocked_message_delegate_android_unittest.cc",
-      "permission_prompt_android_unittest.cc",
       "permission_update_message_controller_android_unittest.cc",
     ]
     deps += [
-      "//components/infobars/content",
       "//components/messages/android:test_support",
       "//components/ukm:test_support",
     ]
@@ -234,7 +242,7 @@ source_set("unit_tests") {
     deps += [ "//chrome/browser/ui/hats" ]
   }
 
-  if (is_chromeos_ash) {
+  if (is_chromeos) {
     deps += [
       "//chrome/browser/ash/app_mode/web_app",
       "//chrome/browser/ash/login/users:test_support",
@@ -270,7 +278,7 @@ if (!is_android) {
       "//components/optimization_guide/core:test_support",
     ]
 
-    if (is_chromeos_ash) {
+    if (is_chromeos) {
       sources += [ "system/system_permission_settings_chromeos_unittest.cc" ]
       deps += [ "//chrome/browser/ash/privacy_hub" ]
     }

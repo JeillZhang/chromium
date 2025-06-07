@@ -7,7 +7,6 @@
 #include "base/feature_list.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "chrome/browser/net/system_network_context_manager.h"
@@ -61,7 +60,7 @@ BASE_FEATURE(kCertificateTransparencyAskBeforeEnabling,
 // fail to validate with network time will fall back to the system time.
 // This has no effect if the network_time::kNetworkTimeServiceQuerying flag is
 // disabled, or the BrowserNetworkTimeQueriesEnabled policy is set to false.
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
+#if !BUILDFLAG(IS_CHROMEOS)
 BASE_FEATURE(kCertVerificationNetworkTime,
              "CertVerificationNetworkTime",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -69,18 +68,12 @@ BASE_FEATURE(kCertVerificationNetworkTime,
 BASE_FEATURE(kCertVerificationNetworkTime,
              "CertVerificationNetworkTime",
              base::FEATURE_DISABLED_BY_DEFAULT);
-#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
-// Uses the browser theme's color mode for web contents.
-// The theme can have three modes: light, dark, and device.
-// When the mode is light or dark, the browser theme's color mode will be
-// applied to web contents.
-// When the mode is device, web contents will use the device color mode.
-// Pages in incognito mode are not affected by this feature. They will continue
-// to follow the device color mode.
-BASE_FEATURE(kContentUsesBrowserThemeColorMode,
-             "ContentUsesBrowserThemeColorMode",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+// Killswitch that guards clearing all user data in the ProfileImpl destructor.
+BASE_FEATURE(kClearUserDataUponProfileDestruction,
+             "ClearUserDataUponProfileDestruction",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_LINUX)
 // Enables usage of os_crypt_async::SecretPortalKeyProvider.  Once
@@ -94,17 +87,14 @@ BASE_FEATURE(kDbusSecretPortal,
 // compatible with the synchronous backend.
 BASE_FEATURE(kUseFreedesktopSecretKeyProvider,
              "UseFreedesktopSecretKeyProvider",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             base::FEATURE_DISABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_LINUX)
 
 // Destroy profiles when their last browser window is closed, instead of when
 // the browser exits.
-// On Lacros the feature is enabled only for secondary profiles, check the
-// implementation of `ProfileManager::ProfileInfo::FromUnownedProfile()`.
 BASE_FEATURE(kDestroyProfileOnBrowserClose,
              "DestroyProfileOnBrowserClose",
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || \
-    BUILDFLAG(IS_CHROMEOS_LACROS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
              base::FEATURE_ENABLED_BY_DEFAULT);
 #else
              base::FEATURE_DISABLED_BY_DEFAULT);
@@ -196,12 +186,17 @@ BASE_FEATURE(kReadAnythingPermanentAccessibility,
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
+#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 // When this feature is enabled, Chrome will register os_update_handler with
 // Omaha, to be run on OS upgrade.
-#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 BASE_FEATURE(kRegisterOsUpdateHandlerWin,
              "RegisterOsUpdateHandlerWin",
              base::FEATURE_ENABLED_BY_DEFAULT);
+// When this feature is enabled, Chrome will install the
+// platform_experience_helper.
+BASE_FEATURE(kInstallPlatformExperienceHelperWin,
+             "InstallPlatformExperienceHelperWin",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
 // When this feature is enabled, the network service will restart unsandboxed if
@@ -251,12 +246,6 @@ BASE_FEATURE(kUseFreedesktopSecretKeyProviderForEncryption,
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_LINUX)
 
-// This flag controls whether to trigger prerendering when the default search
-// engine suggests to prerender a search result.
-BASE_FEATURE(kSupportSearchSuggestionForPrerender2,
-             "SupportSearchSuggestionForPrerender2",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 // Enables migration of the network context data from `unsandboxed_data_path` to
 // `data_path`. See the explanation in network_context.mojom.
 BASE_FEATURE(kTriggerNetworkDataMigration,
@@ -273,11 +262,9 @@ BASE_FEATURE(kTriggerNetworkDataMigration,
 // If disabled, the blue border is not used on ChromeOS.
 //
 // Motivation:
-//  The blue border behavior used to cause problems on ChromeOS - see
-//  crbug.com/1320262 for Ash (fixed) and crbug.com/1030925 for Lacros
-//  (relatively old bug - we would like to observe whether it's still
-//  there). This flag is introduced as means of disabling this feature in case
-//  of possible future regressions.
+//  The blue border behavior used to (still does, see below) cause problems on
+//  ChromeOS - see crbug.com/1320262 (fixed). This flag is introduced as means
+//  of disabling this feature in case of possible future regressions.
 //
 // TODO(crbug.com/40198577): Remove this flag once we confirm that blue border
 // works fine on ChromeOS.
@@ -344,6 +331,11 @@ const base::FeatureParam<base::TimeDelta>
     kNoPreReadMainDllStartup_StartupDuration{&kNoPreReadMainDllStartup,
                                              "no-preread-dll-startup-time",
                                              base::Minutes(2)};
+
+// When enabled, the browser process will re-launch itself when launched with
+// an elevated linked token. The re-launched browser will use the token from
+// the Windows Shell (explorer.exe), which is typically non-elevated.
+BASE_FEATURE(kAutoDeElevate, "AutoDeElevate", base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_WIN)
 
 #if !BUILDFLAG(IS_ANDROID)

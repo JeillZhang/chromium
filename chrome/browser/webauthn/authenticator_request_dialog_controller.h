@@ -16,8 +16,11 @@
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/timer/timer.h"
+#include "chrome/browser/ui/webauthn/passkey_upgrade_request_controller.h"
+#include "chrome/browser/webauthn/authenticator_reference.h"
 #include "chrome/browser/webauthn/authenticator_request_dialog_model.h"
 #include "chrome/browser/webauthn/authenticator_transport.h"
+#include "chrome/browser/webauthn/observable_authenticator_list.h"
 #include "chrome/browser/webauthn/password_credential_controller.h"
 #include "components/webauthn/core/browser/passkey_model.h"
 #include "components/webauthn/core/browser/passkey_model_change.h"
@@ -27,6 +30,7 @@
 #include "url/gurl.h"
 
 class ChallengeUrlFetcher;
+class PasskeyUpgradeRequestController;
 class Profile;
 
 namespace content {
@@ -38,11 +42,14 @@ class RenderFrameHost;
 // the `Step` enumeration.
 class AuthenticatorRequestDialogController
     : public AuthenticatorRequestDialogModel::Observer,
-      public webauthn::PasskeyModel::Observer {
+      public webauthn::PasskeyModel::Observer,
+      public PasskeyUpgradeRequestController::Delegate {
  public:
   using RequestCallback = device::FidoRequestHandlerBase::RequestCallback;
   using BlePermissionCallback = base::RepeatingCallback<void(
       device::FidoRequestHandlerBase::BlePermissionCallback)>;
+  using EnclaveRequestCallback = base::RepeatingCallback<void(
+      std::unique_ptr<device::enclave::CredentialRequest>)>;
 
   AuthenticatorRequestDialogController(
       AuthenticatorRequestDialogModel* model,
@@ -83,6 +90,10 @@ class AuthenticatorRequestDialogController
   void OnPasskeyModelShuttingDown() override;
   void OnPasskeyModelIsReady(bool is_ready) override;
 
+  // PasskeyUpgradeRequestController::Delegate:
+  void PasskeyUpgradeSucceeded() override;
+  void PasskeyUpgradeFailed() override;
+
   // Hides the dialog. A subsequent call to SetCurrentStep() will unhide it.
   void HideDialog();
 
@@ -95,10 +106,9 @@ class AuthenticatorRequestDialogController
   // screen or the guided flow for the most likely transport.
   //
   // Valid action when at step: kNotStarted.
-  void StartFlow(
-      device::FidoRequestHandlerBase::TransportAvailabilityInfo
-          transport_availability,
-      webauthn::PasswordCredentialController::PasswordCredentials passwords);
+  void StartFlow(device::FidoRequestHandlerBase::TransportAvailabilityInfo
+                     transport_availability,
+                 PasswordCredentialController::PasswordCredentials passwords);
 
   // Starts a modal WebAuthn flow (i.e. what you normally get if you call
   // WebAuthn with no mediation parameter) from a conditional request.
@@ -351,13 +361,16 @@ class AuthenticatorRequestDialogController
 
   content::AuthenticatorRequestClientDelegate::UIPresentation ui_presentation()
       const;
-  void set_ui_presentation(
+  void SetUIPresentation(
       content::AuthenticatorRequestClientDelegate::UIPresentation modality);
 
   void ProvideChallengeUrl(
       const GURL& url,
       base::OnceCallback<void(std::optional<base::span<const uint8_t>>)>
           callback);
+
+  void InitializeEnclaveRequestCallback(
+      device::FidoDiscoveryFactory* discovery_factory);
 
   base::WeakPtr<AuthenticatorRequestDialogController> GetWeakPtr();
 
@@ -452,14 +465,11 @@ class AuthenticatorRequestDialogController
   std::optional<size_t> IndexOfPriorityMechanism();
 
   std::optional<size_t> IndexOfGetAssertionPriorityMechanism();
+  std::optional<size_t> IndexOfImmediateGetPriorityMechanism();
   std::optional<size_t> IndexOfMakeCredentialPriorityMechanism();
 
   // Sets correct step for entering GPM pin based on `gpm_pin_is_arbitrary_`.
   void PromptForGPMPin();
-
-  // Update fields in `model_` based on the value of `transport_availability_`
-  // and `priority_mechanism_index_`.
-  void UpdateModelForTransportAvailability();
 
   // Returns true if this request could pick the enclave authenticator by
   // default. This only makes sense for a create() call.
@@ -508,7 +518,7 @@ class AuthenticatorRequestDialogController
   device::FidoRequestHandlerBase::TransportAvailabilityInfo
       transport_availability_;
 
-  webauthn::PasswordCredentialController::PasswordCredentials passwords_;
+  PasswordCredentialController::PasswordCredentials passwords_;
 
   content::AuthenticatorRequestClientDelegate::AccountPreselectedCallback
       account_preselected_callback_;
@@ -525,9 +535,6 @@ class AuthenticatorRequestDialogController
 
   base::OnceCallback<void(device::AuthenticatorGetAssertionResponse)>
       selection_callback_;
-
-  content::AuthenticatorRequestClientDelegate::UIPresentation ui_presentation_ =
-      content::AuthenticatorRequestClientDelegate::UIPresentation::kModal;
 
   // cable_extension_provided_ indicates whether the request included a caBLE
   // extension.
@@ -622,6 +629,10 @@ class AuthenticatorRequestDialogController
   base::ScopedObservation<webauthn::PasskeyModel,
                           webauthn::PasskeyModel::Observer>
       passkey_model_observation_{this};
+
+  EnclaveRequestCallback enclave_request_callback_;
+  std::unique_ptr<PasskeyUpgradeRequestController>
+      passkey_upgrade_request_controller_;
 
   base::WeakPtrFactory<AuthenticatorRequestDialogController> weak_factory_{
       this};

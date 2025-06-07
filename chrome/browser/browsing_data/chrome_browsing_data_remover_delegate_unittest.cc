@@ -83,7 +83,6 @@
 #include "chrome/browser/tpcd/metadata/manager_factory.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/trusted_vault/trusted_vault_service_factory.h"
-#include "chrome/browser/user_annotations/user_annotations_service_factory.h"
 #include "chrome/browser/webdata_services/web_data_service_factory.h"
 #include "chrome/browser/webid/federated_identity_permission_context.h"
 #include "chrome/common/chrome_constants.h"
@@ -99,8 +98,8 @@
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager.h"
 #include "components/autofill/core/browser/data_manager/personal_data_manager_test_utils.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/strike_databases/strike_database.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/browser/test_utils/test_autofill_clock.h"
@@ -145,10 +144,12 @@
 #include "components/permissions/features.h"
 #include "components/permissions/permission_actions_history.h"
 #include "components/permissions/permission_decision_auto_blocker.h"
+#include "components/permissions/permission_request_data.h"
 #include "components/permissions/permission_request_enums.h"
 #include "components/permissions/permission_uma_util.h"
 #include "components/permissions/permission_util.h"
 #include "components/permissions/request_type.h"
+#include "components/permissions/resolvers/content_setting_permission_resolver.h"
 #include "components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.h"
 #include "components/privacy_sandbox/privacy_sandbox_attestations/scoped_privacy_sandbox_attestations.h"
 #include "components/privacy_sandbox/privacy_sandbox_settings.h"
@@ -166,7 +167,6 @@
 #include "components/tpcd/metadata/browser/prefs.h"
 #include "components/tpcd/metadata/browser/test_support.h"
 #include "components/ukm/test_ukm_recorder.h"
-#include "components/user_annotations/test_user_annotations_service.h"
 #include "content/public/browser/background_tracing_manager.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -217,6 +217,8 @@
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
 #include "chrome/browser/ui/android/tab_model/tab_model_test_helper.h"
 #include "components/password_manager/core/browser/split_stores_and_local_upm.h"
+#include "components/payments/content/browser_binding/browser_bound_keys_deleter_factory.h"
+#include "components/payments/content/browser_binding/mock_browser_bound_keys_deleter.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #else
 #include "base/task/current_thread.h"
@@ -257,6 +259,7 @@
 #include "chromeos/dbus/tpm_manager/fake_tpm_manager_client.h"
 #include "components/account_id/account_id.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "components/user_manager/test_helper.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -639,8 +642,6 @@ class RemoveUkmDataTester {
  private:
   ukm::TestUkmRecorder ukm_recorder_;
   segmentation_platform::UkmDataManagerTestUtils test_utils_;
-
-  base::WeakPtrFactory<RemoveUkmDataTester> weak_ptr_factory_{this};
 };
 
 std::unique_ptr<KeyedService> BuildProtocolHandlerRegistry(
@@ -688,43 +689,6 @@ class ClearDomainReliabilityTester {
   unsigned clear_count_ = 0;
   network::mojom::NetworkContext::DomainReliabilityClearMode last_clear_mode_;
   base::RepeatingCallback<bool(const GURL&)> last_filter_;
-};
-
-class RemoveSecurePaymentConfirmationCredentialsTester {
- public:
-  using MockWrapper = testing::NiceMock<payments::MockWebDataServiceWrapper>;
-  using MockService =
-      testing::NiceMock<payments::MockPaymentManifestWebDataService>;
-  explicit RemoveSecurePaymentConfirmationCredentialsTester(
-      TestingProfile* testing_profile) {
-    webdata_services::WebDataServiceWrapperFactory::GetInstance()
-        ->SetTestingFactory(
-            testing_profile,
-            base::BindRepeating(
-                &RemoveSecurePaymentConfirmationCredentialsTester::
-                    BuildServiceWapper,
-                base::Unretained(this)));
-  }
-
-  std::unique_ptr<KeyedService> BuildServiceWapper(
-      content::BrowserContext* context) {
-    auto wrapper = std::make_unique<MockWrapper>();
-    EXPECT_CALL(*wrapper, GetPaymentManifestWebData)
-        .WillRepeatedly(Return(service_));
-    return std::move(wrapper);
-  }
-
-  void ExpectCallClearSecurePaymentConfirmationCredentials(int times) {
-    EXPECT_CALL(*service_.get(), ClearSecurePaymentConfirmationCredentials)
-        .Times(times)
-        .WillRepeatedly(testing::WithArg<2>([](base::OnceClosure completion) {
-          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-              FROM_HERE, std::move(completion));
-        }));
-  }
-
- private:
-  scoped_refptr<MockService> service_ = base::MakeRefCounted<MockService>();
 };
 
 class RemovePermissionPromptCountsTest {
@@ -2526,51 +2490,6 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest,
   ASSERT_FALSE(tester.HasProfileAndCard());
 }
 
-#if !BUILDFLAG(IS_ANDROID)
-class ChromeBrowsingDataRemoverDelegateUserAnnotationsTest
-    : public ChromeBrowsingDataRemoverDelegateTest {
- public:
-  static std::unique_ptr<KeyedService> CreateUserAnnotationsServiceFactory(
-      content::BrowserContext* context) {
-    return std::make_unique<user_annotations::TestUserAnnotationsService>();
-  }
-
-  void SetUp() override { ChromeBrowsingDataRemoverDelegateTest::SetUp(); }
-
-  TestingProfile::TestingFactories GetTestingFactories() override {
-    TestingProfile::TestingFactories factories =
-        ChromeBrowsingDataRemoverDelegateTest::GetTestingFactories();
-    factories.emplace_back(
-        UserAnnotationsServiceFactory::GetInstance(),
-        base::BindRepeating(&CreateUserAnnotationsServiceFactory));
-    return factories;
-  }
-
-  user_annotations::TestUserAnnotationsService* service() {
-    // Overridden in GetTestingFactories().
-    return static_cast<user_annotations::TestUserAnnotationsService*>(
-        UserAnnotationsServiceFactory::GetForProfile(GetProfile()));
-  }
-};
-
-TEST_F(ChromeBrowsingDataRemoverDelegateUserAnnotationsTest,
-       UserAnnotationsOnAutofillRemoveRange) {
-  auto time_now = base::Time::Now();
-  BlockUntilBrowsingDataRemoved(time_now, time_now + base::Hours(1),
-                                constants::DATA_TYPE_FORM_DATA, false);
-
-  // UserAnnotations should be empty when DATA_TYPE_FORM_DATA browsing data
-  // gets deleted.
-  EXPECT_EQ(constants::DATA_TYPE_FORM_DATA, GetRemovalMask());
-  EXPECT_EQ(content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
-            GetOriginTypeMask());
-
-  EXPECT_THAT(service()->last_received_remove_annotations_in_range(),
-              testing::Pair(testing::Eq(time_now),
-                            testing::Eq(time_now + base::Hours(1))));
-}
-#endif
-
 TEST_F(ChromeBrowsingDataRemoverDelegateTest, ZeroSuggestPrefsBasedCacheClear) {
   // Disable in-memory ZPS caching.
   base::test::ScopedFeatureList features;
@@ -2655,8 +2574,9 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest,
   auto user_manager = std::make_unique<ash::FakeChromeUserManager>();
   auto* user =
       user_manager->AddUser(AccountId::FromUserEmail("test@example.com"));
-  user_manager->UserLoggedIn(user->GetAccountId(), user->username_hash(),
-                             /*browser_restart=*/false, /*is_child=*/false);
+  user_manager->UserLoggedIn(
+      user->GetAccountId(),
+      user_manager::TestHelper::GetFakeUsernameHash(user->GetAccountId()));
   user_manager::ScopedUserManager user_manager_enabler(std::move(user_manager));
 
   ash::AttestationClient::InitializeFake();
@@ -3309,9 +3229,17 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest, RemoveDurablePermission) {
 
   DurableStoragePermissionContext durable_permission(GetProfile());
   durable_permission.UpdateContentSetting(
-      kOrigin1, GURL(), CONTENT_SETTING_ALLOW, /*is_one_time=*/false);
+      permissions::PermissionRequestData(
+          std::make_unique<permissions::ContentSettingPermissionResolver>(
+              ContentSettingsType::DURABLE_STORAGE),
+          /*user_gesture=*/true, kOrigin1, GURL()),
+      CONTENT_SETTING_ALLOW, /*is_one_time=*/false);
   durable_permission.UpdateContentSetting(
-      kOrigin2, GURL(), CONTENT_SETTING_ALLOW, /*is_one_time=*/false);
+      permissions::PermissionRequestData(
+          std::make_unique<permissions::ContentSettingPermissionResolver>(
+              ContentSettingsType::DURABLE_STORAGE),
+          /*user_gesture=*/true, kOrigin2, GURL()),
+      CONTENT_SETTING_ALLOW, /*is_one_time=*/false);
 
   // Clear all except for origin1 and origin3.
   std::unique_ptr<BrowsingDataFilterBuilder> filter(
@@ -3351,9 +3279,13 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest,
   HostContentSettingsMap* host_content_settings_map =
       HostContentSettingsMapFactory::GetForProfile(GetProfile());
   DurableStoragePermissionContext durable_permission(GetProfile());
-  durable_permission.UpdateContentSetting(GURL("http://host1.com:1"), GURL(),
-                                          CONTENT_SETTING_ALLOW,
-                                          /*is_one_time=*/false);
+  durable_permission.UpdateContentSetting(
+      permissions::PermissionRequestData(
+          std::make_unique<permissions::ContentSettingPermissionResolver>(
+              ContentSettingsType::DURABLE_STORAGE),
+          /*user_gesture=*/true, GURL("http://host1.com:1"), GURL()),
+      CONTENT_SETTING_ALLOW,
+      /*is_one_time=*/false);
   ContentSettingsForOneType host_settings =
       host_content_settings_map->GetSettingsForOneType(
           ContentSettingsType::DURABLE_STORAGE);
@@ -4103,6 +4035,33 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest,
   EXPECT_TRUE(prefs->GetDict(kPermissionActionsPrefPath).empty());
 }
 
+TEST_F(ChromeBrowsingDataRemoverDelegateTest, WipeSuspiciousNotificationIds) {
+  // Add setting value.
+  const GURL kOrigin1("http://host1.com:1");
+  base::Value::List suspicious_notification_ids;
+  suspicious_notification_ids.Append("1");
+  suspicious_notification_ids.Append("2");
+  base::Value::Dict suspicious_notification_id_dict;
+  suspicious_notification_id_dict.Set("suspicious-notification-ids",
+                                      std::move(suspicious_notification_ids));
+  HostContentSettingsMap* host_content_settings_map =
+      HostContentSettingsMapFactory::GetForProfile(GetProfile());
+  host_content_settings_map->SetWebsiteSettingDefaultScope(
+      kOrigin1, GURL(), ContentSettingsType::SUSPICIOUS_NOTIFICATION_IDS,
+      base::Value(suspicious_notification_id_dict.Clone()));
+  ContentSettingsForOneType host_settings =
+      host_content_settings_map->GetSettingsForOneType(
+          ContentSettingsType::SUSPICIOUS_NOTIFICATION_IDS);
+  ASSERT_EQ(1u, host_settings.size());
+
+  // Wipe the setting.
+  BlockUntilBrowsingDataRemoved(base::Time::Now(), base::Time::Max(),
+                                constants::DATA_TYPE_HISTORY, false);
+  host_settings = host_content_settings_map->GetSettingsForOneType(
+      ContentSettingsType::SUSPICIOUS_NOTIFICATION_IDS);
+  ASSERT_EQ(0u, host_settings.size());
+}
+
 // Tests with non-null AccountPasswordStoreFactory::GetForProfile().
 class ChromeBrowsingDataRemoverDelegateWithAccountPasswordsTest
     : public ChromeBrowsingDataRemoverDelegateWithPasswordsTest {
@@ -4294,11 +4253,47 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest,
   EXPECT_THAT(domains, IsEmpty());
 }
 
+class
+    ChromeBrowsingDataRemoverDelegateTest_RemoveSecurePaymentConfirmationCredentials
+    : public ChromeBrowsingDataRemoverDelegateTest {
+ public:
+  using MockWrapper = testing::NiceMock<payments::MockWebDataServiceWrapper>;
+  using MockService =
+      testing::NiceMock<payments::MockPaymentManifestWebDataService>;
+
+  TestingProfile::TestingFactories GetTestingFactories() override {
+    TestingProfile::TestingFactories factories =
+        ChromeBrowsingDataRemoverDelegateTest::GetTestingFactories();
+    factories.emplace_back(
+        webdata_services::WebDataServiceWrapperFactory::GetInstance(),
+        base::BindLambdaForTesting([&](content::BrowserContext* context)
+                                       -> std::unique_ptr<KeyedService> {
+          auto wrapper = std::make_unique<MockWrapper>();
+          ON_CALL(*wrapper, GetPaymentManifestWebData)
+              .WillByDefault(Return(service_));
+          return std::move(wrapper);
+        }));
+    return factories;
+  }
+
+  void ExpectCallClearSecurePaymentConfirmationCredentials(int times) {
+    EXPECT_CALL(*service_.get(), ClearSecurePaymentConfirmationCredentials)
+        .Times(times)
+        .WillRepeatedly(testing::WithArg<2>([](base::OnceClosure completion) {
+          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+              FROM_HERE, std::move(completion));
+        }));
+  }
+
+ private:
+  scoped_refptr<MockService> service_ = base::MakeRefCounted<MockService>();
+};
+
 // Verify that clearing secure payment confirmation credentials data works.
-TEST_F(ChromeBrowsingDataRemoverDelegateTest,
-       RemoveSecurePaymentConfirmationCredentials) {
-  RemoveSecurePaymentConfirmationCredentialsTester tester(GetProfile());
-  tester.ExpectCallClearSecurePaymentConfirmationCredentials(1);
+TEST_F(
+    ChromeBrowsingDataRemoverDelegateTest_RemoveSecurePaymentConfirmationCredentials,
+    RemoveSecurePaymentConfirmationCredentials) {
+  ExpectCallClearSecurePaymentConfirmationCredentials(1);
 
   BlockUntilBrowsingDataRemoved(AnHourAgo(), base::Time::Max(),
                                 constants::DATA_TYPE_PASSWORDS, false);
@@ -4466,6 +4461,28 @@ TEST_F(ChromeBrowsingDataRemoverDelegateTest, ClearNewTabPageLocalStorage) {
   EXPECT_TRUE(auth_service->GetAccessToken().empty());
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
+
+#if BUILDFLAG(IS_ANDROID)
+// Verify that clearing cookies will also trigger removing invalid browser bound
+// keys.
+TEST_F(ChromeBrowsingDataRemoverDelegateTest,
+       ClearInvalidBrowserBoundKeysForSecurePaymentConfirmation) {
+  auto* mock_browser_bound_keys_deleter = static_cast<
+      payments::MockBrowserBoundKeyDeleter*>(
+      payments::BrowserBoundKeyDeleterFactory::GetInstance()
+          ->SetTestingFactoryAndUse(
+              GetProfile(),
+              base::BindOnce([](content::BrowserContext*)
+                                 -> std::unique_ptr<KeyedService> {
+                return std::make_unique<payments::MockBrowserBoundKeyDeleter>();
+              })));
+
+  EXPECT_CALL(*mock_browser_bound_keys_deleter, RemoveInvalidBBKs());
+  BlockUntilBrowsingDataRemoved(base::Time(), base::Time::Max(),
+                                content::BrowsingDataRemover::DATA_TYPE_COOKIES,
+                                false);
+}
+#endif  // BUILDFLAG(IS_ANDROID)
 
 class ChromeBrowsingDataRemoverDelegateOriginTrialsTest
     : public ChromeBrowsingDataRemoverDelegateTest {

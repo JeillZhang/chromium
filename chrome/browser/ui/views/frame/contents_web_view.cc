@@ -5,7 +5,9 @@
 #include "chrome/browser/ui/views/frame/contents_web_view.h"
 
 #include "chrome/browser/ui/color/chrome_color_id.h"
+#include "chrome/browser/ui/views/frame/web_contents_close_handler.h"
 #include "chrome/browser/ui/views/status_bubble_views.h"
+#include "components/search/ntp_features.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -25,25 +27,26 @@ DEFINE_CLASS_ELEMENT_IDENTIFIER_VALUE(ContentsWebView,
                                       kContentsWebViewElementId);
 
 ContentsWebView::ContentsWebView(content::BrowserContext* browser_context)
-    : views::WebView(browser_context), status_bubble_(nullptr) {
+    : views::WebView(browser_context) {
   // Draws the ContentsWebView background.
   SetPaintToLayer(ui::LAYER_SOLID_COLOR);
   SetProperty(views::kElementIdentifierKey, kContentsWebViewElementId);
+  status_bubble_ = std::make_unique<StatusBubbleViews>(this);
+  status_bubble_->Reposition();
+  web_contents_close_handler_ = std::make_unique<WebContentsCloseHandler>(this);
 }
 
 ContentsWebView::~ContentsWebView() = default;
 
-void ContentsWebView::SetStatusBubble(StatusBubbleViews* status_bubble) {
-  status_bubble_ = status_bubble;
-  DCHECK(!status_bubble_ || status_bubble_->base_view() == this);
+StatusBubbleViews* ContentsWebView::GetStatusBubble() const {
   if (status_bubble_) {
-    status_bubble_->Reposition();
+    return status_bubble_.get();
   }
-  OnPropertyChanged(&status_bubble_, views::kPropertyEffectsNone);
+  return nullptr;
 }
 
-StatusBubbleViews* ContentsWebView::GetStatusBubble() const {
-  return status_bubble_;
+WebContentsCloseHandler* ContentsWebView::GetWebContentsCloseHandler() const {
+  return web_contents_close_handler_.get();
 }
 
 void ContentsWebView::SetBackgroundVisible(bool background_visible) {
@@ -86,6 +89,22 @@ void ContentsWebView::OnThemeChanged() {
 void ContentsWebView::OnLetterboxingChanged() {
   if (GetWidget()) {
     UpdateBackgroundColor();
+  }
+}
+
+void ContentsWebView::SetWebContents(content::WebContents* web_contents) {
+  views::WebView::SetWebContents(web_contents);
+  if (web_contents == nullptr) {
+    status_bubble_ = nullptr;
+    // Early exit: Without web contents, views dependent on ContentsWebView's
+    // bounds cannot be properly created or positioned. These views will
+    // initialize later when valid web contents exist.
+    return;
+  }
+
+  if (status_bubble_ == nullptr) {
+    status_bubble_ = std::make_unique<StatusBubbleViews>(this);
+    status_bubble_->Reposition();
   }
 }
 
@@ -165,5 +184,4 @@ void ContentsWebView::RenderViewReady() {
 }
 
 BEGIN_METADATA(ContentsWebView)
-ADD_PROPERTY_METADATA(StatusBubbleViews*, StatusBubble)
 END_METADATA

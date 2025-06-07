@@ -178,6 +178,11 @@ signin::IdentityManager* StubPasswordManagerClient::GetIdentityManager() {
   return nullptr;
 }
 
+const signin::IdentityManager* StubPasswordManagerClient::GetIdentityManager()
+    const {
+  return nullptr;
+}
+
 scoped_refptr<network::SharedURLLoaderFactory>
 StubPasswordManagerClient::GetURLLoaderFactory() {
   return nullptr;
@@ -204,6 +209,8 @@ version_info::Channel StubPasswordManagerClient::GetChannel() const {
     BUILDFLAG(IS_CHROMEOS)
 void StubPasswordManagerClient::OpenPasswordDetailsBubble(
     const password_manager::PasswordForm& form) {}
+void StubPasswordManagerClient::MaybeShowSavePasswordPrimingPromo(
+    const GURL& current_url) {}
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) ||
         // BUILDFLAG(IS_CHROMEOS)
 

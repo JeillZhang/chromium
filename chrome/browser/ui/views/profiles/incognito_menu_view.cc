@@ -30,7 +30,7 @@
 IncognitoMenuView::IncognitoMenuView(views::Button* anchor_button,
                                      Browser* browser)
     : ProfileMenuViewBase(anchor_button, browser) {
-  DCHECK(browser->profile()->IsIncognitoProfile());
+  CHECK(profile().IsIncognitoProfile());
   GetViewAccessibility().SetName(GetAccessibleWindowTitle(),
                                  ax::mojom::NameFrom::kAttribute);
 
@@ -41,42 +41,20 @@ IncognitoMenuView::~IncognitoMenuView() = default;
 
 void IncognitoMenuView::BuildMenu() {
   int incognito_window_count =
-      BrowserList::GetOffTheRecordBrowsersActiveForProfile(
-          browser()->profile());
-  std::u16string close_button_title;
-  if (base::FeatureList::IsEnabled(switches::kEnableImprovedGuestProfileMenu)) {
-    close_button_title = l10n_util::GetPluralStringFUTF16(
-        IDS_INCOGNITO_PROFILE_MENU_CLOSE_X_WINDOWS_BUTTON,
-        incognito_window_count);
-    IdentitySectionParams params;
-    params.title = l10n_util::GetStringUTF16(IDS_INCOGNITO_PROFILE_MENU_TITLE);
+      BrowserList::GetOffTheRecordBrowsersActiveForProfile(&profile());
+  std::u16string close_button_title = l10n_util::GetPluralStringFUTF16(
+      IDS_INCOGNITO_PROFILE_MENU_CLOSE_X_WINDOWS_BUTTON,
+      incognito_window_count);
+  IdentitySectionParams params;
+  params.title = l10n_util::GetStringUTF16(IDS_INCOGNITO_PROFILE_MENU_TITLE);
 
-    // Padded icon.
-    params.profile_image_padding =
-        std::nearbyint(kIdentityInfoImageSize * 0.25f);
-    params.profile_image = ui::ImageModel::FromVectorIcon(
-        kIncognitoRefreshMenuIcon,
-        kColorAvatarButtonHighlightIncognitoForeground,
-        kIdentityInfoImageSize - 2 * params.profile_image_padding);
-    SetProfileIdentityWithCallToAction(std::move(params));
-    AddBottomMargin();
-  } else {
-    close_button_title =
-        l10n_util::GetStringUTF16(IDS_INCOGNITO_PROFILE_MENU_CLOSE_BUTTON_NEW);
-    SetProfileIdentityInfo(
-        /*profile_name=*/std::u16string(),
-        /*profile_background_color=*/SK_ColorTRANSPARENT,
-        /*edit_button_params=*/std::nullopt,
-        ui::ImageModel::FromVectorIcon(kIncognitoProfileIcon,
-                                       ui::kColorAvatarIconIncognito),
-        ui::ImageModel(),
-        l10n_util::GetStringUTF16(IDS_INCOGNITO_PROFILE_MENU_TITLE),
-        incognito_window_count > 1
-            ? l10n_util::GetPluralStringFUTF16(
-                  IDS_INCOGNITO_WINDOW_COUNT_MESSAGE, incognito_window_count)
-            : std::u16string(),
-        std::u16string(), &kIncognitoMenuArtIcon);
-  }
+  // Padded icon.
+  params.profile_image_padding = std::nearbyint(kIdentityInfoImageSize * 0.25f);
+  params.profile_image = ui::ImageModel::FromVectorIcon(
+      kIncognitoRefreshMenuIcon, kColorAvatarButtonHighlightIncognitoForeground,
+      kIdentityInfoImageSize - 2 * params.profile_image_padding);
+  SetProfileIdentityWithCallToAction(std::move(params));
+  AddBottomMargin();
 
   AddFeatureButton(close_button_title,
                    base::BindRepeating(&IncognitoMenuView::OnExitButtonClicked,
@@ -87,8 +65,7 @@ void IncognitoMenuView::BuildMenu() {
 std::u16string IncognitoMenuView::GetAccessibleWindowTitle() const {
   return l10n_util::GetPluralStringFUTF16(
       IDS_INCOGNITO_BUBBLE_ACCESSIBLE_TITLE,
-      BrowserList::GetOffTheRecordBrowsersActiveForProfile(
-          browser()->profile()));
+      BrowserList::GetOffTheRecordBrowsersActiveForProfile(&profile()));
 }
 
 void IncognitoMenuView::OnExitButtonClicked() {
@@ -98,6 +75,7 @@ void IncognitoMenuView::OnExitButtonClicked() {
   // quickly close all incognito windows without needing to confirm closing the
   // open forms.
   BrowserList::CloseAllBrowsersWithIncognitoProfile(
-      browser()->profile(), base::DoNothing(), base::DoNothing(),
-      true /* skip_beforeunload */);
+      &profile(), /*on_close_success=*/base::DoNothing(),
+      /*on_close_aborted=*/base::DoNothing(),
+      /*skip_beforeunload=*/true);
 }

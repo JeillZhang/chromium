@@ -56,11 +56,9 @@
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/policy/core/browser_policy_connector_ash.h"
-#include "chrome/browser/ash/policy/core/device_policy_builder.h"
+#include "chrome/browser/ash/policy/core/device_policy_cros_test_helper.h"
 #include "chrome/browser/ash/policy/test_support/embedded_policy_test_server_mixin.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
-#include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
-#include "chrome/browser/ash/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
@@ -85,6 +83,7 @@
 #include "chromeos/ash/components/login/auth/public/user_context.h"
 #include "chromeos/ash/components/network/network_state_test_helper.h"
 #include "chromeos/ash/components/osauth/public/auth_session_storage.h"
+#include "chromeos/ash/components/policy/device_policy/device_policy_builder.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "chromeos/ash/components/tpm/tpm_token_loader.h"
 #include "chromeos/dbus/tpm_manager/tpm_manager_client.h"
@@ -379,7 +378,6 @@ class WebviewLoginTest : public OobeBaseTest {
   }
 
  protected:
-  ScopedTestingCrosSettings scoped_testing_cros_settings_;
   FakeGaiaMixin fake_gaia_{&mixin_host_};
   base::test::ScopedFeatureList scoped_feature_list_;
 };
@@ -916,10 +914,17 @@ IN_PROC_BROWSER_TEST_F(WebviewDeviceOwnedLoginTest, AllowNewUser) {
   test::OobeJS().ExpectTrue(frame_url + ".search('flow=nosignup') == -1");
 
   // Disallow new users - we also need to set an allowlist due to weird logic.
-  scoped_testing_cros_settings_.device_settings()->Set(
-      kAccountsPrefUsers, base::Value(base::Value::List()));
-  scoped_testing_cros_settings_.device_settings()->Set(
-      kAccountsPrefAllowNewUser, base::Value(false));
+  ::policy::DevicePolicyCrosTestHelper test_helper;
+  test_helper.device_policy()
+      ->payload()
+      .mutable_user_allowlist()
+      ->clear_user_allowlist();
+  test_helper.device_policy()
+      ->payload()
+      .mutable_allow_new_users()
+      ->set_allow_new_users(false);
+  test_helper.RefreshDevicePolicy();
+
   WaitForGaiaPageReload();
 
   // flow=nosignup indicates that user creation is not allowed.
@@ -987,11 +992,15 @@ class AutoReloadWebviewLoginTest : public WebviewLoginTest {
     // TODO(b/353919505): Introduce a function for testing to advance time and
     // reschedule the timer in one call.
     task_runner()->FastForwardBy(time_change);
-    LoginDisplayHost::default_host()
-        ->GetOobeUI()
-        ->GetHandler<GaiaScreenHandler>()
-        ->GetAutoReloadManagerForTesting()
-        .ResumeTimerForTesting();
+    base::WallClockTimer* auto_reload_timer =
+        LoginDisplayHost::default_host()
+            ->GetOobeUI()
+            ->GetHandler<GaiaScreenHandler>()
+            ->GetAutoReloadManagerForTesting()
+            .GetTimerForTesting();
+    if (auto_reload_timer && auto_reload_timer->IsRunning()) {
+      auto_reload_timer->OnResume();
+    }
   }
 
   void SetUpOnMainThread() override {
@@ -1038,7 +1047,7 @@ class AutoReloadWebviewLoginTest : public WebviewLoginTest {
         ->GetOobeUI()
         ->GetHandler<GaiaScreenHandler>()
         ->GetAutoReloadManagerForTesting()
-        .IsActiveForTesting();
+        .IsAutoReloadActive();
   }
 
   void ExpectAutoReloadDisabled() {
@@ -1231,16 +1240,7 @@ IN_PROC_BROWSER_TEST_F(ReauthWebviewLoginTest, EmailPrefill) {
             user_with_gaia_pw_.account_id.GetUserEmail());
 }
 
-class ReauthWebviewPasswordlessLoginTest : public ReauthWebviewLoginTest {
- public:
-  ReauthWebviewPasswordlessLoginTest() {
-    scoped_feature_list_.Reset();
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kPasswordlessGaiaForConsumers);
-  }
-};
-
-IN_PROC_BROWSER_TEST_F(ReauthWebviewPasswordlessLoginTest, GaiaPasswordFactor) {
+IN_PROC_BROWSER_TEST_F(ReauthWebviewLoginTest, GaiaPasswordFactor) {
   TriggerOnlineSignin(user_with_gaia_pw_);
   // Passwordless login is disallowed when Gaia password factor is
   // configured.
@@ -1257,8 +1257,7 @@ IN_PROC_BROWSER_TEST_F(ReauthWebviewPasswordlessLoginTest, GaiaPasswordFactor) {
                                        0 /* password login */, 0);
 }
 
-IN_PROC_BROWSER_TEST_F(ReauthWebviewPasswordlessLoginTest,
-                       LocalPasswordFactor) {
+IN_PROC_BROWSER_TEST_F(ReauthWebviewLoginTest, LocalPasswordFactor) {
   TriggerOnlineSignin(user_with_local_pw_);
   // Passwordless login is allowed when only local password factor is
   // configured.
@@ -1282,7 +1281,18 @@ class ReauthTokenWebviewLoginTest : public ReauthWebviewLoginTest {
     user_with_invalid_token_ = login_manager_mixin_.users().back().account_id;
     cryptohome_mixin_.MarkUserAsExisting(user_with_invalid_token_);
     UserDataAuthClient::InitializeFake();
+  }
+
+  void SetUpOnMainThread() override {
+    ReauthWebviewLoginTest::SetUpOnMainThread();
     token_handle_store_ = TokenHandleStoreFactory::Get()->GetTokenHandleStore();
+    token_handle_store_->SetInvalidTokenForTesting(kTestTokenHandle);
+  }
+
+  void TearDownOnMainThread() override {
+    token_handle_store_->SetInvalidTokenForTesting(nullptr);
+    token_handle_store_ = nullptr;
+    ReauthWebviewLoginTest::TearDownOnMainThread();
   }
 
   void ShowReauthDialog() {
@@ -1306,16 +1316,6 @@ class ReauthTokenWebviewLoginTest : public ReauthWebviewLoginTest {
   }
 
  protected:
-  void SetUpInProcessBrowserTestFixture() override {
-    ReauthWebviewLoginTest::SetUpInProcessBrowserTestFixture();
-    token_handle_store_->SetInvalidTokenForTesting(kTestTokenHandle);
-  }
-
-  void TearDownInProcessBrowserTestFixture() override {
-    token_handle_store_->SetInvalidTokenForTesting(nullptr);
-    ReauthWebviewLoginTest::TearDownInProcessBrowserTestFixture();
-  }
-
   AccountId user_with_invalid_token_;
   CryptohomeMixin cryptohome_mixin_{&mixin_host_};
   FakeRecoveryServiceMixin fake_recovery_service_{&mixin_host_,

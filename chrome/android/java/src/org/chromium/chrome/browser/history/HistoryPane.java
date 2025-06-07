@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.history;
 import static org.chromium.chrome.browser.hub.HubAnimationConstants.HUB_LAYOUT_FADE_DURATION_MS;
 
 import android.app.Activity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
@@ -48,6 +49,10 @@ public class HistoryPane implements Pane {
     private final ObservableSupplier<FullButtonData> mEmptyActionButtonSupplier =
             new ObservableSupplierImpl<>();
     private final ObservableSupplierImpl<Boolean> mHairlineVisibilitySupplier =
+            new ObservableSupplierImpl<>();
+    private final ObservableSupplierImpl<View> mHubOverlayViewSupplier =
+            new ObservableSupplierImpl<>();
+    private final ObservableSupplierImpl<Boolean> mHubSearchEnabledStateSupplier =
             new ObservableSupplierImpl<>();
 
     // FrameLayout which has HistoryManager's root view as the only child.
@@ -170,6 +175,11 @@ public class HistoryPane implements Pane {
         return mHairlineVisibilitySupplier;
     }
 
+    @Override
+    public ObservableSupplier<View> getHubOverlayViewSupplier() {
+        return mHubOverlayViewSupplier;
+    }
+
     @Nullable
     @Override
     public HubLayoutAnimationListener getHubLayoutAnimationListener() {
@@ -190,6 +200,12 @@ public class HistoryPane implements Pane {
             @NonNull HubContainerView hubContainerView) {
         return FadeHubLayoutAnimationFactory.createFadeOutAnimatorProvider(
                 hubContainerView, HUB_LAYOUT_FADE_DURATION_MS, mOnToolbarAlphaChange);
+    }
+
+    @NonNull
+    @Override
+    public ObservableSupplier<Boolean> getHubSearchEnabledStateSupplier() {
+        return mHubSearchEnabledStateSupplier;
     }
 
     private void onHistoryItemOpened() {

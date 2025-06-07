@@ -32,6 +32,7 @@
 #include "content/browser/renderer_host/display_feature.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/render_frame_metadata_provider.h"
+#include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/common/page_visibility_state.h"
 #include "content/public/common/widget_type.h"
@@ -48,11 +49,13 @@
 #include "ui/base/ime/text_input_type.h"
 #include "ui/display/display.h"
 #include "ui/display/screen_infos.h"
+#include "ui/events/blink/did_overscroll_params.h"
 #include "ui/events/event_constants.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/range/range.h"
 #include "ui/surface/transport_dib.h"
+#include "url/origin.h"
 
 namespace blink {
 class WebMouseEvent;
@@ -78,8 +81,6 @@ class TouchSelectionControllerInputObserver;
 class WebContentsAccessibility;
 class DelegatedFrameHost;
 class SyntheticGestureTarget;
-
-using CopyOutputIpcPriority = viz::CopyOutputRequest::IpcPriority;
 
 // Basic implementation shared by concrete RenderWidgetHostView subclasses.
 class CONTENT_EXPORT RenderWidgetHostViewBase
@@ -155,6 +156,8 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   float GetDeviceScaleFactor() const final;
   bool IsPointerLocked() override;
 
+  virtual void DidOverscroll(const ui::DidOverscrollParams& params) {}
+
   // Identical to `CopyFromSurface()`, except that this method issues the
   // `viz::CopyOutputRequest` against the exact `viz::Surface` currently
   // embedded by this View, while `CopyFromSurface()` may return a copy of any
@@ -171,11 +174,26 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
       base::OnceCallback<void(const SkBitmap&)> callback);
 
 #if BUILDFLAG(IS_ANDROID)
-  virtual void CopyFromExactSurfaceWithIpcPriority(
+  virtual void CopyFromExactSurfaceWithIpcDelay(
       const gfx::Rect& src_rect,
       const gfx::Size& output_size,
       base::OnceCallback<void(const SkBitmap&)> callback,
-      CopyOutputIpcPriority ipc_priority);
+      base::TimeDelta ipc_delay);
+
+  // Returns whethere there's a touch sequence active on Viz.
+  //  false: There's definitely no active touch sequence on Viz.
+  //  true: A touch sequence is likely active on Viz, but could be a false
+  //  positive in some racy conditions.
+  virtual bool IsTouchSequencePotentiallyActiveOnViz() = 0;
+
+  virtual void RequestInputBackForDragAndDrop(
+      blink::mojom::DragDataPtr drag_data,
+      const url::Origin& source_origin,
+      blink::DragOperationsMask drag_operations_mask,
+      SkBitmap bitmap,
+      gfx::Vector2d cursor_offset_in_dip,
+      gfx::Rect drag_obj_rect_in_dip,
+      blink::mojom::DragEventSourceInfoPtr event_info) = 0;
 #endif
 
   // For HiDPI capture mode, allow applying a render scale multiplier
@@ -192,6 +210,8 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   ui::mojom::VirtualKeyboardMode GetVirtualKeyboardMode() override;
   void NotifyVirtualKeyboardOverlayRect(
       const gfx::Rect& keyboard_rect) override {}
+  void NotifyContextMenuInsetsObservers(const gfx::Rect&) override {}
+  void ShowInterestInElement(int) override {}
   bool IsHTMLFormPopup() const override;
 
   // This only needs to be overridden by RenderWidgetHostViewBase subclasses
@@ -284,7 +304,7 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
 
   // Requests a new CompositorFrame from the renderer. This is done by
   // allocating a new viz::LocalSurfaceId which forces a commit and draw.
-  virtual bool RequestRepaintForTesting();
+  virtual bool RequestRepaintOnNewSurface();
 
   // Subclass identifier for RenderWidgetHostViewChildFrames. This is useful
   // to be able to know if this RWHV is embedded within another RWHV. If
@@ -337,8 +357,7 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   // line bounds, or both.
   virtual void ImeCompositionRangeChanged(
       const gfx::Range& range,
-      const std::optional<std::vector<gfx::Rect>>& character_bounds,
-      const std::optional<std::vector<gfx::Rect>>& line_bounds);
+      const std::optional<std::vector<gfx::Rect>>& character_bounds);
 
   //----------------------------------------------------------------------------
   // The following pure virtual methods are implemented by derived classes.
@@ -440,7 +459,16 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   virtual TouchSelectionControllerInputObserver*
   GetTouchSelectionControllerInputObserver();
 
-  virtual void SetDisplayFeatureForTesting(
+  virtual RenderWidgetHost::InputEventObserver*
+  GetInputTransferHandlerObserver();
+
+  // Disable the DisplayFeature emulation (if used) and restore the
+  // DisplayFeature of the device (if there is).
+  virtual void DisableDisplayFeatureOverrideForEmulation() = 0;
+
+  // Override the DisplayFeature provided by the device (if there is) and
+  // replace it with the provided one.
+  virtual void OverrideDisplayFeatureForEmulation(
       const DisplayFeature* display_feature) = 0;
 
   DevicePosturePlatformProvider* GetDevicePosturePlatformProvider();

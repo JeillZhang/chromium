@@ -16,6 +16,8 @@
 #include "base/numerics/byte_conversions.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "net/base/net_errors.h"
 #include "net/socket/socket.h"
 #include "net/socket/stream_socket.h"
@@ -280,7 +282,7 @@ void WebSocketConnection::OnReadComplete(int result)
   }
 
   base::span<uint8_t> data_span =
-      read_buffer_->span().first(static_cast<size_t>(result));
+      read_buffer_->first(static_cast<size_t>(result));
 
   WebSocketFrameParser parser;
   std::vector<std::unique_ptr<WebSocketFrameChunk>> frame_chunks;

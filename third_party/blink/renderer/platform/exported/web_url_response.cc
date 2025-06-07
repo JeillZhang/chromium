@@ -134,6 +134,7 @@ WebURLResponse WebURLResponse::Create(
 
   response.SetCurrentRequestUrl(url);
   response.SetResponseTime(head.response_time);
+  response.SetOriginalResponseTime(head.original_response_time);
   response.SetMimeType(WebString::FromUTF8(head.mime_type));
   response.SetTextEncodingName(WebString::FromUTF8(head.charset));
   response.SetExpectedContentLength(head.content_length);
@@ -198,6 +199,7 @@ WebURLResponse WebURLResponse::Create(
   response.SetWasInPrefetchCache(head.was_in_prefetch_cache);
   response.SetWasCookieInRequest(head.was_cookie_in_request);
   response.SetRecursivePrefetchToken(head.recursive_prefetch_token);
+  response.SetDeviceBoundSessionUsage(head.device_bound_session_usage);
 
   SetSecurityStyleAndDetails(GURL(KURL(url)), head, &response,
                              report_security_info);
@@ -335,6 +337,14 @@ base::Time WebURLResponse::ResponseTime() const {
 
 void WebURLResponse::SetResponseTime(base::Time response_time) {
   resource_response_->SetResponseTime(response_time);
+}
+
+base::Time WebURLResponse::OriginalResponseTime() const {
+  return resource_response_->OriginalResponseTime();
+}
+
+void WebURLResponse::SetOriginalResponseTime(base::Time response_time) {
+  resource_response_->SetOriginalResponseTime(response_time);
 }
 
 WebString WebURLResponse::MimeType() const {
@@ -724,6 +734,15 @@ void WebURLResponse::SetShouldUseSourceHashForJSCodeCache(
 
 bool WebURLResponse::ShouldUseSourceHashForJSCodeCache() const {
   return resource_response_->ShouldUseSourceHashForJSCodeCache();
+}
+
+void WebURLResponse::SetDeviceBoundSessionUsage(
+    network::mojom::DeviceBoundSessionUsage usage) {
+  resource_response_->SetDeviceBoundSessionUsage(usage);
+}
+network::mojom::DeviceBoundSessionUsage
+WebURLResponse::DeviceBoundSessionUsage() const {
+  return resource_response_->DeviceBoundSessionUsage();
 }
 
 WebURLResponse::WebURLResponse(ResourceResponse& r) : resource_response_(&r) {}

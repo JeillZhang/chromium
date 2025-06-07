@@ -123,7 +123,7 @@ class Rankings {
   void Reset();
 
   // Inserts a given entry at the head of the queue.
-  void Insert(CacheRankingsBlock* node, bool modified, List list);
+  void Insert(CacheRankingsBlock* node, List list);
 
   // Removes a given entry from the LRU list. If |strict| is true, this method
   // assumes that |node| is not pointed to by an active iterator. On the other
@@ -133,7 +133,7 @@ class Rankings {
   void Remove(CacheRankingsBlock* node, List list, bool strict);
 
   // Moves a given entry to the head.
-  void UpdateRank(CacheRankingsBlock* node, bool modified, List list);
+  void UpdateRank(CacheRankingsBlock* node, List list);
 
   // Iterates through the list.
   CacheRankingsBlock* GetNext(CacheRankingsBlock* node, List list);
@@ -213,8 +213,8 @@ class Rankings {
 
   bool init_ = false;
   bool count_lists_;
-  Addr heads_[LAST_ELEMENT];
-  Addr tails_[LAST_ELEMENT];
+  std::array<Addr, LAST_ELEMENT> heads_;
+  std::array<Addr, LAST_ELEMENT> tails_;
   raw_ptr<BackendImpl> backend_;
 
   // Data related to the LRU lists.

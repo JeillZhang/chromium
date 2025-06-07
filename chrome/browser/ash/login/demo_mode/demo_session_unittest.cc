@@ -13,6 +13,7 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/constants/ash_pref_names.h"
+#include "base/check_deref.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
@@ -21,6 +22,7 @@
 #include "base/test/metrics/user_action_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/timer/mock_timer.h"
+#include "chrome/browser/ash/browser_delegate/browser_controller_impl.h"
 #include "chrome/browser/ash/login/demo_mode/demo_components.h"
 #include "chrome/browser/ash/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/ash/wallpaper_handlers/test_wallpaper_fetcher_delegate.h"
@@ -79,8 +81,10 @@ class DemoSessionTest : public testing::Test {
     session_manager_ = std::make_unique<session_manager::SessionManager>();
     wallpaper_controller_client_ = std::make_unique<
         WallpaperControllerClientImpl>(
+        CHECK_DEREF(TestingBrowserProcess::GetGlobal()->local_state()),
         std::make_unique<wallpaper_handlers::TestWallpaperFetcherDelegate>());
     wallpaper_controller_client_->InitForTesting(&test_wallpaper_controller_);
+    browser_controller_ = std::make_unique<ash::BrowserControllerImpl>();
     // TODO(b/321321392): Test loading growth campaigns at session start.
     scoped_feature_list_.InitAndDisableFeature(
         ash::features::kGrowthCampaignsInDemoMode);
@@ -90,6 +94,7 @@ class DemoSessionTest : public testing::Test {
     DemoSession::ShutDownIfInitialized();
     DemoSession::ResetDemoConfigForTesting();
 
+    browser_controller_.reset();
     wallpaper_controller_client_.reset();
     ConciergeClient::Shutdown();
 
@@ -151,6 +156,7 @@ class DemoSessionTest : public testing::Test {
 
  private:
   BrowserProcessPlatformPartTestApi browser_process_platform_part_test_api_;
+  std::unique_ptr<BrowserControllerImpl> browser_controller_;
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 

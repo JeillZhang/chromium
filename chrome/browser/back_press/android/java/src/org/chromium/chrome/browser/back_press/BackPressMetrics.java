@@ -10,6 +10,7 @@ import androidx.activity.BackEventCompat;
 import androidx.annotation.IntDef;
 
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler.Type;
 import org.chromium.ui.UiUtils;
@@ -22,6 +23,7 @@ import java.lang.annotation.RetentionPolicy;
  * A utility class to record back press related histograms. TODO(crbug.com/41481803): Move other
  * histogram recording to this class.
  */
+@NullMarked
 public class BackPressMetrics {
     private static final String EDGE_HISTOGRAM = "Android.BackPress.SwipeEdge";
     private static final String TAB_HISTORY_EDGE_HISTOGRAM =
@@ -34,7 +36,9 @@ public class BackPressMetrics {
             "Android.BackPress.IncorrectEdgeSwipe";
     private static final String INCORRECT_EDGE_SWIPE_COUNT_CHAINED_HISTOGRAM =
             "Android.BackPress.IncorrectEdgeSwipe.CountChained";
-    private static final String BACK_FALSING_HISTOGRAM = "Android.BackPress.Backfalsing";
+    private static final String BACK_FALSING_HISTOGRAM = "Android.BackPress.Backfalsing2";
+    private static final String STRICT_BACK_FALSING_HISTOGRAM =
+            "Android.BackPress.StrictBackfalsing";
 
     @IntDef({
         PredictiveGestureNavPhase.ACTIVATED,
@@ -73,6 +77,8 @@ public class BackPressMetrics {
         int NUM_ENTRIES = 4;
     }
 
+    // These values are persisted to logs. Entries should not be renumbered and numeric values
+    // should never be reused.
     @IntDef({
         NavigationDirection.FORWARD,
         NavigationDirection.BACKWARD,
@@ -93,6 +99,16 @@ public class BackPressMetrics {
     public static void recordBackFalsing(@NavigationDirection int navigationDirection) {
         RecordHistogram.recordEnumeratedHistogram(
                 BACK_FALSING_HISTOGRAM, navigationDirection, NavigationDirection.NUM_ENTRIES);
+    }
+
+    /**
+     * @param navigationDirection The direction of the navigation.
+     */
+    public static void recordStrictBackFalsing(@NavigationDirection int navigationDirection) {
+        RecordHistogram.recordEnumeratedHistogram(
+                STRICT_BACK_FALSING_HISTOGRAM,
+                navigationDirection,
+                NavigationDirection.NUM_ENTRIES);
     }
 
     /**

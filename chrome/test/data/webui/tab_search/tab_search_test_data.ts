@@ -13,6 +13,7 @@ export function createTab(overrides: Partial<Tab>): Tab {
   return Object.assign(
       {
         active: false,
+        visible: false,
         faviconUrl: null,
         groupId: null,
         alertStates: [],
@@ -21,6 +22,7 @@ export function createTab(overrides: Partial<Tab>): Tab {
         lastActiveElapsedText: '',
         lastActiveTimeTicks: {internalValue: BigInt(0)},
         pinned: false,
+        split: false,
         showIcon: false,
         tabId: 1,
         title: 'Example',
@@ -31,6 +33,7 @@ export function createTab(overrides: Partial<Tab>): Tab {
 
 export const SAMPLE_WINDOW_DATA_WITH_MEDIA_TAB: Window[] = [{
   active: true,
+  isHostWindow: true,
   height: SAMPLE_WINDOW_HEIGHT,
   tabs: [
     createTab({
@@ -65,6 +68,7 @@ export const SAMPLE_WINDOW_DATA_WITH_MEDIA_TAB: Window[] = [{
 export const SAMPLE_WINDOW_DATA: Window[] = [
   {
     active: true,
+    isHostWindow: true,
     height: SAMPLE_WINDOW_HEIGHT,
     tabs: [
       createTab({
@@ -90,6 +94,7 @@ export const SAMPLE_WINDOW_DATA: Window[] = [
   },
   {
     active: false,
+    isHostWindow: false,
     height: SAMPLE_WINDOW_HEIGHT,
     tabs: [
       createTab({
@@ -215,6 +220,7 @@ export function generateSampleDataFromSiteNames(siteNames: string[]):
   return {
     windows: [{
       active: true,
+      isHostWindow: true,
       height: SAMPLE_WINDOW_HEIGHT,
       tabs: generateSampleTabsFromSiteNames(siteNames),
     }],

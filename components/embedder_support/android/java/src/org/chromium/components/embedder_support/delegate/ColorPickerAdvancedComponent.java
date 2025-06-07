@@ -30,7 +30,7 @@ public class ColorPickerAdvancedComponent {
     // The set of colors to interpolate the gradient through.
     private int @Nullable [] mGradientColors;
     // The Drawable that represents the gradient.
-    private GradientDrawable mGradientDrawable;
+    private final GradientDrawable mGradientDrawable;
     // The text label for the component.
     private final TextView mText;
 
@@ -63,6 +63,7 @@ public class ColorPickerAdvancedComponent {
                                 R.drawable.color_picker_advanced_select_handle)
                         .getIntrinsicWidth();
         mSeekBar.setThumbOffset(offset / 2);
+        mSeekBar.setContentDescription(context.getString(textResourceId));
     }
 
     /** @return The value represented by this component, maintained by the seek bar progress. */

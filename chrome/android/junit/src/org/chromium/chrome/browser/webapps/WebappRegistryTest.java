@@ -73,7 +73,7 @@ public class WebappRegistryTest {
 
     private static class FetchStorageCallback
             implements WebappRegistry.FetchWebappDataStorageCallback {
-        BrowserServicesIntentDataProvider mIntentDataProvider;
+        final BrowserServicesIntentDataProvider mIntentDataProvider;
         boolean mCallbackCalled;
 
         FetchStorageCallback(BrowserServicesIntentDataProvider intentDataProvider) {
@@ -924,7 +924,7 @@ public class WebappRegistryTest {
                 webApkRegistry.getWebApkSpecificsImpl(setWebappInfoForTesting);
         assertEquals(2, webApkSpecificsList.size());
 
-        Set<String> visitedScopes = new HashSet<String>();
+        Set<String> visitedScopes = new HashSet<>();
         for (WebApkSpecifics webApkSpecifics : webApkSpecificsList) {
             BrowserServicesIntentDataProvider intentDataProvider =
                     expectedIntentDataProviders.get(webApkSpecifics.getScope());

@@ -26,9 +26,6 @@
 class GoogleServiceAuthError;
 class OAuth2MintTokenFlowTest;
 
-COMPONENT_EXPORT(GOOGLE_APIS)
-extern const char kOAuth2MintTokenApiCallResultHistogram[];
-
 // Values carrying the result of processing a successful API call.
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -66,7 +63,8 @@ struct COMPONENT_EXPORT(GOOGLE_APIS) RemoteConsentResolutionData {
   GURL url;
   net::CookieList cookies;
 
-  bool operator==(const RemoteConsentResolutionData& rhs) const;
+  friend bool operator==(const RemoteConsentResolutionData&,
+                         const RemoteConsentResolutionData&) = default;
 };
 
 // This class implements the OAuth2 flow to Google to mint an OAuth2 access

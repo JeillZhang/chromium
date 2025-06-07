@@ -32,8 +32,8 @@
 #include "ash/system/progress_indicator/progress_ring_animation.h"
 #include "base/check.h"
 #include "base/functional/bind.h"
-#include "base/functional/overloaded.h"
 #include "base/memory/raw_ptr.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
@@ -625,22 +625,22 @@ void HoldingSpaceItemChipView::UpdateLabels() {
 
   // Primary.
   primary_label_->SetText(item()->GetText());
-  primary_label_->SetEnabledColorId(selected() && multiselect
-                                        ? kColorAshMultiSelectTextColor
-                                        : kColorAshTextColorPrimary);
+  primary_label_->SetEnabledColor(selected() && multiselect
+                                      ? kColorAshMultiSelectTextColor
+                                      : kColorAshTextColorPrimary);
 
   // Secondary.
   secondary_label_->SetText(
       item()->secondary_text().value_or(std::u16string()));
 
   if (selected() && multiselect) {
-    secondary_label_->SetEnabledColorId(kColorAshMultiSelectTextColor);
+    secondary_label_->SetEnabledColor(kColorAshMultiSelectTextColor);
   } else if (const std::optional<HoldingSpaceColorVariant>& color_variant =
                  item()->secondary_text_color_variant()) {
     // Handle the case where the `color_variant` is set.
-    std::visit(base::Overloaded{
+    std::visit(absl::Overload{
                    [&](const ui::ColorId& color_id) {
-                     secondary_label_->SetEnabledColorId(color_id);
+                     secondary_label_->SetEnabledColor(color_id);
                    },
                    [&](const HoldingSpaceColors& colors) {
                      secondary_label_->SetEnabledColor(
@@ -652,7 +652,7 @@ void HoldingSpaceItemChipView::UpdateLabels() {
                *color_variant);
   } else {
     // Use the default color.
-    secondary_label_->SetEnabledColorId(kColorAshTextColorSecondary);
+    secondary_label_->SetEnabledColor(kColorAshTextColorSecondary);
   }
 
   secondary_label_->SetVisible(!secondary_label_->GetText().empty());

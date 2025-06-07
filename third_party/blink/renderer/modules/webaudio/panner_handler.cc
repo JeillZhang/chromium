@@ -2,13 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/modules/webaudio/panner_handler.h"
 
+#include <array>
+
+#include "base/compiler_specific.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/synchronization/lock.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_listener.h"
@@ -46,7 +44,7 @@ PannerHandler::PannerHandler(AudioNode& node,
                              AudioParamHandler& orientation_x,
                              AudioParamHandler& orientation_y,
                              AudioParamHandler& orientation_z)
-    : AudioHandler(kNodeTypePanner, node, sample_rate),
+    : AudioHandler(NodeType::kNodeTypePanner, node, sample_rate),
       position_x_(&position_x),
       position_y_(&position_y),
       position_z_(&position_z),
@@ -234,19 +232,22 @@ void PannerHandler::ProcessSampleAccurateValues(AudioBus* destination,
   float orientation_x[render_quantum_frames_expected];
   float orientation_y[render_quantum_frames_expected];
   float orientation_z[render_quantum_frames_expected];
-  double azimuth[render_quantum_frames_expected];
-  double elevation[render_quantum_frames_expected];
+  std::array<double, render_quantum_frames_expected> azimuth;
+  std::array<double, render_quantum_frames_expected> elevation;
   float total_gain[render_quantum_frames_expected];
 
-  position_x_->CalculateSampleAccurateValues(panner_x, frames_to_process);
-  position_y_->CalculateSampleAccurateValues(panner_y, frames_to_process);
-  position_z_->CalculateSampleAccurateValues(panner_z, frames_to_process);
-  orientation_x_->CalculateSampleAccurateValues(orientation_x,
-                                                frames_to_process);
-  orientation_y_->CalculateSampleAccurateValues(orientation_y,
-                                                frames_to_process);
-  orientation_z_->CalculateSampleAccurateValues(orientation_z,
-                                                frames_to_process);
+  position_x_->CalculateSampleAccurateValues(
+      base::span(panner_x).first(frames_to_process));
+  position_y_->CalculateSampleAccurateValues(
+      base::span(panner_y).first(frames_to_process));
+  position_z_->CalculateSampleAccurateValues(
+      base::span(panner_z).first(frames_to_process));
+  orientation_x_->CalculateSampleAccurateValues(
+      base::span(orientation_x).first(frames_to_process));
+  orientation_y_->CalculateSampleAccurateValues(
+      base::span(orientation_y).first(frames_to_process));
+  orientation_z_->CalculateSampleAccurateValues(
+      base::span(orientation_z).first(frames_to_process));
 
   const float* listener_x = listener_handler_->GetPositionXValues(
       render_quantum_frames);
@@ -267,29 +268,31 @@ void PannerHandler::ProcessSampleAccurateValues(AudioBus* destination,
   const float* up_z = listener_handler_->GetUpZValues(
       render_quantum_frames);
 
-  // Compute the azimuth, elevation, and total gains for each position.
-  for (unsigned k = 0; k < frames_to_process; ++k) {
-    gfx::Point3F panner_position(panner_x[k], panner_y[k], panner_z[k]);
-    gfx::Vector3dF orientation(orientation_x[k], orientation_y[k],
-                               orientation_z[k]);
-    gfx::Point3F listener_position(listener_x[k], listener_y[k], listener_z[k]);
-    gfx::Vector3dF listener_forward(forward_x[k], forward_y[k], forward_z[k]);
-    gfx::Vector3dF listener_up(up_x[k], up_y[k], up_z[k]);
+  UNSAFE_TODO({
+    // Compute the azimuth, elevation, and total gains for each position.
+    for (unsigned k = 0; k < frames_to_process; ++k) {
+      gfx::Point3F panner_position(panner_x[k], panner_y[k], panner_z[k]);
+      gfx::Vector3dF orientation(orientation_x[k], orientation_y[k],
+                                 orientation_z[k]);
+      gfx::Point3F listener_position(listener_x[k], listener_y[k],
+                                     listener_z[k]);
+      gfx::Vector3dF listener_forward(forward_x[k], forward_y[k], forward_z[k]);
+      gfx::Vector3dF listener_up(up_x[k], up_y[k], up_z[k]);
 
-    CalculateAzimuthElevation(&azimuth[k], &elevation[k], panner_position,
-                              listener_position, listener_forward, listener_up);
+      CalculateAzimuthElevation(&azimuth[k], &elevation[k], panner_position,
+                                listener_position, listener_forward,
+                                listener_up);
 
-    total_gain[k] = CalculateDistanceConeGain(panner_position, orientation,
-                                              listener_position);
-  }
-
-  // Update cached values in case automations end.
-  if (frames_to_process > 0) {
-    cached_azimuth_ = azimuth[frames_to_process - 1];
-    cached_elevation_ = elevation[frames_to_process - 1];
-    cached_distance_cone_gain_ = total_gain[frames_to_process - 1];
-  }
-
+      total_gain[k] = CalculateDistanceConeGain(panner_position, orientation,
+                                                listener_position);
+    }
+    // Update cached values in case automations end.
+    if (frames_to_process > 0) {
+      cached_azimuth_ = azimuth[frames_to_process - 1];
+      cached_elevation_ = elevation[frames_to_process - 1];
+      cached_distance_cone_gain_ = total_gain[frames_to_process - 1];
+    }
+  });
   panner_->PanWithSampleAccurateValues(azimuth, elevation, source, destination,
                                        frames_to_process,
                                        InternalChannelInterpretation());
@@ -308,12 +311,18 @@ void PannerHandler::ProcessOnlyAudioParams(uint32_t frames_to_process) {
 
   DCHECK_LE(frames_to_process, GetDeferredTaskHandler().RenderQuantumFrames());
 
-  position_x_->CalculateSampleAccurateValues(values, frames_to_process);
-  position_y_->CalculateSampleAccurateValues(values, frames_to_process);
-  position_z_->CalculateSampleAccurateValues(values, frames_to_process);
-  orientation_x_->CalculateSampleAccurateValues(values, frames_to_process);
-  orientation_y_->CalculateSampleAccurateValues(values, frames_to_process);
-  orientation_z_->CalculateSampleAccurateValues(values, frames_to_process);
+  position_x_->CalculateSampleAccurateValues(
+      base::span(values).first(frames_to_process));
+  position_y_->CalculateSampleAccurateValues(
+      base::span(values).first(frames_to_process));
+  position_z_->CalculateSampleAccurateValues(
+      base::span(values).first(frames_to_process));
+  orientation_x_->CalculateSampleAccurateValues(
+      base::span(values).first(frames_to_process));
+  orientation_y_->CalculateSampleAccurateValues(
+      base::span(values).first(frames_to_process));
+  orientation_z_->CalculateSampleAccurateValues(
+      base::span(values).first(frames_to_process));
 }
 
 void PannerHandler::Initialize() {
@@ -523,9 +532,9 @@ void PannerHandler::SetPosition(float x,
 
   double now = Context()->currentTime();
 
-  position_x_->Timeline().SetValueAtTime(x, now, exceptionState);
-  position_y_->Timeline().SetValueAtTime(y, now, exceptionState);
-  position_z_->Timeline().SetValueAtTime(z, now, exceptionState);
+  position_x_->SetValueAtTime(x, now, exceptionState);
+  position_y_->SetValueAtTime(y, now, exceptionState);
+  position_z_->SetValueAtTime(z, now, exceptionState);
 
   MarkPannerAsDirty(PannerHandler::kAzimuthElevationDirty |
                     PannerHandler::kDistanceConeGainDirty);
@@ -540,9 +549,9 @@ void PannerHandler::SetOrientation(float x,
 
   double now = Context()->currentTime();
 
-  orientation_x_->Timeline().SetValueAtTime(x, now, exceptionState);
-  orientation_y_->Timeline().SetValueAtTime(y, now, exceptionState);
-  orientation_z_->Timeline().SetValueAtTime(z, now, exceptionState);
+  orientation_x_->SetValueAtTime(x, now, exceptionState);
+  orientation_y_->SetValueAtTime(y, now, exceptionState);
+  orientation_z_->SetValueAtTime(z, now, exceptionState);
 
   MarkPannerAsDirty(PannerHandler::kDistanceConeGainDirty);
 }

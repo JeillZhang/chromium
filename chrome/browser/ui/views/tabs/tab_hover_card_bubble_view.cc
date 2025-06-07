@@ -33,6 +33,7 @@
 #include "chrome/browser/ui/views/tabs/tab_style_views.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/collaboration/public/messaging/message.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_formatter.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -75,7 +76,7 @@ constexpr int kTitleDomainSpacing = 4;
 constexpr auto kTextMargins = gfx::Insets::VH(12, 12);
 
 // Calculates an appropriate size to display a preview image in the hover card.
-// For the vast majority of images, the |preferred_size| is used, but extremely
+// For the vast majority of images, the `preferred_size` is used, but extremely
 // tall or wide images use the image size instead, centering in the available
 // space.
 gfx::Size GetPreviewImageSize(gfx::Size preview_size,
@@ -223,8 +224,8 @@ class TabHoverCardBubbleView::ThumbnailView
     switch (image_type) {
       case ImageType::kNone:
       case ImageType::kNoneButWaiting:
-        image_view->SetBackground(views::CreateSolidOrThemedBackground(
-            bubble_view_->background_color()));
+        image_view->SetBackground(
+            views::CreateSolidBackground(bubble_view_->background_color()));
         break;
       case ImageType::kPlaceholder:
         image_view->SetVerticalAlignment(views::ImageView::Alignment::kCenter);
@@ -392,7 +393,7 @@ TabHoverCardBubbleView::TabHoverCardBubbleView(Tab* tab,
       views::style::STYLE_BODY_3_EMPHASIS));
   domain_label_ = AddChildView(std::make_unique<FadeLabelView>(
       1, views::style::CONTEXT_DIALOG_BODY_TEXT, views::style::STYLE_BODY_4));
-  domain_label_->SetEnabledColorId(kColorTabHoverCardSecondaryText);
+  domain_label_->SetEnabledColor(kColorTabHoverCardSecondaryText);
 
   if (bubble_params_.show_image_preview) {
     thumbnail_view_ = AddChildView(std::make_unique<ThumbnailView>(this));
@@ -454,7 +455,7 @@ TabHoverCardBubbleView::TabHoverCardBubbleView(Tab* tab,
       views::BubbleFrameView::PreferredArrowAdjustment::kOffset);
   GetBubbleFrameView()->set_hit_test_transparent(true);
 
-  GetBubbleFrameView()->SetCornerRadius(corner_radius_);
+  GetBubbleFrameView()->SetRoundedCorners(gfx::RoundedCornersF(corner_radius_));
 
   // Placeholder image should be used when there is no image data for the
   // given tab. Otherwise don't flash the placeholder while we wait for the
@@ -503,7 +504,8 @@ TabHoverCardBubbleView::GetCollaborationMessagingData(
     default:
       NOTREACHED();
   }
-  collaboration_messaging_data.avatar = data->hover_card_avatar();
+
+  collaboration_messaging_data.avatar = data->GetHoverCardImage(GetWidget());
   collaboration_messaging_data.should_show_collaboration_messaging = true;
 
   return collaboration_messaging_data;
@@ -570,7 +572,7 @@ void TabHoverCardBubbleView::UpdateCardContent(const Tab* tab) {
   }
 
   title_label_->SetData({title, is_filename});
-  domain_label_->SetData({domain, false});
+  domain_label_->SetData({domain, false, gfx::ELIDE_HEAD});
 
   CollaborationMessagingRowData collaboration_messaging_data =
       GetCollaborationMessagingData(tab_data);

@@ -13,10 +13,11 @@
 #include <vector>
 
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
-#include "components/autofill/core/browser/data_model/autofill_wallet_usage_data.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
-#include "components/autofill/core/browser/data_model/iban.h"
+#include "components/autofill/core/browser/data_model/payments/autofill_wallet_usage_data.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
+#include "components/autofill/core/browser/data_model/payments/iban.h"
 #include "components/autofill/core/browser/payments/payments_customer_data.h"
+#include "components/autofill/core/browser/ui/test_autofill_image_fetcher.h"
 
 namespace autofill {
 
@@ -96,6 +97,9 @@ class TestPaymentsDataManager : public PaymentsDataManager {
   // on its properties.
   void AddBnplIssuer(const BnplIssuer& bnpl_issuer);
 
+  // Clears BNPL issuers from `TestPaymentsDataManager`.
+  void ClearBnplIssuers();
+
   // Adds offer data to `autofill_offer_data_`.
   void AddAutofillOfferData(const AutofillOfferData& offer_data);
 
@@ -108,9 +112,9 @@ class TestPaymentsDataManager : public PaymentsDataManager {
 
   // Adds a `url` to `image` mapping to the local `credit_card_art_images_`
   // cache.
-  void AddCardArtImage(const GURL& url, const gfx::Image& image);
+  void CacheImage(const GURL& url, const gfx::Image& image);
 
-  void ClearCreditCardArtImages() { credit_card_art_images_.clear(); }
+  void ClearCachedImages() { owned_image_fetcher_->ClearCachedImages(); }
 
   // Adds `usage_data` to `autofill_virtual_card_usage_data_`.
   void AddVirtualCardUsageData(const VirtualCardUsageData& usage_data);
@@ -137,6 +141,7 @@ class TestPaymentsDataManager : public PaymentsDataManager {
   std::optional<bool> payment_methods_mandatory_reauth_enabled_;
   std::optional<bool> payments_cvc_storage_enabled_;
   CoreAccountInfo account_info_;
+  std::unique_ptr<TestAutofillImageFetcher> owned_image_fetcher_;
 };
 
 }  // namespace autofill

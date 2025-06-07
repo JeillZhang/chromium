@@ -14,6 +14,7 @@
 #include <array>
 
 #include "base/memory/aligned_memory.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/trace_event/trace_event.h"
 #include "media/base/cdm_context.h"
 #include "media/gpu/h264_dpb.h"
@@ -98,7 +99,7 @@ scoped_refptr<H264Picture> H264VaapiVideoDecoderDelegate::CreateH264Picture() {
     return nullptr;
   }
 
-  return new VaapiH264Picture(std::move(va_surface_handle));
+  return base::MakeRefCounted<VaapiH264Picture>(std::move(va_surface_handle));
 }
 
 // Fill |va_pic| with default/neutral values.
@@ -376,10 +377,20 @@ DecodeStatus H264VaapiVideoDecoderDelegate::ParseEncryptedSliceHeader(
       DVLOG(1) << "Failure submitting encrypted slice header buffers";
       return DecodeStatus::kFail;
     }
+
     if (!vaapi_wrapper_->ExecuteAndDestroyPendingBuffers(surface->id())) {
+      if (NeedsProtectedSessionRecovery()) {
+        LOG(ERROR) << "Retry slice header decrypt due to recovery";
+        return DecodeStatus::kTryAgain;
+      }
       LOG(ERROR) << "Failed executing for slice header decrypt";
       return DecodeStatus::kFail;
     }
+
+    if (IsEncryptedSession()) {
+      ProtectedDecodedSucceeded();
+    }
+
     if (status_buf->status != VA_ENCRYPTION_STATUS_SUCCESSFUL) {
       LOG(ERROR) << "Failure status in encrypted header parsing: "
                  << static_cast<int>(status_buf->status);

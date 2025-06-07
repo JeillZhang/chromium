@@ -58,7 +58,7 @@ constexpr int kBadCommand = 102;
 
 base::Value ValueFromString(const std::string& values) {
   std::optional<base::Value> results_value = base::JSONReader::Read(values);
-  EXPECT_TRUE(results_value);
+  EXPECT_TRUE(results_value) << values;
   return results_value->Clone();
 }
 
@@ -294,12 +294,10 @@ void AppTestHelper::FirstTaskRun() {
                        "idle_timeout",
                        WithSwitch(
                            "app_logo_url",
-                           WithSwitch(
-                               "device_management_url",
-                               WithSwitch(
-                                   "crash_upload_url",
-                                   WithSwitch("update_url",
-                                              Wrap(&EnterTestMode))))))))},
+                            WithSwitch(
+                                "crash_upload_url",
+                                WithSwitch("update_url",
+                                           Wrap(&EnterTestMode)))))))},
           {"exit_test_mode", WithSystemScope(Wrap(&ExitTestMode))},
           {"set_dict_policies", WithSwitch("values", Wrap(&SetDictPolicies))},
           {"set_platform_policies",
@@ -357,7 +355,9 @@ void AppTestHelper::FirstTaskRun() {
                                   WithSystemScope(Wrap(
                                       &ExpectLegacyAppCommandWebSucceeds))))))},
           {"expect_legacy_policy_status_succeeds",
-           WithSystemScope(Wrap(&ExpectLegacyPolicyStatusSucceeds))},
+           WithSwitch(
+               "updater_version",
+               WithSystemScope(Wrap(&ExpectLegacyPolicyStatusSucceeds)))},
           {"legacy_install_app",
            WithSwitch(
                "app_version",
@@ -449,8 +449,9 @@ void AppTestHelper::FirstTaskRun() {
           {"setup_fake_updater_lower_version",
            WithSystemScope(Wrap(&SetupFakeUpdaterLowerVersion))},
           {"setup_real_updater",
-           WithSwitch("updater_path",
-                      WithSystemScope(Wrap(&SetupRealUpdater)))},
+           WithSwitch("switches",
+                      WithSwitch("updater_path",
+                                 WithSystemScope(Wrap(&SetupRealUpdater))))},
           {"set_first_registration_counter",
            WithSwitch("value", WithSystemScope(Wrap(&SetServerStarts)))},
           {"stress_update_service",
@@ -487,9 +488,13 @@ void AppTestHelper::FirstTaskRun() {
           {"expect_last_checked", WithSystemScope(Wrap(&ExpectLastChecked))},
           {"expect_last_started", WithSystemScope(Wrap(&ExpectLastStarted))},
           {"run_offline_install",
-           WithSwitch("silent",
-                      WithSwitch("legacy_install",
-                                 WithSystemScope(Wrap(&RunOfflineInstall))))},
+           WithSwitch(
+               "installer_error",
+               WithSwitch("installer_result",
+                          WithSwitch("silent",
+                                     WithSwitch("legacy_install",
+                                                WithSystemScope(Wrap(
+                                                    &RunOfflineInstall))))))},
           {"run_offline_install_os_not_supported",
            WithSwitch(
                "language",
@@ -497,6 +502,27 @@ void AppTestHelper::FirstTaskRun() {
                           WithSwitch("legacy_install",
                                      WithSystemScope(Wrap(
                                          &RunOfflineInstallOsNotSupported)))))},
+          {"run_mock_offline_meta_install",
+           WithSwitch(
+               "expect_success",
+               WithSwitch(
+                   "language",
+                   WithSwitch(
+                       "string_resource_id_to_find",
+                       WithSwitch(
+                           "platform",
+                           WithSwitch(
+                               "is_silent_install",
+                               WithSwitch(
+                                   "arguments",
+                                   WithSwitch(
+                                       "installer_path",
+                                       WithSwitch(
+                                           "version",
+                                           WithSwitch(
+                                               "app_id",
+                                               WithSystemScope(Wrap(
+                                                   &RunMockOfflineMetaInstall)))))))))))},  // NOLINT
           {"dm_push_enrollment_token",
            WithSwitch("enrollment_token", Wrap(DMPushEnrollmentToken))},
           {"dm_deregister_device", WithSystemScope(Wrap(&DMDeregisterDevice))},

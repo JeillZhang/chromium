@@ -9,6 +9,7 @@
 #import "base/metrics/field_trial.h"
 #import "components/prefs/pref_service.h"
 #import "components/variations/pref_names.h"
+#import "components/variations/service/variations_service.h"
 #import "components/variations/variations_test_utils.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
@@ -19,19 +20,25 @@
   PrefService* prefService = GetApplicationContext()->GetLocalState();
 
   // Clear variations seed prefs.
-  prefService->ClearPref(variations::prefs::kVariationsCompressedSeed);
+  GetApplicationContext()
+      ->GetVariationsService()
+      ->GetSeedStoreForTesting()
+      ->GetSeedReaderWriterForTesting()
+      ->ClearSeedInfo();
   prefService->ClearPref(variations::prefs::kVariationsCountry);
   prefService->ClearPref(variations::prefs::kVariationsLastFetchTime);
   prefService->ClearPref(
       variations::prefs::kVariationsPermanentConsistencyCountry);
   prefService->ClearPref(
       variations::prefs::kVariationsPermanentOverriddenCountry);
-  prefService->ClearPref(variations::prefs::kVariationsSeedDate);
   prefService->ClearPref(variations::prefs::kVariationsSeedSignature);
 
   // Clear variations safe seed prefs.
-  prefService->ClearPref(variations::prefs::kVariationsSafeCompressedSeed);
-  prefService->ClearPref(variations::prefs::kVariationsSafeSeedDate);
+  GetApplicationContext()
+      ->GetVariationsService()
+      ->GetSeedStoreForTesting()
+      ->GetSafeSeedReaderWriterForTesting()
+      ->ClearSeedInfo();
   prefService->ClearPref(variations::prefs::kVariationsSafeSeedFetchTime);
   prefService->ClearPref(variations::prefs::kVariationsSafeSeedLocale);
   prefService->ClearPref(
@@ -54,22 +61,42 @@
 }
 
 + (BOOL)hasSafeSeed {
-  PrefService* prefService = GetApplicationContext()->GetLocalState();
-  const std::string& safe_seed =
-      prefService->GetString(variations::prefs::kVariationsSafeCompressedSeed);
-  return !safe_seed.empty();
+  return !GetApplicationContext()
+              ->GetVariationsService()
+              ->GetSeedStoreForTesting()
+              ->GetSafeSeedReaderWriterForTesting()
+              ->GetSeedData()
+              .data.empty();
 }
 
 + (void)setTestSafeSeedAndSignature {
-  PrefService* prefService = GetApplicationContext()->GetLocalState();
-  variations::WriteSeedData(prefService, variations::kTestSeedData,
-                            variations::kSafeSeedPrefKeys);
+  GetApplicationContext()
+      ->GetVariationsService()
+      ->GetSeedStoreForTesting()
+      ->GetSafeSeedReaderWriterForTesting()
+      ->StoreValidatedSeedInfo(variations::ValidatedSeedInfo{
+          .compressed_seed_data = variations::kTestSeedData.GetCompressedData(),
+          .base64_seed_data = variations::kTestSeedData.base64_compressed_data,
+          .signature = variations::kTestSeedData.base64_signature,
+          .milestone = 92, // Milestone number is arbitrary.
+          .seed_date = base::Time::Now(),
+      });
 }
 
 + (void)setCrashingRegularSeedAndSignature {
-  PrefService* prefService = GetApplicationContext()->GetLocalState();
-  variations::WriteSeedData(prefService, variations::kCrashingSeedData,
-                            variations::kRegularSeedPrefKeys);
+  GetApplicationContext()
+      ->GetVariationsService()
+      ->GetSeedStoreForTesting()
+      ->GetSeedReaderWriterForTesting()
+      ->StoreValidatedSeedInfo(variations::ValidatedSeedInfo{
+          .compressed_seed_data =
+              variations::kCrashingSeedData.GetCompressedData(),
+          .base64_seed_data =
+              variations::kCrashingSeedData.base64_compressed_data,
+          .signature = variations::kCrashingSeedData.base64_signature,
+          .milestone = 92, // Milestone number is arbitrary.
+          .seed_date = base::Time::Now(),
+      });
 }
 
 + (int)crashStreak {

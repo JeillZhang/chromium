@@ -226,12 +226,7 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
         onViewWaiting(withId(R.id.privacy_sandbox_dialog)).check(matches(isCompletelyDisplayed()));
         onViewWaiting(withId(R.id.privacy_sandbox_notice_title), true)
                 .check(matches(isCompletelyDisplayed()));
-        if (ChromeFeatureList.isEnabled(
-                ChromeFeatureList.PRIVACY_SANDBOX_EQUALIZED_PROMPT_BUTTONS)) {
-            tryClickOn(withId(R.id.ack_button_equalized));
-        } else {
-            tryClickOn(withId(R.id.ack_button));
-        }
+        tryClickOn(withId(R.id.ack_button));
     }
 
     @Test
@@ -244,7 +239,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
                 + TestSurveyUtils.TEST_TRIGGER_ID_FOO,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-notice-row-for-testing/true/notice-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
     })
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
     @DisableIf.Device(DeviceFormFactor.TABLET)
@@ -272,7 +266,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
                 + TestSurveyUtils.TEST_TRIGGER_ID_FOO,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-notice-row-for-testing/true/notice-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
     })
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
     @DisableIf.Device(DeviceFormFactor.TABLET)
@@ -304,7 +297,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
                 + TestSurveyUtils.TEST_TRIGGER_ID_FOO,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-notice-row-for-testing/true/notice-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
     })
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
     @DisableIf.Device(DeviceFormFactor.TABLET)
@@ -322,7 +314,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
     @Features.EnableFeatures({
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-notice-row-for-testing/true/notice-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT
     })
     @DisableFeatures({ChromeFeatureList.PRIVACY_SANDBOX_CCT_ADS_NOTICE_SURVEY})
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
@@ -345,7 +336,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
                 + TestSurveyUtils.TEST_TRIGGER_ID_FOO,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-consent-for-testing/true/consent-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
     })
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
     @DisableIf.Device(DeviceFormFactor.TABLET)
@@ -374,7 +364,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
                 + TestSurveyUtils.TEST_TRIGGER_ID_FOO,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-consent-for-testing/true/consent-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
     })
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
     @DisableIf.Device(DeviceFormFactor.TABLET)
@@ -409,7 +398,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
                 + TestSurveyUtils.TEST_TRIGGER_ID_FOO,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-consent-for-testing/true/consent-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
     })
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
     @DisableIf.Device(DeviceFormFactor.TABLET)
@@ -433,7 +421,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
                 + TestSurveyUtils.TEST_TRIGGER_ID_FOO,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-consent-for-testing/true/consent-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
     })
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
     @DisableIf.Device(DeviceFormFactor.TABLET)
@@ -457,7 +444,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
                 + TestSurveyUtils.TEST_TRIGGER_ID_FOO,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-consent-for-testing/true/consent-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
     })
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
     @DisableIf.Device(DeviceFormFactor.TABLET)
@@ -486,7 +472,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
                 + TestSurveyUtils.TEST_TRIGGER_ID_FOO,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-consent-for-testing/true/consent-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
     })
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
     @DisableIf.Device(DeviceFormFactor.TABLET)
@@ -515,7 +500,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
                 + TestSurveyUtils.TEST_TRIGGER_ID_FOO,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-consent-for-testing/true/consent-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
     })
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
     @DisableIf.Device(DeviceFormFactor.TABLET)
@@ -545,7 +529,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
                 + TestSurveyUtils.TEST_TRIGGER_ID_FOO,
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-consent-for-testing/true/consent-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT,
     })
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
     @DisableIf.Device(DeviceFormFactor.TABLET)
@@ -596,7 +579,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
     @Features.EnableFeatures({
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-consent-for-testing/true/consent-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT
     })
     @DisableFeatures({ChromeFeatureList.PRIVACY_SANDBOX_CCT_ADS_NOTICE_SURVEY})
     // TODO(crbug.com/391968140): Re-enable tests when supporting tablets
@@ -782,7 +764,6 @@ public class PrivacySandboxSurveyControllerIntegrationTest {
         ChromeFeatureList.PRIVACY_SANDBOX_SETTINGS_4
                 + ":force-show-consent-for-testing/true/consent-required/true"
                 + "/force-show-notice-row-for-testing/true/notice-required/true",
-        ChromeFeatureList.PRIVACY_SANDBOX_ADS_NOTICE_CCT
     })
     public void adsCctSurveyForControlSurveyNotShownWhenAdsNoticeCctFeatureEnabled() {
         mCustomTabActivityTestRule.startCustomTabActivityWithIntent(createMinimalCustomTabIntent());

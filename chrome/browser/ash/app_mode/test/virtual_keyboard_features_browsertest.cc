@@ -27,8 +27,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace ash {
+
 using kiosk::test::AutoLaunchKioskApp;
 using kiosk::test::CachePolicy;
+using kiosk::test::WaitKioskLaunched;
 
 namespace {
 
@@ -99,7 +101,6 @@ class VirtualKeyboardFeaturesTest
           std::tuple<KioskMixin::Config, TestParam>> {
  public:
   VirtualKeyboardFeaturesTest() = default;
-
   VirtualKeyboardFeaturesTest(const VirtualKeyboardFeaturesTest&) = delete;
   VirtualKeyboardFeaturesTest& operator=(const VirtualKeyboardFeaturesTest&) =
       delete;
@@ -116,7 +117,7 @@ class VirtualKeyboardFeaturesTest
 
   void SetUpOnMainThread() override {
     MixinBasedInProcessBrowserTest::SetUpOnMainThread();
-    ASSERT_TRUE(kiosk_.WaitSessionLaunched());
+    ASSERT_TRUE(WaitKioskLaunched());
   }
 
   const KioskMixin::Config& config() {

@@ -130,7 +130,7 @@ class MODULES_EXPORT MediaRecorderHandler final
                           base::TimeTicks timestamp) override;
   std::unique_ptr<media::VideoEncoderMetricsProvider>
   CreateVideoEncoderMetricsProvider() override;
-  void OnVideoEncodingError(const media::EncoderStatus& error_status) override;
+  void OnVideoEncodingError(media::EncoderStatus error_status) override;
   // AudioTrackRecorder::CallbackInterface overrides.
   void OnEncodedAudio(
       const media::AudioParameters& params,
@@ -162,6 +162,8 @@ class MODULES_EXPORT MediaRecorderHandler final
   void SetAudioFormatForTesting(const media::AudioParameters& params);
   void UpdateTrackLiveAndEnabled(const MediaStreamComponent& track,
                                  bool is_video);
+
+  void OnStarted();
 
   // Variant holding configured keyframe intervals.
   const KeyFrameRequestProcessor::Configuration key_frame_config_;

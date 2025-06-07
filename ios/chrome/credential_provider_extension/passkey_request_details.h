@@ -41,12 +41,19 @@
 // domain and username as the passkey request.
 - (BOOL)hasMatchingPassword:(NSArray<id<Credential>>*)credentials;
 
+// Returns whether a passkey from the excluded passkeys list is both in the
+// credentials list and is for the same rpId as the current request.
+- (BOOL)hasExcludedPasskey:(NSArray<id<Credential>>*)credentials;
+
 // A preference for whether the authenticator should attempt to verify that it
 // is being used by its owner.
 @property(nonatomic, readonly) BOOL userVerificationRequired;
 
 // The relying party identifier for this request.
 @property(nonatomic, readonly) NSString* relyingPartyIdentifier;
+
+// The user name for this request.
+@property(nonatomic, readonly) NSString* userName;
 
 // A list of allowed credential IDs for this request. An empty list means all
 // credentials are allowed.

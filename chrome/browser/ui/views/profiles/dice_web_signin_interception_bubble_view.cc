@@ -12,6 +12,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/not_fatal_until.h"
 #include "base/notreached.h"
 #include "base/strings/strcat.h"
 #include "base/time/time.h"
@@ -91,7 +92,8 @@ std::optional<std::u16string> InteractionTypeToIdentityPillAccessibilityLabel(
     WebSigninInterceptor::SigninInterceptionType interception_type) {
   switch (interception_type) {
     case WebSigninInterceptor::SigninInterceptionType::kChromeSignin:
-      if (switches::kInterceptBubblesDismissibleByAvatarButton.Get()) {
+      if (base::FeatureList::IsEnabled(
+              switches::kInterceptBubblesDismissibleByAvatarButton)) {
         return l10n_util::GetStringUTF16(
             IDS_AVATAR_BUTTON_INTERCEPT_BUBBLE_CHROME_SIGNIN_ACCESSIBILITY_LABEL);
       } else {
@@ -290,7 +292,7 @@ DiceWebSigninInterceptionBubbleView::DiceWebSigninInterceptionBubbleView(
       bubble_parameters_(bubble_parameters),
       callback_(std::move(callback)) {
   DCHECK(browser_);
-  DCHECK(callback_);
+  CHECK(callback_, base::NotFatalUntil::M138);
   set_close_on_deactivate(false);
 
   // Create the web view in the native bubble.
@@ -350,6 +352,14 @@ DiceWebSigninInterceptionBubbleView::GetHandle() {
 
 void DiceWebSigninInterceptionBubbleView::OnWebUIUserChoice(
     SigninInterceptionUserChoice user_choice) {
+  if (!callback_) {
+    // This may be called multiple times, or after some other user action.
+    // See https://crbug.com/401528621
+    // Ignore repeated calls, as the callback has already been called and the
+    // bubble is closing.
+    return;
+  }
+
   SigninInterceptionResult result;
   switch (user_choice) {
     case SigninInterceptionUserChoice::kAccept:
@@ -372,7 +382,7 @@ void DiceWebSigninInterceptionBubbleView::OnInterceptionResult(
 
   RecordInterceptionResult(bubble_parameters_, profile_, result);
 
-  ClearAvatarButtonEffects();
+  clear_avatar_button_effects_callback_.RunAndReset();
 
   std::move(callback_).Run(result);
   if (!accepted_) {
@@ -401,6 +411,14 @@ bool DiceWebSigninInterceptionBubbleView::HandleKeyboardEvent(
 
 void DiceWebSigninInterceptionBubbleView::Dismiss(
     SigninInterceptionDismissReason reason) {
+  if (!callback_) {
+    // The bubble may be dismissed multiple times, or dismissed after some other
+    // user action. See https://crbug.com/401528621
+    // Ignore repeated calls, as the callback has already been called and the
+    // bubble is closing.
+    return;
+  }
+
   RecordDismissReason(bubble_parameters_.interception_type, reason);
   OnInterceptionResult(SigninInterceptionResult::kDismissed);
 }
@@ -427,36 +445,27 @@ void DiceWebSigninInterceptionBubbleView::ApplyAvatarButtonEffects() {
   // resets the effects `ClearAvatarButtonEffects()`.
 
   AvatarToolbarButton* button = GetAvatarToolbarButton(*browser_);
-  // Avatar text behavior
-  // Adapt the identity pill, show the appropriate intercept text and
-  // highlight the button as long as the text is shown.
-  hide_avatar_text_callback_ = button->ShowExplicitText(
-      InterceptionTypeToIdentityPillText(bubble_parameters_.interception_type),
-      InteractionTypeToIdentityPillAccessibilityLabel(
-          bubble_parameters_.interception_type));
 
-  // Avatar Button action behavior
-  if (switches::kInterceptBubblesDismissibleByAvatarButton.Get()) {
-    reset_avatar_button_action_callback_ =
-        button->SetExplicitButtonAction(base::BindRepeating(
-            &DiceWebSigninInterceptionBubbleView::Dismiss,
-            weak_factory_.GetWeakPtr(),
-            /*reason=*/SigninInterceptionDismissReason::kIdentityPillPressed));
+  std::optional<base::RepeatingCallback<void(bool)>>
+      explicit_avatar_button_action;
+  if (base::FeatureList::IsEnabled(
+          switches::kInterceptBubblesDismissibleByAvatarButton)) {
+    explicit_avatar_button_action = base::IgnoreArgs<bool>(base::BindRepeating(
+        &DiceWebSigninInterceptionBubbleView::Dismiss,
+        weak_factory_.GetWeakPtr(),
+        /*reason=*/SigninInterceptionDismissReason::kIdentityPillPressed));
   } else if (IsChromeSignin()) {
     button->SetButtonActionDisabled(true);
   }
-}
 
-void DiceWebSigninInterceptionBubbleView::ClearAvatarButtonEffects() {
-  // Main logic described in the apply function.
-  // Changes done in this method should also be reflected in the method that
-  // applies the effects `ApplyAvatarButtonEffects()`.
-
-  // Avatar text behavior
-  hide_avatar_text_callback_.RunAndReset();
-
-  // Avatar Button action behavior
-  reset_avatar_button_action_callback_.RunAndReset();
+  // Adapt the identity pill, show the appropriate intercept text,
+  // highlight the button as long as the text is shown and override the
+  // button action (if needed).
+  clear_avatar_button_effects_callback_ = button->SetExplicitButtonState(
+      InterceptionTypeToIdentityPillText(bubble_parameters_.interception_type),
+      InteractionTypeToIdentityPillAccessibilityLabel(
+          bubble_parameters_.interception_type),
+      std::move(explicit_avatar_button_action));
 }
 
 // DiceWebSigninInterceptorDelegate --------------------------------------------

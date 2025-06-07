@@ -16,6 +16,7 @@
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/notreached.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -33,6 +34,7 @@
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/safe_browsing/content/browser/notification_content_detection/notification_content_detection_constants.h"
+#include "components/safe_browsing/core/common/features.h"
 #include "components/url_formatter/url_formatter.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -279,6 +281,66 @@ void NotificationPlatformBridgeAndroid::SetIsSuspiciousParameterForTesting(
   test_is_suspicious_value_ = is_suspicious;
 }
 
+void NotificationPlatformBridgeAndroid::OnReportNotificationAsSafe(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& java_object,
+    std::string& notification_id,
+    std::string& origin,
+    std::string& profile_id,
+    jboolean incognito) {
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  CHECK(profile_manager);
+
+  profile_manager->LoadProfile(
+      GetProfileBaseNameFromProfileId(profile_id), incognito,
+      base::BindOnce(&NotificationDisplayServiceImpl::ProfileLoadedCallback,
+                     NotificationOperation::kReportAsSafe,
+                     NotificationHandler::Type::WEB_PERSISTENT, GURL(origin),
+                     notification_id, std::nullopt /* action index */,
+                     std::nullopt /* reply */, std::nullopt /* by_user */,
+                     base::DoNothing()));
+}
+
+void NotificationPlatformBridgeAndroid::OnReportWarnedNotificationAsSpam(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& java_object,
+    std::string& notification_id,
+    std::string& origin,
+    std::string& profile_id,
+    jboolean incognito) {
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  CHECK(profile_manager);
+
+  profile_manager->LoadProfile(
+      GetProfileBaseNameFromProfileId(profile_id), incognito,
+      base::BindOnce(&NotificationDisplayServiceImpl::ProfileLoadedCallback,
+                     NotificationOperation::kReportWarnedAsSpam,
+                     NotificationHandler::Type::WEB_PERSISTENT, GURL(origin),
+                     notification_id, std::nullopt /* action index */,
+                     std::nullopt /* reply */, std::nullopt /* by_user */,
+                     base::DoNothing()));
+}
+
+void NotificationPlatformBridgeAndroid::OnReportUnwarnedNotificationAsSpam(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& java_object,
+    std::string& notification_id,
+    std::string& origin,
+    std::string& profile_id,
+    jboolean incognito) {
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  CHECK(profile_manager);
+
+  profile_manager->LoadProfile(
+      GetProfileBaseNameFromProfileId(profile_id), incognito,
+      base::BindOnce(&NotificationDisplayServiceImpl::ProfileLoadedCallback,
+                     NotificationOperation::kReportUnwarnedAsSpam,
+                     NotificationHandler::Type::WEB_PERSISTENT, GURL(origin),
+                     notification_id, std::nullopt /* action index */,
+                     std::nullopt /* reply */, std::nullopt /* by_user */,
+                     base::DoNothing()));
+}
+
 void NotificationPlatformBridgeAndroid::OnNotificationAlwaysAllowFromOrigin(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& java_object,
@@ -437,17 +499,35 @@ void NotificationPlatformBridgeAndroid::AlwaysAllowNotifications(
 
   // Send a new notification to tell the user that Chrome will no longer hide
   // notifications from `url`.
+  std::u16string notification_title =
+      base::FeatureList::IsEnabled(
+          safe_browsing::kReportNotificationContentDetectionData)
+          ? l10n_util::GetStringFUTF16(
+                IDS_CHROME_NO_LONGER_SHOW_WARNINGS_NOTIFICATION_TITLE_NEW,
+                url_formatter::FormatUrl(
+                    url,
+                    url_formatter::kFormatUrlOmitDefaults |
+                        url_formatter::kFormatUrlOmitHTTPS |
+                        url_formatter::kFormatUrlOmitTrivialSubdomains |
+                        url_formatter::kFormatUrlTrimAfterHost,
+                    base::UnescapeRule::SPACES, nullptr, nullptr, nullptr))
+          : l10n_util::GetStringUTF16(
+                IDS_CHROME_NO_LONGER_SHOW_WARNINGS_NOTIFICATION_TITLE);
+  std::u16string notification_body =
+      base::FeatureList::IsEnabled(
+          safe_browsing::kReportNotificationContentDetectionData)
+          ? l10n_util::GetStringUTF16(
+                IDS_CHROME_NO_LONGER_SHOW_WARNINGS_NOTIFICATION_BODY_NEW)
+          : l10n_util::GetStringUTF16(
+                IDS_CHROME_NO_LONGER_SHOW_WARNINGS_NOTIFICATION_BODY);
   message_center::Notification notification(
       message_center::NOTIFICATION_TYPE_SIMPLE,
       base::NumberToString(
           PlatformNotificationServiceFactory::GetForProfile(profile)
               ->ReadNextPersistentNotificationId()),
-      l10n_util::GetStringUTF16(
-          IDS_CHROME_NO_LONGER_SHOW_WARNINGS_NOTIFICATION_TITLE),
-      l10n_util::GetStringUTF16(
-          IDS_CHROME_NO_LONGER_SHOW_WARNINGS_NOTIFICATION_BODY),
-      ui::ImageModel(), std::u16string(), url, message_center::NotifierId(),
-      message_center::RichNotificationData(), nullptr);
+      notification_title, notification_body, ui::ImageModel(), std::u16string(),
+      url, message_center::NotifierId(), message_center::RichNotificationData(),
+      nullptr);
   // Create new `PersistentNotificationMetadata`, where `is_suspicious` is set
   // to false by default. Set `skip_ua_buttons` to true so the confirmation
   // notification does not restore any UA buttons.

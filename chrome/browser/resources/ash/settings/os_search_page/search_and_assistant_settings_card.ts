@@ -23,7 +23,7 @@ import {assert} from 'chrome://resources/js/assert.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {DeepLinkingMixin} from '../common/deep_linking_mixin.js';
-import {isAssistantAllowed, isLobsterSettingsToggleVisible, isMagicBoostFeatureEnabled, isMagicBoostNoticeBannerVisible, isQuickAnswersSupported, isScannerSettingsToggleVisible, isSunfishSettingsToggleVisible} from '../common/load_time_booleans.js';
+import {isAssistantAllowed, isLobsterSettingsToggleVisible, isMagicBoostFeatureEnabled, isMagicBoostNoticeBannerVisible, isQuickAnswersSupported, isScannerSettingsToggleVisible} from '../common/load_time_booleans.js';
 import {RouteOriginMixin} from '../common/route_origin_mixin.js';
 import type {PrefsState} from '../common/types.js';
 import {Setting} from '../mojom-webui/setting.mojom-webui.js';
@@ -82,14 +82,6 @@ export class SearchAndAssistantSettingsCardElement extends
         },
       },
 
-      isSunfishSettingsToggleVisible_: {
-        type: Boolean,
-        readOnly: true,
-        value: () => {
-          return isSunfishSettingsToggleVisible();
-        },
-      },
-
       isScannerSettingsToggleVisible_: {
         type: Boolean,
         readOnly: true,
@@ -98,10 +90,28 @@ export class SearchAndAssistantSettingsCardElement extends
         },
       },
 
+      isLobsterAllowedByEnterprisePolicy_: {
+        type: Boolean,
+        computed: 'isEnterprisePolicyAllowed_(' +
+            'prefs.settings.lobster.enterprise_settings.value)',
+      },
+
       isScannerAllowedByEnterprisePolicy_: {
         type: Boolean,
         computed: 'isEnterprisePolicyAllowed_(' +
             'prefs.ash.scanner.enterprise_policy_allowed.value)',
+      },
+
+      isHmrAllowedByEnterprisePolicy_: {
+        type: Boolean,
+        computed: 'isEnterprisePolicyAllowed_(' +
+            'prefs.settings.managed.help_me_read.value)',
+      },
+
+      isHmwAllowedByEnterprisePolicy_: {
+        type: Boolean,
+        computed: 'isEnterprisePolicyAllowed_(' +
+            'prefs.settings.managed.help_me_write.value)',
       },
 
       enterprisePolicyToggleUncheckedValues_: {
@@ -117,30 +127,32 @@ export class SearchAndAssistantSettingsCardElement extends
           return isAssistantAllowed();
         },
       },
-
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kPreferredSearchEngine,
-          Setting.kMagicBoostOnOff,
-          Setting.kMahiOnOff,
-          Setting.kShowOrca,
-          Setting.kLobsterOnOff,
-          Setting.kSunfishOnOff,
-          Setting.kScannerOnOff,
-        ]),
-      },
     };
   }
 
   prefs: PrefsState;
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kPreferredSearchEngine,
+    Setting.kMagicBoostOnOff,
+    Setting.kMahiOnOff,
+    Setting.kShowOrca,
+    Setting.kLobsterOnOff,
+    Setting.kSunfishOnOff,
+    Setting.kScannerOnOff,
+  ]);
+
+  private readonly enterprisePolicyToggleUncheckedValues_: number[];
   private isAssistantAllowed_: boolean;
-  private isQuickAnswersSupported_: boolean;
+  private isHmrAllowedByEnterprisePolicy_: boolean;
+  private isHmwAllowedByEnterprisePolicy_: boolean;
+  private isLobsterAllowedByEnterprisePolicy_: boolean;
+  private readonly isLobsterSettingsToggleVisible_: boolean;
+  private readonly isMagicBoostNoticeBannerVisible_: boolean;
   private isMagicBoostFeatureEnabled_: boolean;
-  private readonly isSunfishSettingsToggleVisible_: boolean;
+  private isQuickAnswersSupported_: boolean;
+  private isScannerAllowedByEnterprisePolicy_: boolean;
   private readonly isScannerSettingsToggleVisible_: boolean;
 
   constructor() {

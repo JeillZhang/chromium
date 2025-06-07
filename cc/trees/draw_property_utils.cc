@@ -16,10 +16,12 @@
 #include "base/containers/adapters.h"
 #include "base/containers/flat_map.h"
 #include "base/containers/stack.h"
-#include "base/debug/alias.h"
+#include "base/debug/crash_logging.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notreached.h"
+#include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "cc/base/features.h"
 #include "cc/base/math_util.h"
@@ -508,8 +510,19 @@ bool LayerNeedsUpdate(LayerType* layer,
   if (!layer_is_drawn)
     return false;
 
-  if (!layer->draws_content() || layer->bounds().IsEmpty())
+  if (!layer->draws_content()) {
     return false;
+  }
+
+  if (layer->bounds().IsEmpty()) {
+    // Reference filters can contribute to visual output even if the layer has
+    // no other content.
+    if (!property_trees->effect_tree()
+             .Node(layer->effect_tree_index())
+             ->filters.HasReferenceFilter()) {
+      return false;
+    }
+  }
 
   // The layer should not be drawn if (1) it is not double-sided and (2) the
   // back of the layer is known to be facing the screen.
@@ -667,11 +680,11 @@ void SetSurfaceDrawTransform(const PropertyTrees* property_trees,
     // pixel alignment to align it to screen pixels.
     render_surface_transform.PostTranslate(
         render_surface->render_target()->pixel_alignment_offset());
-    // TODO(crbug.com/396190933): For now a render surface with view
-    // transition handles pixel alignment by itself, but that doesn't
-    // work in some cases.
-    if (!render_surface->OwningEffectNode()
-             ->view_transition_element_resource_id.IsValid()) {
+    if (effect_node->render_surface_reason !=
+            RenderSurfaceReason::k2DScaleTransformWithCompositedDescendants &&
+        (base::FeatureList::IsEnabled(
+             features::kViewTransitionFloorTransform) ||
+         !effect_node->view_transition_element_resource_id.IsValid())) {
       if (auto offset = draw_property_utils::PixelAlignmentOffset(
               render_surface->screen_space_transform(),
               render_surface_transform)) {
@@ -796,9 +809,18 @@ std::pair<gfx::MaskFilterInfo, bool> GetMaskFilterInfoPair(
   if (!node || !found_mask_filter_info)
     return kEmptyMaskFilterInfoPair;
 
+  int transform_id = node->transform_id;
+  std::optional<int> clip_id = node->mask_filter_info.clip_id();
+  if (clip_id) {
+    const ClipTree* clip_tree = &property_trees->clip_tree();
+    const ClipNode* clip_node = clip_tree->Node(clip_id.value());
+    transform_id = clip_node->transform_id;
+  }
+
   gfx::Transform to_target;
-  if (!property_trees->GetToTarget(node->transform_id, target_id, &to_target))
+  if (!property_trees->GetToTarget(transform_id, target_id, &to_target)) {
     return kEmptyMaskFilterInfoPair;
+  }
 
   auto result =
       std::make_pair(node->mask_filter_info, node->is_fast_rounded_corner);
@@ -938,9 +960,13 @@ void ComputeSurfaceDrawProperties(PropertyTrees* property_trees,
   SetSurfaceClipRect(property_trees, render_surface);
 }
 
-void AddSurfaceToRenderSurfaceList(RenderSurfaceImpl* render_surface,
-                                   RenderSurfaceList* render_surface_list,
-                                   PropertyTrees* property_trees) {
+void AddSurfaceToRenderSurfaceList(
+    RenderSurfaceImpl* render_surface,
+    RenderSurfaceList* render_surface_list,
+    PropertyTrees* property_trees,
+    const base::flat_set<blink::ViewTransitionToken>&
+        capture_view_transition_tokens,
+    std::vector<RenderSurfaceImpl*>& view_transition_capture_surfaces) {
   // |render_surface| must appear after its target, so first make sure its
   // target is in the list.
   RenderSurfaceImpl* target = render_surface->render_target();
@@ -961,8 +987,9 @@ void AddSurfaceToRenderSurfaceList(RenderSurfaceImpl* render_surface,
     CHECK(vt_target);
 
     if (!vt_target->is_render_surface_list_member()) {
-      AddSurfaceToRenderSurfaceList(vt_target, render_surface_list,
-                                    property_trees);
+      AddSurfaceToRenderSurfaceList(
+          vt_target, render_surface_list, property_trees,
+          capture_view_transition_tokens, view_transition_capture_surfaces);
     }
   }
 
@@ -970,11 +997,19 @@ void AddSurfaceToRenderSurfaceList(RenderSurfaceImpl* render_surface,
   // changes the render list in an incorrect way due to CC assumptions about how
   // surfaces and view-transition captures interact.
   if (!is_root && !target->is_render_surface_list_member()) {
-    AddSurfaceToRenderSurfaceList(target, render_surface_list, property_trees);
+    AddSurfaceToRenderSurfaceList(target, render_surface_list, property_trees,
+                                  capture_view_transition_tokens,
+                                  view_transition_capture_surfaces);
   }
   render_surface->ClearAccumulatedContentRect();
   render_surface_list->push_back(render_surface);
   render_surface->set_is_render_surface_list_member(true);
+  if (render_surface->ViewTransitionElementResourceId().MatchesToken(
+          capture_view_transition_tokens)) {
+    // The capture surface itself has contributions.
+    render_surface->set_has_view_transition_capture_contributions(true);
+    view_transition_capture_surfaces.push_back(render_surface);
+  }
   if (is_root) {
     // The root surface does not contribute to any other surface, it has no
     // target.
@@ -1007,9 +1042,9 @@ void AddSurfaceToRenderSurfaceList(RenderSurfaceImpl* render_surface,
   const bool allow_skipping_render_pass = base::FeatureList::IsEnabled(
       features::kAllowUndamagedNonrootRenderPassToSkip);
   const FilterOperations& filters = render_surface->Filters();
-  bool is_occlusion_immune =
-      render_surface->CopyOfOutputRequired() || filters.HasReferenceFilter() ||
-      filters.HasFilterThatMovesPixels() || allow_skipping_render_pass;
+  bool is_occlusion_immune = render_surface->CopyOfOutputRequired() ||
+                             filters.HasFilterThatMovesPixels() ||
+                             allow_skipping_render_pass;
 
   // Setting |is_occlusion_immune| leads to an empty
   // |occlusion_from_outside_target| for a non-root render_surface. It does not
@@ -1134,6 +1169,8 @@ void AdjustLayerDrawPropertiesForPixelAlignmentOffset(
 void ComputeInitialRenderSurfaceList(
     LayerTreeImpl* layer_tree_impl,
     PropertyTrees* property_trees,
+    const base::flat_set<blink::ViewTransitionToken>&
+        capture_view_transition_tokens,
     RenderSurfaceList* render_surface_list,
     std::map<viz::ViewTransitionElementResourceId,
              ViewTransitionContentLayerImpl*>& view_transition_content_layers) {
@@ -1142,15 +1179,19 @@ void ComputeInitialRenderSurfaceList(
        i < static_cast<int>(effect_tree.size()); ++i) {
     if (RenderSurfaceImpl* render_surface = effect_tree.GetRenderSurface(i)) {
       render_surface->set_is_render_surface_list_member(false);
+      render_surface->set_has_view_transition_capture_contributions(false);
       render_surface->reset_num_contributors();
     }
   }
+
+  std::vector<RenderSurfaceImpl*> view_transition_capture_surfaces;
 
   RenderSurfaceImpl* root_surface =
       effect_tree.GetRenderSurface(kContentsRootPropertyNodeId);
   // The root surface always gets added to the render surface  list.
   AddSurfaceToRenderSurfaceList(root_surface, render_surface_list,
-                                property_trees);
+                                property_trees, capture_view_transition_tokens,
+                                view_transition_capture_surfaces);
 
   // For all non-skipped layers, add their target to the render surface list if
   // it's not already been added, and add their content rect to the target
@@ -1197,17 +1238,21 @@ void ComputeInitialRenderSurfaceList(
 
     RenderSurfaceImpl* render_target = layer->render_target();
     if (!render_target->is_render_surface_list_member()) {
-      AddSurfaceToRenderSurfaceList(render_target, render_surface_list,
-                                    property_trees);
+      AddSurfaceToRenderSurfaceList(
+          render_target, render_surface_list, property_trees,
+          capture_view_transition_tokens, view_transition_capture_surfaces);
     }
 
     AdjustLayerDrawPropertiesForPixelAlignmentOffset(layer, property_trees);
     layer->set_contributes_to_drawn_render_surface(true);
 
     // The layer contributes its drawable content rect to its render target.
-    render_target->AccumulateContentRectFromContributingLayer(layer);
+    render_target->AccumulateContentRectFromContributingLayer(
+        layer, capture_view_transition_tokens);
     render_target->increment_num_contributors();
-    if (!layer->ViewTransitionResourceId().IsValid()) {
+    if (!layer->ViewTransitionResourceId().IsValid() ||
+        layer->ViewTransitionResourceId().MatchesToken(
+            capture_view_transition_tokens)) {
       continue;
     }
     auto* view_transition_content_layer =
@@ -1217,9 +1262,36 @@ void ComputeInitialRenderSurfaceList(
     view_transition_content_layers[layer->ViewTransitionResourceId()] =
         view_transition_content_layer;
   }
+
+  // Mark any intermediate surfaces as having view transition contributions.
+  for (RenderSurfaceImpl* render_surface : view_transition_capture_surfaces) {
+    CHECK(render_surface->IsViewTransitionElement());
+    CHECK(render_surface->has_view_transition_capture_contributions());
+    // Find an ancestor that is also a view transition capture element.
+    RenderSurfaceImpl* view_transition_target = render_surface->render_target();
+    while (
+        view_transition_target != root_surface &&
+        !view_transition_target->has_view_transition_capture_contributions()) {
+      view_transition_target = view_transition_target->render_target();
+    }
+
+    // If we found a `view_transition_target` which has view transition capture
+    // contributions, then mark the chain between render_surface and the
+    // `view_transition_target` as having contributions.
+    if (view_transition_target->has_view_transition_capture_contributions()) {
+      RenderSurfaceImpl* intermediate_target = render_surface->render_target();
+      while (intermediate_target != view_transition_target) {
+        intermediate_target->set_has_view_transition_capture_contributions(
+            true);
+        intermediate_target = intermediate_target->render_target();
+      }
+    }
+  }
 }
 
 void ComputeSurfaceContentRects(
+    const base::flat_set<blink::ViewTransitionToken>&
+        capture_view_transition_tokens,
     PropertyTrees* property_trees,
     RenderSurfaceList* render_surface_list,
     int max_texture_size,
@@ -1248,7 +1320,7 @@ void ComputeSurfaceContentRects(
     RenderSurfaceImpl* render_target = render_surface->render_target();
     DCHECK(render_target->is_render_surface_list_member());
     render_target->AccumulateContentRectFromContributingRenderSurface(
-        render_surface);
+        render_surface, capture_view_transition_tokens);
     render_target->increment_num_contributors();
 
     // Collect the content rects for view transition capture surfaces, and
@@ -1261,16 +1333,22 @@ void ComputeSurfaceContentRects(
       continue;
     }
 
-    auto unscaled_content_rect =
-        render_surface->SurfaceScale().InverseOrIdentity().MapRect(
-            render_surface->content_rect());
+    // We use the view_transition_capture_content_rect if we're in the capture
+    // phase and content_rect otherwise, which is important for live captures.
+    const auto& output_rect =
+        render_surface->ViewTransitionElementResourceId().MatchesToken(
+            capture_view_transition_tokens)
+            ? render_surface->view_transition_capture_content_rect()
+            : render_surface->content_rect();
+    auto unscaled_output_rect =
+        render_surface->SurfaceScale().InverseOrIdentity().MapRect(output_rect);
 
     view_transition_content_rects.emplace_back(
-        view_transition_id, gfx::RectF(unscaled_content_rect));
+        view_transition_id, gfx::RectF(unscaled_output_rect));
 
     if (view_transition_content_layers.contains(view_transition_id)) {
       view_transition_content_layers.at(view_transition_id)
-          ->SetOriginatingSurfaceContentRect(unscaled_content_rect);
+          ->SetOriginatingSurfaceContentRect(unscaled_output_rect);
     }
   }
 }
@@ -1290,7 +1368,8 @@ void ComputeListOfNonEmptySurfaces(LayerTreeImpl* layer_tree_impl,
   for (RenderSurfaceImpl* surface : *initial_surface_list) {
     bool is_root = surface->EffectTreeIndex() == kContentsRootPropertyNodeId;
     RenderSurfaceImpl* target_surface = surface->render_target();
-    if (!is_root && (surface->content_rect().IsEmpty() ||
+    if (!is_root && ((surface->content_rect().IsEmpty() &&
+                      !surface->Filters().HasReferenceFilter()) ||
                      (!target_surface->is_render_surface_list_member() &&
                       !surface->CopyOfOutputRequired()))) {
       surface->set_is_render_surface_list_member(false);
@@ -1344,11 +1423,14 @@ void CalculateRenderSurfaceLayerList(LayerTreeImpl* layer_tree_impl,
   // First compute a list that might include surfaces that later turn out to
   // have an empty content rect. After surface content rects are computed,
   // produce a final list that omits empty surfaces.
-  ComputeInitialRenderSurfaceList(layer_tree_impl, property_trees,
-                                  &initial_render_surface_list,
-                                  view_transition_content_layers);
-  ComputeSurfaceContentRects(property_trees, &initial_render_surface_list,
-                             max_texture_size, view_transition_content_layers,
+  const auto& capture_view_transition_tokens =
+      layer_tree_impl->GetCaptureViewTransitionTokens();
+  ComputeInitialRenderSurfaceList(
+      layer_tree_impl, property_trees, capture_view_transition_tokens,
+      &initial_render_surface_list, view_transition_content_layers);
+  ComputeSurfaceContentRects(capture_view_transition_tokens, property_trees,
+                             &initial_render_surface_list, max_texture_size,
+                             view_transition_content_layers,
                              view_transition_content_rects);
   ComputeListOfNonEmptySurfaces(layer_tree_impl, property_trees,
                                 &initial_render_surface_list,
@@ -1446,10 +1528,13 @@ void UpdateElasticOverscroll(
   // overscroll amount.
   gfx::PointF overscroll_offset =
       gfx::PointAtOffsetFromOrigin(elastic_overscroll);
-  if (overscroll_elasticity_transform_node->scroll_offset == overscroll_offset)
+  if (overscroll_elasticity_transform_node->scroll_offset() ==
+      overscroll_offset) {
     return;
+  }
 
-  overscroll_elasticity_transform_node->scroll_offset = overscroll_offset;
+  overscroll_elasticity_transform_node->SetScrollOffset(
+      overscroll_offset, DamageReason::kUntracked);
 
   overscroll_elasticity_transform_node->needs_local_transform_update = true;
   property_trees->transform_tree_mutable().set_needs_update(true);
@@ -1498,13 +1583,17 @@ bool LayerShouldBeSkippedForDrawPropertiesComputation(
   const TransformTree& transform_tree = property_trees->transform_tree();
   const EffectTree& effect_tree = property_trees->effect_tree();
   int effect_tree_index = layer->effect_tree_index();
+  CHECK(effect_tree_index != kInvalidPropertyNodeId);
   const EffectNode* effect_node = effect_tree.Node(effect_tree_index);
+  // TODO(crbug.com/390906639): Remove after bug is fixed.
+  if (!effect_node) {
+    SCOPED_CRASH_KEY_STRING32("cc", "Effect tree index",
+                              base::NumberToString(effect_tree_index));
+    base::debug::DumpWithoutCrashing();
+  }
 
   if (effect_node->HasRenderSurface() && effect_node->subtree_has_copy_request)
     return false;
-
-  // TODO(crbug.com/390906639): Remove after bug is fixed.
-  base::debug::Alias(&effect_tree_index);
 
   // Skip if the node's subtree is hidden and no need to cache, or capture.
   if (effect_node->subtree_hidden && !effect_node->cache_render_surface &&

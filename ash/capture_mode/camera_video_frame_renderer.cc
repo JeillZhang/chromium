@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/capture_mode/camera_video_frame_renderer.h"
 
 #include <cmath>
@@ -78,7 +73,6 @@ void CameraVideoFrameRenderer::Initialize() {
   video_resource_updater_ = std::make_unique<media::VideoResourceUpdater>(
       context_provider_.get(), &client_resource_provider_,
       layer_tree_frame_sink_->shared_image_interface(),
-      /*use_stream_video_draw_quad=*/false,
       /*use_gpu_memory_buffer_resources=*/false, max_texture_size);
 
   video_frame_handler_.StartHandlingFrames(/*delegate=*/this);

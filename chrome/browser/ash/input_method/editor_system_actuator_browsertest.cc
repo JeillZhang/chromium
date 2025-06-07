@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ash/input_method/editor_system_actuator.h"
 
+#include "base/strings/string_util.h"
 #include "chrome/browser/ash/accessibility/accessibility_manager.h"
 #include "chrome/browser/ash/accessibility/speech_monitor.h"
 #include "chrome/browser/ash/input_method/editor_geolocation_mock_provider.h"
@@ -37,7 +38,7 @@ class EditorSystemActuatorAccessibilityTest : public InProcessBrowserTest {
     // Disable earcons which can be annoying in tests.
     sm_.Call([this]() {
       ImportJSModuleForChromeVox("ChromeVox",
-                                 "/chromevox/background/chromevox.js");
+                                 "/chromevox/mv2/background/chromevox.js");
       DisableEarcons();
     });
   }

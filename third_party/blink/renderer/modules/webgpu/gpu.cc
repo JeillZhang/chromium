@@ -89,9 +89,7 @@ wgpu::RequestAdapterOptions AsDawnType(
   wgpu::RequestAdapterOptions dawn_options;
   dawn_options.forceFallbackAdapter = webgpu_options->forceFallbackAdapter();
 
-  if (webgpu_options->compatibilityMode()) {
-    dawn_options.featureLevel = wgpu::FeatureLevel::Compatibility;
-  } else if (RuntimeEnabledFeatures::WebGPUFeatureLevelEnabled()) {
+  if (RuntimeEnabledFeatures::WebGPUFeatureLevelEnabled()) {
     dawn_options.featureLevel =
         AsDawnFeatureLevel(webgpu_options->featureLevel());
   }
@@ -215,7 +213,7 @@ void GPU::OnRequestAdapterCallback(
     // there are error messages.
     case wgpu::RequestAdapterStatus::Unavailable:
     case wgpu::RequestAdapterStatus::Error:
-    case wgpu::RequestAdapterStatus::InstanceDropped:
+    case wgpu::RequestAdapterStatus::CallbackCancelled:
       break;
   }
   if (error_message.length != 0) {
@@ -392,7 +390,7 @@ void GPU::RequestAdapterImpl(
 #endif
 
   if (options->featureLevel() == "compatibility" &&
-      !RuntimeEnabledFeatures::WebGPUExperimentalFeaturesEnabled()) {
+      !RuntimeEnabledFeatures::WebGPUCompatibilityModeEnabled()) {
     AddConsoleWarning(
         execution_context,
         "Beware! featureLevel was set to \"compatibility\", but this request "
@@ -400,15 +398,6 @@ void GPU::RequestAdapterImpl(
         "enforced as soon as Chromium ships Compatibility Mode, potentially "
         "breaking this webpage. See "
         "https://github.com/gpuweb/gpuweb/issues/4266");
-  }
-
-  if (options->compatibilityMode() &&
-      options->featureLevel() != "compatibility") {
-    AddConsoleWarning(execution_context,
-                      "The \"compatibilityMode\" option is deprecated. Use "
-                      "\"featureLevel\": \"compatibility\" instead. See "
-                      "https://gpuweb.github.io/gpuweb/"
-                      "#dom-gpurequestadapteroptions-featurelevel");
   }
 
   wgpu::RequestAdapterOptions dawn_options = AsDawnType(options);
@@ -449,10 +438,10 @@ ScriptPromise<IDLNullable<GPUAdapter>> GPU::requestAdapter(
 }
 
 V8GPUTextureFormat GPU::getPreferredCanvasFormat() {
-  return FromDawnEnum(preferred_canvas_format());
+  return FromDawnEnum(GetPreferredCanvasFormat());
 }
 
-wgpu::TextureFormat GPU::preferred_canvas_format() {
+wgpu::TextureFormat GPU::GetPreferredCanvasFormat() {
 #if BUILDFLAG(IS_ANDROID)
   return wgpu::TextureFormat::RGBA8Unorm;
 #else

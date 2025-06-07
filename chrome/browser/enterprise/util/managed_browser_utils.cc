@@ -18,7 +18,6 @@
 #include "chrome/browser/enterprise/browser_management/management_service_factory.h"
 #include "chrome/browser/image_fetcher/image_fetcher_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -213,20 +212,23 @@ void SetUserAcceptedAccountManagement(Profile* profile, bool accepted) {
     return;
   // The updated consent screen also ask the user for consent to share device
   // signals.
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS)
   if (accepted && base::FeatureList::IsEnabled(
                       features::kEnterpriseUpdatedProfileCreationScreen)) {
     profile->GetPrefs()->SetBoolean(
         device_signals::prefs::kDeviceSignalsPermanentConsentReceived, true);
   }
+#endif
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   ProfileAttributesEntry* entry =
       profile_manager->GetProfileAttributesStorage()
           .GetProfileAttributesWithPath(profile->GetPath());
   if (entry) {
-    entry->SetUserAcceptedAccountManagement(accepted);
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-    entry->SetEnterpriseProfileLabel(GetEnterpriseLabel(profile));
+    SetEnterpriseProfileLabel(profile);
 #endif
+    entry->SetUserAcceptedAccountManagement(accepted);
   }
 }
 
@@ -239,6 +241,25 @@ bool UserAcceptedAccountManagement(Profile* profile) {
           ->GetProfileAttributesStorage()
           .GetProfileAttributesWithPath(profile->GetPath());
   return entry && entry->UserAcceptedAccountManagement();
+}
+
+void SetEnterpriseProfileLabel(Profile* profile) {
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  if (!profile_manager) {
+    // Can be null in tests.
+    return;
+  }
+  ProfileAttributesEntry* entry =
+      profile_manager->GetProfileAttributesStorage()
+          .GetProfileAttributesWithPath(profile->GetPath());
+  if (!entry) {
+    return;
+  }
+  std::string label = IsEnterpriseBadgingEnabledForToolbar(profile)
+                          ? profile->GetPrefs()->GetString(
+                                prefs::kEnterpriseCustomLabelForProfile)
+                          : std::string();
+  entry->SetEnterpriseProfileLabel(base::UTF8ToUTF16(label));
 }
 
 bool ProfileCanBeManaged(Profile* profile) {
@@ -269,7 +290,7 @@ bool IsEnterpriseBadgingEnabledForToolbar(Profile* profile) {
 }
 
 bool CanShowEnterpriseBadgingForMenu(Profile* profile) {
-  if (!UserAcceptedAccountManagement(profile) && !profile->IsChild()) {
+  if (!CanShowEnterpriseProfileUI(profile) && !profile->IsChild()) {
     return false;
   }
   if (base::FeatureList::IsEnabled(
@@ -290,7 +311,7 @@ bool CanShowEnterpriseBadgingForMenu(Profile* profile) {
 }
 
 bool CanShowEnterpriseBadgingForAvatar(Profile* profile) {
-  if (!UserAcceptedAccountManagement(profile)) {
+  if (!CanShowEnterpriseProfileUI(profile)) {
     return false;
   }
   if (!IsEnterpriseBadgingEnabledForToolbar(profile)) {
@@ -308,6 +329,52 @@ bool CanShowEnterpriseBadgingForAvatar(Profile* profile) {
   return !profile->GetPrefs()
               ->GetString(prefs::kEnterpriseCustomLabelForProfile)
               .empty();
+}
+
+bool CanShowEnterpriseProfileUI(Profile* profile) {
+  if (profile->IsOffTheRecord()) {
+    return false;
+  }
+  if (!UserAcceptedAccountManagement(profile) ||
+      !policy::ManagementServiceFactory::GetForProfile(profile)
+           ->IsAccountManaged()) {
+    return false;
+  }
+  return true;
+}
+
+bool CanShowEnterpriseBadgingForNTPFooter(Profile* profile) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
+  auto* management_service =
+      policy::ManagementServiceFactory::GetForProfile(profile);
+  // Return false if the browser is not managed or managed by a low trusted
+  // authority (i.e. EnterpriseManagementAuthority::COMPUTER_LOCAL).
+  if (!management_service->IsBrowserManaged() ||
+      management_service->GetManagementAuthorityTrustworthiness() <=
+          policy::ManagementAuthorityTrustworthiness::LOW) {
+    return false;
+  }
+  if (!g_browser_process->local_state()->GetBoolean(
+          prefs::kNTPFooterManagementNoticeEnabled)) {
+    return false;
+  }
+  if (base::FeatureList::IsEnabled(features::kEnterpriseBadgingForNtpFooter)) {
+    return true;
+  }
+  if (!base::FeatureList::IsEnabled(features::kNTPFooterBadgingPolicies)) {
+    return false;
+  }
+
+  return !g_browser_process->local_state()
+              ->GetString(prefs::kEnterpriseCustomLabelForBrowser)
+              .empty() ||
+         !g_browser_process->local_state()
+              ->GetString(prefs::kEnterpriseLogoUrlForBrowser)
+              .empty();
+#else
+  return false;
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
 }
 
 bool IsKnownConsumerDomain(const std::string& email_domain) {
@@ -356,7 +423,10 @@ jboolean JNI_ManagedBrowserUtils_IsOnSecurityEventEnterpriseConnectorEnabled(
   DCHECK(profile);
 
   if (!base::FeatureList::IsEnabled(
-          enterprise_connectors::kEnterpriseSecurityEventReportingOnAndroid)) {
+          enterprise_connectors::kEnterpriseSecurityEventReportingOnAndroid) &&
+      !base::FeatureList::IsEnabled(
+          enterprise_connectors::
+              kEnterpriseUrlFilteringEventReportingOnAndroid)) {
     return false;
   }
 
@@ -375,11 +445,6 @@ jboolean JNI_ManagedBrowserUtils_IsEnterpriseRealTimeUrlCheckModeEnabled(
     JNIEnv* env,
     Profile* profile) {
   DCHECK(profile);
-
-  if (!base::FeatureList::IsEnabled(
-           safe_browsing::kEnterpriseRealTimeUrlCheckOnAndroid)) {
-    return false;
-  }
 
   auto* service =
       enterprise_connectors::ConnectorsServiceFactory::GetForBrowserContext(

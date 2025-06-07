@@ -8,7 +8,6 @@
 #import <UIKit/UIKit.h>
 
 @class AccountErrorUIInfo;
-struct ManagementState;
 
 // Identity data source for AccountMenuViewController instance, to
 // manage the model.
@@ -29,8 +28,8 @@ struct ManagementState;
 // The user full name of the primary account. May be nil.
 @property(nonatomic, readonly) NSString* primaryAccountUserFullName;
 
-// The management state of this browser and profile.
-@property(nonatomic, readonly) ManagementState managementState;
+// The description showed when the browser is managed.
+@property(nonatomic, readonly) NSString* managementDescription;
 
 // The full name for the user with `gaiaID`.
 - (NSString*)nameForGaiaID:(NSString*)gaiaID;

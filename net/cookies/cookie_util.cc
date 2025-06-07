@@ -2,13 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "net/cookies/cookie_util.h"
 
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -22,6 +18,7 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
@@ -36,13 +33,14 @@
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/schemeful_site.h"
 #include "net/base/url_util.h"
+#include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_access_delegate.h"
+#include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_inclusion_status.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_setting_override.h"
-#include "net/cookies/cookie_switches.h"
 #include "net/cookies/parsed_cookie.h"
 #include "net/first_party_sets/first_party_set_metadata.h"
 #include "net/first_party_sets/first_party_sets_cache_filter.h"
@@ -111,7 +109,9 @@ bool HasValidHostPrefixAttributes(const GURL& url,
                                   bool secure,
                                   const std::string& domain,
                                   const std::string& path) {
-  if (!secure || !url.SchemeIsCryptographic() || path != "/") {
+  if (!secure ||
+      ProvisionalAccessScheme(url) == CookieAccessScheme::kNonCryptographic ||
+      path != "/") {
     return false;
   }
   return domain.empty() || (url.HostIsIPAddress() && url.host() == domain);
@@ -309,17 +309,25 @@ enum class StorageAccessNetRequestKind {
   // The request had the `kStorageAccessGrantEligible` override, and was
   // same-origin.
   kSameOrigin = 0,
-  // The request had the `kStorageAccessGrantEligible` override, and was
+  // Deprecated: The request had the `kStorageAccessGrantEligible` override, and
+  // was
   // cross-origin, same-site.
-  kCrossOriginSameSite = 1,
+  // kCrossOriginSameSite = 1,
+
   // The request had the `kStorageAccessGrantEligible` override, and was
   // cross-site.
   kCrossSite = 2,
-  kMaxValue = kCrossSite
+  // The request had the `kStorageAccessGrantEligible` override, and was
+  // cross-origin, same-site, and included credentials.
+  kCrossOriginSameSiteCredentialsIncluded = 3,
+  // The request had the `kStorageAccessGrantEligible` override, and was
+  // cross-origin, same-site, but did not include credentials.
+  kCrossOriginSameSiteCredentialsNotIncluded = 4,
+  kMaxValue = kCrossOriginSameSiteCredentialsNotIncluded
 };
 
 void RecordStorageAccessNetRequestMetric(StorageAccessNetRequestKind kind) {
-  base::UmaHistogramEnumeration("Net.HttpJob.StorageAccessNetRequest", kind);
+  base::UmaHistogramEnumeration("Net.HttpJob.StorageAccessNetRequest2", kind);
 }
 
 }  // namespace
@@ -387,13 +395,29 @@ std::optional<std::string> GetCookieDomainWithString(
   // exists. It should be treated as a host cookie.
   if (domain_string.empty() || (is_host_ip && domain_matches_host)) {
     std::string result;
-    if (url.SchemeIsHTTPOrHTTPS() || url.SchemeIsWSOrWSS()) {
+    if (url.IsStandard()) {
       result = url_host;
     } else {
-      // If the URL uses an unknown scheme, we should ensure the host has been
-      // canonicalized.
+      // TODO(crbug.com/403967933): Investigate how GetCookieDomainWithString
+      // is called for non-special URLs. There is no standard for canonicalizing
+      // an opaque hostname of non-special URLs. We need to call
+      // CanonicalizeHost for non-special URLs to handle cases like:
+      // - `git://HOST` => `host`. We should also investigate whether it's
+      // correct to use the host of the `url` parameter, or if we should be
+      // using the domain from the parsed cookie instead.
       url::CanonHostInfo ignored;
       result = CanonicalizeHost(url_host, &ignored);
+
+      // The canonicalized result of an opaque hostname can have a leading dot
+      // which requires special handling, e.g. `git://%2ehost` => `.host`.
+      if (!result.empty() && result[0] == '.') {
+        return std::nullopt;
+      }
+
+      if (result.empty() && !url_host.empty()) {
+        // Reject non-special domains we fail to canonicalize.
+        return std::nullopt;
+      }
     }
     // TODO(crbug.com/40271909): Once empty label support is implemented we can
     // CHECK our assumptions here. For now, we DCHECK as DUMP_WILL_BE_CHECK is
@@ -470,9 +494,20 @@ std::optional<std::string> GetCookieDomainWithString(
 // An average cookie expiration will look something like this:
 //   Sat, 15-Apr-17 21:01:22 GMT
 base::Time ParseCookieExpirationTime(const std::string& time_string) {
-  static const char* const kMonths[] = {
-    "jan", "feb", "mar", "apr", "may", "jun",
-    "jul", "aug", "sep", "oct", "nov", "dec" };
+  static constexpr auto kMonths = std::to_array<std::string_view>({
+      "jan",
+      "feb",
+      "mar",
+      "apr",
+      "may",
+      "jun",
+      "jul",
+      "aug",
+      "sep",
+      "oct",
+      "nov",
+      "dec",
+  });
   // We want to be pretty liberal, and support most non-ascii and non-digit
   // characters as a delimiter.  We can't treat : as a delimiter, because it
   // is the delimiter for hh:mm:ss, and we want to keep this field together.
@@ -501,8 +536,7 @@ base::Time ParseCookieExpirationTime(const std::string& time_string) {
       if (!found_month) {
         for (size_t i = 0; i < std::size(kMonths); ++i) {
           // Match prefix, so we could match January, etc
-          if (base::StartsWith(token,
-                               UNSAFE_TODO(std::string_view(kMonths[i], 3)),
+          if (base::StartsWith(token, kMonths[i],
                                base::CompareCase::INSENSITIVE_ASCII)) {
             exploded.month = static_cast<int>(i) + 1;
             found_month = true;
@@ -522,12 +556,12 @@ base::Time ParseCookieExpirationTime(const std::string& time_string) {
     } else if (token.find(':') != std::string::npos) {
       if (!found_time &&
 #ifdef COMPILER_MSVC
-          sscanf_s(
+          UNSAFE_TODO(sscanf_s(
 #else
-          sscanf(
+          UNSAFE_TODO(sscanf(
 #endif
-                 token.c_str(), "%2u:%2u:%2u", &exploded.hour,
-                 &exploded.minute, &exploded.second) == 3) {
+              token.c_str(), "%2u:%2u:%2u", &exploded.hour, &exploded.minute,
+              &exploded.second)) == 3) {
         found_time = true;
       } else {
         // We should only ever encounter one time-like thing.  If we're here,
@@ -747,7 +781,8 @@ bool IsCookiePrefixValid(CookiePrefix prefix,
                          const std::string& domain,
                          const std::string& path) {
   if (prefix == COOKIE_PREFIX_SECURE) {
-    return secure && url.SchemeIsCryptographic();
+    return secure && ProvisionalAccessScheme(url) !=
+                         CookieAccessScheme::kNonCryptographic;
   }
   if (prefix == COOKIE_PREFIX_HOST) {
     return HasValidHostPrefixAttributes(url, secure, domain, path);
@@ -1022,10 +1057,6 @@ bool IsTimeLimitedInsecureCookiesEnabled() {
          base::FeatureList::IsEnabled(features::kTimeLimitedInsecureCookies);
 }
 
-bool IsSchemefulSameSiteEnabled() {
-  return base::FeatureList::IsEnabled(features::kSchemefulSameSite);
-}
-
 std::optional<
     std::pair<FirstPartySetMetadata, FirstPartySetsCacheFilter::MatchInfo>>
 ComputeFirstPartySetMetadataMaybeAsync(
@@ -1126,36 +1157,27 @@ NET_EXPORT bool IsForceThirdPartyCookieBlockingEnabled() {
          base::FeatureList::IsEnabled(features::kThirdPartyStoragePartitioning);
 }
 
-bool PartitionedCookiesDisabledByCommandLine() {
-  const base::CommandLine* command_line =
-      base::CommandLine::ForCurrentProcess();
-  if (!command_line) {
-    return false;
-  }
-  return command_line->HasSwitch(kDisablePartitionedCookiesSwitch);
-}
-
 bool ShouldAddInitialStorageAccessApiOverride(
     const GURL& url,
     StorageAccessApiStatus api_status,
     base::optional_ref<const url::Origin> request_initiator,
-    bool emit_metrics) {
+    bool emit_metrics,
+    bool credentials_mode_include) {
   if (api_status != StorageAccessApiStatus::kAccessViaAPI ||
       !request_initiator) {
     return false;
   }
 
+  const url::Origin origin = url::Origin::Create(url);
+
   using enum StorageAccessNetRequestKind;
   StorageAccessNetRequestKind kind = kCrossSite;
-  if (request_initiator->IsSameOriginWith(url)) {
+  if (request_initiator->IsSameOriginWith(origin)) {
     kind = kSameOrigin;
-  } else {
-    SchemefulSite request_site(url.SchemeIsHTTPOrHTTPS()
-                                   ? url
-                                   : ChangeWebSocketSchemeToHttpScheme(url));
-    if (SchemefulSite(request_initiator.value()) == request_site) {
-      kind = kCrossOriginSameSite;
-    }
+  } else if (SchemefulSite::IsSameSite(request_initiator.value(), origin)) {
+    kind = credentials_mode_include
+               ? kCrossOriginSameSiteCredentialsIncluded
+               : kCrossOriginSameSiteCredentialsNotIncluded;
   }
   if (emit_metrics) {
     RecordStorageAccessNetRequestMetric(kind);

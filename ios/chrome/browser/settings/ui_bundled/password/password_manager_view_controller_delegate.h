@@ -7,16 +7,12 @@
 
 #import <Foundation/Foundation.h>
 
-#include <vector>
+#import <vector>
 
 namespace password_manager {
 class AffiliatedGroup;
 struct CredentialUIEntry;
 }  // namespace password_manager
-
-namespace password_manager {
-struct CredentialUIEntry;
-}
 
 // Delegate for `PasswordManagerViewController`.
 @protocol PasswordManagerViewControllerDelegate

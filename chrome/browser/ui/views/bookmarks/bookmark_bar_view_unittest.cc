@@ -19,6 +19,7 @@
 #include "chrome/browser/bookmarks/bookmark_merged_surface_service.h"
 #include "chrome/browser/bookmarks/bookmark_merged_surface_service_factory.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
+#include "chrome/browser/bookmarks/bookmark_test_helpers.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
 #include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/profiles/profile.h"
@@ -42,7 +43,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/search_engines/template_url_service_client.h"
-#include "components/sync/base/features.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom.h"
@@ -79,6 +80,9 @@ class BookmarkBarViewBaseTest : public ChromeViewsTestBase {
         BookmarkMergedSurfaceServiceFactory::GetInstance(),
         BookmarkMergedSurfaceServiceFactory::GetDefaultFactory());
     profile_ = profile_builder.Build();
+
+    BookmarkMergedSurfaceServiceFactory::GetForProfile(profile_.get())
+        ->LoadForTesting({});
 
     Browser::CreateParams params(profile(), true);
     params.window = &browser_window_;
@@ -213,7 +217,7 @@ class BookmarkBarViewTest : public BookmarkBarViewBaseTest {
 
  private:
   base::test::ScopedFeatureList features_{
-      syncer::kSyncEnableBookmarksInTransportMode};
+      switches::kSyncEnableBookmarksInTransportMode};
   std::unique_ptr<BookmarkBarView> bookmark_bar_view_;
 };
 
@@ -237,6 +241,7 @@ class BookmarkBarViewInWidgetTest : public BookmarkBarViewBaseTest {
   }
 
   void TearDown() override {
+    bookmark_bar_view_ = nullptr;
     widget_.reset();
 
     BookmarkBarViewBaseTest::TearDown();
@@ -248,7 +253,7 @@ class BookmarkBarViewInWidgetTest : public BookmarkBarViewBaseTest {
 
  private:
   std::unique_ptr<views::Widget> widget_;
-  raw_ptr<BookmarkBarView, DanglingUntriaged> bookmark_bar_view_ = nullptr;
+  raw_ptr<BookmarkBarView> bookmark_bar_view_ = nullptr;
 };
 
 // Verify that in instant extended mode the visibility of the apps shortcut
@@ -805,6 +810,76 @@ TEST_F(BookmarkBarViewTest, MAYBE_AccessibleRoleDescription) {
   EXPECT_EQ(
       data.GetStringAttribute(ax::mojom::StringAttribute::kRoleDescription),
       l10n_util::GetStringUTF8(IDS_ACCNAME_BOOKMARK_BUTTON_ROLE_DESCRIPTION));
+}
+
+// This mock is used for method call counting. It redirects the call to the real
+// implementation.
+class BookmarkBarViewWithCounter : public BookmarkBarView {
+ public:
+  explicit BookmarkBarViewWithCounter(Browser* browser)
+      : BookmarkBarView(browser, nullptr) {}
+
+  size_t GetSchedulePaintCount() const { return schedule_paint_count_; }
+
+ protected:
+  void OnDidSchedulePaint(const gfx::Rect& r) override {
+    BookmarkBarView::OnDidSchedulePaint(r);
+    ++schedule_paint_count_;
+  }
+
+  size_t schedule_paint_count_ = 0;
+};
+
+// Test implementation using `BookmarkBarViewWithCounter`.
+class BookmarkBarViewWithCounterTest : public BookmarkBarViewBaseTest {
+ public:
+  // BookmarkBarViewBaseTest
+  void SetUp() override {
+    BookmarkBarViewBaseTest::SetUp();
+
+    WaitForBookmarkModelToLoad();
+    bookmark_bar_view_with_counter_ =
+        std::make_unique<BookmarkBarViewWithCounter>(browser());
+  }
+
+  BookmarkBarView* bookmark_bar_view() override {
+    return bookmark_bar_view_with_counter_.get();
+  }
+  BookmarkBarViewWithCounter* bookmark_bar_view_with_counter() {
+    return static_cast<BookmarkBarViewWithCounter*>(bookmark_bar_view());
+  }
+
+ private:
+  std::unique_ptr<BookmarkBarViewWithCounter> bookmark_bar_view_with_counter_;
+};
+
+TEST_F(BookmarkBarViewWithCounterTest, PaintCountWithIndividualAddition) {
+  ASSERT_EQ(bookmark_bar_view_with_counter()->GetSchedulePaintCount(), 0u);
+
+  const bookmarks::BookmarkNode* bookmark_bar = model()->bookmark_bar_node();
+  model()->AddFolder(bookmark_bar, 0, u"f1");
+  ASSERT_EQ(bookmark_bar_view_with_counter()->GetSchedulePaintCount(), 1u);
+
+  model()->AddFolder(bookmark_bar, 0, u"f2");
+  ASSERT_EQ(bookmark_bar_view_with_counter()->GetSchedulePaintCount(), 2u);
+
+  model()->AddFolder(bookmark_bar, 0, u"f3");
+  ASSERT_EQ(bookmark_bar_view_with_counter()->GetSchedulePaintCount(), 3u);
+}
+
+TEST_F(BookmarkBarViewWithCounterTest, PaintCountWithExtensiveChangesAddition) {
+  ASSERT_EQ(bookmark_bar_view_with_counter()->GetSchedulePaintCount(), 0u);
+
+  model()->BeginExtensiveChanges();
+  const bookmarks::BookmarkNode* bookmark_bar = model()->bookmark_bar_node();
+  model()->AddFolder(bookmark_bar, 0, u"f1");
+  model()->AddFolder(bookmark_bar, 0, u"f2");
+  model()->AddFolder(bookmark_bar, 0, u"f3");
+
+  EXPECT_EQ(bookmark_bar_view_with_counter()->GetSchedulePaintCount(), 0u);
+
+  model()->EndExtensiveChanges();
+  EXPECT_EQ(bookmark_bar_view_with_counter()->GetSchedulePaintCount(), 1u);
 }
 
 }  // namespace

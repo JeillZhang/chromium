@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "base/containers/contains.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -1264,9 +1266,17 @@ IN_PROC_BROWSER_TEST_P(
 
 // Same as UrlTypedWithoutScheme_BadHttps_Redirected_ShouldFallback, but the
 // redirect ends up on a net error instead of an SSL error.
+// TODO(crbug.com/402833505): Flaky on Linux.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_UrlTypedWithoutScheme_NetError_Redirected_ShouldFallback \
+  DISABLED_UrlTypedWithoutScheme_NetError_Redirected_ShouldFallback
+#else
+#define MAYBE_UrlTypedWithoutScheme_NetError_Redirected_ShouldFallback \
+  UrlTypedWithoutScheme_NetError_Redirected_ShouldFallback
+#endif
 IN_PROC_BROWSER_TEST_P(
     TypedNavigationUpgradeThrottleRedirectBrowserTest,
-    UrlTypedWithoutScheme_NetError_Redirected_ShouldFallback) {
+    MAYBE_UrlTypedWithoutScheme_NetError_Redirected_ShouldFallback) {
   if (!IsFeatureEnabled()) {
     return;
   }

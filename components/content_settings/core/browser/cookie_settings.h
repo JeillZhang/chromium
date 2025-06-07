@@ -25,7 +25,6 @@
 #include "components/privacy_sandbox/tracking_protection_settings.h"
 #include "components/privacy_sandbox/tracking_protection_settings_observer.h"
 #include "net/cookies/cookie_setting_override.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
 class GURL;
 class PrefService;
@@ -45,6 +44,7 @@ namespace content_settings {
 // This enum needs to be kept in sync with the enum of the same name in
 // browser/resources/settings/site_settings/constants.js.
 // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.content_settings
+// LINT.IfChange(CookieControlsMode)
 enum class CookieControlsMode {
   kOff = 0,
   kBlockThirdParty = 1,
@@ -52,6 +52,7 @@ enum class CookieControlsMode {
   kLimited = 3,
   kMaxValue = kLimited,
 };
+// LINT.ThenChange(//tools/metrics/histograms/metadata/privacy/enums.xml:CookieControlsMode, //chrome/browser/resources/settings/site_settings/constants.ts:CookieControlsMode)
 
 // Default value for |extension_scheme|.
 const char kDummyExtensionScheme[] = ":no-extension-scheme:";

@@ -221,14 +221,6 @@ class PLATFORM_EXPORT FetchParameters {
     return is_potentially_lcp_influencer_;
   }
 
-  void SetHasPreloadedResponseCandidate(bool flag) {
-    has_preloaded_response_candidate_ = flag;
-  }
-
-  bool HasPreloadedResponseCandidate() const {
-    return has_preloaded_response_candidate_;
-  }
-
   void Trace(Visitor* visitor) const { visitor->Trace(options_); }
 
  private:
@@ -251,7 +243,6 @@ class PLATFORM_EXPORT FetchParameters {
       RenderBlockingBehavior::kUnset;
   bool is_potentially_lcp_element_ = false;
   bool is_potentially_lcp_influencer_ = false;
-  bool has_preloaded_response_candidate_ = false;
 };
 
 }  // namespace blink

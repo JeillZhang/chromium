@@ -6,9 +6,11 @@
 
 #include <memory>
 #include <utility>
+#include <variant>
 
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/to_string.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/sequenced_task_runner.h"
@@ -213,7 +215,7 @@ class ScriptStreamingTest : public testing::Test {
     resource_ = ScriptResource::Fetch(
         params, fetcher, resource_client_, isolate,
         ScriptResource::kAllowStreaming, kNoCompileHintsProducer,
-        kNoCompileHintsConsumer, v8_compile_hints::MagicCommentMode::kNever);
+        kNoCompileHintsConsumer, v8_compile_hints::MagicCommentMode::kNone);
     resource_->AddClient(resource_client_, task_runner.get());
 
     ResourceResponse response(url_);
@@ -884,14 +886,14 @@ class DummyBackgroundResponseProcessorClient
       base::span<const char> expected_body,
       std::optional<base::span<const uint8_t>> expected_cached_metadata) {
     EXPECT_TRUE(head_);
-    if (absl::holds_alternative<SegmentedBuffer>(body_)) {
-      const SegmentedBuffer& raw_body = absl::get<SegmentedBuffer>(body_);
+    if (std::holds_alternative<SegmentedBuffer>(body_)) {
+      const SegmentedBuffer& raw_body = std::get<SegmentedBuffer>(body_);
       const Vector<char> concatenated_body = raw_body.CopyAs<Vector<char>>();
       EXPECT_THAT(concatenated_body, testing::ElementsAreArray(expected_body));
     } else {
-      CHECK(absl::holds_alternative<mojo::ScopedDataPipeConsumerHandle>(body_));
+      CHECK(std::holds_alternative<mojo::ScopedDataPipeConsumerHandle>(body_));
       mojo::ScopedDataPipeConsumerHandle& handle =
-          absl::get<mojo::ScopedDataPipeConsumerHandle>(body_);
+          std::get<mojo::ScopedDataPipeConsumerHandle>(body_);
       std::string text;
       EXPECT_TRUE(mojo::BlockingCopyToString(std::move(handle), &text));
       EXPECT_THAT(text, testing::ElementsAreArray(expected_body));
@@ -1033,7 +1035,7 @@ class BackgroundResourceScriptStreamerTest : public testing::Test {
     resource_ = ScriptResource::Fetch(
         params, fetcher, resource_client_, isolate,
         ScriptResource::kAllowStreaming, kNoCompileHintsProducer,
-        v8_compile_hints_consumer, v8_compile_hints::MagicCommentMode::kNever);
+        v8_compile_hints_consumer, v8_compile_hints::MagicCommentMode::kNone);
     resource_->AddClient(resource_client_, main_thread_task_runner.get());
 
     CHECK(dummy_loader_factory->load_started());

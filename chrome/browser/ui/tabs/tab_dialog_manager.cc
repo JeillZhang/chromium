@@ -13,14 +13,15 @@
 #include "base/scoped_observation.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
-#include "chrome/browser/ui/tabs/public/tab_interface.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "components/back_forward_cache/back_forward_cache_disable.h"
+#include "components/tabs/public/tab_interface.h"
 #include "components/web_modal/modal_dialog_host.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/navigation_handle.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "ui/base/base_window.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/point.h"
@@ -96,10 +97,13 @@ gfx::Rect GetModalDialogBounds(views::Widget* widget,
   gfx::Point position =
       host_browser_window->GetWebContentsModalDialogHostForWindow()
           ->GetDialogPosition(size);
-  // Align the first row of pixels inside the border. This is the apparent top
-  // of the dialog.
-  position.set_y(position.y() -
-                 widget->non_client_view()->frame_view()->GetInsets().top());
+
+  if (widget->non_client_view()) {
+    // Align the first row of pixels inside the border. This is the apparent top
+    // of the dialog.
+    position.set_y(position.y() -
+                  widget->non_client_view()->frame_view()->GetInsets().top());
+  }
 
   gfx::Rect dialog_bounds(position, size);
 
@@ -148,11 +152,18 @@ void UpdateModalDialogPosition(views::Widget* widget,
     return;
   }
 
+  auto* host_view_widget = host_browser_window->TopContainer()->GetWidget();
+
+  // If the host view's widget is minimized, don't update any positions.
+  if (host_view_widget && host_view_widget->IsMinimized()) {
+    return;
+  }
+
   // If the host view is not backed by a Views::Widget, just update the widget
   // size. This can happen on MacViews under the Cocoa browser where the window
   // modal dialogs are displayed as sheets, and their position is managed by a
   // ConstrainedWindowSheetController instance.
-  if (!host_browser_window->TopContainer()->GetWidget()) {
+  if (!host_view_widget) {
     widget->SetSize(size);
     return;
   }
@@ -177,19 +188,26 @@ void ConfigureDesiredBoundsDelegate(
       widget, host_browser_window));
 }
 
+// The dialog widget should be visible if and only if the tab is in the
+// foreground and activated, and the host window is not minimized.
+bool GetDialogWidgetVisibility(bool activated, bool minimized) {
+  return activated && !minimized;
+}
+
 }  // namespace
 
 // Applies positioning changes from the browser window widget to the tracked
-// Widget.
+// Widget. This class relies on the assumption that it is scoped to the lifetime
+// of a single tab, in a single browser, and that it will be destroyed
+// before the tab moves between browser windows.
 class BrowserWindowWidgetObserver : public views::WidgetObserver {
  public:
-  BrowserWindowWidgetObserver(BrowserWindowInterface* host_browser_window,
+  BrowserWindowWidgetObserver(TabInterface* tab_interface,
                               views::Widget* dialog_widget)
-      : host_(host_browser_window), dialog_widget_(dialog_widget) {
-    CHECK(host_);
+      : tab_(tab_interface), dialog_widget_(dialog_widget) {
     CHECK(dialog_widget_);
     browser_window_widget_observation_.Observe(
-        host_browser_window->TopContainer()->GetWidget());
+        tab_->GetBrowserWindowInterface()->TopContainer()->GetWidget());
   }
   BrowserWindowWidgetObserver(const BrowserWindowWidgetObserver&) = delete;
   BrowserWindowWidgetObserver& operator=(const BrowserWindowWidgetObserver&) =
@@ -199,17 +217,22 @@ class BrowserWindowWidgetObserver : public views::WidgetObserver {
   // WidgetObserver:
   void OnWidgetBoundsChanged(views::Widget* widget,
                              const gfx::Rect& new_bounds) override {
-    CHECK(host_);
     if (dialog_widget_->IsVisible()) {
       UpdateModalDialogPosition(
-          dialog_widget_, host_,
+          dialog_widget_, tab_->GetBrowserWindowInterface(),
           dialog_widget_->GetRootView()->GetPreferredSize({}));
     }
   }
 
+  void OnWidgetShowStateChanged(views::Widget* widget) override {
+    bool minimized = widget->IsMinimized();
+    bool activated = tab_->IsActivated();
+    dialog_widget_->SetVisible(GetDialogWidgetVisibility(activated, minimized));
+  }
+
  private:
-  // The modal host for the widget that owns this observer.
-  raw_ptr<BrowserWindowInterface> host_;
+  // The tab that owns this dialog manager.
+  raw_ptr<TabInterface> tab_;
 
   // The widget being tracked.
   raw_ptr<views::Widget> dialog_widget_;
@@ -241,13 +264,13 @@ std::unique_ptr<views::Widget> TabDialogManager::CreateTabScopedDialog(
       tab_interface_->GetBrowserWindowInterface()->TopContainer()->GetWidget();
   CHECK(host);
   return base::WrapUnique(views::DialogDelegate::CreateDialogWidget(
-      delegate, nullptr, host->GetNativeView()));
+      delegate, gfx::NativeWindow(), host->GetNativeView()));
 }
 
-void TabDialogManager::ShowDialogAndBlockTabInteraction(views::Widget* widget) {
-  CHECK(tab_interface_->CanShowModalUI());
-  CHECK(!widget_);
+void TabDialogManager::ShowDialog(views::Widget* widget,
+                                  std::unique_ptr<Params> params) {
   widget_ = widget;
+  params_ = std::move(params);
   auto* browser_window_interface = tab_interface_->GetBrowserWindowInterface();
   ConfigureDesiredBoundsDelegate(widget_.get(), browser_window_interface);
   UpdateModalDialogPosition(widget_.get(), browser_window_interface,
@@ -256,26 +279,29 @@ void TabDialogManager::ShowDialogAndBlockTabInteraction(views::Widget* widget) {
       views::kWidgetIdentifierKey,
       const_cast<void*>(
           constrained_window::kConstrainedWindowWidgetIdentifier));
-  scoped_ignore_input_events_ =
-      tab_interface_->GetContents()->IgnoreInputEvents(std::nullopt);
-  tab_interface_->GetBrowserWindowInterface()->SetWebContentsBlocked(
-      tab_interface_->GetContents(), /*blocked=*/true);
+  if (params_->disable_input) {
+    scoped_ignore_input_events_ =
+        tab_interface_->GetContents()->IgnoreInputEvents(std::nullopt);
+    tab_interface_->GetBrowserWindowInterface()->SetWebContentsBlocked(
+        tab_interface_->GetContents(), /*blocked=*/true);
+  }
   tab_dialog_widget_observer_ =
       std::make_unique<TabDialogWidgetObserver>(this, widget_.get());
   showing_modal_ui_ = tab_interface_->ShowModalUI();
-  if (tab_interface_->IsActivated()) {
-    browser_window_widget_observer_ =
-        std::make_unique<BrowserWindowWidgetObserver>(browser_window_interface,
-                                                      widget_.get());
-    widget_->Show();
-  }
+  browser_window_widget_observer_ =
+      std::make_unique<BrowserWindowWidgetObserver>(tab_interface_,
+                                                    widget_.get());
+  bool minimized = browser_window_interface->GetWindow()->IsMinimized();
+  bool activated = tab_interface_->IsActivated();
+  widget_->Show();
+  widget_->SetVisible(GetDialogWidgetVisibility(activated, minimized));
 }
 
-std::unique_ptr<views::Widget>
-TabDialogManager::CreateShowDialogAndBlockTabInteraction(
-    views::DialogDelegate* delegate) {
+std::unique_ptr<views::Widget> TabDialogManager::CreateAndShowDialog(
+    views::DialogDelegate* delegate,
+    std::unique_ptr<Params> params) {
   auto widget = CreateTabScopedDialog(delegate);
-  ShowDialogAndBlockTabInteraction(widget.get());
+  ShowDialog(widget.get(), std::move(params));
   return widget;
 }
 
@@ -306,28 +332,32 @@ void TabDialogManager::WidgetDestroyed(views::Widget* widget) {
 
 void TabDialogManager::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
+  if (!widget_) {
+    return;
+  }
+
   if (!navigation_handle->IsInPrimaryMainFrame() ||
       !navigation_handle->HasCommitted()) {
     return;
   }
 
-  if (widget_) {
-    // Disable BFCache for the page which had any modal dialog open.
-    // This prevents the page which has print, confirm form resubmission, http
-    // password dialogs, etc. to go in to BFCache. We can't simply dismiss the
-    // dialogs in the case, since they are requesting meaningful input from the
-    // user that affects the loading or display of the content.
-    content::BackForwardCache::DisableForRenderFrameHost(
-        navigation_handle->GetPreviousRenderFrameHostId(),
-        back_forward_cache::DisabledReason(
-            back_forward_cache::DisabledReasonId::kModalDialog));
-  }
+  // Disable BFCache for the page which had any modal dialog open.
+  // This prevents the page which has print, confirm form resubmission, http
+  // password dialogs, etc. to go in to BFCache. We can't simply dismiss the
+  // dialogs in the case, since they are requesting meaningful input from the
+  // user that affects the loading or display of the content.
+  content::BackForwardCache::DisableForRenderFrameHost(
+      navigation_handle->GetPreviousRenderFrameHostId(),
+      back_forward_cache::DisabledReason(
+          back_forward_cache::DisabledReasonId::kModalDialog));
 
   // Close modal dialogs if necessary.
-  if (!net::registry_controlled_domains::SameDomainOrHost(
+  bool different_site_navigation =
+      !net::registry_controlled_domains::SameDomainOrHost(
           navigation_handle->GetPreviousPrimaryMainFrameURL(),
           navigation_handle->GetURL(),
-          net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES)) {
+          net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+  if (params_->close_on_navigate && different_site_navigation) {
     CloseDialog();
   }
 }
@@ -338,8 +368,8 @@ void TabDialogManager::TabDidEnterForeground(TabInterface* tab_interface) {
                               tab_interface_->GetBrowserWindowInterface(),
                               widget_->GetRootView()->GetPreferredSize({}));
     browser_window_widget_observer_ =
-        std::make_unique<BrowserWindowWidgetObserver>(
-            tab_interface_->GetBrowserWindowInterface(), widget_.get());
+        std::make_unique<BrowserWindowWidgetObserver>(tab_interface_,
+                                                      widget_.get());
     // Check if the tab was detached and dragged to a new browser window. This
     // ensures the widget is properly reparented.
     auto* parent_widget =
@@ -347,7 +377,8 @@ void TabDialogManager::TabDidEnterForeground(TabInterface* tab_interface) {
     if (parent_widget != widget_->parent()) {
       widget_->Reparent(parent_widget);
     }
-    widget_->SetVisible(true);
+    widget_->SetVisible(
+        GetDialogWidgetVisibility(/*activated=*/true, widget_->IsMinimized()));
   }
 }
 
@@ -360,7 +391,9 @@ void TabDialogManager::TabWillEnterBackground(TabInterface* tab_interface) {
 
 void TabDialogManager::TabWillDetach(TabInterface* tab_interface,
                                      TabInterface::DetachReason reason) {
-  CloseDialog();
+  if (widget_ && params_->close_on_detach) {
+    CloseDialog();
+  }
 }
 
 }  // namespace tabs

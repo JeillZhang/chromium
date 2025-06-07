@@ -19,6 +19,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_urlpatterninit_usvstring.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
+#include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
@@ -154,6 +155,37 @@ MATCHER_P(ReferrerPolicyIs,
   return arg->referrer_policy() == policy;
 }
 
+MATCHER_P(HasRuleLevelTag, tag, "has rule level tag " + std::string(tag)) {
+  return arg->rule_tag() == tag;
+}
+
+MATCHER_P(HasTags, tags, "") {
+  if (arg->tags.size() != tags.size()) {
+    return false;
+  }
+
+  for (auto& tag : tags) {
+    bool found = false;
+    for (auto& tag_ : arg->tags) {
+      if (tag_ == tag) {
+        found = true;
+        break;
+      }
+    }
+
+    if (!found) {
+      return false;
+    }
+  }
+  return true;
+}
+
+MATCHER_P(HasRulesetLevelTag,
+          tag,
+          "has ruleset level tag " + std::string(tag)) {
+  return arg->ruleset_tag() == tag;
+}
+
 class SpeculationRuleSetTest : public ::testing::Test {
  public:
   SpeculationRuleSetTest()
@@ -205,7 +237,6 @@ class SpeculationRuleSetTest : public ::testing::Test {
   }
 
  private:
-  ScopedPrerender2ForTest enable_prerender2_{true};
   test::TaskEnvironment task_environment_;
   Persistent<ExecutionContext> execution_context_;
 };
@@ -967,9 +998,13 @@ TEST_F(SpeculationRuleSetTest, PropagatesAllRulesToBrowser) {
   }
 }
 
-// Tests that prefetch rules are ignored unless SpeculationRulesPrefetchProxy
-// is enabled.
-TEST_F(SpeculationRuleSetTest, PrerenderIgnorePrefetchRules) {
+// Tests that prefetch_with_subresources rules are ignored unless
+// SpeculationRulesPrefetchWithSubresources is enabled.
+TEST_F(SpeculationRuleSetTest, PrerenderIgnorePrefetchWithSubresourcesRules) {
+  // Overwrite the feature flag.
+  ScopedSpeculationRulesPrefetchWithSubresourcesForTest
+      enable_prefetch_with_subresources{false};
+
   DummyPageHolder page_holder;
   StubSpeculationHost speculation_host;
   const String speculation_script =
@@ -990,33 +1025,6 @@ TEST_F(SpeculationRuleSetTest, PrerenderIgnorePrefetchRules) {
   EXPECT_FALSE(std::ranges::any_of(candidates, [](const auto& candidate) {
     return candidate->action ==
            mojom::blink::SpeculationAction::kPrefetchWithSubresources;
-  }));
-}
-
-// Tests that prerender rules are ignored unless Prerender2 is enabled.
-TEST_F(SpeculationRuleSetTest, PrefetchIgnorePrerenderRules) {
-  // Overwrite the kPrerender2 flag.
-  ScopedPrerender2ForTest enable_prerender{false};
-
-  DummyPageHolder page_holder;
-  StubSpeculationHost speculation_host;
-  const String speculation_script =
-      R"({"prefetch": [
-           {"source": "list",
-            "urls": ["https://example.com/foo", "https://example.com/bar"],
-            "requires": ["anonymous-client-ip-when-cross-origin"]}
-         ],
-          "prerender": [
-           {"source": "list", "urls": ["https://example.com/prerender"]}
-         ]
-         })";
-  PropagateRulesToStubSpeculationHost(page_holder, speculation_host,
-                                      speculation_script);
-
-  const auto& candidates = speculation_host.candidates();
-  EXPECT_EQ(candidates.size(), 2u);
-  EXPECT_FALSE(std::ranges::any_of(candidates, [](const auto& candidate) {
-    return candidate->action == mojom::blink::SpeculationAction::kPrerender;
   }));
 }
 
@@ -2099,20 +2107,22 @@ TEST_F(DocumentRulesTest, EvaluateHrefMatches) {
   EXPECT_TRUE(pass_fail->Matches(*link));
 }
 
-HTMLAnchorElement* AddAnchor(ContainerNode& parent, const String& href) {
-  HTMLAnchorElement* link =
-      MakeGarbageCollected<HTMLAnchorElement>(parent.GetDocument());
+template <typename T = HTMLAnchorElement>
+T* AddAnchor(ContainerNode& parent,
+             const String& href,
+             const Vector<std::pair<const QualifiedName&, AtomicString>>&
+                 attributes = {}) {
+  auto* link = MakeGarbageCollected<T>(parent.GetDocument());
   link->setHref(href);
+  for (const auto& [attribute, value] : attributes) {
+    link->setAttribute(attribute, value);
+  }
   parent.appendChild(link);
   return link;
 }
 
 HTMLAreaElement* AddAreaElement(ContainerNode& parent, const String& href) {
-  HTMLAreaElement* area =
-      MakeGarbageCollected<HTMLAreaElement>(parent.GetDocument());
-  area->setHref(href);
-  parent.appendChild(area);
-  return area;
+  return AddAnchor<HTMLAreaElement>(parent, href);
 }
 
 // Tests that speculation candidates based of existing links are reported after
@@ -4415,6 +4425,189 @@ TEST_F(SpeculationRuleSetTest, ImplicitSource) {
                           MatchesListOfURLs("https://example.com/bar")));
 }
 
+TEST_F(SpeculationRuleSetTest, ParseValidTag) {
+  auto* rule_set = CreateRuleSet(
+      R"({
+        "tag": "example/foo",
+        "prefetch": [{
+          "where": {"href_matches": "/foo"}
+        }, {
+          "where": {"href_matches": "/bar"}
+        }]
+      })",
+      KURL("https://example.com/"), execution_context());
+  EXPECT_THAT(rule_set->prefetch_rules(),
+              ElementsAre(HasRulesetLevelTag("example/foo"),
+                          HasRulesetLevelTag("example/foo")));
+
+  // \"null\" string is valid.
+  auto* rule_set2 = CreateRuleSet(
+      R"({
+        "tag": "null",
+        "prefetch": [{
+          "where": {"href_matches": "/foo"}
+        }]
+      })",
+      KURL("https://example.com/"), execution_context());
+  EXPECT_THAT(rule_set2->prefetch_rules(),
+              ElementsAre(HasRulesetLevelTag("null")));
+
+  // Verify rule level tag and an empty string as tag.
+  auto* rule_set3 = CreateRuleSet(
+      R"({
+        "prefetch": [{
+          "tag": "",
+          "where": {"href_matches": "/foo"}
+        }]
+      })",
+      KURL("https://example.com/"), execution_context());
+  EXPECT_THAT(rule_set3->prefetch_rules(), ElementsAre(HasRuleLevelTag("")));
+}
+
+TEST_F(SpeculationRuleSetTest, InvalidTag) {
+  auto* rule_set = CreateRuleSet(
+      R"({
+        "tag": null,
+        "prefetch": [{
+          "where": {"href_matches": "/foo"}
+        }]
+      })",
+      KURL("https://example.com/"), execution_context());
+  EXPECT_EQ(rule_set->error_type(),
+            SpeculationRuleSetErrorType::kInvalidRulesSkipped);
+  EXPECT_TRUE(rule_set->error_message().Contains("Tag value"))
+      << rule_set->error_message();
+
+  const char* tag =
+      "Qu\xe9"
+      "bec";
+  rule_set = CreateRuleSet(String::Format(R"({
+        "tag": "%s",
+        "prefetch": [{
+          "where": {"href_matches": "/foo"}
+        }]
+      })",
+                                          tag),
+                           KURL("https://example.com/"), execution_context());
+  EXPECT_EQ(rule_set->error_type(),
+            SpeculationRuleSetErrorType::kInvalidRulesSkipped);
+  EXPECT_TRUE(rule_set->error_message().Contains("Tag value"))
+      << rule_set->error_message();
+}
+
+TEST_F(SpeculationRuleSetTest, CandidatesSharesTheSameTag) {
+  DummyPageHolder page_holder;
+  StubSpeculationHost speculation_host;
+  Document& document = page_holder.GetDocument();
+
+  AddAnchor(*document.body(), "https://example.com/foo",
+            {{html_names::kClassAttr, AtomicString("bar")}});
+  AddAnchor(*document.body(), "https://example.com/baz",
+            {{html_names::kClassAttr, AtomicString("bar")}});
+
+  PropagateRulesToStubSpeculationHost(page_holder, speculation_host, String(R"({
+        "tag": "example/foo",
+        "prefetch": [{
+          "where": {"href_matches": "https://example.com/foo"}
+        }, {
+          "where": {"selector_matches": ".bar"},
+          "eagerness": "moderate"
+        }]
+      })"));
+
+  const auto& candidates = speculation_host.candidates();
+  EXPECT_THAT(
+      candidates,
+      UnorderedElementsAre(
+          AllOf(HasURL(KURL("https://example.com/foo")),
+                HasEagerness(blink::mojom::SpeculationEagerness::kConservative),
+                HasTags(Vector<AtomicString>({AtomicString("example/foo")}))),
+          AllOf(HasURL(KURL("https://example.com/foo")),
+                HasEagerness(blink::mojom::SpeculationEagerness::kModerate),
+                HasTags(Vector<AtomicString>({AtomicString("example/foo")}))),
+          AllOf(HasURL(KURL("https://example.com/baz")),
+                HasEagerness(blink::mojom::SpeculationEagerness::kModerate),
+                HasTags(Vector<AtomicString>({AtomicString("example/foo")})))));
+}
+
+TEST_F(SpeculationRuleSetTest, RuleLevelTags) {
+  DummyPageHolder page_holder;
+  StubSpeculationHost speculation_host;
+  Document& document = page_holder.GetDocument();
+
+  AddAnchor(*document.body(), "https://example.com/foo",
+            {{html_names::kClassAttr, AtomicString("bar")}});
+  AddAnchor(*document.body(), "https://example.com/baz",
+            {{html_names::kClassAttr, AtomicString("bar")}});
+
+  PropagateRulesToStubSpeculationHost(page_holder, speculation_host, String(R"({
+        "prefetch": [{
+          "tag": "example/foo",
+          "where": {"href_matches": "https://example.com/foo"}
+        }, {
+          "where": {"selector_matches": ".bar"},
+          "eagerness": "moderate"
+        }]
+      })"));
+
+  const auto& candidates = speculation_host.candidates();
+
+  EXPECT_THAT(
+      candidates,
+      UnorderedElementsAre(
+          AllOf(HasURL(KURL("https://example.com/foo")),
+                HasEagerness(blink::mojom::SpeculationEagerness::kConservative),
+                HasTags(Vector<AtomicString>({AtomicString("example/foo")}))),
+          AllOf(HasURL(KURL("https://example.com/foo")),
+                HasEagerness(blink::mojom::SpeculationEagerness::kModerate),
+                HasTags(Vector<AtomicString>({g_null_atom}))),
+          AllOf(HasURL(KURL("https://example.com/baz")),
+                HasEagerness(blink::mojom::SpeculationEagerness::kModerate),
+                HasTags(Vector<AtomicString>({g_null_atom})))));
+}
+
+TEST_F(SpeculationRuleSetTest, BothLevelTags) {
+  DummyPageHolder page_holder;
+  StubSpeculationHost speculation_host;
+  Document& document = page_holder.GetDocument();
+
+  AddAnchor(*document.body(), "https://example.com/foo",
+            {{html_names::kClassAttr, AtomicString("bar")}});
+  AddAnchor(*document.body(), "https://example.com/baz",
+            {{html_names::kClassAttr, AtomicString("bar")}});
+
+  PropagateRulesToStubSpeculationHost(page_holder, speculation_host, String(R"({
+        "tag": "example/foo",
+        "prefetch": [{
+          "tag": "",
+          "where": {"href_matches": "https://example.com/foo"}
+        }, {
+          "where": {"selector_matches": ".bar"},
+          "tag": "example/bar1",
+          "eagerness": "moderate"
+        }]
+      })"));
+
+  const auto& candidates = speculation_host.candidates();
+
+  EXPECT_THAT(
+      candidates,
+      UnorderedElementsAre(
+          AllOf(HasURL(KURL("https://example.com/foo")),
+                HasEagerness(blink::mojom::SpeculationEagerness::kConservative),
+                HasTags(Vector<AtomicString>(
+                    {AtomicString("example/foo"), g_empty_atom}))),
+          AllOf(HasURL(KURL("https://example.com/foo")),
+                HasEagerness(blink::mojom::SpeculationEagerness::kModerate),
+                HasTags(Vector<AtomicString>({AtomicString("example/foo"),
+                                              AtomicString("example/bar1")}))),
+          AllOf(
+              HasURL(KURL("https://example.com/baz")),
+              HasEagerness(blink::mojom::SpeculationEagerness::kModerate),
+              HasTags(Vector<AtomicString>({AtomicString("example/foo"),
+                                            AtomicString("example/bar1")})))));
+}
+
 // Regression test for crbug.com/386547460.
 // This test will hit a DCHECK if we use document.scripts() when iterating
 // through scripts in |Document::UpdateBaseURL()| as the HTMLCollection's cached
@@ -4438,6 +4631,48 @@ TEST_F(SpeculationRuleSetTest, Crbug386547460) {
 
   document.scripts()->item(2);
   document.body()->setOuterHTML("<body>42</body>");
+}
+
+// Regression test for crbug.com/411367105.
+// This test will force update a display locked link. The link shall be
+// excluded from the speculation rule matches when the force update ends.
+TEST_F(DocumentRulesTest, DisplayLockedLinkForceUpdated) {
+  DummyPageHolder page_holder;
+  StubSpeculationHost speculation_host;
+  Document& document = page_holder.GetDocument();
+
+  document.body()->setInnerHTML(R"HTML(
+    <details id="test-details">
+      <summary>Summary</summary>
+      <div id="important-section"></div>
+    </details>
+  )HTML");
+  auto* important_section =
+      document.getElementById(AtomicString("important-section"));
+  AddAnchor(*important_section, "https://foo.com/bar");
+
+  String speculation_script = R"(
+    {"prefetch": [{
+      "source": "document",
+      "where": {"selector_matches": "#important-section a"}
+    }]}
+  )";
+  PropagateRulesToStubSpeculationHost(page_holder, speculation_host,
+                                      speculation_script);
+  const auto& candidates = speculation_host.candidates();
+  EXPECT_THAT(candidates, HasURLs());
+
+  // Force a style update including display locked elements.
+  document.AddViewportUnitFlags(
+      static_cast<unsigned>(ViewportUnitFlag::kStatic));
+  document.AddViewportUnitFlags(
+      static_cast<unsigned>(ViewportUnitFlag::kDynamic));
+  document.MarkViewportUnitsDirty();
+  document.UpdateStyleAndLayoutTreeForElement(
+      important_section, DocumentUpdateReason::kComputedStyle);
+  PropagateRulesToStubSpeculationHost(page_holder, speculation_host,
+                                      speculation_script);
+  EXPECT_THAT(candidates, HasURLs());
 }
 
 }  // namespace

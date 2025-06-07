@@ -52,6 +52,7 @@ import androidx.test.espresso.action.Press;
 import androidx.test.filters.MediumTest;
 
 import org.hamcrest.Matcher;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -87,6 +88,7 @@ import org.chromium.chrome.browser.firstrun.FirstRunUtils;
 import org.chromium.chrome.browser.firstrun.FirstRunUtilsJni;
 import org.chromium.chrome.browser.firstrun.MobileFreProgress;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
+import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.privacy.settings.PrivacyPreferencesManagerImpl;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
@@ -106,6 +108,7 @@ import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.chrome.test.util.browser.signin.SigninTestUtil;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.externalauth.ExternalAuthUtils;
+import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
@@ -113,6 +116,7 @@ import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.components.signin.test.util.FakeAccountManagerFacade;
 import org.chromium.components.signin.test.util.TestAccounts;
+import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.content_public.browser.test.NativeLibraryTestUtils;
 import org.chromium.ui.test.util.BlankUiTestActivity;
 import org.chromium.ui.test.util.DeviceRestriction;
@@ -198,8 +202,11 @@ public class SigninFirstRunFragmentTest {
                 () -> {
                     mNativeInitializationPromise = new Promise<>();
                     mNativeInitializationPromise.fulfill(null);
-                    // Use thenAnswer in case mNativeSideIsInitialized is changed in some tests.
+                    // Initially return an unfulfilled promise so that the loading will not be
+                    // skipped.Then use thenAnswer in case mNativeSideIsInitialized is changed in
+                    // some tests.
                     when(mFirstRunPageDelegateMock.getNativeInitializationPromise())
+                            .thenReturn(new Promise<>())
                             .thenAnswer(ignored -> mNativeInitializationPromise);
                 });
 
@@ -225,6 +232,16 @@ public class SigninFirstRunFragmentTest {
         mActivityTestRule.launchActivity(null);
         mFragment = new CustomSigninFirstRunFragment();
         mFragment.setPageDelegate(mFirstRunPageDelegateMock);
+    }
+
+    @After
+    public void tearDown() {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    PrefService prefService =
+                            UserPrefs.get(ProfileManager.getLastUsedRegularProfile());
+                    prefService.clearPref(Pref.SIGNIN_ALLOWED);
+                });
     }
 
     @Test
@@ -356,8 +373,10 @@ public class SigninFirstRunFragmentTest {
                     when(IdentityServicesProvider.get()
                                     .getSigninManager(ProfileManager.getLastUsedRegularProfile()))
                             .thenReturn(mSigninManagerMock);
+                    PrefService prefService =
+                            UserPrefs.get(ProfileManager.getLastUsedRegularProfile());
+                    prefService.setBoolean(Pref.SIGNIN_ALLOWED, false);
                 });
-        when(mSigninManagerMock.isSigninDisabledByPolicy()).thenReturn(true);
         when(mPolicyLoadListenerMock.get()).thenReturn(true);
         mSigninTestRule.addAccount(TestAccounts.ACCOUNT1);
 
@@ -416,8 +435,10 @@ public class SigninFirstRunFragmentTest {
                     when(IdentityServicesProvider.get()
                                     .getSigninManager(ProfileManager.getLastUsedRegularProfile()))
                             .thenReturn(mSigninManagerMock);
+                    PrefService prefService =
+                            UserPrefs.get(ProfileManager.getLastUsedRegularProfile());
+                    prefService.setBoolean(Pref.SIGNIN_ALLOWED, false);
                 });
-        when(mSigninManagerMock.isSigninDisabledByPolicy()).thenReturn(true);
         when(mPolicyLoadListenerMock.get()).thenReturn(true);
         launchActivityWithFragment();
         checkFragmentWhenSigninIsDisabledByPolicy();
@@ -1093,30 +1114,26 @@ public class SigninFirstRunFragmentTest {
             sdk_is_greater_than = Build.VERSION_CODES.S_V2,
             message = "Flaky, crbug.com/358148764")
     public void testFragmentSigninWhenAddedAccountIsNotYetAvailable() {
-        final String continueAsText =
+        // This will freeze AccountManagerFacade with the currently available list of accounts.
+        // The added account from add account flow later on will not be available.
+        try (var ignored = mSigninTestRule.blockGetAccountsUpdate(/* populateCache= */ true)) {
+            launchActivityWithFragment();
+            onView(withText(R.string.signin_add_account_to_device)).perform(click());
+            mSigninTestRule.setAddAccountFlowResult(TestAccounts.TEST_ACCOUNT_NO_NAME);
+            onViewWaiting(AccountManagerTestRule.ADD_ACCOUNT_BUTTON_MATCHER).perform(click());
+
+            // The account is not visible and thus add account button is shown.
+            onView(withText(R.string.signin_add_account_to_device)).check(matches(isDisplayed()));
+        }
+
+        // Allow account list update and the continue button starts sign-in.
+        checkFragmentWithSelectedAccount(TestAccounts.TEST_ACCOUNT_NO_NAME);
+        String continueAsText =
                 mActivityTestRule
                         .getActivity()
                         .getString(
                                 R.string.sync_promo_continue_as,
                                 TestAccounts.TEST_ACCOUNT_NO_NAME.getEmail());
-
-        // This will freeze AccountManagerFacade with the currently available list of accounts.
-        // The added account from add account flow later on will not be available.
-        try (var ignored =
-                mSigninTestRule.blockGetCoreAccountInfosUpdate(/* populateCache= */ true)) {
-            launchActivityWithFragment();
-            onView(withText(R.string.signin_add_account_to_device)).perform(click());
-            mSigninTestRule.setAddAccountFlowResult(TestAccounts.TEST_ACCOUNT_NO_NAME);
-            onViewWaiting(AccountManagerTestRule.ADD_ACCOUNT_BUTTON_MATCHER).perform(click());
-            checkFragmentWithSelectedAccount(TestAccounts.TEST_ACCOUNT_NO_NAME);
-
-            clickContinueButton(continueAsText);
-
-            // The click on continue button should be a no-op.
-            verify(mFirstRunPageDelegateMock, never()).advanceToNextPage();
-            checkFragmentWithSelectedAccount(TestAccounts.TEST_ACCOUNT_NO_NAME);
-        }
-        // Allow account list update and the continue button starts sign-in.
         clickContinueButton(continueAsText);
         verify(mFirstRunPageDelegateMock, timeout(CriteriaHelper.DEFAULT_MAX_TIME_TO_POLL))
                 .advanceToNextPage();
@@ -1200,7 +1217,7 @@ public class SigninFirstRunFragmentTest {
     @Restriction({DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
     public void testFragmentWhenAccountsAreLoadedAfterChildStatusAndNativeAndPolicy() {
         FakeAccountManagerFacade.UpdateBlocker blocker =
-                mSigninTestRule.blockGetCoreAccountInfosUpdate(/* populateCache= */ false);
+                mSigninTestRule.blockGetAccountsUpdate(/* populateCache= */ false);
         launchActivityWithFragment();
         checkFragmentWhenLoading();
 
@@ -1285,20 +1302,6 @@ public class SigninFirstRunFragmentTest {
                 .check(matches(isDisplayed()));
         onView(allOf(withId(R.id.subtitle), withText(R.string.signin_fre_subtitle)))
                 .check(matches(isDisplayed()));
-    }
-
-    @Test
-    @MediumTest
-    @Restriction({DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
-    public void testFragmentWithChildAccount_doesNotApplyFreStringVariation() {
-        mSigninTestRule.addAccount(TestAccounts.CHILD_ACCOUNT);
-        when(mPolicyLoadListenerMock.get()).thenReturn(true);
-
-        launchActivityWithFragment();
-        checkFragmentWithChildAccount(
-                /* hasDisplayableFullName= */ true,
-                /* hasDisplayableEmail= */ true,
-                TestAccounts.CHILD_ACCOUNT);
     }
 
     @Test
@@ -1453,8 +1456,6 @@ public class SigninFirstRunFragmentTest {
 
             // Sign-in isn't processed by SigninFirstRunFragment for child accounts.
             verify(mSigninManagerMock, never()).signin(any(CoreAccountInfo.class), anyInt(), any());
-            verify(mSigninManagerMock, never())
-                    .signinAndEnableSync(any(CoreAccountInfo.class), anyInt(), any());
         } else {
             checkFragmentWithSignInSpinner(
                     accountInfo, continueAsButtonText, /* isChildAccount= */ true);

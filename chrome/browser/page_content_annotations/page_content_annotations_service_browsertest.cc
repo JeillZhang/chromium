@@ -18,6 +18,8 @@
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/page_content_annotations/page_content_annotations_service_factory.h"
+#include "chrome/browser/page_content_annotations/page_content_extraction_service.h"
+#include "chrome/browser/page_content_annotations/page_content_extraction_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -41,13 +43,14 @@
 #include "components/ukm/test_ukm_recorder.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/test_navigation_observer.h"
 #include "net/dns/mock_host_resolver.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_source.h"
 #include "services/metrics/public/mojom/ukm_interface.mojom-forward.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/login/test/device_state_mixin.h"
 #include "chrome/browser/ash/login/test/guest_session_mixin.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
@@ -170,7 +173,7 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceKioskModeBrowserTest,
                          browser()->profile()));
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 class PageContentAnnotationsServiceEphemeralProfileBrowserTest
     : public MixinBasedInProcessBrowserTest {
  public:
@@ -931,8 +934,15 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceNoHistoryTest,
   EXPECT_FALSE(ModelAnnotationsFieldsAreSetForURL(url));
 }
 
+// Times out on Linux Tests (dbg)(1); see https://crbug.com/40229591.
+#if BUILDFLAG(IS_LINUX) && !defined(NDEBUG)
+#define MAYBE_ModelExecutesAndUsesCachedResult \
+  DISABLED_ModelExecutesAndUsesCachedResult
+#else
+#define MAYBE_ModelExecutesAndUsesCachedResult ModelExecutesAndUsesCachedResult
+#endif
 IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceNoHistoryTest,
-                       ModelExecutesAndUsesCachedResult) {
+                       MAYBE_ModelExecutesAndUsesCachedResult) {
   TestPageContentAnnotator test_annotator;
   test_annotator.UseVisibilityScores(std::nullopt, {{"Test Page", 0.5}});
   service()->OverridePageContentAnnotatorForTesting(&test_annotator);
@@ -1218,6 +1228,36 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceContentExtractionTest,
                  kExtractionLatencyName));
 }
 
+IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceContentExtractionTest,
+                       Subframe) {
+  base::HistogramTester histogram_tester;
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  GURL url(embedded_test_server()->GetURL("/optimization_guide/iframe.html"));
+  content::NavigateToURLBlockUntilNavigationsComplete(web_contents, url, 1);
+  optimization_guide::RetryForHistogramUntilCountReached(
+      &histogram_tester, "OptimizationGuide.AIPageContent.TotalLatency", 1);
+
+  // Navigate the iframe and wait for it to load. The extraction should be
+  // triggered immediately and it currently waits for the next frame if the
+  // lifecycle isn't clean. So wait for a couple of frames and ensure no
+  // extraction was triggered.
+  content::TestNavigationObserver nav_obsever(web_contents);
+  ASSERT_TRUE(
+      ExecJs(web_contents->GetPrimaryMainFrame(),
+             "document.getElementsByTagName('iframe')[0].src='hello.html'"));
+  nav_obsever.Wait();
+
+  for (int i = 0; i < 2; i++) {
+    base::test::TestFuture<void> done;
+    NotifyCopyableViewInWebContents(web_contents, done.GetCallback());
+    ASSERT_TRUE(done.Wait());
+  }
+
+  histogram_tester.ExpectTotalCount(
+      "OptimizationGuide.AIPageContent.TotalLatency", 1);
+}
+
 class PageContentAnnotationsServiceContentExtractionPdfTest
     : public PageContentAnnotationsServiceContentExtractionTest {
  public:
@@ -1227,8 +1267,15 @@ class PageContentAnnotationsServiceContentExtractionPdfTest
   }
 };
 
+// TODO(crbug.com/410068541): Test is slow for debug/sanitized builds.
+// Reenable once timeouts are fixed.
+#if defined(MEMORY_SANITIZER) || defined(ADDRESS_SANITIZER) || !defined(NDEBUG)
+#define MAYBE_PdfPageCount DISABLED_PdfPageCount
+#else
+#define MAYBE_PdfPageCount PdfPageCount
+#endif
 IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceContentExtractionPdfTest,
-                       PdfPageCount) {
+                       MAYBE_PdfPageCount) {
   ukm::TestAutoSetUkmRecorder ukm_recorder;
   base::test::TestFuture<void> future;
   ukm_recorder.SetOnAddEntryCallback(
@@ -1248,8 +1295,15 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceContentExtractionPdfTest,
                               kPdfPageCountName));
 }
 
+// TODO(crbug.com/410068541): Test is slow for debug/sanitized builds.
+// Reenable once timeouts are fixed.
+#if defined(MEMORY_SANITIZER) || defined(ADDRESS_SANITIZER) || !defined(NDEBUG)
+#define MAYBE_TwoPdfPageLoads DISABLED_TwoPdfPageLoads
+#else
+#define MAYBE_TwoPdfPageLoads TwoPdfPageLoads
+#endif
 IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceContentExtractionPdfTest,
-                       TwoPdfPageLoads) {
+                       MAYBE_TwoPdfPageLoads) {
   ukm::TestAutoSetUkmRecorder ukm_recorder;
   base::test::TestFuture<void> future;
   ukm_recorder.SetOnAddEntryCallback(
@@ -1278,5 +1332,46 @@ IN_PROC_BROWSER_TEST_F(PageContentAnnotationsServiceContentExtractionPdfTest,
 }
 
 #endif  // BUILDFLAG(BUILD_WITH_TFLITE_LIB)
+
+class PageContentAnnotationsServiceContentExtractionTestNoFeatureFlag
+    : public PageContentAnnotationsServiceContentExtractionTest {
+ public:
+  void InitializeFeaureList() override {}
+};
+
+class FakeExtractionServiceObserver
+    : public PageContentExtractionService::Observer {
+ public:
+  void OnPageContentExtracted(
+      content::Page& page,
+      const optimization_guide::proto::AnnotatedPageContent& page_content)
+      override {
+    page_content_future_.SetValue(page_content);
+  }
+  void Wait() { EXPECT_TRUE(page_content_future_.Wait()); }
+  base::test::TestFuture<optimization_guide::proto::AnnotatedPageContent>
+      page_content_future_;
+};
+
+IN_PROC_BROWSER_TEST_F(
+    PageContentAnnotationsServiceContentExtractionTestNoFeatureFlag,
+    ObserverAddedAfterWebContentsInit) {
+  FakeExtractionServiceObserver observer;
+  auto* service =
+      PageContentExtractionServiceFactory::GetForProfile(browser()->profile());
+  service->AddObserver(&observer);
+
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  GURL url(embedded_test_server()->GetURL("a.test",
+                                          "/optimization_guide/hello.html"));
+  content::NavigateToURLBlockUntilNavigationsComplete(web_contents, url, 1);
+
+  observer.Wait();
+  auto& page_content = observer.page_content_future_.Get();
+  EXPECT_TRUE(page_content.IsInitialized());
+
+  service->RemoveObserver(&observer);
+}
 
 }  // namespace page_content_annotations

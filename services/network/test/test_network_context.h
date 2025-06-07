@@ -24,8 +24,10 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/network_service_buildflags.h"
 #include "services/network/public/mojom/clear_data_filter.mojom.h"
+#include "services/network/public/mojom/connection_change_observer_client.mojom.h"
 #include "services/network/public/mojom/cookie_access_observer.mojom.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
+#include "services/network/public/mojom/device_bound_sessions.mojom.h"
 #include "services/network/public/mojom/host_resolver.mojom.h"
 #include "services/network/public/mojom/network_context.mojom-forward.h"
 #include "services/network/public/mojom/network_context.mojom.h"
@@ -41,7 +43,6 @@
 #include "services/network/public/mojom/web_transport.mojom.h"
 #include "services/network/public/mojom/websocket.mojom.h"
 #include "url/origin.h"
-#include "services/network/public/mojom/device_bound_sessions.mojom.h"
 
 namespace net {
 class NetworkAnonymizationKey;
@@ -85,6 +86,8 @@ class TestNetworkContext : public mojom::NetworkContext {
       const url::Origin& issuer,
       DeleteStoredTrustTokensCallback callback) override {}
   void SetBlockTrustTokens(bool block) override {}
+  void SetTrackingProtectionContentSetting(
+      const ContentSettingsForOneType& settings) override {}
 #if BUILDFLAG(ENABLE_REPORTING)
   void AddReportingApiObserver(
       mojo::PendingRemote<network::mojom::ReportingApiObserver> observer)
@@ -238,12 +241,17 @@ class TestNetworkContext : public mojom::NetworkContext {
                               const std::string& http_method,
                               const net::NetworkIsolationKey& key,
                               bool include_credentials) override {}
+  void VerifyCert(const scoped_refptr<net::X509Certificate>& certificate,
+                  const net::HostPortPair& host_port,
+                  const std::string& ocsp_result,
+                  const std::string& sct_list,
+                  VerifyCertCallback callback) override {}
   void VerifyCertForSignedExchange(
       const scoped_refptr<net::X509Certificate>& certificate,
-      const GURL& url,
+      const net::HostPortPair& host_port,
       const std::string& ocsp_result,
       const std::string& sct_list,
-      VerifyCertForSignedExchangeCallback callback) override {}
+      VerifyCertCallback callback) override {}
   void IsHSTSActiveForHost(const std::string& host,
                            bool is_top_level_nav,
                            IsHSTSActiveForHostCallback callback) override {}
@@ -266,13 +274,17 @@ class TestNetworkContext : public mojom::NetworkContext {
       const std::string& ocsp_response,
       const std::string& sct_list,
       VerifyCertificateForTestingCallback callback) override {}
+  void GetTrustAnchorIDsForTesting(
+      GetTrustAnchorIDsForTestingCallback callback) override {}
   void PreconnectSockets(
       uint32_t num_streams,
       const GURL& url,
       mojom::CredentialsMode credentials_mode,
       const net::NetworkAnonymizationKey& network_anonymization_key,
-      const net::MutableNetworkTrafficAnnotationTag& traffic_annotation)
-      override {}
+      const net::MutableNetworkTrafficAnnotationTag& traffic_annotation,
+      const std::optional<net::ConnectionKeepAliveConfig>& keepalive_config,
+      mojo::PendingRemote<network::mojom::ConnectionChangeObserverClient>
+          observer_client) override {}
 #if BUILDFLAG(IS_P2P_ENABLED)
   void CreateP2PSocketManager(
       const net::NetworkAnonymizationKey& network_anonymization_key,

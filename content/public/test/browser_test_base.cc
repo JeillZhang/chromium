@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/base_switches.h"
@@ -26,6 +27,7 @@
 #include "base/path_service.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -211,7 +213,7 @@ std::string GetDefaultTraceBasename(TraceBasenameType type) {
   // Add random number to the trace file to distinguish traces from different
   // test runs. We don't use timestamp here to avoid collisions with parallel
   // runs of the same test. Browser test runner runs one test per browser
-  // process instantiation, so saving the seed here is appopriate.
+  // process instantiation, so saving the seed here is appropriate.
   // GetDefaultTraceBasename() is going to be called twice:
   // - for the first time, before the test starts to get the name of the file to
   // stream the results (to avoid losing them if test crashes).
@@ -493,6 +495,11 @@ void BrowserTestBase::SetUp() {
   // interference. This GPU process is launched 120 seconds after chrome starts.
   command_line->AppendSwitch(switches::kDisableGpuProcessForDX12InfoCollection);
 
+  // Disable activation of accessibility from interactions with the platform's
+  // accessibility integration since it leads to flaky tests.
+  command_line->AppendSwitch(
+      switches::kDisablePlatformAccessibilityIntegration);
+
   // The current global field trial list contains any trials that were activated
   // prior to main browser startup. That global field trial list is about to be
   // destroyed below, and will be recreated during the browser_tests browser
@@ -617,8 +624,7 @@ void BrowserTestBase::SetUp() {
 
     StartBrowserThreadPool();
 
-    tracing::InitTracingPostThreadPoolStartAndFeatureList(
-        /* enable_consumer */ true);
+    tracing::InitTracingPostFeatureList(/*enable_consumer=*/true);
     InitializeBrowserMemoryInstrumentationClient();
   }
 
@@ -645,11 +651,11 @@ void BrowserTestBase::SetUp() {
   // to BrowserMain() if it did not run it (or equivalent) itself. On Android,
   // RunProcess() will return 0 so we don't have to fallback to BrowserMain().
   {
-    // This loop will wait until Java completes async initializion and the test
-    // is ready to run. We must allow nestable tasks so that tasks posted to the
-    // UI thread run as well. The loop is created before RunProcess() so that
-    // the StartupTaskRunner tasks will be nested inside this loop and able to
-    // run.
+    // This loop will wait until Java completes async initialization and the
+    // test is ready to run. We must allow nestable tasks so that tasks posted
+    // to the UI thread run as well. The loop is created before RunProcess() so
+    // that the StartupTaskRunner tasks will be nested inside this loop and able
+    // to run.
     base::RunLoop loop{base::RunLoop::Type::kNestableTasksAllowed};
 
     // The MainFunctionParams must out-live all the startup tasks running.
@@ -663,8 +669,8 @@ void BrowserTestBase::SetUp() {
                                     TestTimeouts::action_max_timeout());
     // Passing "" as the process type to indicate the browser process.
     auto exit_code = delegate->RunProcess("", std::move(params));
-    DCHECK(absl::holds_alternative<int>(exit_code));
-    DCHECK_EQ(absl::get<int>(exit_code), 0);
+    DCHECK(std::holds_alternative<int>(exit_code));
+    DCHECK_EQ(std::get<int>(exit_code), 0);
 
     // Waits for Java to finish initialization, then we can run the test.
     loop.Run();
@@ -698,8 +704,16 @@ void BrowserTestBase::SetUp() {
 }
 
 void BrowserTestBase::TearDown() {
-  if (embedded_test_server()->Started())
+  // Have to shut down test servers before destruction. Subclasses may have
+  // configured custom handlers using raw pointers to the test fixture itself,
+  // in which case, the test server will maintain a raw pointer to the test
+  // fixture, so needs to be shut down before the test fixture is destroyed.
+  if (embedded_test_server()->Started()) {
     ASSERT_TRUE(embedded_test_server()->ShutdownAndWaitUntilComplete());
+  }
+  if (embedded_https_test_server_ && embedded_https_test_server_->Started()) {
+    ASSERT_TRUE(embedded_https_test_server_->ShutdownAndWaitUntilComplete());
+  }
 
 #if defined(USE_AURA) || BUILDFLAG(IS_MAC)
   ui::test::EventGeneratorDelegate::SetFactoryFunction(
@@ -882,12 +896,16 @@ void BrowserTestBase::ProxyRunTestOnMainThreadLoop() {
         auto* test = ::testing::UnitTest::GetInstance()->current_test_info();
         // This might be nullptr in a fuzz test or something else without gtest.
         if (test) {
-          TRACE_EVENT("test", "RunTestOnMainThread", "test_name",
-                      test->test_suite_name() + std::string(".") + test->name(),
-                      "file", test->file(), "line", test->line());
+          TRACE_EVENT_BEGIN(
+              "test", "RunTestOnMainThread", "test_name",
+              base::StrCat({test->test_suite_name(), ".", test->name()}),
+              "file", test->file(), "line", test->line());
         }
         base::ScopedDisallowBlocking disallow_blocking;
         RunTestOnMainThread();
+        if (test) {
+          TRACE_EVENT_END("test");
+        }
       }
     }
 
@@ -955,6 +973,20 @@ void BrowserTestBase::SetTestDohConfig(net::SecureDnsMode secure_dns_mode,
                                        net::DnsOverHttpsConfig config) {
   DCHECK(!test_doh_config_.has_value());
   test_doh_config_ = std::make_pair(secure_dns_mode, std::move(config));
+}
+
+void BrowserTestBase::InitializeHTTPSTestServer() {
+  CHECK(!embedded_https_test_server_)
+      << "HTTPS test server already initialized";
+
+  embedded_https_test_server_ = std::make_unique<net::EmbeddedTestServer>(
+    net::EmbeddedTestServer::TYPE_HTTPS);
+  // Default hostnames for the HTTPS test server. Test fixtures can call this
+  // with different hostnames (before starting the server) to override.
+  embedded_https_test_server_->SetCertHostnames(
+      {"example.com", "*.example.com", "foo.com", "*.foo.com", "bar.com",
+      "*.bar.com", "a.com", "*.a.com", "b.com", "*.b.com", "c.com",
+      "*.c.com"});
 }
 
 void BrowserTestBase::CreateTestServer(const base::FilePath& test_server_base) {

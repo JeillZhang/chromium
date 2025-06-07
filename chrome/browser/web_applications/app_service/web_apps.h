@@ -14,7 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/one_shot_event.h"
 #include "base/scoped_observation.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/apps/app_service/launch_result_type.h"
 #include "chrome/browser/apps/app_service/publishers/app_publisher.h"
 #include "chrome/browser/web_applications/app_service/web_app_publisher_helper.h"
@@ -27,9 +27,6 @@
 #include "components/services/app_service/public/cpp/permission.h"
 #include "components/webapps/common/web_app_id.h"
 #include "ui/base/resource/resource_scale_factor.h"
-#include "url/gurl.h"
-
-static_assert(!BUILDFLAG(IS_CHROMEOS_LACROS), "For non-Lacros only");
 
 class Profile;
 
@@ -37,7 +34,7 @@ namespace webapps {
 enum class WebappUninstallSource;
 }  // namespace webapps
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 namespace apps {
 class InstanceRegistry;
 struct AppLaunchParams;
@@ -58,7 +55,7 @@ class WebApps final : public apps::AppPublisher,
   WebApps& operator=(const WebApps&) = delete;
   ~WebApps() override;
 
-  virtual void Shutdown();
+  void Shutdown();
 
  protected:
   const WebApp* GetWebApp(const webapps::AppId& app_id) const;
@@ -78,7 +75,7 @@ class WebApps final : public apps::AppPublisher,
                 int32_t size_hint_in_dip,
                 bool allow_placeholder_icon,
                 apps::LoadIconCallback callback) override;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void GetCompressedIconData(const std::string& app_id,
                              int32_t size_in_dip,
                              ui::ResourceScaleFactor scale_factor,
@@ -106,13 +103,13 @@ class WebApps final : public apps::AppPublisher,
                  apps::UninstallSource uninstall_source,
                  bool clear_site_data,
                  bool report_abuse) override;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void GetMenuModel(
       const std::string& app_id,
       apps::MenuType menu_type,
       int64_t display_id,
       base::OnceCallback<void(apps::MenuItems)> callback) override;
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   void UpdateAppSize(const std::string& app_id) override;
 
@@ -132,7 +129,7 @@ class WebApps final : public apps::AppPublisher,
   std::vector<apps::AppPtr> CreateWebApps();
   void InitWebApps();
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   // apps::AppPublisher overrides.
   void PauseApp(const std::string& app_id) override;
   void UnpauseApp(const std::string& app_id) override;
@@ -153,7 +150,7 @@ class WebApps final : public apps::AppPublisher,
       apps::MenuItems menu_items,
       base::OnceCallback<void(apps::MenuItems)> callback,
       ShortcutsMenuIconBitmaps shortcuts_menu_icon_bitmaps);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   const raw_ptr<Profile> profile_;
 
@@ -162,7 +159,7 @@ class WebApps final : public apps::AppPublisher,
   // Specifies whether the web app registry becomes ready.
   bool is_ready_ = false;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   const raw_ptr<apps::InstanceRegistry> instance_registry_;
 #endif
 

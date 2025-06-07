@@ -96,7 +96,8 @@ class SpeechRecognitionRecognizerImpl
   // Convert the audio buffer into the appropriate format and feed the raw audio
   // into the speech recognition instance.
   void SendAudioToSpeechRecognitionService(
-      media::mojom::AudioDataS16Ptr buffer) final;
+      media::mojom::AudioDataS16Ptr buffer,
+      std::optional<base::TimeDelta> media_start_pts) final;
 
   void OnSpeechRecognitionError();
 
@@ -139,6 +140,9 @@ class SpeechRecognitionRecognizerImpl
   std::string primary_language_name() const { return primary_language_name_; }
 
   media::mojom::SpeechRecognitionOptionsPtr options_;
+
+ protected:
+  bool mask_offensive_words() { return mask_offensive_words_; }
 
  private:
   void OnLanguageChanged(const std::string& language) final;

@@ -4,20 +4,18 @@
 
 //! Utilities to handle vendored third-party crates.
 
-use crate::config::BuildConfig;
+use crate::config::{BuildConfig, CrateConfig};
 use crate::deps;
 use crate::manifest;
 
 use std::fmt::{self, Display};
 use std::fs;
 use std::hash::Hash;
-use std::io;
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use anyhow::Context;
-use log::error;
+use anyhow::{bail, Context, Result};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -323,9 +321,7 @@ pub fn collect_crate_files(
     p: &deps::Package,
     config: &BuildConfig,
     include_targets: IncludeCrateTargets,
-) -> anyhow::Result<(VendoredCrate, CrateFiles)> {
-    let crate_config = config.per_crate_config.get(&p.crate_id().name);
-
+) -> Result<(VendoredCrate, CrateFiles)> {
     let mut files = CrateFiles::new();
 
     struct RootDir {
@@ -338,57 +334,26 @@ pub fn collect_crate_files(
         let lib_root = lib_target.root.parent().expect("lib target has no directory in its path");
         root_dirs.push(RootDir { path: lib_root.to_owned(), collect: CollectCrateFiles::Internal });
 
-        root_dirs.extend(
-            crate_config
-                .iter()
-                .flat_map(|crate_config| &crate_config.extra_src_roots)
-                .chain(&config.all_config.extra_src_roots)
-                .map(|path| RootDir {
-                    path: lib_root.join(path),
-                    collect: CollectCrateFiles::ExternalSourcesAndInputs,
-                }),
+        let mut extend_root_dirs = |entry_getter: &dyn Fn(&CrateConfig) -> &Vec<PathBuf>,
+                                    collect_kind| {
+            root_dirs.extend(
+                config
+                    .get_combined_set(&p.package_name, entry_getter)
+                    .into_iter()
+                    .map(|path| RootDir { path: lib_root.join(path), collect: collect_kind }),
+            );
+        };
+        extend_root_dirs(&|cfg| &cfg.extra_src_roots, CollectCrateFiles::ExternalSourcesAndInputs);
+        extend_root_dirs(&|cfg| &cfg.extra_input_roots, CollectCrateFiles::ExternalInputsOnly);
+        extend_root_dirs(
+            &|cfg| &cfg.extra_build_script_src_roots,
+            CollectCrateFiles::BuildScriptExternalSourcesAndInputs,
         );
-        root_dirs.extend(
-            crate_config
-                .iter()
-                .flat_map(|crate_config| &crate_config.extra_input_roots)
-                .chain(&config.all_config.extra_input_roots)
-                .map(|path| RootDir {
-                    path: lib_root.join(path),
-                    collect: CollectCrateFiles::ExternalInputsOnly,
-                }),
+        extend_root_dirs(
+            &|cfg| &cfg.extra_build_script_input_roots,
+            CollectCrateFiles::BuildScriptExternalInputsOnly,
         );
-        root_dirs.extend(
-            crate_config
-                .iter()
-                .flat_map(|crate_config| &crate_config.extra_build_script_src_roots)
-                .chain(&config.all_config.extra_build_script_src_roots)
-                .map(|path| RootDir {
-                    path: lib_root.join(path),
-                    collect: CollectCrateFiles::BuildScriptExternalSourcesAndInputs,
-                }),
-        );
-        root_dirs.extend(
-            crate_config
-                .iter()
-                .flat_map(|crate_config| &crate_config.extra_build_script_input_roots)
-                .chain(&config.all_config.extra_build_script_input_roots)
-                .map(|path| RootDir {
-                    path: lib_root.join(path),
-                    collect: CollectCrateFiles::BuildScriptExternalInputsOnly,
-                }),
-        );
-
-        root_dirs.extend(
-            crate_config
-                .iter()
-                .flat_map(|crate_config| &crate_config.native_libs_roots)
-                .chain(&config.all_config.native_libs_roots)
-                .map(|path| RootDir {
-                    path: lib_root.join(path),
-                    collect: CollectCrateFiles::LibsOnly,
-                }),
-        );
+        extend_root_dirs(&|cfg| &cfg.native_libs_roots, CollectCrateFiles::LibsOnly);
     }
     if include_targets == IncludeCrateTargets::LibAndBin {
         for bin in &p.bin_targets {
@@ -401,6 +366,13 @@ pub fn collect_crate_files(
     for root_dir in root_dirs {
         recurse_crate_files(&root_dir.path, &mut |filepath| {
             collect_crate_file(&mut files, root_dir.collect, filepath)
+        })
+        .with_context(|| {
+            format!(
+                "Failed to process `{}` path.  This path came from {} for {p}",
+                root_dir.path.display(),
+                root_dir.collect.as_origin_msg(),
+            )
         })?;
     }
     files.sort();
@@ -412,7 +384,7 @@ pub fn collect_crate_files(
 /// Traverse vendored third-party crates in the Rust source package. Each
 /// `VendoredCrate` is paired with the package metadata from its manifest. The
 /// returned list is in unspecified order.
-pub fn collect_std_vendored_crates(vendor_path: &Path) -> io::Result<Vec<VendoredCrate>> {
+pub fn collect_std_vendored_crates(vendor_path: &Path) -> Result<Vec<VendoredCrate>> {
     let mut crates = Vec::new();
 
     for vendored_crate in fs::read_dir(vendor_path)? {
@@ -421,13 +393,7 @@ pub fn collect_std_vendored_crates(vendor_path: &Path) -> io::Result<Vec<Vendore
             continue;
         }
 
-        let Some(crate_id) = get_vendored_crate_id(&vendored_crate.path())? else {
-            error!(
-                "Cargo.toml not found at {}. cargo vendor would not do that to us.",
-                vendored_crate.path().to_string_lossy()
-            );
-            panic!()
-        };
+        let crate_id = get_vendored_crate_id(&vendored_crate.path())?;
 
         // Vendored crate directories can be named "{package_name}" or
         // "{package_name}-{version}", but for now we only use the latter for
@@ -439,12 +405,7 @@ pub fn collect_std_vendored_crates(vendor_path: &Path) -> io::Result<Vec<Vendore
             .map(|pos| std_path[..pos].to_string())
             .unwrap_or(std_path.to_string());
         if std_path != dir_name && std_path_no_version != dir_name {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "directory name {dir_name} does not match package information for {crate_id:?}"
-                ),
-            ));
+            bail!("directory name {dir_name} does not match package information for {crate_id:?}");
         }
         crates.push(crate_id);
     }
@@ -472,6 +433,24 @@ enum CollectCrateFiles {
     LibsOnly,
 }
 
+impl CollectCrateFiles {
+    fn as_origin_msg(&self) -> &'static str {
+        use CollectCrateFiles::*;
+        match self {
+            Internal => "crate metadata and sources",
+            ExternalSourcesAndInputs => "`extra_src_roots` entry in `gnrt_config.toml`",
+            ExternalInputsOnly => "`extra_input_roots` entry in `gnrt_config.toml`",
+            BuildScriptExternalSourcesAndInputs => {
+                "`extra_build_script_src_roots` entry in `gnrt_config.toml`"
+            }
+            BuildScriptExternalInputsOnly => {
+                "`extra_build_script_input_roots` entry in `gnrt_config.toml`"
+            }
+            LibsOnly => "`native_libs_roots` entry in `gnrt_config.toml`",
+        }
+    }
+}
+
 // Adds a `filepath` to `CrateFiles` depending on the type of file and the
 // `mode` of collection.
 fn collect_crate_file(files: &mut CrateFiles, mode: CollectCrateFiles, filepath: &Path) {
@@ -491,7 +470,8 @@ fn collect_crate_file(files: &mut CrateFiles, mode: CollectCrateFiles, filepath:
         // h: cxxbridge_cmd include!()'s its .h file into it.
         // json: json files are include!()'d into source code in the wycheproof crate
         // data: .rs.data files used by ICU4X
-        Some("md") | Some("h") | Some("json") | Some("data") => match mode {
+        // dat: zoneinfo.dat file from jiff-tzdb
+        Some("md") | Some("h") | Some("json") | Some("data") | Some("dat") => match mode {
             Internal | ExternalSourcesAndInputs | ExternalInputsOnly => {
                 files.inputs.push(filepath.to_owned())
             }
@@ -508,9 +488,10 @@ fn collect_crate_file(files: &mut CrateFiles, mode: CollectCrateFiles, filepath:
 /// Recursively visits all files under `path` and calls `f` on each one.
 ///
 /// The `path` may be a single file or a directory.
-pub fn recurse_crate_files(path: &Path, f: &mut dyn FnMut(&Path)) -> anyhow::Result<()> {
-    fn recurse(path: &Path, root: &Path, f: &mut dyn FnMut(&Path)) -> anyhow::Result<()> {
-        let meta = std::fs::metadata(path).with_context(|| format!("missing path {:?}", path))?;
+pub fn recurse_crate_files(path: &Path, f: &mut dyn FnMut(&Path)) -> Result<()> {
+    fn recurse(path: &Path, root: &Path, f: &mut dyn FnMut(&Path)) -> Result<()> {
+        let meta = std::fs::metadata(path)
+            .with_context(|| format!("Couldn't read metadata of `{}`", path.display()))?;
         if !meta.is_dir() {
             // Working locally can produce files in tree that should not be considered, and
             // which are not part of the git repository.
@@ -530,8 +511,10 @@ pub fn recurse_crate_files(path: &Path, f: &mut dyn FnMut(&Path)) -> anyhow::Res
             }
             f(path)
         } else {
-            for r in std::fs::read_dir(path).with_context(|| format!("dir at {:?}", path))? {
-                let entry = r?;
+            let context =
+                || format!("Couldn't read contents of the directory at `{}`", path.display(),);
+            for r in std::fs::read_dir(path).with_context(context)? {
+                let entry = r.with_context(context)?;
                 let path = entry.path();
                 recurse(&path, root, f)?;
             }
@@ -543,19 +526,13 @@ pub fn recurse_crate_files(path: &Path, f: &mut dyn FnMut(&Path)) -> anyhow::Res
 
 /// Get a crate's ID and parsed manifest from its path. Returns `Ok(None)` if
 /// there was no Cargo.toml, or `Err(_)` for other IO errors.
-fn get_vendored_crate_id(package_path: &Path) -> io::Result<Option<VendoredCrate>> {
-    let manifest_file = match fs::read_to_string(package_path.join("Cargo.toml")) {
-        Ok(f) => f,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e),
-    };
-
-    let manifest: manifest::CargoManifest = toml::de::from_str(&manifest_file).unwrap();
+fn get_vendored_crate_id(package_path: &Path) -> Result<VendoredCrate> {
+    let manifest = manifest::CargoManifest::from_path(&package_path.join("Cargo.toml"))?;
     let crate_id = VendoredCrate {
         name: manifest.package.name.as_str().into(),
         version: manifest.package.version.clone(),
     };
-    Ok(Some(crate_id))
+    Ok(crate_id)
 }
 
 /// Proxy for [de]serializing epochs to/from strings. This uses the "1" or "0.1"

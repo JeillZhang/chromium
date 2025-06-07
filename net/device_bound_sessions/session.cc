@@ -10,6 +10,7 @@
 #include "components/unexportable_keys/unexportable_key_id.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/cookies/canonical_cookie.h"
+#include "net/cookies/cookie_access_params.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_store.h"
@@ -17,7 +18,9 @@
 #include "net/device_bound_sessions/cookie_craving.h"
 #include "net/device_bound_sessions/proto/storage.pb.h"
 #include "net/device_bound_sessions/session_binding_utils.h"
+#include "net/device_bound_sessions/session_error.h"
 #include "net/device_bound_sessions/session_inclusion_rules.h"
+#include "net/device_bound_sessions/session_usage.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 
@@ -27,10 +30,38 @@ namespace {
 
 constexpr base::TimeDelta kSessionTtl = base::Days(400);
 
+constexpr net::BackoffEntry::Policy kBackoffPolicy = {
+    // Number of initial errors (in sequence) to ignore before applying
+    // exponential back-off rules.
+    3,
+
+    // Initial delay for exponential backoff in ms.
+    500,
+
+    // Factor by which the waiting time will be multiplied.
+    1.5,
+
+    // Fuzzing percentage. ex: 10% will spread requests randomly
+    // between 90%-100% of the calculated time.
+    0.2,  // 20%
+
+    // Maximum amount of time we are willing to delay our request in ms.
+    1000 * 60 * 8,  // 8 Minutes
+
+    // Time to keep an entry from being discarded even when it
+    // has no significant state, -1 to never discard.
+    -1,
+
+    // Don't use initial delay unless the last request was an error.
+    false,
+};
 }
 
 Session::Session(Id id, url::Origin origin, GURL refresh)
-    : id_(id), refresh_url_(refresh), inclusion_rules_(origin) {}
+    : id_(id),
+      refresh_url_(refresh),
+      inclusion_rules_(origin),
+      backoff_(&kBackoffPolicy) {}
 
 Session::Session(Id id,
                  GURL refresh,
@@ -45,27 +76,46 @@ Session::Session(Id id,
       cookie_cravings_(std::move(cookie_cravings)),
       should_defer_when_expired_(should_defer_when_expired),
       creation_date_(creation_date),
-      expiry_date_(expiry_date) {}
+      expiry_date_(expiry_date),
+      backoff_(&kBackoffPolicy) {}
 
 Session::~Session() = default;
 
 // static
-std::unique_ptr<Session> Session::CreateIfValid(const SessionParams& params,
-                                                const GURL& fetcher_url) {
-  if (!fetcher_url.is_valid() || params.session_id.empty() ||
-      params.refresh_url.empty()) {
-    return nullptr;
+base::expected<std::unique_ptr<Session>, SessionError> Session::CreateIfValid(
+    const SessionParams& params) {
+  if (!params.fetcher_url.is_valid()) {
+    return base::unexpected(
+        SessionError{SessionError::ErrorType::kInvalidFetcherUrl,
+                     net::SchemefulSite(), /*session_id=*/std::nullopt});
+  } else if (params.refresh_url.empty()) {
+    return base::unexpected(
+        SessionError{SessionError::ErrorType::kInvalidRefreshUrl,
+                     net::SchemefulSite(), /*session_id=*/std::nullopt});
+  } else if (params.session_id.empty()) {
+    return base::unexpected(
+        SessionError{SessionError::ErrorType::kInvalidSessionId,
+                     net::SchemefulSite(), /*session_id=*/std::nullopt});
   }
 
-  if (!params.scope.origin.empty() && !fetcher_url.host().empty() &&
-      fetcher_url.host() != params.scope.origin &&
-      net::registry_controlled_domains::GetDomainAndRegistry(
-          fetcher_url,
-          net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES) !=
-          net::registry_controlled_domains::GetDomainAndRegistry(
-              params.scope.origin,
-              net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES)) {
-    return nullptr;
+  // If there is an origin in the scope, verify it is valid. Default to the
+  // fetcher URL if the origin is missing from the scope.
+  GURL scope_origin_as_url = params.scope.origin.empty()
+                                 ? params.fetcher_url
+                                 : GURL(params.scope.origin);
+  url::Origin scope_origin = url::Origin::Create(scope_origin_as_url);
+  if (scope_origin.opaque()) {
+    return base::unexpected(
+        SessionError{SessionError::ErrorType::kInvalidScopeOrigin,
+                     net::SchemefulSite(), /*session_id=*/std::nullopt});
+  }
+
+  // Check if the scope-origin is samesite with fetcher URL.
+  if (net::SchemefulSite(scope_origin_as_url) !=
+      net::SchemefulSite(params.fetcher_url)) {
+    return base::unexpected(
+        SessionError{SessionError::ErrorType::kScopeOriginSameSiteMismatch,
+                     net::SchemefulSite(), /*session_id=*/std::nullopt});
   }
 
   // The refresh endpoint can be a full URL (samesite with request origin)
@@ -76,16 +126,26 @@ std::unique_ptr<Session> Session::CreateIfValid(const SessionParams& params,
       params.refresh_url,
       base::UnescapeRule::PATH_SEPARATORS |
           base::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
-  GURL candidate_refresh_endpoint = fetcher_url.Resolve(unescaped_path);
+  GURL candidate_refresh_endpoint = params.fetcher_url.Resolve(unescaped_path);
+
+  // Check if the refresh URL is valid, secure.
   if (!candidate_refresh_endpoint.is_valid() ||
-      !IsSecure(candidate_refresh_endpoint) ||
-      net::SchemefulSite(candidate_refresh_endpoint) !=
-          net::SchemefulSite(fetcher_url)) {
-    return nullptr;
+      !IsSecure(candidate_refresh_endpoint)) {
+    return base::unexpected(
+        SessionError{SessionError::ErrorType::kInvalidRefreshUrl,
+                     net::SchemefulSite(), /*session_id=*/std::nullopt});
   }
-  std::unique_ptr<Session> session(
-      new Session(Id(params.session_id), url::Origin::Create(fetcher_url),
-                  std::move(candidate_refresh_endpoint)));
+
+  // Check if the refresh URL is same-site with the fetcher URL.
+  if (net::SchemefulSite(candidate_refresh_endpoint) !=
+      net::SchemefulSite(params.fetcher_url)) {
+    return base::unexpected(
+        SessionError{SessionError::ErrorType::kRefreshUrlSameSiteMismatch,
+                     net::SchemefulSite(), /*session_id=*/std::nullopt});
+  }
+
+  std::unique_ptr<Session> session(new Session(
+      Id(params.session_id), scope_origin, candidate_refresh_endpoint));
   for (const auto& spec : params.scope.specifications) {
     if (!spec.domain.empty() && !spec.path.empty()) {
       const auto inclusion_result =
@@ -97,10 +157,18 @@ std::unique_ptr<Session> Session::CreateIfValid(const SessionParams& params,
     }
   }
 
+  // Sessions should never include the refresh endpoint, since that would
+  // prevent them from ever refreshing when a cookie expires.
+  session->inclusion_rules_.AddUrlRuleIfValid(
+      SessionInclusionRules::InclusionResult::kExclude,
+      candidate_refresh_endpoint.host(), candidate_refresh_endpoint.path());
+
+  session->inclusion_rules_.SetIncludeSite(params.scope.include_site);
+
   for (const auto& cred : params.credentials) {
-    if (!cred.name.empty() && !cred.attributes.empty()) {
+    if (!cred.name.empty()) {
       std::optional<CookieCraving> craving =
-          CookieCraving::Create(fetcher_url, cred.name, cred.attributes,
+          CookieCraving::Create(params.fetcher_url, cred.name, cred.attributes,
                                 base::Time::Now(), std::nullopt);
       if (craving) {
         session->cookie_cravings_.push_back(*craving);
@@ -110,8 +178,9 @@ std::unique_ptr<Session> Session::CreateIfValid(const SessionParams& params,
 
   session->set_creation_date(base::Time::Now());
   session->set_expiry_date(base::Time::Now() + kSessionTtl);
+  session->set_unexportable_key_id(std::move(params.key_id));
 
-  return session;
+  return base::ok(std::move(session));
 }
 
 // static
@@ -186,10 +255,21 @@ proto::Session Session::ToProto() const {
   return session_proto;
 }
 
-bool Session::ShouldDeferRequest(URLRequest* request) const {
+bool Session::ShouldDeferRequest(
+    URLRequest* request,
+    const net::FirstPartySetMetadata& first_party_set_metadata) const {
+  if (request->device_bound_session_usage() < SessionUsage::kNoUsage) {
+    request->set_device_bound_session_usage(SessionUsage::kNoUsage);
+  }
+
   if (!IncludesUrl(request->url())) {
     // Request is not in scope for this session.
     return false;
+  }
+
+  if (request->device_bound_session_usage() <
+      SessionUsage::kInScopeNotDeferred) {
+    request->set_device_bound_session_usage(SessionUsage::kInScopeNotDeferred);
   }
 
   request->net_log().AddEvent(
@@ -247,8 +327,8 @@ bool Session::ShouldDeferRequest(URLRequest* request) const {
   // The main logic. This checks every CookieCraving against every (real)
   // CanonicalCookie.
   for (const CookieCraving& cookie_craving : cookie_cravings_) {
-    if (!cookie_craving.IncludeForRequestURL(request->url(), options, params)
-             .status.IsInclude()) {
+    if (!cookie_craving.ShouldIncludeForRequest(
+            request, first_party_set_metadata, options, params)) {
       continue;
     }
 
@@ -290,6 +370,7 @@ bool Session::ShouldDeferRequest(URLRequest* request) const {
           });
 
       // There's an unsatisfied craving. Defer the request.
+      request->set_device_bound_session_usage(SessionUsage::kDeferred);
       return true;
     }
   }
@@ -331,6 +412,45 @@ void Session::RecordAccess() {
 bool Session::IncludesUrl(const GURL& url) const {
   return inclusion_rules_.EvaluateRequestUrl(url) ==
          SessionInclusionRules::kInclude;
+}
+
+bool Session::ShouldBackoff() const {
+  return backoff_.ShouldRejectRequest();
+}
+
+void Session::InformOfRefreshResult(SessionError::ErrorType error_type) {
+  using enum SessionError::ErrorType;
+
+  switch (error_type) {
+    case kSuccess:
+      backoff_.InformOfRequest(/*succeeded=*/true);
+      break;
+    // Fatal errors, no backoff needed
+    case kKeyError:
+    case kSigningError:
+    case kServerRequestedTermination:
+    case kInvalidConfigJson:
+    case kInvalidSessionId:
+    case kInvalidCredentials:
+    case kInvalidChallenge:
+    case kTooManyChallenges:
+    case kInvalidFetcherUrl:
+    case kInvalidRefreshUrl:
+    case kPersistentHttpError:
+    case kScopeOriginSameSiteMismatch:
+    case kRefreshUrlSameSiteMismatch:
+    case kInvalidScopeOrigin:
+
+    // We do not want to back off on many network connection errors
+    // (e.g. internet disconnected), so we do not hit our maximum
+    // backoff whenever the machine goes offline while the browser is
+    // running.
+    case kNetError:
+      break;
+    case kTransientHttpError:
+      backoff_.InformOfRequest(/*succeeded=*/false);
+      break;
+  }
 }
 
 }  // namespace net::device_bound_sessions

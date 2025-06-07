@@ -9,8 +9,7 @@
 
 #include "build/build_config.h"
 #include "components/signin/public/base/signin_metrics.h"
-
-class GURL;
+#include "url/gurl.h"
 
 namespace content {
 class BrowserContext;
@@ -63,6 +62,16 @@ enum class Flow {
   // of providing a page with no outbound links, in order not to be able to open
   // browser page during the signin flow.
   EMBEDDED_PROMO
+};
+
+// Maps to a subset of `signin_metrics::AccessPoint`. Is used for both signin
+// and sync promos.
+enum class SignInPromoType {
+  kPassword,
+  kAddress,
+  kBookmark,
+  kExtension,
+  // Add other types here if other access points will show a signin promo.
 };
 
 // Wraps arguments for `GetChromeSyncURLForDice()`. They are all optional.

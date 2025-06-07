@@ -13,7 +13,7 @@
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_ui_util.h"
 #import "ios/chrome/browser/authentication/ui_bundled/history_sync/history_sync_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/history_sync/history_sync_utils.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin/interruptible_chrome_coordinator.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_context_style.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_utils.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
@@ -44,6 +44,8 @@
   // Whether the History Sync screen is a optional step, that can be skipped
   // if declined too often.
   BOOL _isOptional;
+  // Used to customize content on screen.
+  SigninContextStyle _contextStyle;
   // Access point associated with the history opt-in screen.
   signin_metrics::AccessPoint _accessPoint;
 }
@@ -53,6 +55,7 @@
                              showUserEmail:(BOOL)showUserEmail
                          signOutIfDeclined:(BOOL)signOutIfDeclined
                                 isOptional:(BOOL)isOptional
+                              contextStyle:(SigninContextStyle)contextStyle
                                accessPoint:
                                    (signin_metrics::AccessPoint)accessPoint {
   self = [super initWithBaseViewController:viewController browser:browser];
@@ -60,14 +63,22 @@
     _showUserEmail = showUserEmail;
     _signOutIfDeclined = signOutIfDeclined;
     _isOptional = isOptional;
+    _contextStyle = contextStyle;
     _accessPoint = accessPoint;
   }
   return self;
 }
 
+- (void)dealloc {
+  // TODO(crbug.com/40272467)
+  DUMP_WILL_BE_CHECK(!_historySyncCoordinator);
+}
+
+#pragma mark - ChromeCoordinator
+
 - (void)start {
   [super start];
-  ProfileIOS* profile = self.browser->GetProfile();
+  ProfileIOS* profile = self.profile;
   CHECK_EQ(profile, profile->GetOriginalProfile());
   _authenticationService = AuthenticationServiceFactory::GetForProfile(profile);
   syncer::SyncService* syncService = SyncServiceFactory::GetForProfile(profile);
@@ -88,6 +99,7 @@
                               firstRun:NO
                          showUserEmail:_showUserEmail
                             isOptional:_isOptional
+                          contextStyle:_contextStyle
                            accessPoint:_accessPoint];
   [_historySyncCoordinator start];
   [_navigationController setNavigationBarHidden:YES animated:NO];
@@ -96,60 +108,14 @@
                                       completion:nil];
 }
 
-- (void)dealloc {
-  // TODO(crbug.com/40272467)
-  DUMP_WILL_BE_CHECK(!_historySyncCoordinator);
-}
+#pragma mark - AnimatedCoordinator
 
-- (void)stop {
+- (void)stopAnimated:(BOOL)animated {
   [self stopHistorySyncCoordinator];
   _navigationController.presentationController.delegate = nil;
-  [_navigationController dismissViewControllerAnimated:NO completion:nil];
+  [_navigationController dismissViewControllerAnimated:animated completion:nil];
   _navigationController = nil;
-  [super stop];
-}
-
-#pragma mark - InterruptibleChromeCoordinator
-
-- (void)interruptWithAction:(SigninCoordinatorInterrupt)action
-                 completion:(ProceduralBlock)completion {
-  __weak __typeof(self) weakSelf = self;
-  ProceduralBlock dismissCompletion = ^() {
-    [weakSelf viewWasDismissedWithResult:SigninCoordinatorResultInterrupted];
-    if (completion) {
-      completion();
-    }
-  };
-  switch (action) {
-    case SigninCoordinatorInterrupt::DismissWithAnimation:
-    case SigninCoordinatorInterrupt::DismissWithoutAnimation: {
-      BOOL animated =
-          SigninCoordinatorInterrupt::DismissWithAnimation == action;
-      if (IsInterruptibleCoordinatorStoppedSynchronouslyEnabled()) {
-        [_navigationController dismissViewControllerAnimated:animated
-                                                  completion:nil];
-        dismissCompletion();
-      } else {
-        [_navigationController dismissViewControllerAnimated:animated
-                                                  completion:dismissCompletion];
-      }
-      break;
-    }
-    case SigninCoordinatorInterrupt::UIShutdownNoDismiss:
-      CHECK(!IsInterruptibleCoordinatorAlwaysDismissedEnabled(),
-            base::NotFatalUntil::M136);
-      // The view should be ignored and leave it being presented.
-      _navigationController.presentationController.delegate = nil;
-      _navigationController = nil;
-      // This coordinator is now done, and its owner can now stop it.
-      [self.delegate
-          historySyncPopupCoordinator:self
-                  didFinishWithResult:SigninCoordinatorResultInterrupted];
-      if (completion) {
-        completion();
-      }
-      break;
-  }
+  [super stopAnimated:animated];
 }
 
 #pragma mark - Private
@@ -159,32 +125,21 @@
   _historySyncCoordinator = nil;
 }
 
-- (void)viewWasDismissedWithResult:(SigninCoordinatorResult)result {
-  _navigationController.presentationController.delegate = nil;
-  _navigationController = nil;
-
-  if (result != SigninCoordinatorResultSuccess && _signOutIfDeclined) {
-    signin::MultiProfileSignOut(
-        self.browser,
+- (void)viewWasDismissedWithResult:(HistorySyncResult)result {
+  if (result == HistorySyncResult::kUserCanceled && _signOutIfDeclined) {
+    signin::ProfileSignoutRequest(
         signin_metrics::ProfileSignout::
-            kUserDeclinedHistorySyncAfterDedicatedSignIn,
-        /*force_snackbar_over_toolbar=*/false,
-        /*snackbar_message=*/nil,
-        /*signout_completion=*/nil);
+            kUserDeclinedHistorySyncAfterDedicatedSignIn)
+        .Run(self.browser);
   }
   [self.delegate historySyncPopupCoordinator:self didFinishWithResult:result];
 }
 
 #pragma mark - HistorySyncCoordinatorDelegate
 
-- (void)closeHistorySyncCoordinator:
-            (HistorySyncCoordinator*)historySyncCoordinator
-                     declinedByUser:(BOOL)declined {
-  CHECK(_navigationController);
+- (void)historySyncCoordinator:(HistorySyncCoordinator*)historySyncCoordinator
+                    withResult:(HistorySyncResult)result {
   [self stopHistorySyncCoordinator];
-  SigninCoordinatorResult result = declined
-                                       ? SigninCoordinatorResultCanceledByUser
-                                       : SigninCoordinatorResultSuccess;
   __weak __typeof(self) weakSelf = self;
   [_navigationController
       dismissViewControllerAnimated:YES
@@ -202,7 +157,7 @@
   [self stopHistorySyncCoordinator];
   _navigationController.presentationController.delegate = nil;
   _navigationController = nil;
-  [self viewWasDismissedWithResult:SigninCoordinatorResultCanceledByUser];
+  [self viewWasDismissedWithResult:HistorySyncResult::kUserCanceled];
 }
 
 #pragma mark - NSObject

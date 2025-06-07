@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "base/containers/contains.h"
+#include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -19,7 +20,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/safe_ref.h"
-#include "base/not_fatal_until.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/trace_event/optional_trace_event.h"
 #include "base/trace_event/typed_macros.h"
 #include "base/types/cxx23_from_range.h"
@@ -211,7 +212,6 @@ FrameTree::FrameTree(
                  navigator_delegate,
                  navigation_controller_delegate),
       type_(type),
-      load_progress_(0.0),
       root_(*this,
             nullptr,
             // The top-level frame must always be in a
@@ -319,7 +319,7 @@ std::vector<FrameTreeNode*> FrameTree::CollectNodesForIsLoading() {
   FrameTree::NodeIterator node_iter = node_range.begin();
   std::vector<FrameTreeNode*> nodes;
 
-  CHECK(node_iter != node_range.end(), base::NotFatalUntil::M130);
+  CHECK(node_iter != node_range.end());
   FrameTree* root_loading_tree = root_.frame_tree().LoadingTree();
   while (node_iter != node_range.end()) {
     // Skip over frame trees and children which belong to inner web contents
@@ -494,7 +494,8 @@ void FrameTree::CreateProxiesForSiteInstanceGroup(
     FrameTreeNode* source,
     SiteInstanceGroup* site_instance_group,
     const scoped_refptr<BrowsingContextState>&
-        source_new_browsing_context_state) {
+        source_new_browsing_context_state,
+    const std::optional<base::UnguessableToken>& navigation_metrics_token) {
   // Will be instantiated with the root proxy later and passed to
   // `CreateRenderFrameProxy()` to batch create proxies for child frames.
   std::unique_ptr<BatchedProxyIPCSender> batched_proxy_ipc_sender;
@@ -504,7 +505,7 @@ void FrameTree::CreateProxiesForSiteInstanceGroup(
         GetRenderViewHost(site_instance_group).get();
     if (render_view_host) {
       root()->render_manager()->EnsureRenderViewInitialized(
-          render_view_host, site_instance_group);
+          render_view_host, site_instance_group, navigation_metrics_token);
     } else {
       // Due to the check above, we are creating either an opener proxy (when
       // source is null) or a main frame proxy due to a subframe navigation
@@ -523,6 +524,7 @@ void FrameTree::CreateProxiesForSiteInstanceGroup(
       // pass an instance of `BatchedProxyIPCSender` here instead of nullptr.
       root()->render_manager()->CreateRenderFrameProxy(
           site_instance_group, root_browsing_context_state,
+          navigation_metrics_token,
           /*batched_proxy_ipc_sender=*/nullptr);
 
       // We only need to use `BatchedProxyIPCSender` when navigating to a new
@@ -537,8 +539,8 @@ void FrameTree::CreateProxiesForSiteInstanceGroup(
           root_browsing_context_state
               ->GetRenderFrameProxyHost(site_instance_group)
               ->GetSafeRef();
-      batched_proxy_ipc_sender =
-          std::make_unique<BatchedProxyIPCSender>(std::move(root_proxy));
+      batched_proxy_ipc_sender = std::make_unique<BatchedProxyIPCSender>(
+          std::move(root_proxy), navigation_metrics_token);
     }
   }
 
@@ -608,7 +610,7 @@ void FrameTree::CreateProxiesForSiteInstanceGroup(
           site_instance_group,
           node == source ? source_new_browsing_context_state
                          : node->current_frame_host()->browsing_context_state(),
-          batched_proxy_ipc_sender.get());
+          navigation_metrics_token, batched_proxy_ipc_sender.get());
     }
   }
 
@@ -1098,20 +1100,24 @@ void FrameTree::FocusOuterFrameTrees() {
 }
 
 void FrameTree::Discard() {
-  // A speculative pending-commit rfh should not be cancelled or deleted. In
-  // this case ignore the discard request and allow the navigation to complete
-  // as normal.
-  if (const auto* speculative_rfh =
-          root()->render_manager()->speculative_frame_host();
-      speculative_rfh && speculative_rfh->HasPendingCommitNavigation()) {
-    return;
-  }
+  const auto attempt_discard = [this]() {
+    // A speculative pending-commit rfh should not be cancelled or deleted. In
+    // this case ignore the discard request and allow the navigation to complete
+    // as normal.
+    if (const auto* speculative_rfh =
+            root()->render_manager()->speculative_frame_host();
+        speculative_rfh && speculative_rfh->HasPendingCommitNavigation()) {
+      return false;
+    }
 
-  root()->set_was_discarded();
-  root()->current_frame_host()->DiscardFrame();
-  NavigationControllerImpl& navigation_controller = controller();
-  navigation_controller.SetNeedsReload();
-  navigation_controller.GetBackForwardCache().Flush();
+    root()->set_was_discarded();
+    root()->current_frame_host()->DiscardFrame();
+    NavigationControllerImpl& navigation_controller = controller();
+    navigation_controller.SetNeedsReload();
+    navigation_controller.GetBackForwardCache().Flush();
+    return true;
+  };
+  base::UmaHistogramBoolean("Discarding.DiscardFrameTree", attempt_discard());
 }
 
 }  // namespace content

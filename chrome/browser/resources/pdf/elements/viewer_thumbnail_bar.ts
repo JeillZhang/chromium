@@ -21,6 +21,7 @@ import {getHtml} from './viewer_thumbnail_bar.html.js';
 export interface Ink2ThumbnailData {
   type: string;
   pageNumber: number;
+  isInk: boolean;
   imageData: ArrayBuffer;
   width: number;
   height: number;
@@ -55,10 +56,10 @@ export class ViewerThumbnailBarElement extends CrLitElement {
     };
   }
 
-  activePage: number = 0;
-  clockwiseRotations: number = 0;
-  docLength: number = 0;
-  protected isPluginActive_: boolean = false;
+  accessor activePage: number = 0;
+  accessor clockwiseRotations: number = 0;
+  accessor docLength: number = 0;
+  protected accessor isPluginActive_: boolean = false;
   private intersectionObserver_: IntersectionObserver|null = null;
   private pluginController_: PluginController = PluginController.getInstance();
   private tracker_: EventTracker = new EventTracker();
@@ -243,9 +244,14 @@ export class ViewerThumbnailBarElement extends CrLitElement {
   private handleUpdateInkThumbnail_(e: CustomEvent<Ink2ThumbnailData>) {
     const data = e.detail;
     const thumbnail = this.getThumbnailForPage(data.pageNumber);
-    if (thumbnail) {
+    if (thumbnail && thumbnail.isPainted()) {
       const array = new Uint8ClampedArray(data.imageData);
-      thumbnail.ink2Image = new ImageData(array, data.width);
+      const imageData = new ImageData(array, data.width);
+      if (data.isInk) {
+        thumbnail.ink2Image = imageData;
+      } else {
+        thumbnail.image = imageData;
+      }
     }
   }
   // </if>

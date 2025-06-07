@@ -56,6 +56,7 @@ FakeWebState::~FakeWebState() {
   for (auto& observer : policy_deciders_) {
     observer.ResetWebState();
   }
+  ClearAllUserData();
 }
 
 void FakeWebState::SerializeToProto(proto::WebStateStorage& storage) const {}
@@ -304,13 +305,6 @@ void FakeWebState::SetTitle(const std::u16string& title) {
   title_ = title;
   for (auto& observer : observers_) {
     observer.TitleWasSet(this);
-  }
-}
-
-void FakeWebState::SetUnderPageBackgroundColor(UIColor* color) {
-  under_page_background_color_ = color;
-  for (auto& observer : observers_) {
-    observer.UnderPageBackgroundColorChanged(this);
   }
 }
 
@@ -632,7 +626,7 @@ UIColor* FakeWebState::GetThemeColor() {
 }
 
 UIColor* FakeWebState::GetUnderPageBackgroundColor() {
-  return under_page_background_color_;
+  return nil;
 }
 
 FakeWebStateWithPolicyCache::FakeWebStateWithPolicyCache(

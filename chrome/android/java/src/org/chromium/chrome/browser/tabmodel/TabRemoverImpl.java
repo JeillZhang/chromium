@@ -15,10 +15,10 @@ import org.chromium.base.supplier.Supplier;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabGroupUtils;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabGroupUtils.GroupsPendingDestroy;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager;
+import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager.MaybeBlockingResult;
 import org.chromium.chrome.browser.tabmodel.TabModelActionListener.DialogType;
 import org.chromium.chrome.browser.tabmodel.TabModelRemover.TabModelRemoverFlowHandler;
-import org.chromium.chrome.browser.tasks.tab_management.ActionConfirmationManager;
-import org.chromium.chrome.browser.tasks.tab_management.ActionConfirmationManager.MaybeBlockingResult;
 import org.chromium.components.browser_ui.widget.ActionConfirmationResult;
 import org.chromium.components.data_sharing.member_role.MemberRole;
 import org.chromium.ui.modaldialog.ModalDialogManager;
@@ -126,7 +126,8 @@ public class TabRemoverImpl implements TabRemover {
         }
 
         @Override
-        public void showTabGroupDeletionConfirmationDialog(@NonNull Callback<Integer> onResult) {
+        public void showTabGroupDeletionConfirmationDialog(
+                @NonNull Callback<@ActionConfirmationResult Integer> onResult) {
             boolean isTabGroup = mOriginalTabClosureParams.isTabGroup;
             @Nullable TabModelActionListener listener = takeListener();
             if (listener != null) {
@@ -206,9 +207,10 @@ public class TabRemoverImpl implements TabRemover {
             };
         }
 
-        private @NonNull Callback<Integer> adaptSyncOnResultCallback(
-                @NonNull Callback<Integer> callback, @Nullable TabModelActionListener listener) {
-            return (result) -> {
+        private @NonNull Callback<@ActionConfirmationResult Integer> adaptSyncOnResultCallback(
+                @NonNull Callback<@ActionConfirmationResult Integer> callback,
+                @Nullable TabModelActionListener listener) {
+            return (@ActionConfirmationResult Integer result) -> {
                 boolean isImmediateContinue = result == ActionConfirmationResult.IMMEDIATE_CONTINUE;
                 // Sync dialogs interrupt the flow and as such undo operations after the dialog is
                 // shown should be suppressed as the user already had an opportunity to abort.
@@ -226,7 +228,7 @@ public class TabRemoverImpl implements TabRemover {
     private static class RemoveTabHandler implements TabModelRemoverFlowHandler {
         private final TabGroupModelFilter mTabGroupModelFilter;
         private final Tab mTabToRemove;
-        private @Nullable TabModelActionListener mListener;
+        private final @Nullable TabModelActionListener mListener;
 
         RemoveTabHandler(
                 @NonNull TabGroupModelFilter tabGroupModelFilter,

@@ -8,7 +8,6 @@
  * subsection settings in system settings.
  */
 
-import '../icons.html.js';
 import '../settings_shared.css.js';
 import 'chrome://resources/ash/common/bluetooth/bluetooth_battery_icon_percentage.js';
 import 'chrome://resources/ash/common/cr_elements/localized_link/localized_link.js';
@@ -118,7 +117,7 @@ export class SettingsPerDeviceMouseSubsectionElement extends
         value: true,
       },
 
-      swapPrimaryOptions: {
+      swapPrimaryOptions_: {
         readOnly: true,
         type: Array,
         value() {
@@ -166,20 +165,6 @@ export class SettingsPerDeviceMouseSubsectionElement extends
         type: Object,
       },
 
-      /**
-       * Used by DeepLinkingMixin to focus this page's deep links.
-       */
-      supportedSettingIds: {
-        type: Object,
-        value: () => new Set<Setting>([
-          Setting.kMouseSwapPrimaryButtons,
-          Setting.kMouseReverseScrolling,
-          Setting.kMouseAcceleration,
-          Setting.kMouseScrollAcceleration,
-          Setting.kMouseSpeed,
-        ]),
-      },
-
       mouseIndex: {
         type: Number,
       },
@@ -206,14 +191,6 @@ export class SettingsPerDeviceMouseSubsectionElement extends
           return loadTimeData.getBoolean('enableWelcomeExperience');
         },
         readOnly: true,
-      },
-
-      deviceImageDataUrl: {
-        type: String,
-      },
-
-      bluetoothDevice: {
-        type: Object,
       },
     };
   }
@@ -262,6 +239,16 @@ export class SettingsPerDeviceMouseSubsectionElement extends
   }
 
   isWelcomeExperienceEnabled: boolean;
+
+  // DeepLinkingMixin override
+  override supportedSettingIds = new Set<Setting>([
+    Setting.kMouseSwapPrimaryButtons,
+    Setting.kMouseReverseScrolling,
+    Setting.kMouseAcceleration,
+    Setting.kMouseScrollAcceleration,
+    Setting.kMouseSpeed,
+  ]);
+
   private mouse: Mouse;
   protected mousePolicies: MousePolicies;
   private primaryRightPref: chrome.settingsPrivate.PrefObject;
@@ -278,6 +265,9 @@ export class SettingsPerDeviceMouseSubsectionElement extends
   private isLastDevice: boolean;
   private customizationRestriction: CustomizationRestriction;
   private currentMouseChanged: boolean;
+  private readonly allowScrollSettings_: boolean;
+  private readonly sensitivityValues_: number[];
+  private readonly swapPrimaryOptions_: Array<{value: boolean, name: string}>;
 
   private showCustomizeButtonRow(): boolean {
     return (this.customizationRestriction !==

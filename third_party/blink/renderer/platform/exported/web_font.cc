@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
+#include "third_party/blink/renderer/platform/fonts/plain_text_painter.h"
 #include "third_party/blink/renderer/platform/fonts/text_run_paint_info.h"
 #include "third_party/blink/renderer/platform/text/text_run.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
@@ -84,15 +85,30 @@ void WebFont::DrawText(cc::PaintCanvas* canvas,
   cc::PaintFlags flags;
   flags.setColor(color);
   flags.setAntiAlias(true);
-  private_->GetFont()->DrawText(canvas, text_run, left_baseline, flags);
+  if (RuntimeEnabledFeatures::PlainTextPainterEnabled()) {
+    PlainTextPainter::Shared().DrawWithoutBidi(text_run, *private_->GetFont(),
+                                               *canvas, left_baseline, flags);
+    return;
+  }
+  private_->GetFont()->DeprecatedDrawText(canvas, text_run, left_baseline,
+                                          flags);
 }
 
 int WebFont::CalculateWidth(const WebTextRun& run) const {
-  return private_->GetFont()->Width(run, nullptr);
+  if (RuntimeEnabledFeatures::PlainTextPainterEnabled()) {
+    return PlainTextPainter::Shared().ComputeInlineSizeWithoutBidi(
+        run, *private_->GetFont());
+  }
+  return private_->GetFont()->DeprecatedWidth(run, nullptr);
 }
 
 int WebFont::OffsetForPosition(const WebTextRun& run, float position) const {
-  return private_->GetFont()->OffsetForPosition(
+  if (RuntimeEnabledFeatures::PlainTextPainterEnabled()) {
+    return PlainTextPainter::Shared().OffsetForPositionWithoutBidi(
+        run, *private_->GetFont(), position, kIncludePartialGlyphs,
+        BreakGlyphsOption(false));
+  }
+  return private_->GetFont()->DeprecatedOffsetForPosition(
       run, position, kIncludePartialGlyphs, BreakGlyphsOption(false));
 }
 
@@ -101,8 +117,13 @@ gfx::RectF WebFont::SelectionRectForText(const WebTextRun& run,
                                          int height,
                                          int from,
                                          int to) const {
-  return private_->GetFont()->SelectionRectForText(run, left_baseline, height,
-                                                   from, to);
+  if (RuntimeEnabledFeatures::PlainTextPainterEnabled()) {
+    return PlainTextPainter::Shared().SelectionRectForTextWithoutBidi(
+        run, from, to == -1 ? run.text.length() : to, *private_->GetFont(),
+        left_baseline, height);
+  }
+  return private_->GetFont()->DeprecatedSelectionRectForText(run, left_baseline,
+                                                             height, from, to);
 }
 
 }  // namespace blink

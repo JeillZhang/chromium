@@ -20,8 +20,13 @@
 #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "components/constrained_window/constrained_window_views.h"
+#include "components/tabs/public/split_tab_collection.h"
+#include "components/tabs/public/split_tab_id.h"
+#include "components/tabs/public/tab_collection.h"
+#include "components/tabs/public/tab_group_tab_collection.h"
 #include "components/web_modal/modal_dialog_host.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
+#include "content/public/browser/visibility.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value.h"
 #include "ui/views/widget/native_widget.h"
@@ -42,6 +47,7 @@ class TabLookupFromWebContents
   ~TabLookupFromWebContents() override = default;
 
   TabModel* model() { return model_; }
+  const TabModel* model() const { return model_; }
 
  private:
   friend WebContentsUserData;
@@ -107,17 +113,18 @@ void TabModel::OnRemovedFromModel() {
   owning_model_->RemoveObserver(this);
   owning_model_ = nullptr;
 
+  // At this point tab is detached.
+  will_be_detaching_ = false;
+
   // Opener stuff doesn't make sense to transfer between browsers.
   opener_ = nullptr;
   reset_opener_on_active_tab_change_ = false;
 
-  // Pinned state, blocked state, and group membership are all preserved, at
+  // Blocked state is preserved, at
   // least in some cases, but for now let's leave that to the existing
   // mechanisms that were handling that.
   // TODO(tbergquist): Decide whether to stick with this approach or not.
-  pinned_ = false;
   blocked_ = false;
-  group_ = std::nullopt;
 }
 
 TabCollection* TabModel::GetParentCollection(
@@ -125,9 +132,24 @@ TabCollection* TabModel::GetParentCollection(
   return parent_collection_;
 }
 
+const TabCollection* TabModel::GetParentCollection() const {
+  return parent_collection_;
+}
+
 void TabModel::OnReparented(TabCollection* parent,
-                            base::PassKey<TabCollection>) {
+                            base::PassKey<TabCollection> passkey) {
   parent_collection_ = parent;
+  OnAncestorChanged(passkey);
+}
+
+void TabModel::OnAncestorChanged(base::PassKey<TabCollection> passkey) {
+  // Do not update the properties twice during an operation in tab_collection.
+  // `will_be_detaching_` is needed to update properties when a tab is being
+  // removed from the model to differentiate it from an intermediate step of a
+  // move.
+  if (parent_collection_ || will_be_detaching_) {
+    UpdateProperties();
+  }
 }
 
 void TabModel::SetPinned(bool pinned) {
@@ -155,11 +177,16 @@ void TabModel::WillEnterBackground(base::PassKey<TabStripModel>) {
 
 void TabModel::WillDetach(base::PassKey<TabStripModel>,
                           tabs::TabInterface::DetachReason reason) {
+  will_be_detaching_ = true;
   will_detach_callback_list_.Notify(this, reason);
 }
 
 void TabModel::DidInsert(base::PassKey<TabStripModel>) {
   did_insert_callback_list_.Notify(this);
+}
+
+base::WeakPtr<TabInterface> TabModel::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 content::WebContents* TabModel::GetContents() const {
@@ -172,7 +199,9 @@ base::CallbackListSubscription TabModel::RegisterWillDiscardContents(
 }
 
 bool TabModel::IsActivated() const {
-  return GetModelForTabInterface()->GetActiveTab() == this;
+  // TODO(crbug.com/407148703): Remove the `owning_model_` check once clients of
+  // TabInterface::MaybeGetFromContents() have been removed.
+  return owning_model_ && GetModelForTabInterface()->GetActiveTab() == this;
 }
 
 base::CallbackListSubscription TabModel::RegisterDidActivate(
@@ -186,7 +215,7 @@ base::CallbackListSubscription TabModel::RegisterWillDeactivate(
 }
 
 bool TabModel::IsVisible() const {
-  return GetModelForTabInterface()->GetActiveTab() == this;
+  return contents_->GetVisibility() != content::Visibility::HIDDEN;
 }
 
 base::CallbackListSubscription TabModel::RegisterDidBecomeVisible(
@@ -240,7 +269,15 @@ BrowserWindowInterface* TabModel::GetBrowserWindowInterface() {
   return GetModelForTabInterface()->delegate()->GetBrowserWindowInterface();
 }
 
+const BrowserWindowInterface* TabModel::GetBrowserWindowInterface() const {
+  return GetModelForTabInterface()->delegate()->GetBrowserWindowInterface();
+}
+
 tabs::TabFeatures* TabModel::GetTabFeatures() {
+  return tab_features_.get();
+}
+
+const tabs::TabFeatures* TabModel::GetTabFeatures() const {
   return tab_features_.get();
 }
 
@@ -249,20 +286,15 @@ bool TabModel::IsPinned() const {
 }
 
 bool TabModel::IsSplit() const {
+  return split_.has_value();
+}
+
+std::optional<split_tabs::SplitTabId> TabModel::GetSplit() const {
   return split_;
 }
 
 std::optional<tab_groups::TabGroupId> TabModel::GetGroup() const {
   return group_;
-}
-
-bool TabModel::ShouldAcceptMouseEventsWhileWindowInactive() const {
-  return accept_input_when_window_inactive_ > 0;
-}
-
-std::unique_ptr<ScopedAcceptMouseEventsWhileWindowInactive>
-TabModel::AcceptMouseEventsWhileWindowInactive() {
-  return std::make_unique<ScopedAcceptMouseEventsWhileWindowInactiveImpl>(this);
 }
 
 void TabModel::Close() {
@@ -294,9 +326,39 @@ TabStripModel* TabModel::GetModelForTabInterface() const {
   return soon_to_be_owning_model_ ? soon_to_be_owning_model_ : owning_model_;
 }
 
+// TODO(crbug.com/392950857): Consider making collections responsible for
+// updating the properties of their children. TabModel::OnAddedToModel could be
+// called from here instead of manually doing it in TabStripModel.
+void TabModel::UpdateProperties() {
+  bool pinned = false;
+  std::optional<tab_groups::TabGroupId> group = std::nullopt;
+  std::optional<split_tabs::SplitTabId> split = std::nullopt;
+
+  TabCollection* ancestor = parent_collection_;
+  while (ancestor) {
+    switch (ancestor->type()) {
+      case TabCollection::Type::PINNED:
+        pinned = true;
+        break;
+      case TabCollection::Type::GROUP:
+        group = static_cast<TabGroupTabCollection*>(ancestor)->GetTabGroupId();
+        break;
+      case TabCollection::Type::SPLIT:
+        split = static_cast<SplitTabCollection*>(ancestor)->GetSplitTabId();
+        break;
+      case TabCollection::Type::TABSTRIP:
+      case TabCollection::Type::UNPINNED:
+        break;
+    }
+    ancestor = ancestor->GetParentCollection();
+  }
+  SetPinned(pinned);
+  SetGroup(group);
+  set_split(split);
+}
+
 TabModel::ScopedTabModalUIImpl::ScopedTabModalUIImpl(TabModel* tab)
     : tab_(tab->weak_factory_.GetWeakPtr()) {
-  CHECK(!tab_->showing_modal_ui_);
   tab_->showing_modal_ui_ = true;
   tab_->modal_ui_changed_callback_list_.Notify(tab_.get());
 }
@@ -305,19 +367,6 @@ TabModel::ScopedTabModalUIImpl::~ScopedTabModalUIImpl() {
   if (tab_) {
     tab_->showing_modal_ui_ = false;
     tab_->modal_ui_changed_callback_list_.Notify(tab_.get());
-  }
-}
-
-TabModel::ScopedAcceptMouseEventsWhileWindowInactiveImpl::
-    ScopedAcceptMouseEventsWhileWindowInactiveImpl(TabModel* tab)
-    : tab_(tab->weak_factory_.GetWeakPtr()) {
-  ++tab_->accept_input_when_window_inactive_;
-}
-
-TabModel::ScopedAcceptMouseEventsWhileWindowInactiveImpl::
-    ~ScopedAcceptMouseEventsWhileWindowInactiveImpl() {
-  if (tab_) {
-    --tab_->accept_input_when_window_inactive_;
   }
 }
 
@@ -356,6 +405,12 @@ void TabModel::DestroyTabFeatures() {
 // static
 TabInterface* TabInterface::GetFromContents(
     content::WebContents* web_contents) {
+  return TabLookupFromWebContents::FromWebContents(web_contents)->model();
+}
+
+// static
+const TabInterface* TabInterface::GetFromContents(
+    const content::WebContents* web_contents) {
   return TabLookupFromWebContents::FromWebContents(web_contents)->model();
 }
 

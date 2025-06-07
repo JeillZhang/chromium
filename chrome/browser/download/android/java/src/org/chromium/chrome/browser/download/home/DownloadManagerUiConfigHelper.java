@@ -4,12 +4,21 @@
 
 package org.chromium.chrome.browser.download.home;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+
 /** Helper class to build default or base {@link DownloadManagerUiConfig.Builder} instances. */
+@NullMarked
 public class DownloadManagerUiConfigHelper {
     private DownloadManagerUiConfigHelper() {}
 
     /** Creates a {@link DownloadManagerUiConfig.Builder} based on feature flags. */
     public static DownloadManagerUiConfig.Builder fromFlags() {
-        return new DownloadManagerUiConfig.Builder().setSupportsGrouping(true);
+        boolean showDangerousItems =
+                ChromeFeatureList.sMaliciousApkDownloadCheck.isEnabled()
+                        && !ChromeFeatureList.sMaliciousApkDownloadCheckTelemetryOnly.getValue();
+        return new DownloadManagerUiConfig.Builder()
+                .setShowDangerousItems(showDangerousItems)
+                .setSupportsGrouping(true);
     }
 }

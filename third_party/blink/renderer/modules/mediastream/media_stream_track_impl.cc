@@ -71,6 +71,7 @@
 #include "third_party/blink/renderer/platform/mediastream/media_stream_web_audio_source.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/webrtc/peer_connection_remote_audio_source.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -303,7 +304,7 @@ MediaStreamTrackImpl::MediaStreamTrackImpl(
     zoom_level_ = source_device->display_media_info->initial_zoom_level;
   }
 
-  if (video_track) {
+  if (video_track && GetDisplayCaptureType(component_)) {
     video_track->RegisterCaptureSurfaceResolutionChangeCallback(
         WTF::BindRepeating(
             &MediaStreamTrackImpl::MaybeDispatchConfigurationChange,
@@ -345,6 +346,11 @@ void MediaStreamTrackImpl::setEnabled(bool enabled) {
   }
 
   component_->SetEnabled(enabled);
+
+  if (base::FeatureList::IsEnabled(kPropagateEnabledEventForWebRtcAudioTrack)) {
+    // Propagate the enabled state to the underlying platform track.
+    PropagateTrackEnabled(enabled);
+  }
 
   SendLogMessage(String::Format("%s({enabled=%s})", __func__,
                                 base::ToString(enabled).c_str()));
@@ -465,6 +471,9 @@ MediaStreamTrack* MediaStreamTrackImpl::clone(
 
 MediaTrackCapabilities* MediaStreamTrackImpl::getCapabilities() const {
   MediaTrackCapabilities* capabilities = MediaTrackCapabilities::Create();
+  MediaStreamTrackPlatform::Settings platform_settings;
+  component_->GetSettings(platform_settings);
+
   if (image_capture_) {
     image_capture_->GetMediaTrackCapabilities(capabilities);
   }
@@ -528,13 +537,17 @@ MediaTrackCapabilities* MediaStreamTrackImpl::getCapabilities() const {
     if (platform_capabilities.width.size() == 2) {
       LongRange* width = LongRange::Create();
       width->setMin(platform_capabilities.width[0]);
-      width->setMax(platform_capabilities.width[1]);
+      width->setMax(IsCapturedSurfaceResolutionActive(platform_settings)
+                        ? platform_settings.physical_frame_size->width()
+                        : platform_capabilities.width[1]);
       capabilities->setWidth(width);
     }
     if (platform_capabilities.height.size() == 2) {
       LongRange* height = LongRange::Create();
       height->setMin(platform_capabilities.height[0]);
-      height->setMax(platform_capabilities.height[1]);
+      height->setMax(IsCapturedSurfaceResolutionActive(platform_settings)
+                         ? platform_settings.physical_frame_size->height()
+                         : platform_capabilities.height[1]);
       capabilities->setHeight(height);
     }
     if (platform_capabilities.aspect_ratio.size() == 2) {
@@ -663,14 +676,14 @@ MediaTrackSettings* MediaStreamTrackImpl::getSettings() const {
 
   if (platform_settings.display_surface) {
     settings->setDisplaySurface(
-        GetDisplaySurfaceString(platform_settings.display_surface.value()));
+        GetDisplaySurfaceString(*platform_settings.display_surface));
   }
   if (platform_settings.logical_surface) {
-    settings->setLogicalSurface(platform_settings.logical_surface.value());
+    settings->setLogicalSurface(*platform_settings.logical_surface);
   }
   if (platform_settings.cursor) {
     WTF::String value;
-    switch (platform_settings.cursor.value()) {
+    switch (*platform_settings.cursor) {
       case media::mojom::CursorCaptureType::NEVER:
         value = "never";
         break;
@@ -684,36 +697,19 @@ MediaTrackSettings* MediaStreamTrackImpl::getSettings() const {
     settings->setCursor(value);
   }
 
-#if BUILDFLAG(IS_WIN)
-  if (RuntimeEnabledFeatures::CapturedSurfaceResolutionEnabled(
-          execution_context_) &&
-      platform_settings.display_surface) {
-    std::optional<float> ratio = platform_settings.device_scale_factor;
-    if (platform_settings.display_surface ==
-            media::mojom::DisplayCaptureSurfaceType::BROWSER &&
-        zoom_level_ && ratio) {
-      ratio = zoom_level_.value() * ratio.value();
-      ratio = ratio.value() / 100.0f;
-    }
-
-    if (platform_settings.physical_frame_size) {
-      settings->setPhysicalWidth(
-          platform_settings.physical_frame_size->width());
-      settings->setPhysicalHeight(
-          platform_settings.physical_frame_size->height());
-      if (ratio) {
-        settings->setLogicalWidth(
-            platform_settings.physical_frame_size->width() / ratio.value());
-        settings->setLogicalHeight(
-            platform_settings.physical_frame_size->height() / ratio.value());
-      }
+  if (IsCapturedSurfaceResolutionActive(platform_settings)) {
+    if (platform_settings.device_scale_factor) {
+      settings->setScreenPixelRatio(*platform_settings.device_scale_factor);
     }
   }
-#endif
 
   if (suppress_local_audio_playback_setting_.has_value()) {
     settings->setSuppressLocalAudioPlayback(
-        suppress_local_audio_playback_setting_.value());
+        *suppress_local_audio_playback_setting_);
+  }
+
+  if (restrict_own_audio_setting_.has_value()) {
+    settings->setRestrictOwnAudio(*restrict_own_audio_setting_);
   }
 
   return settings;
@@ -824,6 +820,13 @@ void MediaStreamTrackImpl::SetConstraintsInternal(
       constraints_.Basic().suppress_local_audio_playback.HasIdeal()) {
     suppress_local_audio_playback_setting_ =
         constraints_.Basic().suppress_local_audio_playback.Ideal();
+  }
+
+  CHECK(!restrict_own_audio_setting_.has_value());
+  if (!constraints_.IsNull() &&
+      constraints_.Basic().restrict_own_audio.HasIdeal()) {
+    restrict_own_audio_setting_ =
+        constraints_.Basic().restrict_own_audio.Ideal();
   }
 }
 
@@ -986,6 +989,34 @@ void MediaStreamTrackImpl::PropagateTrackEnded() {
            registered_media_streams_.begin();
        iter != registered_media_streams_.end(); ++iter) {
     (*iter)->TrackEnded();
+  }
+  is_iterating_registered_media_streams_ = false;
+}
+
+void MediaStreamTrackImpl::PropagateTrackEnabled(bool enabled) {
+  CHECK(
+      base::FeatureList::IsEnabled(kPropagateEnabledEventForWebRtcAudioTrack));
+  // The enabled state is propagated only when the track belongs to a WebRTC
+  // stream, because in that case, the Audio Media Element receives the stream
+  // directly from the source, bypassing WebMediaStreamAudioSink. Therefore,
+  // volume control must be applied at the source level. Since the volume update
+  // occurs after the source has already sent data to WebMediaStreamAudioSink,
+  // any clients using WebMediaStreamAudioSink will remain unaffected by the
+  // NotifyEnabledStateChangeForWebRtcAudio call below.
+  if (!component_->Source() ||
+      component_->GetSourceType() != MediaStreamSource::kTypeAudio) {
+    return;
+  }
+
+  if (!PeerConnectionRemoteAudioTrack::From(
+          MediaStreamAudioTrack::From(Component()))) {
+    return;
+  }
+
+  CHECK(!is_iterating_registered_media_streams_);
+  is_iterating_registered_media_streams_ = true;
+  for (const auto& stream : registered_media_streams_) {
+    stream->NotifyEnabledStateChangeForWebRtcAudio(enabled);
   }
   is_iterating_registered_media_streams_ = false;
 }
@@ -1177,6 +1208,16 @@ void MediaStreamTrackImpl::SendLogMessage(const WTF::String& message) {
           muted() ? "true" : "false", readyState().AsCStr(),
           component_->Remote() ? "true" : "false")
           .Utf8());
+}
+
+bool MediaStreamTrackImpl::IsCapturedSurfaceResolutionActive(
+    const MediaStreamTrackPlatform::Settings& platform_settings) const {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS)
+  if (platform_settings.physical_frame_size) {
+    return true;
+  }
+#endif
+  return false;
 }
 
 }  // namespace blink

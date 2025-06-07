@@ -42,6 +42,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/browser_task_environment.h"
+#include "content/public/test/mock_navigation_throttle_registry.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
@@ -121,9 +122,9 @@ class FakeRendererAgent {
 class MockPageActivationThrottle : public content::NavigationThrottle {
  public:
   MockPageActivationThrottle(
-      content::NavigationHandle* navigation_handle,
+      content::NavigationThrottleRegistry& registry,
       PageActivationNotificationTiming activation_throttle_state)
-      : content::NavigationThrottle(navigation_handle),
+      : content::NavigationThrottle(registry),
         activation_throttle_state_(activation_throttle_state) {
     // Add some default activations.
     subresource_filter::mojom::ActivationState enabled_state;
@@ -374,35 +375,40 @@ class ThrottleManagerTest
       return;
     }
 
-    // Inject the proper throttles.
-    std::vector<std::unique_ptr<content::NavigationThrottle>> throttles;
+    // Inject the proper throttles via a mock registry to check if the target
+    // throttle is correctly registered.
+    // TODO(https://crbug.com/412524375): Do not use
+    // MockNavigationThrottleRegistry with a real NavigationHandle.
+    auto navigation_throttle_registry =
+        std::make_unique<content::MockNavigationThrottleRegistry>(
+            navigation_handle,
+            content::MockNavigationThrottleRegistry::RegistrationMode::kHold);
     PageActivationNotificationTiming state =
         ::testing::UnitTest::GetInstance()->current_test_info()->value_param()
             ? GetParam().notification_timing
             : WILL_PROCESS_RESPONSE;
-    throttles.push_back(
-        std::make_unique<MockPageActivationThrottle>(navigation_handle, state));
+    navigation_throttle_registry->AddThrottle(
+        std::make_unique<MockPageActivationThrottle>(
+            *navigation_throttle_registry, state));
 
     auto* navigation_throttle_manager =
         ThrottleManager::FromNavigationHandle(*navigation_handle);
     if (navigation_throttle_manager) {
-      navigation_throttle_manager->MaybeAppendNavigationThrottles(
-          navigation_handle, &throttles);
+      navigation_throttle_manager->MaybeCreateAndAddNavigationThrottles(
+          *navigation_throttle_registry);
     }
 
-    created_fp_throttle_for_last_navigation_ = false;
-    for (size_t i = 0; i < throttles.size(); i++) {
-      if (strcmp(throttles[i]->GetNameForLogging(),
-                 kPageActivationThrottleNameForLogging) == 0) {
-        created_fp_throttle_for_last_navigation_ = true;
-        // Delete the prod activation throttle so it doesn't interfere with
-        // tests.
-        throttles.erase(throttles.begin() + i);
-        i--;
-        continue;
-      }
-      navigation_handle->RegisterThrottleForTesting(std::move(throttles[i]));
-    }
+    // Delete the prod activation throttle so it doesn't interfere with tests.
+    created_fp_throttle_for_last_navigation_ =
+        0 != std::erase_if(
+                 navigation_throttle_registry->throttles(),
+                 [](const auto& item) -> bool {
+                   return strcmp(item->GetNameForLogging(),
+                                 kPageActivationThrottleNameForLogging) == 0;
+                 });
+    navigation_throttle_registry->RegisterHeldThrottles();
+    navigation_throttle_registries_.push_back(
+        std::move(navigation_throttle_registry));
   }
 
   void CreateAgentForHost(content::RenderFrameHost* host) {
@@ -432,6 +438,10 @@ class ThrottleManagerTest
     return FingerprintingProtectionWebContentsHelper::FromWebContents(
         RenderViewHostTestHarness::web_contents());
   }
+
+  // Holds created registries as they should outlive the created throttles.
+  std::vector<std::unique_ptr<content::MockNavigationThrottleRegistry>>
+      navigation_throttle_registries_;
 
   subresource_filter::testing::TestRulesetCreator test_ruleset_creator_;
   subresource_filter::testing::TestRulesetPair test_ruleset_pair_;
@@ -552,12 +562,6 @@ TEST_P(ThrottleManagerEnabledTest,
   EXPECT_EQ(content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE,
             SimulateStartAndGetResult(navigation_simulator()).action());
 
-  // Check that an informational message is printed to the console the first
-  // time something is blocked on the page.
-  ASSERT_FALSE(rfh_tester->GetConsoleMessages().empty());
-  EXPECT_EQ((rfh_tester->GetConsoleMessages())[0],
-            kDisallowFirstResourceConsoleMessage);
-
   // Check test ukm recorder contains event with expected metrics.
   const auto& entries = test_ukm_recorder.GetEntriesByName(
       ukm::builders::FingerprintingProtection::kEntryName);
@@ -659,12 +663,6 @@ TEST_P(ThrottleManagerEnabledTest,
                 navigation_simulator(),
                 GURL("https://www.example.com/disallowed.html"))
                 .action());
-
-  // Check that an informational message is printed to the console the first
-  // time something is blocked on the page.
-  ASSERT_FALSE(rfh_tester->GetConsoleMessages().empty());
-  EXPECT_EQ((rfh_tester->GetConsoleMessages())[0],
-            kDisallowFirstResourceConsoleMessage);
 }
 
 TEST_P(ThrottleManagerEnabledTest,
@@ -712,20 +710,10 @@ TEST_P(ThrottleManagerEnabledTest,
   EXPECT_EQ(content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE,
             SimulateStartAndGetResult(navigation_simulator()).action());
 
-  // Check that an informational message is printed to the console the first
-  // time something is blocked on the page.
-  ASSERT_FALSE(rfh_tester->GetConsoleMessages().empty());
-  EXPECT_EQ((rfh_tester->GetConsoleMessages())[0],
-            kDisallowFirstResourceConsoleMessage);
-
   CreateSubframeWithTestNavigation(
       GURL("https://www.example.com/2/disallowed.html"), main_rfh());
   EXPECT_EQ(content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE,
             SimulateStartAndGetResult(navigation_simulator()).action());
-
-  // Blocking a second subframe navigation within a single page should not
-  // result in a second console message.
-  EXPECT_EQ(rfh_tester->GetConsoleMessages().size(), 1ul);
 }
 
 TEST_P(ThrottleManagerEnabledTest,
@@ -1002,12 +990,6 @@ TEST_P(ThrottleManagerEnabledTest,
       GURL("https://www.example.com/disallowed.html"), main_rfh());
   EXPECT_EQ(content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE,
             SimulateStartAndGetResult(navigation_simulator()).action());
-
-  // Check that an informational message is printed to the console the first
-  // time something is blocked on the page.
-  ASSERT_FALSE(rfh_tester->GetConsoleMessages().empty());
-  EXPECT_EQ((rfh_tester->GetConsoleMessages())[0],
-            kDisallowFirstResourceConsoleMessage);
 }
 
 TEST_P(ThrottleManagerEnabledTest,

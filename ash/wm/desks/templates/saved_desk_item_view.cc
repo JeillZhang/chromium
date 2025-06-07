@@ -30,6 +30,7 @@
 #include "ash/wm/overview/overview_utils.h"
 #include "ash/wm/wm_constants.h"
 #include "base/i18n/time_formatting.h"
+#include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "chromeos/constants/chromeos_features.h"
@@ -129,7 +130,7 @@ SavedDeskItemView::SavedDeskItemView(std::unique_ptr<DeskTemplate> saved_desk)
               .CopyAddressTo(&background_view)
               .SetPreferredSize(kPreferredSize)
               .SetUseDefaultFillLayout(true)
-              .SetBackground(views::CreateThemedRoundedRectBackground(
+              .SetBackground(views::CreateRoundedRectBackground(
                   cros_tokens::kCrosSysSystemBaseElevated,
                   kSaveDeskCornerRadius)),
           views::Builder<views::FlexLayoutView>()
@@ -189,7 +190,7 @@ SavedDeskItemView::SavedDeskItemView(std::unique_ptr<DeskTemplate> saved_desk)
                   views::Builder<views::Label>()
                       .CopyAddressTo(&time_view_)
                       .SetHorizontalAlignment(gfx::ALIGN_LEFT)
-                      .SetEnabledColorId(cros_tokens::kCrosSysSecondary)
+                      .SetEnabledColor(cros_tokens::kCrosSysSecondary)
                       .SetText(
                           is_admin_managed
                               ? l10n_util::GetStringUTF16(

@@ -32,14 +32,14 @@ import org.junit.Test;
 import org.junit.rules.RuleChain;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.password_manager.PasswordManagerUtilBridge;
@@ -52,7 +52,6 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.R;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
-import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.test.util.AccountCapabilitiesBuilder;
@@ -73,6 +72,8 @@ public class AccountManagementFragmentTest {
 
     // SettingsActivity has to be finished before the outer CTA can be finished or trying to finish
     // CTA won't work (SyncTestRule extends CTARule).
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
+
     @Rule
     public final RuleChain mRuleChain =
             RuleChain.outerRule(mSyncTestRule).around(mSettingsActivityTestRule);
@@ -87,7 +88,6 @@ public class AccountManagementFragmentTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         // Prevent "GmsCore outdated" error from being exposed in bots with old version.
         PasswordManagerUtilBridgeJni.setInstanceForTesting(mPasswordManagerUtilBridgeJniMock);
         when(mPasswordManagerUtilBridgeJniMock.isGmsCoreUpdateRequired(any(), any()))
@@ -182,32 +182,6 @@ public class AccountManagementFragmentTest {
     @Test
     @MediumTest
     @Feature("RenderTest")
-    @Features.DisableFeatures(SigninFeatures.FORCE_SUPERVISED_SIGNIN_WITH_CAPABILITIES)
-    public void testAccountManagementViewForChildAccountWithUSMFlag() throws Exception {
-        final SigninTestRule signinTestRule = mSyncTestRule.getSigninTestRule();
-        CoreAccountInfo primarySupervisedAccount =
-                signinTestRule.addChildTestAccountThenWaitForSignin();
-
-        mSettingsActivityTestRule.startSettingsActivity();
-        CriteriaHelper.pollUiThread(
-                () -> {
-                    return mSettingsActivityTestRule
-                            .getFragment()
-                            .getProfileDataCacheForTesting()
-                            .hasProfileDataForTesting(primarySupervisedAccount.getEmail());
-                });
-        View view = mSettingsActivityTestRule.getFragment().getView();
-        onViewWaiting(allOf(is(view), isDisplayed()));
-        mRenderTestRule.render(
-                view,
-                "account_management_fragment_for_child_account_with_add_account_for_supervised_"
-                        + "users");
-    }
-
-    @Test
-    @MediumTest
-    @Feature("RenderTest")
-    @Features.EnableFeatures(SigninFeatures.FORCE_SUPERVISED_SIGNIN_WITH_CAPABILITIES)
     public void testAccountManagementViewForChildAccount() throws Exception {
         final SigninTestRule signinTestRule = mSyncTestRule.getSigninTestRule();
         CoreAccountInfo primarySupervisedAccount =

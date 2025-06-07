@@ -168,7 +168,14 @@ enum DataType {
   // standard syncable prefs.
   PLUS_ADDRESS_SETTING,
 
-  LAST_USER_DATA_TYPE = PLUS_ADDRESS_SETTING,
+  // Valuables stored in the Google Wallet.
+  // Read-only on the client.
+  AUTOFILL_VALUABLE,
+
+  // Account-local metadata for shared tab groups.
+  SHARED_TAB_GROUP_ACCOUNT_DATA,
+
+  LAST_USER_DATA_TYPE = SHARED_TAB_GROUP_ACCOUNT_DATA,
 
   // ---- Control Types ----
   // An object representing a set of Nigori keys.
@@ -266,7 +273,9 @@ enum class DataTypeForHistograms {
   kProductComparison = 66,
   kCookies = 67,
   kPlusAddressSettings = 68,
-  kMaxValue = kPlusAddressSettings,
+  kAutofillValuable = 69,
+  kSharedTabGroupAccountData = 70,
+  kMaxValue = kSharedTabGroupAccountData,
 };
 // LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:SyncDataTypes)
 
@@ -294,16 +303,7 @@ constexpr DataTypeSet UserTypes() {
 }
 
 // User types which are not user-controlled.
-constexpr DataTypeSet AlwaysPreferredUserTypes() {
-  return {DEVICE_INFO,
-          USER_CONSENTS,
-          PLUS_ADDRESS,
-          PLUS_ADDRESS_SETTING,
-          SECURITY_EVENTS,
-          SEND_TAB_TO_SELF,
-          SUPERVISED_USER_SETTINGS,
-          SHARING_MESSAGE};
-}
+DataTypeSet AlwaysPreferredUserTypes();
 
 // User types which are always encrypted.
 constexpr DataTypeSet AlwaysEncryptedUserTypes() {
@@ -394,17 +394,18 @@ constexpr DataTypeSet SharedTypes() {
 }
 
 // Types triggering a warning when the user signs out and the types have
-// unsynced data. The warning offers the user to either save the data locally or
-// abort sign-out, depending on the platform.
+// unsynced data. The warning offers the user to proceed with sign-out deleting
+// any pending account data or abort, depending on the platform.
 constexpr DataTypeSet TypesRequiringUnsyncedDataCheckOnSignout() {
   static_assert(
-      53 == GetNumDataTypes(),
+      55 == GetNumDataTypes(),
       "Add new types to `TypesRequiringUnsyncedDataCheckOnSignout()` if there "
       "should be a warning when the user signs out and the types have unsynced "
-      "data. The warning offers the user to either save the data locally or "
-      "abort sign-out, depending on the platform");
-  return {syncer::BOOKMARKS, syncer::CONTACT_INFO, syncer::PASSWORDS,
-          syncer::READING_LIST, syncer::SAVED_TAB_GROUP};
+      "data. The warning offers the user to either proceed with sign-out "
+      "deleting any pending account data or abort, depending on the platform");
+  return {syncer::BOOKMARKS,    syncer::CONTACT_INFO,    syncer::PASSWORDS,
+          syncer::READING_LIST, syncer::SAVED_TAB_GROUP, syncer::THEMES,
+          syncer::EXTENSIONS};
 }
 
 // User types that can be encrypted, which is a subset of UserTypes() and a
@@ -463,6 +464,9 @@ const char* DataTypeToStableLowerCaseString(DataType data_type);
 
 // Returns the comma-separated string representation of `data_types`.
 std::string DataTypeSetToDebugString(DataTypeSet data_types);
+
+// Necessary for compatibility with EXPECT_EQ and the like.
+std::ostream& operator<<(std::ostream& out, DataType data_type);
 
 // Necessary for compatibility with EXPECT_EQ and the like.
 std::ostream& operator<<(std::ostream& out, DataTypeSet data_type_set);

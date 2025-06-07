@@ -15,6 +15,7 @@
 #include "base/time/time.h"
 #include "chrome/browser/devtools/devtools_window_testing.h"
 #include "chrome/browser/extensions/api/runtime/chrome_runtime_api_delegate.h"
+#include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/extensions/extension_action_test_helper.h"
 #include "chrome/common/url_constants.h"
@@ -45,11 +46,8 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "url/url_constants.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "chrome/browser/extensions/extension_platform_apitest.h"
-#else
+#if !BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/apps/platform_apps/app_browsertest_util.h"
-#include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/ui/browser.h"
@@ -61,16 +59,10 @@ namespace extensions {
 
 using ContextType = extensions::browser_test_util::ContextType;
 
-#if BUILDFLAG(IS_ANDROID)
-using ExtensionApiTestBase = ExtensionPlatformApiTest;
-#else
-using ExtensionApiTestBase = ExtensionApiTest;
-#endif
-
-class RuntimeApiTest : public ExtensionApiTestBase,
+class RuntimeApiTest : public ExtensionApiTest,
                        public testing::WithParamInterface<ContextType> {
  public:
-  RuntimeApiTest() : ExtensionApiTestBase(GetParam()) {}
+  RuntimeApiTest() : ExtensionApiTest(GetParam()) {}
   ~RuntimeApiTest() override = default;
   RuntimeApiTest(const RuntimeApiTest&) = delete;
   RuntimeApiTest& operator=(const RuntimeApiTest&) = delete;
@@ -528,8 +520,18 @@ IN_PROC_BROWSER_TEST_F(RuntimeAPIUpdateTest,
 // Tests that when the last active tab in the window belongs to the extension
 // with an uninstall URL, uninstalling the extension does not close the current
 // browser. Regression test for crbug.com/362452856
-IN_PROC_BROWSER_TEST_P(RuntimeApiTest,
-                       OpenUninstallUrlWhenExtensionPageIsTheOnlyActiveTab) {
+//
+// TODO(crbug.com/415617543): Test is flaky on Linux ASan.
+#if BUILDFLAG(IS_LINUX) && defined(ADDRESS_SANITIZER)
+#define MAYBE_OpenUninstallUrlWhenExtensionPageIsTheOnlyActiveTab \
+  DISABLED_OpenUninstallUrlWhenExtensionPageIsTheOnlyActiveTab
+#else
+#define MAYBE_OpenUninstallUrlWhenExtensionPageIsTheOnlyActiveTab \
+  OpenUninstallUrlWhenExtensionPageIsTheOnlyActiveTab
+#endif
+IN_PROC_BROWSER_TEST_P(
+    RuntimeApiTest,
+    MAYBE_OpenUninstallUrlWhenExtensionPageIsTheOnlyActiveTab) {
   ExtensionTestMessageListener ready_listener("ready");
   // Load an extension that has set an uninstall url.
   scoped_refptr<const Extension> extension =
@@ -538,15 +540,15 @@ IN_PROC_BROWSER_TEST_P(RuntimeApiTest,
                         .AppendASCII("sets_uninstall_url"));
   EXPECT_TRUE(ready_listener.WaitUntilSatisfied());
   ASSERT_TRUE(extension.get());
-  extension_service()->AddExtension(extension.get());
-  ASSERT_TRUE(extension_service()->IsExtensionEnabled(extension->id()));
+  extension_registrar()->AddExtension(extension.get());
+  ASSERT_TRUE(extension_registrar()->IsExtensionEnabled(extension->id()));
   TabStripModel* tabs = browser()->tab_strip_model();
 
   ASSERT_EQ(1, tabs->count());
   ASSERT_EQ("about:blank", GetActiveUrl(browser()));
 
   // Navigate to an extension page.
-  const GURL extension_page_url = extension->GetResourceURL("page.html");
+  const GURL extension_page_url = extension->ResolveExtensionURL("page.html");
   content::RenderFrameHost* new_host =
       ui_test_utils::NavigateToURL(browser(), extension_page_url);
   ASSERT_TRUE(new_host);
@@ -555,7 +557,7 @@ IN_PROC_BROWSER_TEST_P(RuntimeApiTest,
   EXPECT_EQ(extension_page_url.spec(), GetActiveUrl(browser()));
 
   // Uninstall the extension and expect its uninstall url to open in a new tab.
-  extension_service()->UninstallExtension(
+  extension_registrar()->UninstallExtension(
       extension->id(), UNINSTALL_REASON_USER_INITIATED, nullptr);
   content::WaitForLoadStop(tabs->GetActiveWebContents());
   EXPECT_EQ(2, tabs->count());
@@ -580,11 +582,11 @@ IN_PROC_BROWSER_TEST_P(RuntimeApiTest,
                         .AppendASCII("sets_uninstall_url"));
   EXPECT_TRUE(ready_listener.WaitUntilSatisfied());
   ASSERT_TRUE(extension.get());
-  extension_service()->AddExtension(extension.get());
-  ASSERT_TRUE(extension_service()->IsExtensionEnabled(extension->id()));
+  extension_registrar()->AddExtension(extension.get());
+  ASSERT_TRUE(extension_registrar()->IsExtensionEnabled(extension->id()));
 
   // Uninstall the extension and expect its uninstall url to open.
-  extension_service()->UninstallExtension(
+  extension_registrar()->UninstallExtension(
       extension->id(), UNINSTALL_REASON_USER_INITIATED, nullptr);
   TabStripModel* tabs = browser()->tab_strip_model();
 
@@ -604,8 +606,8 @@ IN_PROC_BROWSER_TEST_P(RuntimeApiTest,
                                 .AppendASCII("uninstall_url")
                                 .AppendASCII("sets_uninstall_url"));
   EXPECT_TRUE(ready_listener_reload.WaitUntilSatisfied());
-  extension_service()->AddExtension(extension.get());
-  ASSERT_TRUE(extension_service()->IsExtensionEnabled(extension->id()));
+  extension_registrar()->AddExtension(extension.get());
+  ASSERT_TRUE(extension_registrar()->IsExtensionEnabled(extension->id()));
 
   // Blocklist extension.
   blocklist_prefs::SetSafeBrowsingExtensionBlocklistState(
@@ -615,7 +617,7 @@ IN_PROC_BROWSER_TEST_P(RuntimeApiTest,
   // Uninstalling a blocklisted extension should not open its uninstall url.
   TestExtensionRegistryObserver observer(ExtensionRegistry::Get(profile()),
                                          extension->id());
-  extension_service()->UninstallExtension(
+  extension_registrar()->UninstallExtension(
       extension->id(), UNINSTALL_REASON_USER_INITIATED, nullptr);
   observer.WaitForExtensionUninstalled();
 
@@ -654,7 +656,7 @@ IN_PROC_BROWSER_TEST_P(BackgroundPageOnlyRuntimeApiTest,
   const Extension* extension = LoadExtension(dir.UnpackedPath());
   ASSERT_TRUE(extension);
 
-  GURL new_tab_url = extension->GetResourceURL("/index.htm");
+  GURL new_tab_url = extension->ResolveExtensionURL("index.htm");
   {
     content::TestNavigationObserver nav_observer(new_tab_url);
     nav_observer.StartWatchingNewWebContents();
@@ -689,7 +691,7 @@ IN_PROC_BROWSER_TEST_P(BackgroundPageOnlyRuntimeApiTest,
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-class RuntimeGetContextsApiTest : public ExtensionApiTestBase {
+class RuntimeGetContextsApiTest : public ExtensionApiTest {
  public:
   RuntimeGetContextsApiTest() = default;
   RuntimeGetContextsApiTest(const RuntimeGetContextsApiTest&) = delete;
@@ -698,7 +700,7 @@ class RuntimeGetContextsApiTest : public ExtensionApiTestBase {
   ~RuntimeGetContextsApiTest() override = default;
 
   void SetUpOnMainThread() override {
-    ExtensionApiTestBase::SetUpOnMainThread();
+    ExtensionApiTest::SetUpOnMainThread();
 
     static constexpr char kManifest[] =
         R"({
@@ -870,7 +872,7 @@ IN_PROC_BROWSER_TEST_F(RuntimeGetContextsApiTest,
                                                              extension().id());
   // In order to be able to call the API, we need to open a new tab to an
   // extension resource.
-  const GURL extension_page_url = extension().GetResourceURL("page.html");
+  const GURL extension_page_url = extension().ResolveExtensionURL("page.html");
   content::RenderFrameHost* new_host =
       ui_test_utils::NavigateToURL(browser(), extension_page_url);
   ASSERT_TRUE(new_host);
@@ -889,7 +891,7 @@ IN_PROC_BROWSER_TEST_F(RuntimeGetContextsApiTest,
 IN_PROC_BROWSER_TEST_F(RuntimeGetContextsApiTest, FilterMatching) {
   // Currently, there is only one context: the background service worker. Also
   // open a tab-based context.
-  const GURL extension_page_url = extension().GetResourceURL("page.html");
+  const GURL extension_page_url = extension().ResolveExtensionURL("page.html");
   content::RenderFrameHost* new_host =
       ui_test_utils::NavigateToURL(browser(), extension_page_url);
   ASSERT_TRUE(new_host);
@@ -957,7 +959,7 @@ IN_PROC_BROWSER_TEST_F(RuntimeGetContextsApiTest, FilterMatching) {
 // Tests retrieving tab contexts using `chrome.runtime.getContexts()`.
 IN_PROC_BROWSER_TEST_F(RuntimeGetContextsApiTest, GetTabContext) {
   // Open a new extension tab.
-  const GURL frame_url = extension().GetResourceURL("page.html");
+  const GURL frame_url = extension().ResolveExtensionURL("page.html");
   content::RenderFrameHost* new_host =
       ui_test_utils::NavigateToURL(browser(), frame_url);
   ASSERT_TRUE(new_host);
@@ -1032,7 +1034,7 @@ IN_PROC_BROWSER_TEST_F(RuntimeGetContextsApiTest, GetOffscreenDocumentContext) {
   std::string expected_document_id =
       ExtensionApiFrameIdMap::GetDocumentId(offscreen_frame_host).ToString();
   std::string expected_frame_url =
-      extension().GetResourceURL("offscreen.html").spec();
+      extension().ResolveExtensionURL("offscreen.html").spec();
   std::string expected_origin = extension().origin().Serialize();
 
   // Query for offscreen document contexts. There should only be one.
@@ -1101,7 +1103,7 @@ IN_PROC_BROWSER_TEST_F(RuntimeGetContextsApiTest, GetSidePanelContext) {
   std::string expected_document_id =
       ExtensionApiFrameIdMap::GetDocumentId(panel_frame_host).ToString();
   std::string expected_frame_url =
-      extension().GetResourceURL("side_panel.html").spec();
+      extension().ResolveExtensionURL("side_panel.html").spec();
   std::string expected_origin = extension().origin().Serialize();
 
   base::Value side_panel_contexts =
@@ -1160,7 +1162,7 @@ IN_PROC_BROWSER_TEST_F(RuntimeGetContextsApiTest,
   ASSERT_TRUE(ready_listener.WaitUntilSatisfied());
 
   // Open a tab on-the-record to one of the extension's pages.
-  GURL regular_url = extension->GetResourceURL("regular.html");
+  GURL regular_url = extension->ResolveExtensionURL("regular.html");
   content::RenderFrameHost* regular_host =
       ui_test_utils::NavigateToURL(browser(), regular_url);
   ASSERT_TRUE(regular_host);
@@ -1168,7 +1170,7 @@ IN_PROC_BROWSER_TEST_F(RuntimeGetContextsApiTest,
   // Open up an incognito tab to another extension page, and wait for the
   // incognito version of the extension to start up.
   ready_listener.Reset();
-  GURL incognito_url = extension->GetResourceURL("incognito.html");
+  GURL incognito_url = extension->ResolveExtensionURL("incognito.html");
   Browser* incognito_browser = OpenURLOffTheRecord(profile(), incognito_url);
   ASSERT_TRUE(ready_listener.WaitUntilSatisfied());
 
@@ -1243,7 +1245,7 @@ IN_PROC_BROWSER_TEST_F(RuntimeGetContextsApiTest,
   ASSERT_TRUE(extension);
 
   // Open an on-the-record tab to an extension page.
-  GURL regular_url = extension->GetResourceURL("regular.html");
+  GURL regular_url = extension->ResolveExtensionURL("regular.html");
   content::RenderFrameHost* regular_host =
       ui_test_utils::NavigateToURL(browser(), regular_url);
   ASSERT_TRUE(regular_host);
@@ -1252,7 +1254,7 @@ IN_PROC_BROWSER_TEST_F(RuntimeGetContextsApiTest,
   // to open contexts in an incognito profile (which means all contexts just
   // open in the same profile). There's one exception to this: an embedded web-
   // accessible iframe in an incognito tab. Make it so.
-  GURL incognito_url = extension->GetResourceURL("incognito.html");
+  GURL incognito_url = extension->ResolveExtensionURL("incognito.html");
   Browser* incognito_browser = OpenURLOffTheRecord(
       profile(), embedded_test_server()->GetURL("example.com", "/simple.html"));
   // Inject a script to add an iframe and navigate it to the extension's
@@ -1385,7 +1387,7 @@ IN_PROC_BROWSER_TEST_P(GetContextsWithDeveloperToolsOpened,
   ASSERT_EQ(open_docked, is_docked);
 
   // Extract the extension host from the devtools web contents.
-  GURL expected_frame_url = extension().GetResourceURL("devtools.html");
+  GURL expected_frame_url = extension().ResolveExtensionURL("devtools.html");
   auto is_extension_frame =
       [expected_frame_url](content::RenderFrameHost* rfh) {
         return rfh->GetLastCommittedURL() == expected_frame_url;

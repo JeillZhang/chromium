@@ -42,22 +42,14 @@ _CONFIG = [
         'allowed': [
             # absl
             'absl::Cleanup',
-            'absl::get',
-            'absl::get_if',
-            'absl::holds_alternative',
-            'absl::in_place',
-            'absl::in_place_type',
             'absl::int128',
             'absl::Int128High64',
             'absl::Int128Low64',
             'absl::MakeInt128',
             'absl::MakeUint128',
-            'absl::monostate',
             'absl::uint128',
             'absl::Uint128High64',
             'absl::Uint128Low64',
-            'absl::variant',
-            'absl::visit',
 
             # //base constructs that are allowed everywhere
             'base::(byte_)?span_from_ref',
@@ -97,6 +89,7 @@ _CONFIG = [
             'base::GetSystemMemoryInfo',
             'base::HashingLRUCache',
             'base::HashInts',
+            'base::HashMetricName',
             'base::HeapArray',
             'base::Hertz',
             'base::HexStringToUInt64',
@@ -158,6 +151,7 @@ _CONFIG = [
             'base::Time',
             'base::TimeDelta',
             'base::TimeTicks',
+            'base::to_address',
             'base::to_underlying',
             'base::Token',
             'base::ToVector',
@@ -353,6 +347,16 @@ _CONFIG = [
             'base::WritableSharedMemoryMapping',
             'base::subtle::SharedAtomic',
 
+            # Std.
+            'std::get',
+            'std::get_if',
+            'std::holds_alternative',
+            'std::in_place',
+            'std::in_place_type',
+            'std::monostate',
+            'std::variant',
+            'std::visit',
+
             # tracing
             'perfetto::.+',
         ]
@@ -380,16 +384,20 @@ _CONFIG = [
     },
     {
         'paths': [
-            'third_party/blink/common/interest_group/interest_group.cc',
-            'third_party/blink/public/common/interest_group/interest_group.h'
+            'third_party/blink/common/interest_group/',
+            'third_party/blink/public/common/interest_group/',
         ],
         'allowed': [
             # For hashing of k-anonymity keys
-            'crypto::SHA256HashString',
+            'crypto::hash::Sha256',
 
-            # Types used to compute k-anonymity keys.
+            # Types used to compute k-anonymity keys, also many IG fields are
+            # origins and URLs.
             "url::Origin",
             "GURL",
+
+            # For checking if origins in interest group are https.
+            "url::kHttpsScheme",
         ],
     },
     {
@@ -585,6 +593,7 @@ _CONFIG = [
             'cc::LayerTreeHost',
             'cc::PictureLayer',
             'cc::SurfaceLayer',
+            'cc::TextureLayer',
             'cc::TextureLayerImpl',
 
             # cc::Layer helper data structs.
@@ -643,6 +652,7 @@ _CONFIG = [
             'cc::kManipulationInfoScrollbar',
             'cc::kManipulationInfoTouch',
             'cc::kManipulationInfoWheel',
+            'cc::kMaxOverlapBetweenPages',
             'cc::kMinFractionToStepWhenPaging',
             'cc::kPixelsPerLineStep',
             'cc::MainThreadScrollingReason',
@@ -825,6 +835,9 @@ _CONFIG = [
             'ui::DomKey',
             'ui::KeycodeConverter',
 
+            # UI MIME types
+            'ui::kMimeType.+',
+
             # Accessibility base types and the non-Blink enums they
             # depend on.
             'ax::mojom::BoolAttribute',
@@ -837,6 +850,7 @@ _CONFIG = [
             'ui::AXMode',
             'ui::AXNodeData',
             'ui::AXRelativeBounds',
+            'ui::AXSerializationErrorFlag',
             'ui::AXTreeChecks',
             'ui::AXTreeData',
             'ui::AXTreeID',
@@ -846,6 +860,7 @@ _CONFIG = [
             'ui::AXTreeUpdate',
             'ui::kAXModeBasic',
             'ui::kAXModeComplete',
+            'ui::kAXModeInspector',
             'ui::kFirstGeneratedRendererNodeID',
             'ui::kInvalidAXNodeID',
             'ui::kLastGeneratedRendererNodeID',
@@ -920,7 +935,7 @@ _CONFIG = [
             'third_party/blink/renderer/bindings/core/v8/serialization/',
             'third_party/blink/renderer/core/typed_arrays/',
         ],
-        'allowed': ['base::BufferIterator'],
+        'allowed': ['base::BufferIterator', 'gin::kEmbedderBlink'],
     },
     {
         'paths': [
@@ -1020,12 +1035,18 @@ _CONFIG = [
             'third_party/blink/common/messaging/accelerated_static_bitmap_image_mojom_traits.cc'
         ],
         'allowed': [
+            'gfx::ColorSpace',
+            'gfx::Size',
+            'gfx::SizeToSkISize',
             'gpu::ExportedSharedImage',
             'gpu::SHARED_IMAGE_USAGE_DISPLAY_READ',
             'gpu::SHARED_IMAGE_USAGE_SCANOUT',
             'gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE',
             'gpu::SharedImageUsageSet',
             'gpu::SyncToken',
+            'viz::SharedImageFormat',
+            'viz::SkColorTypeToSinglePlaneSharedImageFormat',
+            'viz::ToClosestSkColorType',
         ],
     },
     {
@@ -1276,6 +1297,7 @@ _CONFIG = [
             'gfx::RectF',
             'gfx::Size',
             'gfx::SizeF',
+            'gfx::Vector2d',
             'gfx::Vector2dF',
 
             # The Blink public API is shared between non-Blink and Blink code
@@ -1314,10 +1336,29 @@ _CONFIG = [
     },
     {
         'paths': [
+            'third_party/blink/public/web/web_document.h',
+        ],
+        'allowed': [
+            # For accessibility tree snapshots.
+            'ui::AXMode',
+            'ui::AXSerializationErrorFlag',
+            'ui::AXTreeUpdate',
+        ],
+    },
+    {
+        'paths': [
             'third_party/blink/public/common/context_menu_data/',
         ],
         'allowed': [
             'ui::mojom::MenuSourceType',
+        ],
+    },
+    {
+        'paths': [
+            'third_party/blink/public/platform/platform.h',
+        ],
+        'allowed': [
+            'viz::RasterContextProvider',
         ],
     },
     {
@@ -1334,6 +1375,14 @@ _CONFIG = [
         ],
         'allowed': [
             'media::EmeInitDataType',
+        ],
+    },
+    {
+        'paths': [
+            'third_party/blink/public/platform/web_policy_container.h',
+        ],
+        'allowed': [
+            'network::IntegrityPolicy',
         ],
     },
     {
@@ -1447,6 +1496,7 @@ _CONFIG = [
             'third_party/blink/renderer/core/inspector',
             'third_party/blink/renderer/controller/dev_tools_frontend_impl.h',
             'third_party/blink/renderer/controller/dev_tools_frontend_impl.cc',
+            'third_party/blink/renderer/modules/credentialmanagement/digital_identity_credential.cc',
             'third_party/blink/renderer/modules/filesystem/dev_tools_host_file_system.cc'
         ],
         'allowed': [
@@ -1481,7 +1531,7 @@ _CONFIG = [
             'base::HexEncode',
             'net::ct::.+',
             'net::IPAddress',
-            'net::SourceStream',
+            'net::SourceStreamType',
             'net::SSL.+',
         ],
     },
@@ -1540,6 +1590,7 @@ _CONFIG = [
             'gpu::Mailbox',
             'gpu::MailboxHolder',
             'gpu::raster::RasterInterface',
+            'gpu::RasterScopedAccess',
             'gpu::SHARED_IMAGE_USAGE_.+',
             'gpu::SharedImageInterface',
             'gpu::SharedImageTexture',
@@ -1557,6 +1608,26 @@ _CONFIG = [
             'viz::ToClosestSkColorType',
             'viz::TransferableResource',
             'wgpu::.+',
+        ],
+    },
+    {
+        'paths': [
+            'third_party/blink/renderer/modules/webgl/webgl_rendering_context_webgpu_base.cc',
+            'third_party/blink/renderer/modules/webgl/webgl_rendering_context_webgpu_base.h',
+        ],
+        # This class needs access to ui/gl classes for driver loading.
+        'allowed': [
+            'dawn::wire::client::GetProcs',
+            'gfx::ExtensionSet',
+            'gfx::MakeExtensionSet',
+            'gl::DriverEGL',
+            'gl::DriverGL',
+            'gl::GLVersionInfo',
+            'gl::GetDebugSeverityString',
+            'gl::GetDebugSourceString',
+            'gl::GetDebugTypeString',
+            'gpu::gles2::GLES2InterfaceStub',
+            'ui::LogEGLDebugMessage',
         ],
     },
     {
@@ -1609,16 +1680,6 @@ _CONFIG = [
             # Required to initialize WebGraphicsContext3DVideoFramePool.
             'gpu::GpuMemoryBufferManager',
             'media::.+',
-        ]
-    },
-    {
-        'paths': [
-            'third_party/blink/renderer/modules/mediasource/',
-        ],
-        'allowed': [
-            'base::CommandLine',
-            'media::.+',
-            'switches::kLacrosEnablePlatformEncryptedHevc',
         ]
     },
     {
@@ -1744,9 +1805,10 @@ _CONFIG = [
             'rtc::TaskQueue',
             'rtc::scoped_refptr',
             'viz::.+',
+            "webrtc::RefCountedObject",
             'webrtc::Aec3ConfigFromJsonString',
-            'webrtc::AudioProcessingBuilder',
             'webrtc::AudioProcessing',
+            'webrtc::AudioProcessingBuilder',
             'webrtc::AudioProcessorInterface',
             'webrtc::AudioTrackInterface',
             'webrtc::Config',
@@ -1757,8 +1819,10 @@ _CONFIG = [
             'webrtc::MediaStreamTrackInterface',
             'webrtc::ObserverInterface',
             'webrtc::StreamConfig',
+            'webrtc::TaskQueue',
             'webrtc::TypingDetection',
             'webrtc::VideoTrackInterface',
+            'webrtc::scoped_refptr',
         ],
         'inclass_allowed': [
             'base::(SingleThread|Sequenced)TaskRunner::(CurrentDefaultHandle|GetCurrentDefault)'
@@ -1807,6 +1871,7 @@ _CONFIG = [
             'media::.+',
             'viz::RasterContextProvider',
             'viz::ReleaseCallback',
+            'viz::SkColorTypeToSinglePlaneSharedImageFormat',
         ]
     },
     {
@@ -1849,6 +1914,7 @@ _CONFIG = [
             'webrtc::AudioTransport',
             'webrtc::kAdmMaxDeviceNameSize',
             'webrtc::kAdmMaxGuidSize',
+            'webrtc::scoped_refptr',
         ]
     },
     {
@@ -1877,6 +1943,18 @@ _CONFIG = [
             # renderer/platform/ violations.
             _DISALLOW_NON_BLINK_MOJOM,
         ]
+    },
+    {
+        'paths': [
+            'third_party/blink/renderer/platform/media/',
+        ],
+        'allowed': [
+            # TODO(crbug.com/40760651): migrate to Blink variant.
+            'media::mojom::MediaMetricsProvider',
+            'media::mojom::PlaybackPropertiesPtr',
+            'media::mojom::SecondaryPlaybackPropertiesPtr',
+            'media::mojom::WatchTimeRecorder',
+        ],
     },
     {
         'paths': [
@@ -1918,6 +1996,14 @@ _CONFIG = [
     {
         'paths': [
             'third_party/blink/renderer/modules/accessibility/',
+        ],
+        'allowed': [
+            'base::MakeFixedFlatSet',
+        ],
+    },
+    {
+        'paths': [
+            'third_party/blink/renderer/modules/ai/',
         ],
         'allowed': [
             'base::MakeFixedFlatSet',
@@ -1982,9 +2068,13 @@ _CONFIG = [
         'paths': [
             'third_party/blink/public/platform/web_theme_engine.h',
             'third_party/blink/renderer/core/css/resolver/style_builder_converter.h',
+            'third_party/blink/renderer/core/animation/css_color_interpolation_type.cc',
+            'third_party/blink/renderer/core/animation/interpolable_shadow.cc',
             'third_party/blink/renderer/core/layout/layout_theme.cc',
             'third_party/blink/renderer/core/layout/layout_theme.h',
             'third_party/blink/renderer/core/scroll/',
+            'third_party/blink/renderer/modules/canvas/canvas2d/canvas_2d_recorder_context.cc',
+            'third_party/blink/renderer/modules/canvas/canvas2d/canvas_2d_recorder_context.h',
         ],
         'allowed': ['ui::ColorProvider'],
     },
@@ -2180,10 +2270,14 @@ _CONFIG = [
             'third_party/blink/renderer/modules/webgpu',
         ],
         'allowed': [
+            'base::BindOnce',
+            'cc::TextureLayerClient',
+            'viz::ReleaseCallback',
             'viz::SharedImageFormat',
             'viz::SinglePlaneFormat',
             'viz::SkColorTypeToSinglePlaneSharedImageFormat',
             'viz::ToClosestSkColorType',
+            'viz::TransferableResource',
         ],
     },
     {
@@ -2197,6 +2291,13 @@ _CONFIG = [
             'third_party/blink/renderer/core/view_transition/',
         ],
         'allowed': ['base::flat_map', 'cc::ScopedPauseRendering'],
+    },
+    {
+        'paths': [
+            'third_party/blink/public/common/frame/view_transition_state_mojom_traits.h',
+            'third_party/blink/public/common/frame/view_transition_state.h',
+        ],
+        'allowed': ['base::flat_map'],
     },
     {
         'paths': [
@@ -2317,6 +2418,8 @@ _CONFIG = [
     },
     {
         'paths': [
+            'third_party/blink/renderer/core/annotation/annotation_agent_impl_test.cc'
+            'third_party/blink/renderer/core/editing/markers/glic_marker.cc',
             'third_party/blink/renderer/core/highlight/highlight_style_utils.cc',
         ],
         'allowed': [
@@ -2356,6 +2459,7 @@ _CONFIG = [
     {
         'paths': [
             'third_party/blink/renderer/modules/ml/webnn/',
+            'third_party/blink/renderer/modules/ml/ml.cc',
             'third_party/blink/renderer/modules/ml/ml_context.cc',
             'third_party/blink/renderer/modules/ml/ml_context.h',
             'third_party/blink/renderer/modules/ml/ml_model_loader_test_util.cc',
@@ -2385,14 +2489,6 @@ _CONFIG = [
     },
     {
         'paths': [
-            'third_party/blink/public/common/permissions_policy/permissions_policy.h',
-        ],
-        'allowed': [
-            'url::Origin',
-        ]
-    },
-    {
-        'paths': [
             'third_party/blink/public/common/privacy_budget/identifiable_token.h',
         ],
         'allowed': [
@@ -2417,6 +2513,7 @@ _CONFIG = [
     },
     {
         'paths': [
+            'third_party/blink/public/platform/media/',
             'third_party/blink/public/platform/web_media_player_client.h',
         ],
         'allowed': [
@@ -2426,6 +2523,8 @@ _CONFIG = [
     {
         'paths': [
             'third_party/blink/common/client_hints/',
+            'third_party/blink/common/fenced_frame/',
+            'third_party/blink/common/frame/',
             'third_party/blink/common/permissions/',
             'third_party/blink/common/permissions_policy/',
             'third_party/blink/common/use_counter/',
@@ -2438,8 +2537,14 @@ _CONFIG = [
             'third_party/blink/public/web/',
         ],
         'allowed': [
+            'network::GetPermissionsPolicyFeatureList',
             'network::mojom::PermissionsPolicyFeature',
             'network::OriginWithPossibleWildcards',
+            'network::ParsedPermissionsPolicy',
+            'network::ParsedPermissionsPolicyDeclaration',
+            'network::PermissionsPolicyFeatureDefault',
+            'network::PermissionsPolicyFeatureList',
+            'network::PermissionsPolicyFeatureState',
         ]
     },
     {
@@ -2449,8 +2554,47 @@ _CONFIG = [
         ],
         'allowed': [
             'base::flat_map',
+            'network::PermissionsPolicy',
         ]
     },
+    {
+        'paths': [
+            'third_party/blink/renderer/core/canvas_interventions/',
+        ],
+        'allowed': [
+            'gfx::SkPixmapToWritableSpan',
+        ]
+    },
+    {
+        'paths': [
+            'third_party/blink/common/features.cc',
+        ],
+        'allowed': [
+            'network::features::kBrowsingTopics',
+            'network::features::kInterestGroupStorage',
+            'network::features::kSharedStorageAPI',
+        ]
+    },
+    {
+        'paths': [
+            'third_party/blink/common/client_hints/client_hints.cc',
+        ],
+        'allowed': [
+            'GURL',
+            'network::GetClientHintToPolicyFeatureMap',
+            'network::PermissionsPolicy',
+        ]
+    },
+    {
+        # TODO(crbug.com/418169222): Remove this entry once the device
+        # bound session credentials origin trial is complete.
+        'paths': [
+            'third_party/blink/common/loader/throttling_url_loader.cc',
+        ],
+        'allowed': [
+            'mojom::OriginTrialFeature',
+        ]
+    }
 ]
 
 

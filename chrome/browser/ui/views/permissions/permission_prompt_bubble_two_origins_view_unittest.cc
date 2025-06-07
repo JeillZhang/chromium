@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/permissions/permission_prompt_bubble_two_origins_view.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/containers/to_vector.h"
 #include "base/memory/raw_ptr.h"
@@ -50,10 +51,9 @@ class TestDelegateTwoOrigins : public permissions::PermissionPrompt::Delegate {
         });
   }
 
-  const std::vector<
-      raw_ptr<permissions::PermissionRequest, VectorExperimental>>&
-  Requests() override {
-    return raw_requests_;
+  const std::vector<std::unique_ptr<permissions::PermissionRequest>>& Requests()
+      override {
+    return requests_;
   }
 
   GURL GetRequestingOrigin() const override {
@@ -139,8 +139,8 @@ class PermissionPromptBubbleTwoOriginsViewTest : public ChromeViewsTestBase {
   }
 
   std::unique_ptr<TestingProfile> profile_;
-  std::unique_ptr<Browser> browser_;
   std::unique_ptr<TestBrowserWindow> browser_window_;
+  std::unique_ptr<Browser> browser_;
 };
 
 TEST_F(PermissionPromptBubbleTwoOriginsViewTest,
@@ -151,8 +151,8 @@ TEST_F(PermissionPromptBubbleTwoOriginsViewTest,
   auto bubble = CreateBubble(&delegate);
 
   const auto title = base::UTF16ToUTF8(bubble->GetWindowTitle());
-  EXPECT_PRED_FORMAT2(::testing::IsSubstring, "info they've saved about you",
-                      title);
+  EXPECT_PRED_FORMAT2(::testing::IsSubstring,
+                      "information they've saved about you", title);
   // The scheme is not included. Only the origin should be visible.
   EXPECT_PRED_FORMAT2(::testing::IsSubstring, "requesting.com", title);
   EXPECT_PRED_FORMAT2(::testing::IsNotSubstring, "https://", title);

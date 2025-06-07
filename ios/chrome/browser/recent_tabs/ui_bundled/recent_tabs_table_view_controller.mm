@@ -31,12 +31,16 @@
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view_configurator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/signin_promo_view_consumer.h"
 #import "ios/chrome/browser/authentication/ui_bundled/cells/table_view_signin_promo_item.h"
+#import "ios/chrome/browser/authentication/ui_bundled/change_profile/change_profile_recent_tabs_continuation.h"
 #import "ios/chrome/browser/authentication/ui_bundled/enterprise/enterprise_utils.h"
 #import "ios/chrome/browser/authentication/ui_bundled/history_sync/history_sync_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/history_sync/history_sync_utils.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_utils.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_presenter.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_promo_view_mediator.h"
+#import "ios/chrome/browser/authentication/ui_bundled/trusted_vault_reauthentication/trusted_vault_reauthentication_coordinator.h"
+#import "ios/chrome/browser/authentication/ui_bundled/trusted_vault_reauthentication/trusted_vault_reauthentication_coordinator_delegate.h"
 #import "ios/chrome/browser/drag_and_drop/model/drag_item_util.h"
 #import "ios/chrome/browser/drag_and_drop/model/table_view_url_drag_drop_handler.h"
 #import "ios/chrome/browser/keyboard/ui_bundled/UIKeyCommand+Chrome.h"
@@ -46,7 +50,6 @@
 #import "ios/chrome/browser/recent_tabs/ui_bundled/recent_tabs_constants.h"
 #import "ios/chrome/browser/recent_tabs/ui_bundled/recent_tabs_menu_provider.h"
 #import "ios/chrome/browser/recent_tabs/ui_bundled/recent_tabs_presentation_delegate.h"
-#import "ios/chrome/browser/recent_tabs/ui_bundled/recent_tabs_table_view_controller_delegate.h"
 #import "ios/chrome/browser/recent_tabs/ui_bundled/recent_tabs_table_view_controller_ui_delegate.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/sessions/model/live_tab_context_browser_agent.h"
@@ -99,7 +102,6 @@
 #import "ios/chrome/common/ui/table_view/table_view_cells_constants.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
-#import "ios/public/provider/chrome/browser/modals/modals_api.h"
 #import "ios/web/public/web_state.h"
 #import "ui/base/l10n/l10n_util.h"
 #import "ui/base/l10n/time_format.h"
@@ -155,13 +157,15 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
 - (instancetype)initWithSession:(UISceneSession*)session;
 @end
 
-@interface RecentTabsTableViewController () <SigninPromoViewConsumer,
-                                             SigninPresenter,
-                                             SyncObserverModelBridge,
-                                             SyncPresenter,
-                                             TableViewURLDragDataSource,
-                                             UIContextMenuInteractionDelegate,
-                                             UIGestureRecognizerDelegate> {
+@interface RecentTabsTableViewController () <
+    SigninPromoViewConsumer,
+    SigninPromoViewMediatorDelegate,
+    SyncObserverModelBridge,
+    SyncPresenter,
+    TableViewURLDragDataSource,
+    TrustedVaultReauthenticationCoordinatorDelegate,
+    UIContextMenuInteractionDelegate,
+    UIGestureRecognizerDelegate> {
   // The displayed recently closed tabs.
   std::vector<RecentlyClosedTableViewItemPair> _recentlyClosedItems;
 
@@ -173,6 +177,8 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
   std::vector<synced_sessions::DistantTabsSet> _displayedTabs;
 
   std::unique_ptr<SyncObserverBridge> _syncObserver;
+  TrustedVaultReauthenticationCoordinator*
+      _trustedVaultReauthenticationCoordinator;
 }
 // The service that manages the recently closed tabs
 @property(nonatomic, assign) sessions::TabRestoreService* tabRestoreService;
@@ -191,7 +197,9 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
 @property(nonatomic, strong) TableViewURLDragDropHandler* dragDropHandler;
 @end
 
-@implementation RecentTabsTableViewController
+@implementation RecentTabsTableViewController {
+  SigninCoordinator* _signinCoordinator;
+}
 
 #pragma mark - Public Interface
 
@@ -405,6 +413,7 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
   historyItem.textColor = [UIColor colorNamed:kBlueColor];
   historyItem.accessibilityIdentifier =
       kRecentTabsShowFullHistoryCellAccessibilityIdentifier;
+  historyItem.accessibilityTraits |= UIAccessibilityTraitButton;
   [model addItem:historyItem
       toSectionWithIdentifier:SectionIdentifierRecentlyClosedTabs];
 }
@@ -729,16 +738,20 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
   ProfileIOS* profile = self.profile;
   if (!self.signinPromoViewMediator && profile) {
     self.signinPromoViewMediator = [[SigninPromoViewMediator alloc]
-         initWithIdentityManager:IdentityManagerFactory::GetForProfile(profile)
-           accountManagerService:ChromeAccountManagerServiceFactory::
-                                     GetForProfile(profile)
-                     authService:AuthenticationServiceFactory::GetForProfile(
-                                     profile)
-                     prefService:profile->GetPrefs()
-                     syncService:self.syncService
-                     accessPoint:signin_metrics::AccessPoint::kRecentTabs
-                 signinPresenter:self
-        accountSettingsPresenter:nil];
+                  initWithIdentityManager:IdentityManagerFactory::GetForProfile(
+                                              profile)
+                    accountManagerService:ChromeAccountManagerServiceFactory::
+                                              GetForProfile(profile)
+                              authService:AuthenticationServiceFactory::
+                                              GetForProfile(profile)
+                              prefService:profile->GetPrefs()
+                              syncService:self.syncService
+                              accessPoint:signin_metrics::AccessPoint::
+                                              kRecentTabs
+                                 delegate:self
+                 accountSettingsPresenter:nil
+        changeProfileContinuationProvider:
+            base::BindRepeating(&CreateChangeProfileRecentTabsContinuation)];
     self.signinPromoViewMediator.signinPromoAction =
         SigninPromoAction::kSigninWithNoDefaultIdentity;
     self.signinPromoViewMediator.consumer = self;
@@ -989,6 +1002,11 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
 
 #pragma mark - Private
 
+- (void)stopSigninCoordinator {
+  [_signinCoordinator stop];
+  _signinCoordinator = nil;
+}
+
 // Returns YES if `sectionIdentifier` is a Sessions sectionIdentifier.
 - (BOOL)isSessionSectionIdentifier:(NSInteger)sectionIdentifier {
   NSArray* sessionSectionIdentifiers = [self allSessionSectionIdentifiers];
@@ -1066,8 +1084,7 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
   self.sessionState = newSessionState;
 
   if (self.sessionState != SessionsSyncUserState::USER_SIGNED_OUT) {
-    [self.signinPromoViewMediator disconnect];
-    self.signinPromoViewMediator = nil;
+    [self disconnectMediator];
   }
 }
 
@@ -1093,9 +1110,10 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
 }
 
 - (void)dismissModals {
-  [self.signinPromoViewMediator disconnect];
-  self.signinPromoViewMediator = nil;
-  ios::provider::DismissModalsForTableView(self.tableView);
+  [self disconnectMediator];
+  [self stopSigninCoordinator];
+  [self.tableView.contextMenuInteraction dismissMenu];
+  [self stopTrustedVaultReauthenticationCoordinator];
 }
 
 #pragma mark - UITableViewDelegate
@@ -1746,10 +1764,8 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
     // exist anymore. The mediator should not be removed each time the section
     // is removed since the section is replaced at each reload.
     // Metrics would be recorded too often.
-    // The other device section can be present even without the sync promo. This
-    // happens when sync is disabled.
-    [self.signinPromoViewMediator disconnect];
-    self.signinPromoViewMediator = nil;
+    // The other device section can be present even without the promo.
+    [self disconnectMediator];
     return;
   }
   if ([self.tableViewModel hasItemForItemType:ItemTypeOtherDevicesSigninPromo
@@ -1775,20 +1791,17 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
   }
 }
 
-- (void)signinDidFinish {
-  [self.presentationDelegate showHistorySyncOptInAfterDedicatedSignIn:YES];
-}
-
 #pragma mark - SyncPresenter
 
 - (void)showPrimaryAccountReauth {
-  [self.applicationHandler
-              showSignin:[[ShowSigninCommand alloc]
-                             initWithOperation:AuthenticationOperation::
-                                                   kPrimaryAccountReauth
-                                   accessPoint:signin_metrics::AccessPoint::
-                                                   kRecentTabs]
-      baseViewController:self];
+  [self.presentationDelegate showPrimaryAccountReauth];
+//  auto provider =
+//      base::BindRepeating(&CreateChangeProfileRecentTabsContinuation);
+//  ShowSigninCommand* command = [[ShowSigninCommand
+//      alloc] initWithOperation:AuthenticationOperation::kPrimaryAccountReauth
+//                            accessPoint:signin_metrics::AccessPoint::kRecentTabs
+//      changeProfileContinuationProvider:provider];
+//  [self showSignin:command];
 }
 
 - (void)showSyncPassphraseSettings {
@@ -1808,34 +1821,58 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
     (syncer::TrustedVaultUserActionTriggerForUMA)trigger {
   trusted_vault::SecurityDomainId securityDomainID =
       trusted_vault::SecurityDomainId::kChromeSync;
-  signin_metrics::AccessPoint accessPoint =
-      signin_metrics::AccessPoint::kRecentTabs;
-  [self.applicationHandler
-      showTrustedVaultReauthForFetchKeysFromViewController:self
-                                          securityDomainID:securityDomainID
-                                                   trigger:trigger
-                                               accessPoint:accessPoint];
+  CHECK(!_trustedVaultReauthenticationCoordinator, base::NotFatalUntil::M145);
+  _trustedVaultReauthenticationCoordinator =
+      [[TrustedVaultReauthenticationCoordinator alloc]
+          initWithBaseViewController:self
+                             browser:self.browser
+                              intent:SigninTrustedVaultDialogIntentFetchKeys
+                    securityDomainID:securityDomainID
+                             trigger:trigger];
+  _trustedVaultReauthenticationCoordinator.delegate = self;
+  [_trustedVaultReauthenticationCoordinator start];
 }
 
 - (void)showTrustedVaultReauthForDegradedRecoverabilityWithTrigger:
     (syncer::TrustedVaultUserActionTriggerForUMA)trigger {
   trusted_vault::SecurityDomainId securityDomainID =
       trusted_vault::SecurityDomainId::kChromeSync;
-  signin_metrics::AccessPoint accessPoint =
-      signin_metrics::AccessPoint::kRecentTabs;
-  [self.applicationHandler
-      showTrustedVaultReauthForDegradedRecoverabilityFromViewController:self
-                                                       securityDomainID:
-                                                           securityDomainID
-                                                                trigger:trigger
-                                                            accessPoint:
-                                                                accessPoint];
+  SigninTrustedVaultDialogIntent intent =
+      SigninTrustedVaultDialogIntentDegradedRecoverability;
+  CHECK(!_trustedVaultReauthenticationCoordinator, base::NotFatalUntil::M145);
+  _trustedVaultReauthenticationCoordinator =
+      [[TrustedVaultReauthenticationCoordinator alloc]
+          initWithBaseViewController:self
+                             browser:self.browser
+                              intent:intent
+                    securityDomainID:securityDomainID
+                             trigger:trigger];
+  _trustedVaultReauthenticationCoordinator.delegate = self;
+  [_trustedVaultReauthenticationCoordinator start];
 }
 
-#pragma mark - SigninPresenter
+#pragma mark - SigninPromoViewMediatorDelegate
 
-- (void)showSignin:(ShowSigninCommand*)command {
-  [self.applicationHandler showSignin:command baseViewController:self];
+- (void)showSignin:(SigninPromoViewMediator*)mediator
+           command:(ShowSigninCommand*)command {
+  CHECK_EQ(mediator, self.signinPromoViewMediator);
+  __weak __typeof(self) weakSelf = self;
+  [command addSigninCompletion:^(SigninCoordinatorResult result,
+                                 id<SystemIdentity>) {
+    [weakSelf signinDidCompleteWithResult:result];
+  }];
+  _signinCoordinator = [SigninCoordinator signinCoordinatorWithCommand:command
+                                                               browser:_browser
+                                                    baseViewController:self];
+  [_signinCoordinator start];
+}
+
+#pragma mark - SigninPromoViewMediatorDelegate Helper
+
+- (void)signinDidCompleteWithResult:(SigninCoordinatorResult)result {
+  [self.signinPromoViewMediator signinDidCompleteWithResult:result];
+  [self stopSigninCoordinator];
+  [self.presentationDelegate showHistorySyncOptInAfterDedicatedSignIn:YES];
 }
 
 #pragma mark - UIAdaptivePresentationControllerDelegate
@@ -1877,7 +1914,27 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
   [self.presentationDelegate showActiveRegularTabFromRecentTabs];
 }
 
+#pragma mark - TrustedVaultReauthenticationCoordinatorDelegate
+
+- (void)trustedVaultReauthenticationCoordinatorWantsToBeStopped:
+    (TrustedVaultReauthenticationCoordinator*)coordinator {
+  CHECK_EQ(coordinator, _trustedVaultReauthenticationCoordinator);
+  [self stopTrustedVaultReauthenticationCoordinator];
+}
+
 #pragma mark - Private Helpers
+
+- (void)stopTrustedVaultReauthenticationCoordinator {
+  [_trustedVaultReauthenticationCoordinator stop];
+  _trustedVaultReauthenticationCoordinator.delegate = nil;
+  _trustedVaultReauthenticationCoordinator = nil;
+}
+
+// Disconnects the mediator.
+- (void)disconnectMediator {
+  [self.signinPromoViewMediator disconnect];
+  self.signinPromoViewMediator = nil;
+}
 
 - (void)didTapPromoActionButton {
   syncer::SyncService* const syncService = self.syncService;
@@ -1905,12 +1962,6 @@ typedef std::pair<SessionID, TableViewURLItem*> RecentlyClosedTableViewItemPair;
 - (BOOL)shouldShowHistorySyncOnPromoAction {
   AuthenticationService* authenticationService =
       AuthenticationServiceFactory::GetForProfile(_profile);
-  // TODO(crbug.com/40276546): Delete the usage of ConsentLevel::kSync after
-  // Phase 2 on iOS is launched. See ConsentLevel::kSync documentation for
-  // details.
-  if (authenticationService->HasPrimaryIdentity(signin::ConsentLevel::kSync)) {
-    return NO;
-  }
   // Check if History Sync Opt-In should be skipped.
   // In case it's not necessary to show the history opt-in, but the promo action
   // button is still available, sync errors should be checked to show the

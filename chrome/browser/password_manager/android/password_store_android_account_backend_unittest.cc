@@ -182,8 +182,7 @@ class PasswordStoreAndroidAccountBackendTest : public testing::Test {
     backend_ = std::make_unique<PasswordStoreAndroidAccountBackend>(
         base::PassKey<class PasswordStoreAndroidAccountBackendTest>(),
         CreateMockBridgeHelper(), CreateFakeLifecycleHelper(),
-        CreatePasswordSyncControllerDelegate(), &prefs_,
-        &password_affiliation_adapter_);
+        CreatePasswordSyncControllerDelegate(), &prefs_);
   }
 
   ~PasswordStoreAndroidAccountBackendTest() override {
@@ -1653,26 +1652,6 @@ TEST_F(PasswordStoreAndroidAccountBackendTest,
 }
 
 TEST_F(PasswordStoreAndroidAccountBackendTest,
-       DisablesAffiliationsPrefetching) {
-  backend().InitBackend(
-      /*affiliated_match_helper=*/nullptr,
-      PasswordStoreAndroidAccountBackend::RemoteChangesReceived(),
-      base::RepeatingClosure(), base::DoNothing());
-  EnableSyncForTestAccount();
-
-  EXPECT_CALL(*bridge_helper(), CanUseGetAllLoginsWithBrandingInfoAPI)
-      .WillOnce(Return(true));
-  backend().OnSyncServiceInitialized(sync_service());
-
-  // Test that the affiliation source got disabled and the data layer is never
-  // queried.
-  base::MockCallback<affiliations::AffiliationSource::ResultCallback> callback;
-  EXPECT_CALL(callback, Run(IsEmpty()));
-  EXPECT_CALL(*bridge_helper(), GetAllLogins).Times(0);
-  affiliation_source_adapter()->GetFacets(callback.Get());
-}
-
-TEST_F(PasswordStoreAndroidAccountBackendTest,
        GetAllLoginsReturnsEmptyResultWhenSyncOff) {
   backend().InitBackend(
       /*affiliated_match_helper=*/nullptr,
@@ -1809,24 +1788,6 @@ TEST_F(PasswordStoreAndroidAccountBackendTest,
   EXPECT_CALL(mock_reply,
               Run(VariantWith<PasswordChanges>(Optional(IsEmpty()))));
   RunUntilIdle();
-}
-
-TEST_F(PasswordStoreAndroidAccountBackendTest, RecordPasswordStoreMetrics) {
-  base::HistogramTester histogram_tester;
-  backend().InitBackend(
-      /*affiliated_match_helper=*/nullptr,
-      PasswordStoreAndroidAccountBackend::RemoteChangesReceived(),
-      base::NullCallback(), base::DoNothing());
-
-  backend().RecordAddLoginAsyncCalledFromTheStore();
-  histogram_tester.ExpectUniqueSample(
-      "PasswordManager.PasswordStore.AccountBackend.AddLoginCalledOnStore",
-      true, 1);
-
-  backend().RecordUpdateLoginAsyncCalledFromTheStore();
-  histogram_tester.ExpectUniqueSample(
-      "PasswordManager.PasswordStore.AccountBackend.UpdateLoginCalledOnStore",
-      true, 1);
 }
 
 // Checks that unenrollment is disabled post M4.

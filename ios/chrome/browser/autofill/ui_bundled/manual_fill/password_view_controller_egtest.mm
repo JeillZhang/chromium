@@ -8,12 +8,14 @@
 #import "base/test/ios/wait_util.h"
 #import "components/password_manager/core/browser/password_ui_utils.h"
 #import "components/strings/grit/components_strings.h"
+#import "components/sync/base/features.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
 #import "ios/chrome/browser/autofill/ui_bundled/form_input_accessory/form_input_accessory_app_interface.h"
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/manual_fill_constants.h"
 #import "ios/chrome/browser/autofill/ui_bundled/manual_fill/manual_fill_matchers.h"
+#import "ios/chrome/browser/infobars/ui_bundled/banners/infobar_banner_constants.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
 #import "ios/chrome/browser/passwords/ui_bundled/bottom_sheet/password_suggestion_bottom_sheet_app_interface.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/manage_sync_settings_constants.h"
@@ -274,6 +276,15 @@ void CheckKeyboardIsUpAndNotCovered() {
   } else {
     config.features_disabled.push_back(kIOSKeyboardAccessoryUpgradeForIPad);
   }
+
+  // TODO(crbug.com/371189341): Test fails on device.
+#if TARGET_IPHONE_SIMULATOR
+  if ([self isRunningTest:@selector
+            (testPasswordGenerationFallbackSignedInEncryptionError)]) {
+    config.features_enabled.push_back(
+        syncer::kSyncTrustedVaultInfobarImprovements);
+  }
+#endif  // TARGET_IPHONE_SIMULATOR
 
   return config;
 }
@@ -1004,8 +1015,8 @@ void CheckKeyboardIsUpAndNotCovered() {
   [ChromeEarlGrey waitForJavaScriptCondition:javaScriptCondition];
 }
 
-// Tests password generation on manual fallback for signed in not syncing users.
-- (void)testPasswordGenerationOnManualFallbackSignedInNotSyncingAccount {
+// Tests password generation on manual fallback for signed in users.
+- (void)testPasswordGenerationOnManualFallbackSignedInAccount {
   [SigninEarlGreyUI signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
   [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
 
@@ -1027,18 +1038,17 @@ void CheckKeyboardIsUpAndNotCovered() {
       performAction:grey_tap()];
 }
 
-// Tests password generation on manual fallback not showing for signed in not
-// syncing users with Passwords toggle in account settings disbaled.
+// Tests password generation on manual fallback not showing for signed in users
+// with Passwords toggle in account settings disabled.
 // TODO(crbug.com/371189341): Test fails on device.
 #if TARGET_IPHONE_SIMULATOR
-#define MAYBE_testPasswordGenerationFallbackSignedInNotSyncingPasswordsDisabled \
-  testPasswordGenerationFallbackSignedInNotSyncingPasswordsDisabled
+#define MAYBE_testPasswordGenerationFallbackSignedInPasswordsDisabled \
+  testPasswordGenerationFallbackSignedInPasswordsDisabled
 #else
-#define MAYBE_testPasswordGenerationFallbackSignedInNotSyncingPasswordsDisabled \
-  DISABLED_testPasswordGenerationFallbackSignedInNotSyncingPasswordsDisabled
+#define MAYBE_testPasswordGenerationFallbackSignedInPasswordsDisabled \
+  DISABLED_testPasswordGenerationFallbackSignedInPasswordsDisabled
 #endif
-- (void)
-    MAYBE_testPasswordGenerationFallbackSignedInNotSyncingPasswordsDisabled {
+- (void)MAYBE_testPasswordGenerationFallbackSignedInPasswordsDisabled {
   [SigninEarlGreyUI signinWithFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
   [ChromeEarlGrey waitForSyncTransportStateActiveWithTimeout:base::Seconds(10)];
 
@@ -1065,17 +1075,17 @@ void CheckKeyboardIsUpAndNotCovered() {
       assertWithMatcher:grey_notVisible()];
 }
 
-// Tests password generation on manual fallback not showing for signed in not
-// syncing users with encryption error.
+// Tests password generation on manual fallback not showing for signed in users
+// with encryption error.
 // TODO(crbug.com/371189341): Test fails on device.
 #if TARGET_IPHONE_SIMULATOR
-#define MAYBE_testPasswordGenerationFallbackSignedInNotSyncingEncryptionError \
-  testPasswordGenerationFallbackSignedInNotSyncingEncryptionError
+#define MAYBE_testPasswordGenerationFallbackSignedInEncryptionError \
+  testPasswordGenerationFallbackSignedInEncryptionError
 #else
-#define MAYBE_testPasswordGenerationFallbackSignedInNotSyncingEncryptionError \
-  DISABLED_testPasswordGenerationFallbackSignedInNotSyncingEncryptionError
+#define MAYBE_testPasswordGenerationFallbackSignedInEncryptionError \
+  DISABLED_testPasswordGenerationFallbackSignedInEncryptionError
 #endif
-- (void)MAYBE_testPasswordGenerationFallbackSignedInNotSyncingEncryptionError {
+- (void)MAYBE_testPasswordGenerationFallbackSignedInEncryptionError {
   // Encrypt synced data with a passphrase to enable passphrase encryption for
   // the signed in account.
   [ChromeEarlGrey addSyncPassphrase:kPassphrase];
@@ -1094,6 +1104,11 @@ void CheckKeyboardIsUpAndNotCovered() {
       performAction:grey_tap()];
 
   [self loadLoginPage];
+
+  // Swipe up the sync infobar error.
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                          kInfobarBannerViewIdentifier)]
+      performAction:grey_swipeFastInDirection(kGREYDirectionUp)];
 
   // Bring up the keyboard.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]

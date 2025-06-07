@@ -16,9 +16,11 @@
 #import "base/check.h"
 #import "base/command_line.h"
 #import "base/debug/dump_without_crashing.h"
+#import "base/feature_list.h"
 #import "base/files/file_path.h"
 #import "base/functional/bind.h"
 #import "base/functional/callback.h"
+#import "base/ios/device_util.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/histogram_macros.h"
 #import "base/metrics/persistent_histogram_allocator.h"
@@ -39,6 +41,7 @@
 #import "components/metrics/dwa/dwa_service.h"
 #import "components/metrics/entropy_state_provider.h"
 #import "components/metrics/field_trials_provider.h"
+#import "components/metrics/install_date_provider.h"
 #import "components/metrics/metrics_data_validation.h"
 #import "components/metrics/metrics_log_uploader.h"
 #import "components/metrics/metrics_pref_names.h"
@@ -59,11 +62,13 @@
 #import "components/sync/service/passphrase_type_metrics_provider.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync_device_info/device_count_metrics_provider.h"
+#import "components/ukm/field_trials_provider_helper.h"
 #import "components/ukm/ukm_service.h"
 #import "components/variations/synthetic_trial_registry.h"
 #import "components/variations/variations_associated_data.h"
 #import "components/version_info/version_info.h"
 #import "google_apis/google_api_keys.h"
+#import "ios/chrome/browser/first_run/ui_bundled/features.h"
 #import "ios/chrome/browser/history/model/history_service_factory.h"
 #import "ios/chrome/browser/metrics/model/demographics_client.h"
 #import "ios/chrome/browser/metrics/model/ios_chrome_default_browser_metrics_provider.h"
@@ -71,7 +76,6 @@
 #import "ios/chrome/browser/metrics/model/ios_chrome_stability_metrics_provider.h"
 #import "ios/chrome/browser/metrics/model/ios_family_link_user_metrics_provider.h"
 #import "ios/chrome/browser/metrics/model/ios_feed_activity_metrics_provider.h"
-#import "ios/chrome/browser/metrics/model/ios_feed_enabled_metrics_provider.h"
 #import "ios/chrome/browser/metrics/model/ios_profile_session_metrics_provider.h"
 #import "ios/chrome/browser/metrics/model/ios_push_notifications_metrics_provider.h"
 #import "ios/chrome/browser/metrics/model/mobile_session_shutdown_metrics_provider.h"
@@ -83,6 +87,7 @@
 #import "ios/chrome/browser/shared/model/profile/incognito_session_tracker.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_manager_ios.h"
+#import "ios/chrome/browser/shared/model/utils/first_run_util.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
 #import "ios/chrome/browser/sync/model/device_info_sync_service_factory.h"
@@ -128,9 +133,6 @@ std::unique_ptr<metrics::FileMetricsProvider> CreateFileMetricsProvider(
 }
 
 }  // namespace
-
-// UKM suffix for field trial recording.
-const char kUKMFieldTrialSuffix[] = "UKM";
 
 IOSChromeMetricsServiceClient::IOSChromeMetricsServiceClient(
     metrics::MetricsStateManager* state_manager,
@@ -370,13 +372,16 @@ void IOSChromeMetricsServiceClient::RegisterMetricsServiceProviders() {
       std::make_unique<IOSFeedActivityMetricsProvider>());
 
   metrics_service_->RegisterMetricsProvider(
-      std::make_unique<IOSFeedEnabledMetricsProvider>());
-
-  metrics_service_->RegisterMetricsProvider(
       std::make_unique<IOSPushNotificationsMetricsProvider>());
 }
 
 void IOSChromeMetricsServiceClient::RegisterUKMProviders() {
+  // LINT.IfChange(UkmProviders)
+  PrefService* local_state = GetApplicationContext()->GetLocalState();
+
+  ukm_service_->RegisterMetricsProvider(
+      std::make_unique<metrics::InstallDateProvider>(local_state));
+
   ukm_service_->RegisterMetricsProvider(
       std::make_unique<metrics::CPUMetricsProvider>());
 
@@ -387,20 +392,20 @@ void IOSChromeMetricsServiceClient::RegisterUKMProviders() {
       std::make_unique<metrics::ScreenInfoMetricsProvider>());
 
   ukm_service_->RegisterMetricsProvider(
-      std::make_unique<variations::FieldTrialsProvider>(
-          synthetic_trial_registry_.get(), kUKMFieldTrialSuffix));
+      ukm::CreateFieldTrialsProviderForUkm(synthetic_trial_registry_.get()));
+
+  ukm_service_->RegisterMetricsProvider(
+      std::make_unique<metrics::EntropyStateProvider>(local_state));
+  // LINT.ThenChange(/chrome/browser/metrics/chrome_metrics_service_client.cc:UkmProviders)
 }
 
 void IOSChromeMetricsServiceClient::CollectFinalHistograms() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-
-  task_vm_info task_info_data;
-  mach_msg_type_number_t count = sizeof(task_vm_info) / sizeof(natural_t);
-  kern_return_t kr =
-      task_info(mach_task_self(), TASK_VM_INFO,
-                reinterpret_cast<task_info_t>(&task_info_data), &count);
-  if (kr == KERN_SUCCESS) {
-    mach_vm_size_t footprint_mb = task_info_data.phys_footprint / 1024 / 1024;
+  auto result = ios::device_util::GetTaskVMInfo();
+  if (result.has_value()) {
+    task_vm_info task_vm_info_data = result.value();
+    mach_vm_size_t footprint_mb =
+        task_vm_info_data.phys_footprint / 1024 / 1024;
     base::UmaHistogramMemoryLargeMB("Memory.Browser.MemoryFootprint",
                                     footprint_mb);
     // The pseudo metric of Memory.Browser.MemoryFootprint. Only used to
@@ -408,7 +413,8 @@ void IOSChromeMetricsServiceClient::CollectFinalHistograms() {
     base::UmaHistogramMemoryLargeMB(
         "UMA.Pseudo.Memory.Browser.MemoryFootprint",
         metrics::GetPseudoMetricsSample(
-            static_cast<double>(task_info_data.phys_footprint) / 1024 / 1024));
+            static_cast<double>(task_vm_info_data.phys_footprint) / 1024 /
+            1024));
 
     switch (UIApplication.sharedApplication.applicationState) {
       case UIApplicationStateActive:
@@ -438,7 +444,7 @@ void IOSChromeMetricsServiceClient::CollectFinalHistograms() {
     static crash_reporter::CrashKeyString<4> task_info_kern_return(
         "task-info-kern-return");
     char kr_buf[4];
-    base::strings::SafeSPrintf(kr_buf, "%d", kr);
+    base::strings::SafeSPrintf(kr_buf, "%d", result.error());
     task_info_kern_return.Set(kr_buf);
     base::debug::DumpWithoutCrashing();
   }
@@ -567,6 +573,12 @@ void IOSChromeMetricsServiceClient::OnUkmAllowedStateChanged(
   UpdateRunningServices();
 }
 
+void IOSChromeMetricsServiceClient::OnProfileManagerWillBeDestroyed(
+    ProfileManagerIOS* manager) {
+  // Nothing to do, IOSChromeMetricsServiceClient does not keep any profile
+  // alive.
+}
+
 void IOSChromeMetricsServiceClient::OnProfileManagerDestroyed(
     ProfileManagerIOS* manager) {
   profile_manager_observation_.Reset();
@@ -588,15 +600,13 @@ void IOSChromeMetricsServiceClient::OnProfileLoaded(ProfileManagerIOS* manager,
 void IOSChromeMetricsServiceClient::OnProfileUnloaded(
     ProfileManagerIOS* manager,
     ProfileIOS* profile) {
-  // Nothing to do, the observer unregister themselves when the KeyedService
-  // as part of the ProfileIOS destruction.
+  // Nothing to do.
 }
 
 void IOSChromeMetricsServiceClient::OnProfileMarkedForPermanentDeletion(
     ProfileManagerIOS* manager,
     ProfileIOS* profile) {
-  // Nothing to do, the observer unregister themselves when the KeyedService
-  // as part of the ProfileIOS destruction.
+  // Nothing to do.
 }
 
 void IOSChromeMetricsServiceClient::OnBrowserAdded(
@@ -627,6 +637,11 @@ void IOSChromeMetricsServiceClient::OnBrowserRemoved(
     case Browser::Type::kTemporary:
       break;
   }
+}
+
+void IOSChromeMetricsServiceClient::OnBrowserListShutdown(
+    BrowserList* browser_list) {
+  StopObservingBrowserList(browser_list);
 }
 
 void IOSChromeMetricsServiceClient::WebStateListDidChange(
@@ -719,6 +734,12 @@ std::string IOSChromeMetricsServiceClient::GetUploadSigningKey() {
   std::string decoded_key;
   base::Base64Decode(google_apis::GetMetricsKey(), &decoded_key);
   return decoded_key;
+}
+
+bool IOSChromeMetricsServiceClient::ShouldStartUpFast() const {
+  return base::FeatureList::IsEnabled(first_run::kManualLogUploadsInTheFRE)
+             ? IsFirstRun()
+             : false;
 }
 
 void IOSChromeMetricsServiceClient::StartObservingBrowserList(

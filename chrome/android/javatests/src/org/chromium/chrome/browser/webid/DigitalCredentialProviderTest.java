@@ -29,9 +29,9 @@ import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.CriteriaNotSatisfiedException;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
+import org.chromium.chrome.browser.webid.IdentityCredentialsDelegate.DigitalCredential;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.content.browser.webid.IdentityCredentialsDelegate;
 import org.chromium.content_public.browser.ContentFeatureList;
 import org.chromium.content_public.browser.test.util.DOMUtils;
 import org.chromium.content_public.browser.test.util.JavaScriptUtils;
@@ -71,7 +71,13 @@ public class DigitalCredentialProviderTest {
     @EnableFeatures(ContentFeatureList.WEB_IDENTITY_DIGITAL_CREDENTIALS)
     public void testRequestMDoc() throws TimeoutException {
         when(mDelegate.get(any(), any(), any()))
-                .thenAnswer(input -> Promise.fulfilled(EXPECTED_MDOC.getBytes()));
+                .thenAnswer(
+                        input ->
+                                Promise.fulfilled(
+                                        new DigitalCredential(
+                                                "protocol",
+                                                ("{\"token\": \"" + EXPECTED_MDOC + "\"}")
+                                                        .getBytes())));
 
         mActivityTestRule.loadUrl(mTestServer.getURL(TEST_PAGE));
         DOMUtils.clickNode(mActivityTestRule.getWebContents(), "request_age_only_button");
@@ -95,7 +101,14 @@ public class DigitalCredentialProviderTest {
     @EnableFeatures(ContentFeatureList.WEB_IDENTITY_DIGITAL_CREDENTIALS_CREATION)
     public void testCreate() throws TimeoutException {
         when(mDelegate.create(any(), any(), any()))
-                .thenAnswer(input -> Promise.fulfilled(EXPECTED_CREATION_RESPONSE));
+                .thenAnswer(
+                        input ->
+                                Promise.fulfilled(
+                                        new DigitalCredential(
+                                                "protocol",
+                                                ("{\"token\": \""
+                                                        + EXPECTED_CREATION_RESPONSE
+                                                        + "\"}"))));
 
         mActivityTestRule.loadUrl(mTestServer.getURL(TEST_PAGE));
         DOMUtils.clickNode(mActivityTestRule.getWebContents(), "create_button");

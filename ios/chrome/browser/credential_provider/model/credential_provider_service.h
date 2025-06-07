@@ -47,7 +47,9 @@ class CredentialProviderService
  public:
   // Initializes the service.
   CredentialProviderService(
+      const std::string& profile_name,
       PrefService* prefs,
+      PrefService* local_state,
       scoped_refptr<password_manager::PasswordStoreInterface>
           profile_password_store,
       scoped_refptr<password_manager::PasswordStoreInterface>
@@ -92,6 +94,9 @@ class CredentialProviderService
 
   // Syncs the credential store to disk.
   void SyncStore();
+
+  // Helper function for asynchronous portion of `SyncStore`.
+  void CompleteSync(NSArray<id<Credential>>* credentials);
 
   // Returns the primary account's gaia id.
   NSString* PrimaryAccountId() const;
@@ -176,8 +181,19 @@ class CredentialProviderService
   MemoryCredentialStore* GetCredentialStore(
       password_manager::PasswordStoreInterface* store) const;
 
+  // Returns whether the profile used to create this CredentialProviderService
+  // is the last used profile. Always return true if the user isn't using multi
+  // profile.
+  bool IsLastUsedProfile() const;
+
+  // The name of the profile used to create this CredentialProviderService.
+  const std::string profile_name_;
+
   // The pref service.
   const raw_ptr<PrefService> prefs_;
+
+  // The local state. Used to query the last used profile.
+  const raw_ptr<PrefService> local_state_;
 
   // The interfaces for getting and manipulating a user's saved passwords.
   const scoped_refptr<password_manager::PasswordStoreInterface>
@@ -204,7 +220,7 @@ class CredentialProviderService
 
   // In-memory stores used to dedupe entries from `profile_password_store_` and
   // `account_password_store_` before persisting via `dual_credential_store_`.
-  // TODO(crbug.com/40260886): This is super hacky. Refactor this class to use
+  // TODO(crbug.com/40910279): This is super hacky. Refactor this class to use
   // SavedPasswordsPresenter, which deduplicates internally.
   MemoryCredentialStore* const profile_credential_store_ =
       [[MemoryCredentialStore alloc] init];
@@ -224,6 +240,10 @@ class CredentialProviderService
   // `AppGroupUserDefaultsCredentialProviderSavingPasskeysEnabled` documentation
   // for important caveats.
   BooleanPrefMember saving_passkeys_enabled_;
+
+  // The preference associated with
+  // password_manager::prefs::kAutomaticPasskeyUpgrades.
+  BooleanPrefMember automatic_passkey_upgrades_enabled_;
 
   // Weak pointer factory.
   base::WeakPtrFactory<CredentialProviderService> weak_ptr_factory_{this};

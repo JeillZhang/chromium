@@ -29,16 +29,20 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobURLStoreImpl
  public:
   // `partitioning_blob_url_closure` runs when the storage_key check fails
   // in `BlobURLStoreImpl::ResolveAsURLLoaderFactory`.
-  BlobURLStoreImpl(const blink::StorageKey& storage_key,
-                   const url::Origin& renderer_origin,
-                   int render_process_host_id,
-                   base::WeakPtr<BlobUrlRegistry> registry,
-                   BlobURLValidityCheckBehavior validity_check_options =
-                       BlobURLValidityCheckBehavior::DEFAULT,
-                   base::RepeatingCallback<
-                       void(const GURL&, blink::mojom::PartitioningBlobURLInfo)>
-                       partitioning_blob_url_closure_ = base::DoNothing(),
-                   bool partitioning_disabled_by_policy = false);
+  BlobURLStoreImpl(
+      const blink::StorageKey& storage_key,
+      const url::Origin& renderer_origin,
+      int render_process_host_id,
+      base::WeakPtr<BlobUrlRegistry> registry,
+      BlobURLValidityCheckBehavior validity_check_options =
+          BlobURLValidityCheckBehavior::DEFAULT,
+      base::RepeatingCallback<
+          void(const GURL&,
+               std::optional<blink::mojom::PartitioningBlobURLInfo>)>
+          partitioning_blob_url_closure = base::DoNothing(),
+      base::RepeatingCallback<bool()> storage_access_check_closure =
+          base::BindRepeating([]() -> bool { return false; }),
+      bool partitioning_disabled_by_policy = false);
 
   BlobURLStoreImpl(const BlobURLStoreImpl&) = delete;
   BlobURLStoreImpl& operator=(const BlobURLStoreImpl&) = delete;
@@ -57,15 +61,11 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobURLStoreImpl
       const GURL& url,
       mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
       ResolveAsURLLoaderFactoryCallback callback) override;
-  void ResolveForNavigation(
+  void ResolveAsBlobURLToken(
       const GURL& url,
       mojo::PendingReceiver<blink::mojom::BlobURLToken> token,
       bool is_top_level_navigation,
-      ResolveForNavigationCallback callback) override;
-  void ResolveForWorkerScriptFetch(
-      const GURL& url,
-      mojo::PendingReceiver<blink::mojom::BlobURLToken> token,
-      ResolveForNavigationCallback callback) override;
+      ResolveAsBlobURLTokenCallback callback) override;
 
  private:
   // Checks if the passed in url is a valid blob url for this blob url store.
@@ -73,6 +73,23 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobURLStoreImpl
   // this function is only suitable to be called from `Register()` and
   // `Revoke()`.
   bool BlobUrlIsValid(const GURL& url, const char* method) const;
+
+  bool ShouldPartitionBlobUrlAccess(
+      bool has_storage_access_handle,
+      BlobUrlRegistry::MappingStatus mapping_status);
+
+  void FinishResolveAsURLLoaderFactory(
+      const GURL& url,
+      mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
+      ResolveAsURLLoaderFactoryCallback callback,
+      bool has_storage_access_handle);
+
+  void FinishResolveAsBlobURLToken(
+      const GURL& url,
+      mojo::PendingReceiver<blink::mojom::BlobURLToken> token,
+      bool is_top_level_navigation,
+      ResolveAsBlobURLTokenCallback callback,
+      bool has_storage_access_handle);
 
   const blink::StorageKey storage_key_;
   // The origin used by the worker/document associated with this BlobURLStore on
@@ -89,9 +106,11 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobURLStoreImpl
 
   std::set<GURL> urls_;
 
-  base::RepeatingCallback<void(const GURL&,
-                               blink::mojom::PartitioningBlobURLInfo)>
+  base::RepeatingCallback<
+      void(const GURL&, std::optional<blink::mojom::PartitioningBlobURLInfo>)>
       partitioning_blob_url_closure_;
+
+  base::RepeatingCallback<bool()> storage_access_check_callback_;
 
   const bool partitioning_disabled_by_policy_;
 

@@ -4,9 +4,7 @@
 
 package org.chromium.base.process_launcher;
 
-import android.content.pm.ApplicationInfo;
-import android.os.Bundle;
-
+import org.chromium.base.process_launcher.IChildProcessArgs;
 import org.chromium.base.process_launcher.IParentProcess;
 
 interface IChildProcessService {
@@ -16,14 +14,14 @@ interface IChildProcessService {
   // calling PID and |clazz| matches the recorded values.
   boolean bindToCaller(in String clazz);
 
-  // Get the ApplicationInfo object used to load the code and resources of the
-  // child process, for validating that the parent is talking to a "matching"
+  // Returns an array of 2 strings: sourceDir and a colon-separated list of
+  // sharedLibraryFiles, for validating that the parent is talking to a "matching"
   // process.
-  ApplicationInfo getAppInfo();
+  String[] getAppInfoStrings();
 
   // Sets up the initial IPC channel.
-  oneway void setupConnection(in Bundle args, IParentProcess parentProcess,
-          in List<IBinder> clientInterfaces, in IBinder binderBox);
+  oneway void setupConnection(in IChildProcessArgs args, in IParentProcess parentProcess,
+           in @nullable List<IBinder> clientInterfaces, in @nullable IBinder binderBox);
 
   // Forcefully kills the child process.
   oneway void forceKill();

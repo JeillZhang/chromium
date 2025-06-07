@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/optimization_guide/optimization_guide_internals_ui.h"
 
@@ -94,7 +90,7 @@ void OptimizationGuideInternalsUI::RequestLoggedModelQualityClientIds(
 
   int64_t client_id =
       local_state->GetInt64(optimization_guide::model_execution::prefs::
-                                localstate::kModelQualityLogggingClientId);
+                                localstate::kModelQualityLoggingClientId);
 
   // If the client id is zero no client id is set, in that case do nothing.
   if (client_id == 0) {

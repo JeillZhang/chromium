@@ -32,6 +32,7 @@
 
 #include "base/strings/latin1_string_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/text/ascii_fast_path.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
@@ -86,13 +87,7 @@ WebString WebString::FromUTF8(std::string_view s) {
 }
 
 std::u16string WebString::Utf16() const {
-  if (!impl_) {
-    return std::u16string();
-  }
-  const bool is_8bit = impl_->Is8Bit();
-  const LChar* latin1_chars = is_8bit ? impl_->Characters8() : nullptr;
-  const UChar* utf16_chars = !is_8bit ? impl_->Characters16() : nullptr;
-  return base::Latin1OrUTF16ToUTF16(impl_->length(), latin1_chars, utf16_chars);
+  return impl_ ? impl_->ToU16String() : std::u16string();
 }
 
 WebString WebString::FromUTF16(std::optional<std::u16string_view> s) {

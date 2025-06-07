@@ -4,6 +4,8 @@
 
 #include "components/password_manager/core/browser/password_store/password_store_built_in_backend.h"
 
+#include <variant>
+
 #include "base/functional/bind.h"
 #include "base/notreached.h"
 #include "base/task/bind_post_task.h"
@@ -52,9 +54,9 @@ base::OnceCallback<Result(Result)> ReportMetricsForResultCallback(
   return base::BindOnce(
       [](PasswordStoreBackendMetricsRecorder reporter,
          Result result) -> Result {
-        if (absl::holds_alternative<PasswordStoreBackendError>(result)) {
+        if (std::holds_alternative<PasswordStoreBackendError>(result)) {
           reporter.RecordMetrics(SuccessStatus::kError,
-                                 absl::get<PasswordStoreBackendError>(result));
+                                 std::get<PasswordStoreBackendError>(result));
         } else {
           reporter.RecordMetrics(SuccessStatus::kSuccess, std::nullopt);
         }
@@ -64,11 +66,7 @@ base::OnceCallback<Result(Result)> ReportMetricsForResultCallback(
 }
 
 std::unique_ptr<os_crypt_async::Encryptor> ConvertToUniquePtr(
-    os_crypt_async::Encryptor encryptor,
-    bool success) {
-  if (!success) {
-    return nullptr;
-  }
+    os_crypt_async::Encryptor encryptor) {
   return std::make_unique<os_crypt_async::Encryptor>(std::move(encryptor));
 }
 
@@ -92,6 +90,7 @@ std::optional<PasswordStoreChangeList> MaybeRecordPasswordDeletionViaSync(
 
 }  // namespace
 
+// TODO(410526044): Make sure `os_crypt_async` is not null.
 PasswordStoreBuiltInBackend::PasswordStoreBuiltInBackend(
     std::unique_ptr<LoginDatabase> login_db,
     syncer::WipeModelUponSyncDisabledBehavior
@@ -153,7 +152,6 @@ void PasswordStoreBuiltInBackend::Shutdown(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   weak_ptr_factory_.InvalidateWeakPtrs();
   affiliated_match_helper_ = nullptr;
-  subscription_ = {};
   if (helper_) {
     background_task_runner_->DeleteSoon(FROM_HERE, std::move(helper_));
     std::move(shutdown_completed).Run();
@@ -224,7 +222,7 @@ void PasswordStoreBuiltInBackend::InitBackend(
           ? os_crypt_async::Encryptor::Option::kNone
           : os_crypt_async::Encryptor::Option::kEncryptSyncCompat;
 
-  subscription_ = os_crypt_async_->GetInstance(
+  os_crypt_async_->GetInstance(
       metrics_util::TimeCallback(
           base::BindOnce(&ConvertToUniquePtr)
               .Then(std::move(init_database_callback)),
@@ -408,18 +406,6 @@ PasswordStoreBuiltInBackend::CreateSyncControllerDelegate() {
 void PasswordStoreBuiltInBackend::OnSyncServiceInitialized(
     syncer::SyncService* sync_service) {}
 
-void PasswordStoreBuiltInBackend::RecordAddLoginAsyncCalledFromTheStore() {
-  base::UmaHistogramBoolean(
-      "PasswordManager.PasswordStore.BuiltInBackend.AddLoginCalledOnStore",
-      true);
-}
-
-void PasswordStoreBuiltInBackend::RecordUpdateLoginAsyncCalledFromTheStore() {
-  base::UmaHistogramBoolean(
-      "PasswordManager.PasswordStore.BuiltInBackend.UpdateLoginCalledOnStore",
-      true);
-}
-
 base::WeakPtr<PasswordStoreBackend> PasswordStoreBuiltInBackend::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
 }
@@ -474,13 +460,13 @@ void PasswordStoreBuiltInBackend::InjectAffiliationAndBrandingInformation(
     LoginsOrErrorReply callback,
     LoginsResultOrError forms_or_error) {
   if (!affiliated_match_helper_ ||
-      absl::holds_alternative<PasswordStoreBackendError>(forms_or_error) ||
-      absl::get<LoginsResult>(forms_or_error).empty()) {
+      std::holds_alternative<PasswordStoreBackendError>(forms_or_error) ||
+      std::get<LoginsResult>(forms_or_error).empty()) {
     std::move(callback).Run(std::move(forms_or_error));
     return;
   }
   affiliated_match_helper_->InjectAffiliationAndBrandingInformation(
-      std::move(absl::get<LoginsResult>(forms_or_error)), std::move(callback));
+      std::move(std::get<LoginsResult>(forms_or_error)), std::move(callback));
 }
 
 void PasswordStoreBuiltInBackend::OnInitComplete(

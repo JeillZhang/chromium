@@ -11,9 +11,7 @@
 
 #include "base/functional/callback_helpers.h"
 #include "base/i18n/case_conversion.h"
-#include "chrome/browser/ui/monogram_utils.h"
 #include "chrome/browser/ui/views/controls/hover_button.h"
-#include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/webid/account_selection_view.h"
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
@@ -21,6 +19,10 @@
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/styled_label.h"
+
+namespace network {
+class SharedURLLoaderFactory;
+}  // namespace network
 
 namespace webid {
 
@@ -30,11 +32,6 @@ class FedCmAccountSelectionView;
 inline constexpr int kButtonRadius = 16;
 // The fixed, total width of the bubble.
 inline constexpr int kBubbleWidth = 375;
-// The desired size of the avatars of user accounts.
-inline constexpr int kDesiredAvatarSize = 30;
-// The desired size of the IDP icon used as badge for the user account avatar
-// when there are multiple IDPs.
-inline constexpr int kLargeAvatarBadgeSize = 16;
 // The size of the icon of the identity provider in the bubble.
 inline constexpr int kBubbleIdpIconSize = 20;
 // The desired size of the icon for a "login to IDP" secondary view.
@@ -68,12 +65,8 @@ inline constexpr int kModalIdpIconSize = 32;
 // The size of the icons when they are combined i.e. IDP icon + arrow icon + RP
 // icon is shown at the same time in the modal.
 inline constexpr int kModalCombinedIconSize = 20;
-// The size of avatars in the modal dialog.
-inline constexpr int kModalAvatarSize = 36;
 // The size of the horizontal padding for most elements in the modal.
 inline constexpr int kModalHorizontalSpacing = 8;
-// Size of the IDP icon offset when badging the IDP icon in the account button.
-inline constexpr int kIdpBadgeOffset = 8;
 // The size of the arrow icon.
 inline constexpr int kArrowIconSize = 8;
 // The size of the spinner used in place of the IDP icon while it is being
@@ -89,35 +82,18 @@ class BrandIconImageView : public views::ImageView {
   METADATA_HEADER(BrandIconImageView, views::ImageView)
 
  public:
-  BrandIconImageView(
-      int image_size,
-      bool should_circle_crop,
-      std::optional<SkColor> background_color = std::nullopt,
-      base::RepeatingClosure on_image_set = base::DoNothing());
+  explicit BrandIconImageView(int image_size);
   BrandIconImageView(const BrandIconImageView&) = delete;
   BrandIconImageView& operator=(const BrandIconImageView&) = delete;
   ~BrandIconImageView() override;
 
-  void CropAndSetImage(const gfx::Image& image);
-
-  // If this image uses a background circle, updates its color.
-  void OnBackgroundColorUpdated(const SkColor& background_color);
-
-  std::optional<SkColor> background_color_for_testing() const {
-    return background_color_;
-  }
+  // This method will crop the given `image` if `should_circle_crop` and will
+  // attempt to set it into the BrandIconImageView. Returns whether the image
+  // was successfully set or not.
+  bool SetBrandIconImage(const gfx::Image& image, bool should_circle_crop);
 
  private:
   int image_size_;
-  bool should_circle_crop_;
-  // The color of a background circle used to encapsulate the brand icon. Set
-  // when this object is used as a badge for an account icon. When set, this
-  // should be the background color of the dialog.
-  std::optional<SkColor> background_color_;
-  gfx::ImageSkia cropped_idp_image_;
-  base::RepeatingClosure on_image_set_;
-
-  base::WeakPtrFactory<BrandIconImageView> weak_ptr_factory_{this};
 };
 
 class AccountHoverButton : public HoverButton {
@@ -129,14 +105,14 @@ class AccountHoverButton : public HoverButton {
                      std::unique_ptr<views::View> secondary_view,
                      bool add_vertical_label_spacing,
                      const std::u16string& footer,
-                     BrandIconImageView* brand_icon_image_view,
                      int button_position);
   AccountHoverButton(const AccountHoverButton&) = delete;
   AccountHoverButton& operator=(const AccountHoverButton&) = delete;
   ~AccountHoverButton() override = default;
 
+  // HoverButton
   void StateChanged(ButtonState old_state) override;
-  void OnThemeChanged() override;
+
   void OnPressed(const ui::Event& event);
   bool HasBeenClicked();
 
@@ -148,10 +124,11 @@ class AccountHoverButton : public HoverButton {
   // Should only be invoked when the button has a secondary view.
   void ReplaceSecondaryViewWithSpinner();
 
+  // Used for testing.
+  void SetCallbackForTesting(PressedCallback callback);
+
  private:
   PressedCallback callback_;
-  // Owned by its views::BoxLayoutView container.
-  raw_ptr<BrandIconImageView> brand_icon_image_view_;
   // The order of this account button relative to other account buttons in
   // the dialog (e.g. 0 is the topmost account, 1 the one below it, etc.). Used
   // to record a metric when the button is clicked.
@@ -183,18 +160,18 @@ class AccountSelectionViewBase {
   AccountSelectionViewBase(
       FedCmAccountSelectionView* owner,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      std::u16string rp_for_display);
+      const content::RelyingPartyData& rp_data,
+      float device_scale_factor);
   virtual ~AccountSelectionViewBase();
 
   // Updates the FedCM dialog to show the "account picker" sheet.
-  // `is_choose_an_account` is true if the dialog must change its title to
-  // 'Choose an account'. This is currently only used on widget mode, when
-  // clicking on the 'Choose an account' button.
+  // `rp_icon` is the RP icon to be displayed on the header of the dialog when
+  // there are multiple IdPs to select from.
   virtual void ShowMultiAccountPicker(
       const std::vector<IdentityRequestAccountPtr>& accounts,
       const std::vector<IdentityProviderDataPtr>& idp_list,
-      bool show_back_button,
-      bool is_choose_an_account) = 0;
+      const gfx::Image& rp_icon,
+      bool show_back_button) = 0;
 
   // Updates the FedCM dialog to show the "verifying" sheet.
   virtual void ShowVerifyingSheet(const IdentityRequestAccountPtr& account,
@@ -222,20 +199,11 @@ class AccountSelectionViewBase {
   virtual void ShowRequestPermissionDialog(
       const IdentityRequestAccountPtr& account) = 0;
 
-  // Updates to show a single account along with a button to show all options.
-  // Currently used when there are multiple IDPs and exactly one returning
-  // account.
-  virtual void ShowSingleReturningAccountDialog(
-      const std::vector<IdentityRequestAccountPtr>& accounts,
-      const std::vector<IdentityProviderDataPtr>& idp_list) = 0;
-
   // Gets the title of the dialog.
   virtual std::string GetDialogTitle() const = 0;
 
-  // Gets the initial letter from the given string and returns it as
-  // a UTF-16 string. Correctly handles non-BMP characters.
-  static std::u16string GetInitialLetterAsUppercase(
-      const std::string& utf8_string);
+  // Gets the subtitle of the dialog, if any.
+  virtual std::optional<std::string> GetDialogSubtitle() const = 0;
 
  protected:
   void SetLabelProperties(views::Label* label);
@@ -261,7 +229,6 @@ class AccountSelectionViewBase {
   // Gets the summary and description string of the error.
   std::pair<std::u16string, std::u16string> GetErrorDialogText(
       const std::optional<TokenError>& error,
-      const std::u16string& rp_for_display,
       const std::u16string& idp_for_display);
 
   // Observes events on AccountSelectionBubbleView.
@@ -278,8 +245,11 @@ class AccountSelectionViewBase {
   // but that's after FedCmAccountSelectionView is destroyed.
   raw_ptr<FedCmAccountSelectionView, DanglingUntriaged> owner_{nullptr};
 
-  // The description of the RP to be used in the dialog.
-  std::u16string rp_for_display_;
+  // Relying party data to customize the dialog.
+  content::RelyingPartyData rp_data_;
+
+  // The device's scale factor.
+  float device_scale_factor_;
 
   // Used to ensure that callbacks are not run if the AccountSelectionViewBase
   // is destroyed.

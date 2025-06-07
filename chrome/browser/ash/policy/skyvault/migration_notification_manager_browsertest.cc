@@ -21,6 +21,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/webui/ash/skyvault/local_files_migration_dialog.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
@@ -63,24 +64,25 @@ class MigrationNotificationManagerTest : public InProcessBrowserTest {
 
 class MigrationNotificationManagerParamTest
     : public MigrationNotificationManagerTest,
-      public ::testing::WithParamInterface<CloudProvider> {
+      public ::testing::WithParamInterface<MigrationDestination> {
  public:
   MigrationNotificationManagerParamTest() {
     EXPECT_TRUE(temp_dir_.CreateUniqueTempDir());
   }
   static std::string ParamToName(const testing::TestParamInfo<ParamType> info) {
     switch (info.param) {
-      case CloudProvider::kGoogleDrive:
+      case MigrationDestination::kGoogleDrive:
         return "google_drive";
-      case CloudProvider::kOneDrive:
+      case MigrationDestination::kOneDrive:
         return "one_drive";
-      case CloudProvider::kNotSpecified:
+      case MigrationDestination::kNotSpecified:
+      case MigrationDestination::kDelete:
         NOTREACHED();
     }
   }
 
  protected:
-  CloudProvider CloudProvider() { return GetParam(); }
+  MigrationDestination CloudProvider() { return GetParam(); }
 
   base::ScopedTempDir temp_dir_;
 };
@@ -107,6 +109,19 @@ IN_PROC_BROWSER_TEST_P(MigrationNotificationManagerParamTest,
   manager()->ShowMigrationCompletedNotification(
       CloudProvider(),
       /*destination_path=*/base::FilePath());
+  EXPECT_TRUE(tester_->GetNotification(kSkyVaultMigrationNotificationId));
+
+  manager()->CloseNotifications();
+  EXPECT_FALSE(tester_->GetNotification(kSkyVaultMigrationNotificationId));
+}
+
+// Tests that a deletion completed notification is shown, and closed when
+// CloseNotifications() is called.
+IN_PROC_BROWSER_TEST_F(MigrationNotificationManagerTest,
+                       ShowDeletionCompletedNotification) {
+  EXPECT_FALSE(tester_->GetNotification(kSkyVaultMigrationNotificationId));
+
+  manager()->ShowDeletionCompletedNotification();
   EXPECT_TRUE(tester_->GetNotification(kSkyVaultMigrationNotificationId));
 
   manager()->CloseNotifications();
@@ -272,8 +287,8 @@ IN_PROC_BROWSER_TEST_P(MigrationNotificationManagerParamTest, ShowDialog) {
 
 INSTANTIATE_TEST_SUITE_P(LocalUserFiles,
                          MigrationNotificationManagerParamTest,
-                         ::testing::Values(CloudProvider::kGoogleDrive,
-                                           CloudProvider::kOneDrive),
+                         ::testing::Values(MigrationDestination::kGoogleDrive,
+                                           MigrationDestination::kOneDrive),
                          MigrationNotificationManagerParamTest::ParamToName);
 
 }  // namespace policy::local_user_files

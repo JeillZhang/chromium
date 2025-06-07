@@ -23,15 +23,11 @@
  * DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "third_party/blink/renderer/modules/webaudio/script_processor_node.h"
 
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/trace_event/trace_event.h"
 #include "third_party/blink/public/platform/platform.h"
@@ -50,6 +46,7 @@
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -183,18 +180,20 @@ ScriptProcessorNode* ScriptProcessorNode::Create(
   if (number_of_input_channels > BaseAudioContext::MaxNumberOfChannels()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kIndexSizeError,
-        "number of input channels (" +
-            String::Number(number_of_input_channels) + ") exceeds maximum (" +
-            String::Number(BaseAudioContext::MaxNumberOfChannels()) + ").");
+        WTF::StrCat(
+            {"number of input channels (",
+             String::Number(number_of_input_channels), ") exceeds maximum (",
+             String::Number(BaseAudioContext::MaxNumberOfChannels()), ")."}));
     return nullptr;
   }
 
   if (number_of_output_channels > BaseAudioContext::MaxNumberOfChannels()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kIndexSizeError,
-        "number of output channels (" +
-            String::Number(number_of_output_channels) + ") exceeds maximum (" +
-            String::Number(BaseAudioContext::MaxNumberOfChannels()) + ").");
+        WTF::StrCat(
+            {"number of output channels (",
+             String::Number(number_of_output_channels), ") exceeds maximum (",
+             String::Number(BaseAudioContext::MaxNumberOfChannels()), ")."}));
     return nullptr;
   }
 
@@ -230,8 +229,9 @@ ScriptProcessorNode* ScriptProcessorNode::Create(
     default:
       exception_state.ThrowDOMException(
           DOMExceptionCode::kIndexSizeError,
-          "buffer size (" + String::Number(requested_buffer_size) +
-              ") must be 0 or a power of two between 256 and 16384.");
+          WTF::StrCat(
+              {"buffer size (", String::Number(requested_buffer_size),
+               ") must be 0 or a power of two between 256 and 16384."}));
       return nullptr;
   }
 
@@ -294,8 +294,8 @@ void ScriptProcessorNode::DispatchEvent(double playback_time,
             backing_input_buffer->getChannelData(channel)->buffer()->Data());
         float* destination = static_cast<float*>(
             external_input_buffer_->getChannelData(channel)->buffer()->Data());
-        memcpy(destination, source,
-               backing_input_buffer->length() * sizeof(float));
+        UNSAFE_TODO(memcpy(destination, source,
+                           backing_input_buffer->length() * sizeof(float)));
       }
     }
   }
@@ -334,8 +334,8 @@ void ScriptProcessorNode::DispatchEvent(double playback_time,
             external_output_buffer_->getChannelData(channel)->buffer()->Data());
         float* destination = static_cast<float*>(
             backing_output_buffer->getChannelData(channel)->buffer()->Data());
-        memcpy(destination, source,
-               backing_output_buffer->length() * sizeof(float));
+        UNSAFE_TODO(memcpy(destination, source,
+                           backing_output_buffer->length() * sizeof(float)));
       }
     }
   }

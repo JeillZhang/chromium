@@ -32,6 +32,14 @@ enum class ASH_PUBLIC_EXPORT LobsterStatus {
   kBlocked,
 };
 
+enum class ASH_PUBLIC_EXPORT LobsterEnterprisePolicyValue : int {
+  // The policy allows the feature to run with model improvement.
+  kAllowedWithModelImprovement = 0,
+  // The policy allows the feature
+  kAllowedWithoutModelImprovement = 1,
+  kDisabled = 2,
+};
+
 enum class ASH_PUBLIC_EXPORT LobsterSystemCheck {
   kMinValue,
   kInvalidConsent,
@@ -41,7 +49,14 @@ enum class ASH_PUBLIC_EXPORT LobsterSystemCheck {
   kInvalidInputField,
   kSettingsOff,
   kNoInternetConnection,
-  kMaxValue = kNoInternetConnection,
+  kInvalidInputMethod,
+  kInvalidFeatureFlags,  // The feature flag disabled.
+  kUnsupportedHardware,
+  kUnsupportedInKioskMode,  // In Kiosk mode.
+  kUnsupportedFormFactor,
+  kUnsupportedPolicy,
+  kForcedDisabledOnManagedUsers,
+  kMaxValue = kForcedDisabledOnManagedUsers,
 };
 
 enum class ASH_PUBLIC_EXPORT LobsterErrorCode {
@@ -53,6 +68,7 @@ enum class ASH_PUBLIC_EXPORT LobsterErrorCode {
   kBackendFailure,
   kUnsupportedLanguage,
   kRestrictedRegion,
+  kContainsPeople,
 };
 
 }  // namespace ash

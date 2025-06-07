@@ -17,20 +17,38 @@ class GlicIphController;
 }  // namespace glic
 #endif
 
+class BookmarksSidePanelCoordinator;
 class Browser;
+class BrowserInstantController;
+class BrowserLocationBarModelDelegate;
+class BrowserSyncedWindowDelegate;
 class BrowserView;
 class BrowserWindowInterface;
 class ChromeLabsCoordinator;
+class CookieControlsBubbleCoordinator;
+class DesktopBrowserWindowCapabilities;
+class DownloadToolbarUIController;
+class HistorySidePanelCoordinator;
+class LocationBarModel;
 class MemorySaverOptInIPHController;
 class SidePanelCoordinator;
 class SidePanelUI;
+class TabMenuModelDelegate;
+class TabSearchToolbarButtonController;
 class TabStripModel;
+class TabStripServiceRegister;
 class ToastController;
 class ToastService;
-class DataSharingOpenGroupHelper;
-class DownloadToolbarUIController;
+class TranslateBubbleController;
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+namespace pdf::infobar {
+class PdfInfoBarController;
+}  // namespace pdf::infobar
+#endif
 
 namespace extensions {
+class BrowserExtensionWindowController;
 class ExtensionSidePanelManager;
 class Mv2DisabledDialogController;
 }  // namespace extensions
@@ -47,6 +65,10 @@ namespace tabs {
 class GlicNudgeController;
 }
 
+namespace tab_groups {
+class DeletionDialogController;
+}  // namespace tab_groups
+
 namespace lens {
 class LensOverlayEntryPointController;
 class LensRegionSearchController;
@@ -59,6 +81,10 @@ class CastBrowserController;
 namespace memory_saver {
 class MemorySaverBubbleController;
 }  // namespace memory_saver
+
+namespace new_tab_footer {
+class NewTabFooterController;
+}  // namespace new_tab_footer
 
 namespace tab_groups {
 class SessionServiceTabGroupSyncObserver;
@@ -121,6 +147,20 @@ class BrowserWindowFeatures {
     return cast_browser_controller_.get();
   }
 
+  HistorySidePanelCoordinator* history_side_panel_coordinator() {
+    return history_side_panel_coordinator_.get();
+  }
+
+  BookmarksSidePanelCoordinator* bookmarks_side_panel_coordinator() {
+    return bookmarks_side_panel_coordinator_.get();
+  }
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  pdf::infobar::PdfInfoBarController* pdf_infobar_controller() {
+    return pdf_infobar_controller_.get();
+  }
+#endif
+
   // TODO(crbug.com/346158959): For historical reasons, side_panel_ui is an
   // abstract base class that contains some, but not all of the public interface
   // of SidePanelCoordinator. One of the accessors side_panel_ui() or
@@ -148,6 +188,7 @@ class BrowserWindowFeatures {
   tabs::GlicNudgeController* glic_nudge_controller() {
     return glic_nudge_controller_.get();
   }
+
   TabStripModel* tab_strip_model() { return tab_strip_model_; }
 
   // Returns a pointer to the ToastController for the browser window. This can
@@ -169,10 +210,6 @@ class BrowserWindowFeatures {
     return extension_side_panel_manager_.get();
   }
 
-  DataSharingOpenGroupHelper* data_sharing_open_group_helper() {
-    return data_sharing_open_group_helper_.get();
-  }
-
   DownloadToolbarUIController* download_toolbar_ui_controller() {
     return download_toolbar_ui_controller_.get();
   }
@@ -191,6 +228,54 @@ class BrowserWindowFeatures {
     return shared_tab_group_feedback_controller_.get();
   }
 
+  TranslateBubbleController* translate_bubble_controller() {
+    return translate_bubble_controller_.get();
+  }
+
+  TabSearchToolbarButtonController* tab_search_toolbar_button_controller() {
+    return tab_search_toolbar_button_controller_.get();
+  }
+
+  CookieControlsBubbleCoordinator* cookie_controls_bubble_coordinator() {
+    return cookie_controls_bubble_coordinator_.get();
+  }
+
+  BrowserSyncedWindowDelegate* synced_window_delegate() {
+    return synced_window_delegate_.get();
+  }
+
+  TabMenuModelDelegate* tab_menu_model_delegate() {
+    return tab_menu_model_delegate_.get();
+  }
+
+  tab_groups::DeletionDialogController* tab_group_deletion_dialog_controller() {
+    return tab_group_deletion_dialog_controller_.get();
+  }
+
+  extensions::BrowserExtensionWindowController* extension_window_controller() {
+    return extension_window_controller_.get();
+  }
+
+  // Only fetch the tab_strip_service to register a pending receiver.
+  TabStripServiceRegister* tab_strip_service() {
+    return tab_strip_service_.get();
+  }
+
+  LocationBarModel* location_bar_model() { return location_bar_model_.get(); }
+  const LocationBarModel* location_bar_model() const {
+    return location_bar_model_.get();
+  }
+#if defined(UNIT_TEST)
+  void swap_location_bar_models(
+      std::unique_ptr<LocationBarModel>* location_bar_model) {
+    location_bar_model->swap(location_bar_model_);
+  }
+#endif
+
+  new_tab_footer::NewTabFooterController* new_tab_footer_controller() {
+    return new_tab_footer_controller_.get();
+  }
+
  protected:
   BrowserWindowFeatures();
 
@@ -199,8 +284,14 @@ class BrowserWindowFeatures {
   // virtual std::unique_ptr<FooFeature> CreateFooFeature();
 
  private:
+  // A collection of features specific to desktop versions of Chrome.
+  std::unique_ptr<DesktopBrowserWindowCapabilities>
+      desktop_browser_window_capabilities_;
+
   // Features that are per-browser window will each have a controller. e.g.
   // std::unique_ptr<FooFeature> foo_feature_;
+
+  std::unique_ptr<BrowserInstantController> instant_controller_;
 
   std::unique_ptr<send_tab_to_self::SendTabToSelfToolbarBubbleController>
       send_tab_to_self_toolbar_bubble_controller_;
@@ -224,6 +315,15 @@ class BrowserWindowFeatures {
   std::unique_ptr<MemorySaverOptInIPHController>
       memory_saver_opt_in_iph_controller_;
 
+  std::unique_ptr<HistorySidePanelCoordinator> history_side_panel_coordinator_;
+
+  std::unique_ptr<BookmarksSidePanelCoordinator>
+      bookmarks_side_panel_coordinator_;
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  std::unique_ptr<pdf::infobar::PdfInfoBarController> pdf_infobar_controller_;
+#endif
+
   std::unique_ptr<SidePanelCoordinator> side_panel_coordinator_;
 
   std::unique_ptr<tab_groups::SessionServiceTabGroupSyncObserver>
@@ -236,8 +336,6 @@ class BrowserWindowFeatures {
   // tab-scoped extension side-panel manager.
   std::unique_ptr<extensions::ExtensionSidePanelManager>
       extension_side_panel_manager_;
-
-  std::unique_ptr<DataSharingOpenGroupHelper> data_sharing_open_group_helper_;
 
   std::unique_ptr<media_router::CastBrowserController> cast_browser_controller_;
 
@@ -258,6 +356,36 @@ class BrowserWindowFeatures {
 
   std::unique_ptr<tab_groups::SharedTabGroupFeedbackController>
       shared_tab_group_feedback_controller_;
+
+  std::unique_ptr<TranslateBubbleController> translate_bubble_controller_;
+
+  std::unique_ptr<TabSearchToolbarButtonController>
+      tab_search_toolbar_button_controller_;
+
+  std::unique_ptr<CookieControlsBubbleCoordinator>
+      cookie_controls_bubble_coordinator_;
+
+  std::unique_ptr<BrowserSyncedWindowDelegate> synced_window_delegate_;
+
+  std::unique_ptr<TabMenuModelDelegate> tab_menu_model_delegate_;
+
+  std::unique_ptr<tab_groups::DeletionDialogController>
+      tab_group_deletion_dialog_controller_;
+
+  // Helper which implements the LocationBarModelDelegate interface.
+  std::unique_ptr<BrowserLocationBarModelDelegate> location_bar_model_delegate_;
+
+  // The model for the toolbar view.
+  std::unique_ptr<LocationBarModel> location_bar_model_;
+
+  std::unique_ptr<new_tab_footer::NewTabFooterController>
+      new_tab_footer_controller_;
+
+  std::unique_ptr<extensions::BrowserExtensionWindowController>
+      extension_window_controller_;
+
+  // This is an experimental API that interacts with the TabStripModel.
+  std::unique_ptr<TabStripServiceRegister> tab_strip_service_;
 };
 
 #endif  // CHROME_BROWSER_UI_BROWSER_WINDOW_PUBLIC_BROWSER_WINDOW_FEATURES_H_

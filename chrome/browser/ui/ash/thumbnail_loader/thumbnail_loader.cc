@@ -19,13 +19,13 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/values.h"
 #include "chrome/browser/ash/file_manager/fileapi_util.h"
-#include "chrome/browser/extensions/api/messaging/native_message_port.h"
 #include "chrome/browser/image_decoder/image_decoder.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromeos/ash/components/file_manager/app_id.h"
 #include "extensions/browser/api/messaging/channel_endpoint.h"
 #include "extensions/browser/api/messaging/message_service.h"
 #include "extensions/browser/api/messaging/native_message_host.h"
+#include "extensions/browser/api/messaging/native_message_port.h"
 #include "extensions/common/api/messaging/messaging_endpoint.h"
 #include "extensions/common/api/messaging/port_id.h"
 #include "extensions/common/extension.h"
@@ -163,10 +163,8 @@ bool IsSupported(const base::FilePath& file_path) {
       }};
 
   // First attempt to match based on `mime_type`.
-  std::string ext = file_path.Extension();
   std::string mime_type;
-  if (!ext.empty() &&
-      net::GetWellKnownMimeTypeFromExtension(ext.substr(1), &mime_type)) {
+  if (net::GetWellKnownMimeTypeFromFile(file_path, &mime_type)) {
     for (const auto& file_match_pattern : kFileMatchPatterns) {
       if (file_match_pattern.second &&
           re2::RE2::FullMatch(mime_type, file_match_pattern.second)) {

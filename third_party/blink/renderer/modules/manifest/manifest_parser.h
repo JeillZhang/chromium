@@ -11,9 +11,8 @@
 #include <string>
 
 #include "base/types/strong_alias.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/common/manifest/manifest.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy_declaration.h"
 #include "third_party/blink/public/common/safe_url_pattern.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-blink.h"
@@ -528,8 +527,8 @@ class MODULES_EXPORT ManifestParser {
   // Parses the 'permissions_policy' field of the manifest.
   // This outsources semantic parsing of the policy to the
   // PermissionsPolicyParser.
-  Vector<blink::ParsedPermissionsPolicyDeclaration> ParseIsolatedAppPermissions(
-      const JSONObject* object);
+  Vector<network::ParsedPermissionsPolicyDeclaration>
+  ParseIsolatedAppPermissions(const JSONObject* object);
   Vector<String> ParseOriginAllowlist(const JSONArray* allowlist,
                                       const String& feature);
 
@@ -564,6 +563,10 @@ class MODULES_EXPORT ManifestParser {
       const JSONObject* pattern_object);
 
   String ParseVersion(const JSONObject* object);
+
+  // Parses the `update_token` field in the manifest iff the `id` is defined in
+  // the manifest. Returns `String()` which is null otherwise.
+  String ParseUpdateToken(const JSONObject* object, bool has_custom_id);
 
   void AddErrorInfo(const String& error_msg,
                     bool critical = false,

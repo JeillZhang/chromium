@@ -8,13 +8,12 @@
 
 #include "base/values.h"
 #include "chrome/browser/policy/policy_test_utils.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/test/base/ui_test_utils.h"
+#include "chrome/test/base/chrome_test_utils.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/policy_constants.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/site_isolation_policy.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/test_utils.h"
@@ -73,10 +72,14 @@ class V8OptimizerPolicyTest
 
   void NavigateAndExpectPolicyResult(const char* hostname,
                                      bool expect_disabled) {
-    auto* render_frame_host = ui_test_utils::NavigateToURL(
-        browser(), embedded_test_server()->GetURL(hostname, "/title1.html"));
+    ASSERT_TRUE(NavigateToUrl(
+        embedded_https_test_server().GetURL(hostname, "/title1.html"), this));
     EXPECT_EQ(expect_disabled,
-              render_frame_host->GetProcess()->AreV8OptimizationsDisabled());
+              current_frame_host()->GetProcess()->AreV8OptimizationsDisabled());
+  }
+
+  content::RenderFrameHost* current_frame_host() {
+    return chrome_test_utils::GetActiveWebContents(this)->GetPrimaryMainFrame();
   }
 
  protected:
@@ -107,25 +110,30 @@ class V8OptimizerPolicyTest
 };
 
 IN_PROC_BROWSER_TEST_P(V8OptimizerPolicyTest, V8OptimizerAllowedAndDisallowed) {
+  // This test uses the non-https server so that URL names can be more
+  // descriptive of their use case.
   ASSERT_TRUE(embedded_test_server()->Start());
 
   ConfigurePolicy("optimizer-enabled.com", "optimizer-disabled.com");
 
   GURL disabled_url =
       embedded_test_server()->GetURL("optimizer-disabled.com", "/title1.html");
-  auto* render_frame_host =
-      ui_test_utils::NavigateToURL(browser(), disabled_url);
+  ASSERT_TRUE(NavigateToUrl(disabled_url, this));
+  auto* render_frame_host = current_frame_host();
   EXPECT_FALSE(render_frame_host->GetProcess()->IsJitDisabled());
   EXPECT_TRUE(render_frame_host->GetProcess()->AreV8OptimizationsDisabled());
 
   GURL enabled_url =
       embedded_test_server()->GetURL("optimizer-enabled.com", "/title1.html");
-  render_frame_host = ui_test_utils::NavigateToURL(browser(), enabled_url);
+  ASSERT_TRUE(NavigateToUrl(enabled_url, this));
+  render_frame_host = current_frame_host();
   EXPECT_FALSE(render_frame_host->GetProcess()->IsJitDisabled());
   EXPECT_FALSE(render_frame_host->GetProcess()->AreV8OptimizationsDisabled());
 
   GURL default_url = embedded_test_server()->GetURL("foo.com", "/title1.html");
-  render_frame_host = ui_test_utils::NavigateToURL(browser(), default_url);
+  ASSERT_TRUE(NavigateToUrl(default_url, this));
+
+  render_frame_host = current_frame_host();
 
   EXPECT_FALSE(render_frame_host->GetProcess()->IsJitDisabled());
   EXPECT_EQ(DetermineExpectedResultForDefault(),
@@ -135,26 +143,41 @@ IN_PROC_BROWSER_TEST_P(V8OptimizerPolicyTest, V8OptimizerAllowedAndDisallowed) {
 IN_PROC_BROWSER_TEST_P(V8OptimizerPolicyTest, V8OptimizerHostnameMatching) {
   // For brevity, this test only tests Deny rules, because Allow rules are
   // tested above.
-  ASSERT_TRUE(embedded_test_server()->Start());
+  //
+  // The https-server is used in this test so that we can verify behavior under
+  // OriginKeyedProcessesByDefault.
+  ASSERT_TRUE(embedded_https_test_server().Start());
+
+  const bool expected_for_default = DetermineExpectedResultForDefault();
 
   // Check subdomains work.
   ConfigurePolicy(nullptr, "foo.com");
   NavigateAndExpectPolicyResult("foo.com", true);
-  NavigateAndExpectPolicyResult("subdomain.foo.com", true);
+  if (content::SiteIsolationPolicy::AreOriginKeyedProcessesEnabledByDefault()) {
+    // Under origin isolation, the origin is passed into
+    // AreV8OptimizationsDisabledForSite(), and the origin does not match the
+    // site-level policy.
+    NavigateAndExpectPolicyResult("subdomain.foo.com", expected_for_default);
+  } else {
+    // Under site isolation, the site is passed in to
+    // AreV8OptimizationsDisabledForSite() and so this navigation will match the
+    // policy.
+    NavigateAndExpectPolicyResult("subdomain.foo.com", true);
+  }
   ConfigurePolicy(nullptr, "[*.]foo.com");
   NavigateAndExpectPolicyResult("subdomain.foo.com", true);
 
-  const bool expected = DetermineExpectedResultForDefault();
-
   // Policy applies to different domain.
   ConfigurePolicy(nullptr, "foo.com");
-  NavigateAndExpectPolicyResult("bar.com", expected);
+  NavigateAndExpectPolicyResult("bar.com", expected_for_default);
 
-  // Here there is an invalid policy as the V8 optimizer policies only support
-  // eTLD+1 as origin.
+  // Policy applies to a subdomain.
   ConfigurePolicy(nullptr, "subdomain.foo.com");
-  NavigateAndExpectPolicyResult("foo.com", expected);
-  NavigateAndExpectPolicyResult("subdomain.foo.com", expected);
+  NavigateAndExpectPolicyResult("foo.com", expected_for_default);
+  // Since there is a specific rule for subdomain.foo.com that differs from the
+  // default policy, subdomain.foo.com will have origin isolation applied and
+  // will match the policy defined above.
+  NavigateAndExpectPolicyResult("subdomain.foo.com", true);
 }
 
 INSTANTIATE_TEST_SUITE_P(DefaultDisabled,

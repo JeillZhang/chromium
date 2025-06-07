@@ -140,10 +140,21 @@ SharedWorker* SharedWorker::CreateImpl(
   if (script_url.IsEmpty())
     return nullptr;
 
+  if (!worker->CheckAllowedByCSPForNoThrow(script_url)) {
+    // Return the unconnected worker. The port_ will be closed when remote_port
+    // goes out of scope after returning from this function.
+    return worker;
+  }
+
   mojo::PendingRemote<mojom::blink::BlobURLToken> blob_url_token;
   if (script_url.ProtocolIs("blob")) {
-    public_url_manager->ResolveForWorkerScriptFetch(
-        script_url, blob_url_token.InitWithNewPipeAndPassReceiver());
+    public_url_manager->ResolveAsBlobURLToken(
+        script_url, blob_url_token.InitWithNewPipeAndPassReceiver(),
+        /*is_top_level_navigation=*/false);
+  }
+
+  if (script_url.ProtocolIs("data")) {
+    context->CountUse(WebFeature::kDataUrlSharedWorker);
   }
 
   auto options = mojom::blink::WorkerOptions::New();
@@ -154,6 +165,7 @@ SharedWorker* SharedWorker::CreateImpl(
       window->GetStorageKey().IsFirstPartyContext()
           ? mojom::blink::SharedWorkerSameSiteCookies::kAll
           : mojom::blink::SharedWorkerSameSiteCookies::kNone;
+  bool extended_lifetime = false;
   switch (name_or_options->GetContentType()) {
     case V8UnionSharedWorkerOptionsOrString::ContentType::kString:
       options->name = name_or_options->GetAsString();
@@ -194,6 +206,15 @@ SharedWorker* SharedWorker::CreateImpl(
             break;
         }
       }
+      if (worker_options->hasExtendedLifetime()) {
+        extended_lifetime = worker_options->extendedLifetime();
+        UseCounter::Count(
+            window, WebFeature::kSharedWorkerExtendedLifetimeFeatureEnabled);
+        if (extended_lifetime) {
+          UseCounter::Count(window,
+                            WebFeature::kSharedWorkerExtendedLifetimeIsTrue);
+        }
+      }
       break;
     }
   }
@@ -206,7 +227,7 @@ SharedWorker* SharedWorker::CreateImpl(
   SharedWorkerClientHolder::From(*window)->Connect(
       worker, std::move(remote_port), script_url, std::move(blob_url_token),
       std::move(options), same_site_cookies, context->UkmSourceID(),
-      connector_override);
+      connector_override, extended_lifetime);
 
   return worker;
 }

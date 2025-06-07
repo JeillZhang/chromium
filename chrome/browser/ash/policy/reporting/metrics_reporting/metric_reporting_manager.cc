@@ -37,6 +37,7 @@
 #include "chrome/browser/ash/policy/reporting/metrics_reporting/cros_healthd_sampler_handlers/cros_healthd_psr_sampler_handler.h"
 #include "chrome/browser/ash/policy/reporting/metrics_reporting/cros_healthd_sampler_handlers/cros_healthd_sampler_handler.h"
 #include "chrome/browser/ash/policy/reporting/metrics_reporting/device_activity/device_activity_sampler.h"
+#include "chrome/browser/ash/policy/reporting/metrics_reporting/external_display/display_events_observer.h"
 #include "chrome/browser/ash/policy/reporting/metrics_reporting/fatal_crash/chrome_fatal_crash_events_observer.h"
 #include "chrome/browser/ash/policy/reporting/metrics_reporting/fatal_crash/fatal_crash_events_observer.h"
 #include "chrome/browser/ash/policy/reporting/metrics_reporting/kiosk_heartbeat/kiosk_heartbeat_telemetry_sampler.h"
@@ -101,10 +102,10 @@ constexpr char kWebsiteTelemetry[] = "website_telemetry";
 // static
 BASE_FEATURE(kEnableFatalCrashEventsObserver,
              "EnableFatalCrashEventsObserver",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kEnableChromeFatalCrashEventsObserver,
              "EnableChromeFatalCrashEventsObserver",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kEnableKioskVisionTelemetry,
              "EnableKioskVisionTelemetry",
              base::FEATURE_DISABLED_BY_DEFAULT);
@@ -252,7 +253,6 @@ void MetricReportingManager::Shutdown() {
   // `chrome_fatal_crash_events_observer_` before the actual class is destructed
   // by `event_observer_managers_`.
   fatal_crash_events_observer_ = nullptr;
-  chrome_fatal_crash_events_observer_ = nullptr;
   event_observer_managers_.clear();
   info_collectors_.clear();
   telemetry_collectors_.clear();
@@ -373,6 +373,19 @@ void MetricReportingManager::InitOnAffiliatedLogin(Profile* profile) {
       metrics::kDeviceReportNetworkEventsDefaultValue,
       /*init_delay=*/base::TimeDelta());
   InitPeripheralsCollectors();
+
+  // External display events observer.
+  if (base::FeatureList::IsEnabled(
+          chromeos::features::kExternalDisplayEventTelemetry)) {
+    // External display events falls under peripheral events group as well, but
+    // has to be tracked separately as graphics status events.
+    event_observer_managers_.emplace_back(delegate_->CreateEventObserverManager(
+        std::make_unique<DisplayEventsObserver>(),
+        user_event_report_queue_.get(), &reporting_settings_,
+        ::ash::kReportDeviceGraphicsStatus,
+        metrics::kReportDeviceGraphicsStatusDefaultValue,
+        /*collector_pool=*/this));
+  }
 
   // Start observing app/website events and telemetry only if the app service is
   // available for the given profile.
@@ -717,7 +730,6 @@ void MetricReportingManager::InitFatalCrashCollectors() {
   if (base::FeatureList::IsEnabled(kEnableChromeFatalCrashEventsObserver)) {
     std::unique_ptr<ChromeFatalCrashEventsObserver>
         chrome_fatal_crash_observer = ChromeFatalCrashEventsObserver::Create();
-    chrome_fatal_crash_events_observer_ = chrome_fatal_crash_observer.get();
     event_observer_managers_.emplace_back(delegate_->CreateEventObserverManager(
         std::move(chrome_fatal_crash_observer),
         chrome_crash_event_report_queue_.get(), &reporting_settings_,

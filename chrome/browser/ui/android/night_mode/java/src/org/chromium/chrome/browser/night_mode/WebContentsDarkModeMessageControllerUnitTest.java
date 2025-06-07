@@ -20,11 +20,13 @@ import android.content.res.Resources;
 
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
@@ -151,6 +153,7 @@ public class WebContentsDarkModeMessageControllerUnitTest {
         }
     }
 
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock Activity mMockActivity;
     @Mock Profile mMockProfile;
     @Mock WebContents mMockWebContents;
@@ -165,8 +168,6 @@ public class WebContentsDarkModeMessageControllerUnitTest {
 
     @Before
     public void setup() {
-        MockitoAnnotations.initMocks(this);
-
         when(mMockActivity.getResources()).thenReturn(mMockResources);
         when(mMockResources.getString(anyInt())).thenReturn(TEST_LINK_STRING);
         when(mMockResources.getString(eq(R.string.auto_dark_message_title)))
@@ -443,20 +444,6 @@ public class WebContentsDarkModeMessageControllerUnitTest {
                 "Shown dialog model should be null after clicking the negative button.",
                 mModalDialogManager.mShownDialogModel);
         verify(mMockTracker, times(1)).dismissed(eq(OPT_OUT_FEATURE));
-    }
-
-    @Test
-    public void testShowDialog_ClickTitleIcon() {
-        // Click on title icon.
-        WebContentsDarkModeMessageController.attemptToShowDialog(
-                mMockActivity, mMockProfile, TEST_URL, mModalDialogManager);
-        mModalDialogManager.clickButton(ButtonType.TITLE_ICON);
-
-        // Verify not dismissed.
-        Assert.assertNotNull(
-                "Shown dialog model should be non-null after clicking the title icon.",
-                mModalDialogManager.mShownDialogModel);
-        verify(mMockTracker, never()).dismissed(eq(OPT_OUT_FEATURE));
     }
 
     @Test

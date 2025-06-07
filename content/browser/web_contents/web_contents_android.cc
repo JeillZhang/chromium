@@ -22,6 +22,7 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/metrics/user_metrics.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "cc/input/android/offset_tag_android.h"
 #include "content/browser/android/java/gin_java_bridge_dispatcher_host.h"
@@ -494,10 +495,10 @@ void WebContentsAndroid::ResumeLoadingCreatedWebContents(JNIEnv* env) {
   web_contents_->ResumeLoadingCreatedWebContents();
 }
 
-void WebContentsAndroid::SetImportance(JNIEnv* env,
-                                       jint primary_main_frame_importance) {
+void WebContentsAndroid::SetPrimaryMainFrameImportance(JNIEnv* env,
+                                                       jint importance) {
   web_contents_->SetPrimaryMainFrameImportance(
-      static_cast<ChildProcessImportance>(primary_main_frame_importance));
+      static_cast<ChildProcessImportance>(importance));
 }
 
 void WebContentsAndroid::SuspendAllMediaPlayers(JNIEnv* env) {
@@ -911,6 +912,19 @@ void WebContentsAndroid::SetDisplayCutoutSafeArea(JNIEnv* env,
       gfx::Insets::TLBR(top, left, bottom, right));
 }
 
+void WebContentsAndroid::SetContextMenuInsets(JNIEnv* env,
+                                              int top,
+                                              int left,
+                                              int bottom,
+                                              int right) {
+  auto rect = gfx::Rect(left, top, right - left, bottom - top);
+  web_contents()->SetContextMenuInsets(rect);
+}
+
+void WebContentsAndroid::ShowInterestInElement(JNIEnv* env, int nodeID) {
+  web_contents()->ShowInterestInElement(nodeID);
+}
+
 void WebContentsAndroid::NotifyRendererPreferenceUpdate(JNIEnv* env) {
   web_contents_->OnWebPreferencesChanged();
 }
@@ -950,6 +964,14 @@ void WebContentsAndroid::SetSupportsForwardTransitionAnimation(
   web_contents_->SetSupportsForwardTransitionAnimation(supports);
 }
 
+jint WebContentsAndroid::GetOriginalWindowOpenDisposition(JNIEnv* env) {
+  return static_cast<jint>(web_contents_->GetOriginalWindowOpenDisposition());
+}
+
+jboolean WebContentsAndroid::HasOpener(JNIEnv* env) {
+  return static_cast<jboolean>(web_contents_->HasOpener());
+}
+
 void WebContentsAndroid::UpdateOffsetTagDefinitions(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& jtag_definitions) {
@@ -959,10 +981,6 @@ void WebContentsAndroid::UpdateOffsetTagDefinitions(
     Init();
   }
   offset_tag_mediator_->SetOffsetTagDefinitions(tag_definitions);
-}
-
-void WebContentsAndroid::DisconnectFileSelectListenerIfAny(JNIEnv* env) {
-  web_contents_->DisconnectFileSelectListenerIfAny();
 }
 
 WebContentsAndroid::BrowserControlsOffsetTagMediator::

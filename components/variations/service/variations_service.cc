@@ -15,6 +15,7 @@
 
 #include "base/base64.h"
 #include "base/command_line.h"
+#include "base/debug/crash_logging.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
@@ -41,7 +42,6 @@
 #include "components/variations/pref_names.h"
 #include "components/variations/proto/variations_seed.pb.h"
 #include "components/variations/seed_response.h"
-#include "components/variations/service/limited_entropy_synthetic_trial.h"
 #include "components/variations/synthetic_trial_registry.h"
 #include "components/variations/variations_safe_seed_store_local_state.h"
 #include "components/variations/variations_seed_simulator.h"
@@ -114,12 +114,14 @@ std::string GetPlatformString() {
 std::string GetRestrictParameterValue(const std::string& restrict_mode_override,
                                       VariationsServiceClient* client,
                                       PrefService* policy_pref_service) {
-  if (!restrict_mode_override.empty())
+  if (!restrict_mode_override.empty()) {
     return restrict_mode_override;
+  }
 
   std::string parameter;
-  if (client->OverridesRestrictParameter(&parameter) || !policy_pref_service)
+  if (client->OverridesRestrictParameter(&parameter) || !policy_pref_service) {
     return parameter;
+  }
 
   return policy_pref_service->GetString(prefs::kVariationsRestrictParameter);
 }
@@ -222,7 +224,12 @@ bool GetInstanceManipulations(const net::HttpResponseHeaders* headers,
 // Variations seed fetching is only enabled in official Chrome builds, if a URL
 // is specified on the command line, and for testing.
 bool IsFetchingEnabled() {
-#if !BUILDFLAG(GOOGLE_CHROME_BRANDING)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableVariationsSeedFetch)) {
+    return false;
+  }
+#else
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kVariationsServerURL) &&
       !g_should_fetch_for_testing) {
@@ -231,7 +238,7 @@ bool IsFetchingEnabled() {
         << switches::kVariationsServerURL << " specified.";
     return false;
   }
-#endif
+#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return true;
 }
 
@@ -288,8 +295,9 @@ class DeviceVariationsRestrictionByPolicyApplicator {
   void OnPolicyPrefServiceInitialized(bool successful) {
     // If PrefService initialization was not successful, another component will
     // display an error message to the user.
-    if (!successful)
+    if (!successful) {
       return;
+    }
 
     pref_change_registrar_ = std::make_unique<PrefChangeRegistrar>();
     pref_change_registrar_->Init(policy_pref_service_);
@@ -342,17 +350,13 @@ VariationsService::VariationsService(
       local_state_(local_state),
       synthetic_trial_registry_(synthetic_trial_registry),
       state_manager_(state_manager),
-      limited_entropy_synthetic_trial_(
-          local_state,
-          client_.get()->GetChannelForVariations()),
       policy_pref_service_(local_state),
       resource_request_allowed_notifier_(std::move(notifier)),
       safe_seed_manager_(local_state),
+      // TODO(crbug.com/421912603): Verify whether all callers should pass
+      // `true` here.
       entropy_providers_(state_manager_->CreateEntropyProviders(
-          VariationsFieldTrialCreatorBase::
-              IsLimitedEntropyRandomizationSourceEnabled(
-                  client_->GetChannelForVariations(),
-                  &limited_entropy_synthetic_trial_))),
+          /*enable_limited_entropy_mode=*/true)),
       field_trial_creator_(
           client_.get(),
           std::make_unique<VariationsSeedStore>(
@@ -367,8 +371,7 @@ VariationsService::VariationsService(
               client_.get()->GetChannelForVariations(),
               client_.get()->GetVariationsSeedFileDir(),
               entropy_providers_.get()),
-          ui_string_overrider,
-          &limited_entropy_synthetic_trial_) {
+          ui_string_overrider) {
   DCHECK(client_);
   DCHECK(resource_request_allowed_notifier_);
 
@@ -392,8 +395,9 @@ void VariationsService::PerformPreMainMessageLoopStartup() {
 // because at this point the |restrict_mode_| hasn't been set yet. See also
 // the CHECK in SetRestrictMode().
 #if !BUILDFLAG(IS_ANDROID)
-  if (!IsFetchingEnabled())
+  if (!IsFetchingEnabled()) {
     return;
+  }
 
   StartRepeatedVariationsSeedFetch();
 #endif  // !BUILDFLAG(IS_ANDROID)
@@ -424,13 +428,15 @@ void VariationsService::RemoveObserver(Observer* observer) {
 void VariationsService::OnAppEnterForeground() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (!IsFetchingEnabled())
+  if (!IsFetchingEnabled()) {
     return;
+  }
 
   // On mobile platforms, initialize the fetch scheduler when we receive the
   // first app foreground notification.
-  if (!request_scheduler_)
+  if (!request_scheduler_) {
     StartRepeatedVariationsSeedFetch();
+  }
   request_scheduler_->OnAppEnterForeground();
 }
 
@@ -470,15 +476,17 @@ GURL VariationsService::GetVariationsServerURL(HttpOptions http_options) {
 
   // If there's a restrict mode, we don't want to fall back to HTTP to avoid
   // toggling restrict mode state.
-  if (!secure && !restrict_mode.empty())
+  if (!secure && !restrict_mode.empty()) {
     return GURL();
+  }
 
   std::string server_url_string(
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           secure ? switches::kVariationsServerURL
                  : switches::kVariationsInsecureServerURL));
-  if (server_url_string.empty())
+  if (server_url_string.empty()) {
     server_url_string = secure ? kDefaultServerUrl : kDefaultInsecureServerUrl;
+  }
   GURL server_url = GURL(server_url_string);
   if (!restrict_mode.empty()) {
     DCHECK(secure);
@@ -517,8 +525,9 @@ void VariationsService::EnsureLocaleEquals(const std::string& locale) {
 #if BUILDFLAG(IS_ANDROID)
   // TODO(asvitkine): Speculative early return to silence CHECK failures on
   // Android, see crbug.com/912320.
-  if (locale.empty())
+  if (locale.empty()) {
     return;
+  }
 #endif
 
   // Uses a CHECK rather than a DCHECK to ensure that issues are caught since
@@ -547,7 +556,6 @@ std::string VariationsService::GetDefaultVariationsServerURLForTesting() {
 void VariationsService::RegisterPrefs(PrefRegistrySimple* registry) {
   SafeSeedManager::RegisterPrefs(registry);
   VariationsSeedStore::RegisterPrefs(registry);
-  LimitedEntropySyntheticTrial::RegisterPrefs(registry);
   RegisterFieldTrialInternalsPrefs(*registry);
 
   registry->RegisterIntegerPref(
@@ -626,8 +634,9 @@ bool VariationsService::DoFetchFromURL(const GURL& url, bool is_http_retry) {
   // debugger or if the machine was suspended) and OnURLFetchComplete() hasn't
   // had a chance to run yet from the previous request. In this case, don't
   // start a new request and just let the previous one finish.
-  if (pending_seed_request_)
+  if (pending_seed_request_) {
     return false;
+  }
 
   last_request_was_http_retry_ = is_http_retry;
 
@@ -685,8 +694,9 @@ bool VariationsService::DoFetchFromURL(const GURL& url, bool is_http_retry) {
   const base::TimeTicks now = base::TimeTicks::Now();
   base::TimeDelta time_since_last_fetch;
   // Record a time delta of 0 (default value) if there was no previous fetch.
-  if (!last_request_started_time_.is_null())
+  if (!last_request_started_time_.is_null()) {
     time_since_last_fetch = now - last_request_started_time_;
+  }
   UMA_HISTOGRAM_CUSTOM_COUNTS("Variations.TimeSinceLastFetchAttempt",
                               time_since_last_fetch.InMinutes(), 1,
                               base::Days(7).InMinutes(), 50);
@@ -721,8 +731,9 @@ void VariationsService::OnSeedStoreResult(bool is_delta_compressed,
   if (!store_success && is_delta_compressed) {
     delta_error_since_last_success_ = true;
     // |request_scheduler_| will be null during unit tests.
-    if (request_scheduler_)
+    if (request_scheduler_) {
       request_scheduler_->ScheduleFetchShortly();
+    }
   }
 
   if (store_success) {
@@ -777,11 +788,13 @@ void VariationsService::NotifyObservers(const SeedSimulationResult& result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (result.kill_critical_group_change_count > 0) {
-    for (auto& observer : observer_list_)
+    for (auto& observer : observer_list_) {
       observer.OnExperimentChangesDetected(Observer::CRITICAL);
+    }
   } else if (result.kill_best_effort_group_change_count > 0) {
-    for (auto& observer : observer_list_)
+    for (auto& observer : observer_list_) {
       observer.OnExperimentChangesDetected(Observer::BEST_EFFORT);
+    }
   }
 }
 
@@ -871,6 +884,7 @@ void VariationsService::OnSimpleLoaderComplete(
     // serial number included in the request is always that of the latest
     // seed, even when running in safe mode, so it's appropriate to always
     // modify the latest seed's date.
+    // TODO(crbug.com/420652919): Reject responses without a date.
     field_trial_creator_.seed_store()->UpdateSeedDateAndLogDayChange(
         response_date.value_or(base::Time()));
     return;
@@ -932,8 +946,9 @@ void VariationsService::PerformSimulationWithVersion(
     const base::Version& version) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (!version.IsValid())
+  if (!version.IsValid()) {
     return;
+  }
 
   std::unique_ptr<ClientFilterableState> client_state =
       field_trial_creator_.GetClientFilterableStateForVersion(version);
@@ -949,6 +964,10 @@ bool VariationsService::CallMaybeRetryOverHTTPForTesting() {
 void VariationsService::RecordSuccessfulFetch() {
   field_trial_creator_.seed_store()->RecordLastFetchTime(base::Time::Now());
   safe_seed_manager_.RecordSuccessfulFetch(field_trial_creator_.seed_store());
+}
+
+VariationsSeedStore* VariationsService::GetSeedStoreForTesting() {
+  return field_trial_creator_.seed_store();
 }
 
 std::unique_ptr<ClientFilterableState>

@@ -14,6 +14,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "components/saved_tab_groups/public/android/tab_group_sync_conversions_bridge.h"
 #include "components/saved_tab_groups/public/android/tab_group_sync_conversions_utils.h"
+#include "components/saved_tab_groups/public/collaboration_finder.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/saved_tab_groups/public/types.h"
 #include "url/android/gurl_android.h"
@@ -174,15 +175,27 @@ void TabGroupSyncServiceAndroid::MakeTabGroupShared(
     JNIEnv* env,
     const JavaParamRef<jobject>& j_caller,
     const JavaParamRef<jobject>& j_group_id,
-    const JavaParamRef<jstring>& j_collaboration_id) {
+    const JavaParamRef<jstring>& j_collaboration_id,
+    const JavaParamRef<jobject>& j_callback) {
   LocalTabGroupID tab_group_id =
       TabGroupSyncConversionsBridge::FromJavaTabGroupId(env, j_group_id);
-  std::string collaboration_id =
-      ConvertJavaStringToUTF8(env, j_collaboration_id);
-  // TODO(crbug.com/382557489): implement the callback.
+  syncer::CollaborationId collaboration_id(
+      ConvertJavaStringToUTF8(env, j_collaboration_id));
+
+  TabGroupSyncService::TabGroupSharingCallback native_sharing_callback;
+  if (j_callback) {
+    native_sharing_callback = base::BindOnce(
+        [](const jni_zero::JavaRef<jobject>& j_callback,
+           TabGroupSyncService::TabGroupSharingResult result) {
+          bool success =
+              (result == TabGroupSyncService::TabGroupSharingResult::kSuccess);
+          base::android::RunBooleanCallbackAndroid(j_callback, success);
+        },
+        ScopedJavaGlobalRef<jobject>(j_callback));
+  }
+
   tab_group_sync_service_->MakeTabGroupShared(
-      tab_group_id, collaboration_id,
-      TabGroupSyncService::TabGroupSharingCallback());
+      tab_group_id, collaboration_id, std::move(native_sharing_callback));
 }
 
 void TabGroupSyncServiceAndroid::AboutToUnShareTabGroup(
@@ -384,6 +397,14 @@ bool TabGroupSyncServiceAndroid::IsRemoteDevice(
   return tab_group_sync_service_->IsRemoteDevice(sync_cache_guid);
 }
 
+bool TabGroupSyncServiceAndroid::WasTabGroupClosedLocally(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& j_caller,
+    const JavaParamRef<jstring>& j_sync_tab_group_id) {
+  auto sync_tab_group_id = JavaStringToUuid(env, j_sync_tab_group_id);
+  return tab_group_sync_service_->WasTabGroupClosedLocally(sync_tab_group_id);
+}
+
 void TabGroupSyncServiceAndroid::RecordTabGroupEvent(
     JNIEnv* env,
     const JavaParamRef<jobject>& j_caller,
@@ -410,6 +431,27 @@ void TabGroupSyncServiceAndroid::RecordTabGroupEvent(
   }
 
   tab_group_sync_service_->RecordTabGroupEvent(event_details);
+}
+
+void TabGroupSyncServiceAndroid::UpdateArchivalStatus(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& j_caller,
+    const JavaParamRef<jstring>& j_sync_group_id,
+    const jboolean j_archival_status) {
+  auto sync_group_id = JavaStringToUuid(env, j_sync_group_id);
+  tab_group_sync_service_->UpdateArchivalStatus(sync_group_id,
+                                                j_archival_status);
+}
+
+void TabGroupSyncServiceAndroid::SetCollaborationAvailableInFinderForTesting(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& j_caller,
+    const JavaParamRef<jstring>& j_collaboration_id) {
+  std::string collaboration_id =
+      ConvertJavaStringToUTF8(env, j_collaboration_id);
+  tab_group_sync_service_->GetCollaborationFinderForTesting()
+      ->SetCollaborationAvailableForTesting(
+          syncer::CollaborationId(collaboration_id));
 }
 
 }  // namespace tab_groups

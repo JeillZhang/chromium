@@ -8,9 +8,9 @@
 #import <UIKit/UIKit.h>
 
 #import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_ui_element.h"
+#import "ios/chrome/browser/popup_menu/ui_bundled/public/popup_menu_ui_updating.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_type.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/toolbar_consumer.h"
-#import "ios/chrome/browser/ui/popup_menu/public/popup_menu_ui_updating.h"
 
 @protocol AdaptiveToolbarMenusProvider;
 @class AdaptiveToolbarViewController;
@@ -69,6 +69,9 @@
 - (void)triggerToolbarSlideInAnimationFromBelow:(BOOL)fromBelow;
 // Shows the animation when transitioning to a prerendered page.
 - (void)showPrerenderingAnimation;
+// Highlights the tab grid button if `highlight` is YES, resets to original
+// color if NO.
+- (void)IPHHighlightTabGridButton:(BOOL)highlight;
 
 @end
 

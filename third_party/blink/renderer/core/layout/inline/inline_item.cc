@@ -16,7 +16,8 @@ namespace {
 
 struct SameSizeAsInlineItem {
   UntracedMember<void*> members[2];
-  unsigned integers[4];
+  unsigned integers[3];
+  uint8_t bytes[1];
   unsigned bit_fields : 32;
 };
 
@@ -91,6 +92,7 @@ InlineItem::InlineItem(const InlineItem& other,
       shape_result_(shape_result, Member<ShapeResult>::AtomicInitializerTag{}),
       layout_object_(other.layout_object_,
                      Member<LayoutObject>::AtomicInitializerTag{}),
+      index_(other.index_),
       type_(other.type_),
       text_type_(other.text_type_),
       style_variant_(other.style_variant_),
@@ -258,6 +260,16 @@ void InlineItem::UpdateIndex(base::span<Member<InlineItem>> items) {
     item->index_ = index++;
   }
 }
+
+#if EXPENSIVE_DCHECKS_ARE_ON()
+void InlineItem::CheckIndex(base::span<Member<InlineItem>> items) {
+  wtf_size_t index = 0;
+  for (Member<InlineItem>& item : items) {
+    DCHECK_EQ(item->index_, index);
+    ++index;
+  }
+}
+#endif  // EXPENSIVE_DCHECKS_ARE_ON()
 
 String InlineItem::ToString() const {
   String object_info;

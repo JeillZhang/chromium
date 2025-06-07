@@ -30,10 +30,9 @@
 #include "components/history_embeddings/history_embeddings_features.h"
 #include "components/history_embeddings/sql_database.h"
 #include "components/history_embeddings/vector_database.h"
-#include "components/optimization_guide/core/optimization_guide_decider.h"
+#include "components/optimization_guide/core/hints/optimization_guide_decider.h"
 #include "components/os_crypt/async/browser/os_crypt_async.h"
 #include "components/page_content_annotations/core/page_content_annotations_service.h"
-#include "components/passage_embeddings/passage_embeddings_service_controller.h"
 #include "components/passage_embeddings/passage_embeddings_types.h"
 #include "url/gurl.h"
 
@@ -228,15 +227,15 @@ HistoryEmbeddingsService::HistoryEmbeddingsService(
     page_content_annotations::PageContentAnnotationsService*
         page_content_annotations_service,
     optimization_guide::OptimizationGuideDecider* optimization_guide_decider,
-    passage_embeddings::PassageEmbeddingsServiceController* service_controller,
-    std::unique_ptr<passage_embeddings::Embedder> embedder,
+    passage_embeddings::EmbedderMetadataProvider* embedder_metadata_provider,
+    passage_embeddings::Embedder* embedder,
     std::unique_ptr<Answerer> answerer,
     std::unique_ptr<IntentClassifier> intent_classifier)
     : os_crypt_async_(os_crypt_async),
       history_service_(history_service),
       page_content_annotations_service_(page_content_annotations_service),
       optimization_guide_decider_(optimization_guide_decider),
-      embedder_(std::move(embedder)),
+      embedder_(embedder),
       answerer_(std::move(answerer)),
       intent_classifier_(std::move(intent_classifier)),
       query_id_weak_ptr_factory_(&query_id_),
@@ -267,8 +266,8 @@ HistoryEmbeddingsService::HistoryEmbeddingsService(
 
   // Observation needs to be set up after the `storage_` construction since the
   // update notification could be invoked immediately.
-  if (service_controller) {
-    embedder_metadata_observation_.Observe(service_controller);
+  if (embedder_metadata_provider) {
+    embedder_metadata_observation_.Observe(embedder_metadata_provider);
   }
 }
 
@@ -312,8 +311,7 @@ void HistoryEmbeddingsService::ComputeAndStorePassageEmbeddings(
 }
 
 void HistoryEmbeddingsService::OnOsCryptAsyncReady(
-    os_crypt_async::Encryptor encryptor,
-    bool success) {
+    os_crypt_async::Encryptor encryptor) {
   storage_.AsyncCall(&Storage::SetEmbedderMetadata)
       .WithArgs(embedder_metadata_, std::move(encryptor));
 
@@ -394,9 +392,8 @@ SearchResult HistoryEmbeddingsService::Search(
   }
 
   // Try to cancel the embedding task for the previous query, if any.
-  if (query_embedding_task_id_ !=
-      passage_embeddings::Embedder::kInvalidTaskId) {
-    embedder_->TryCancel(query_embedding_task_id_);
+  if (query_embedding_task_id_) {
+    embedder_->TryCancel(*query_embedding_task_id_);
   }
 
   query_embedding_task_id_ = embedder_->ComputePassagesEmbeddings(
@@ -424,13 +421,13 @@ void HistoryEmbeddingsService::OnQueryEmbeddingComputed(
           << (query_passages.empty() ? "(NONE)" : query_passages[0]) << "'";
 
   // Ignore the previous query if a new one has been submitted to the embedder.
-  if (query_embedding_task_id_ != task_id) {
+  if (query_embedding_task_id_ && *query_embedding_task_id_ != task_id) {
     std::move(callback).Run(std::move(result));
     return;
   }
 
   // Reset the query embedding task ID to avoid attempting to cancel it later.
-  query_embedding_task_id_ = passage_embeddings::Embedder::kInvalidTaskId;
+  query_embedding_task_id_.reset();
 
   if (!succeeded) {
     std::move(callback).Run(std::move(result));
@@ -589,8 +586,13 @@ void HistoryEmbeddingsService::OnHistoryDeletions(
 
 void HistoryEmbeddingsService::EmbedderMetadataUpdated(
     passage_embeddings::EmbedderMetadata metadata) {
+  if (embedder_metadata_.IsValid()) {
+    // TODO(crbug.com/396684224): Handle runtime model changes. For now the
+    //  code expects them to remain constant and only processes metadata once.
+    return;
+  }
   embedder_metadata_ = metadata;
-  subscription_ = os_crypt_async_->GetInstance(
+  os_crypt_async_->GetInstance(
       base::BindOnce(&HistoryEmbeddingsService::OnOsCryptAsyncReady,
                      weak_ptr_factory_.GetWeakPtr()));
 }
@@ -844,58 +846,54 @@ void HistoryEmbeddingsService::ComputeAndStorePassageEmbeddingsWithExistingData(
 
   // Check the map for identical passages, which can reuse stored embeddings
   // instead of recomputing them with the embedder. Preserve the structure
-  // in `url_data` and remove already-embedded passages from the `passages`
-  // that get sent to the embedder. The missing embeddings will be filled in
+  // in `url_data` and move any passages that still need embedding to
+  // `noncached_passages`. The missing embeddings will be filled in
   // with the computed embeddings in `OnPassagesEmbeddingsComputed()`.
-  size_t passages_size_before = passages.size();
-  for (auto passages_iter = passages.begin();
-       passages_iter != passages.end();) {
-    const auto& passage = *passages_iter;
-    url_data.passages.add_passages(passage);
+  std::vector<std::string> noncached_passages;
+  noncached_passages.reserve(passages.size());
+  for (std::string& passage : passages) {
     if (embedding_cache.contains(passage)) {
-      VLOG(5) << "Cached passage: " << passage;
+      VLOG(6) << "Cached passage: " << passage;
       // Reuse the embeddings from the cache.
       url_data.embeddings.emplace_back(embedding_cache[passage]);
-      passages_iter = passages.erase(passages_iter);
     } else {
-      VLOG(5) << "Noncached passage: " << passage;
+      VLOG(6) << "Noncached passage: " << passage;
       // Reserve room for the embeddings to be filled in once computed.
       url_data.embeddings.emplace_back(std::vector<float>{});
-      passages_iter++;
+      noncached_passages.push_back(passage);
     }
+    url_data.passages.add_passages(std::move(passage));
   }
-  size_t passages_size_after = passages.size();
 
-  if (passages_size_before > 0) {
+  if (passages.size() > 0) {
     base::UmaHistogramPercentage(
         "History.Embeddings.DatabaseCachedPassageRatio",
-        100 * (passages_size_before - passages_size_after) /
-            passages_size_before);
+        100 * (passages.size() - noncached_passages.size()) / passages.size());
     base::UmaHistogramCounts100(
         "History.Embeddings.DatabaseCachedPassageHitCount",
-        passages_size_before - passages_size_after);
+        passages.size() - noncached_passages.size());
     base::UmaHistogramCounts100(
-        "History.Embeddings.DatabaseCachedPassageTryCount",
-        passages_size_before);
-    for (size_t i = 0; i < passages_size_before; i++) {
+        "History.Embeddings.DatabaseCachedPassageTryCount", passages.size());
+    for (size_t i = 0; i < passages.size(); i++) {
       base::UmaHistogramBoolean("History.Embeddings.DatabaseCacheHit",
-                                i >= passages_size_after);
+                                i >= noncached_passages.size());
     }
   }
 
-  VLOG(4) << "All " << passages.size() << " non-cached passages for url_id "
-          << url_data.url_id << ":";
-  for (size_t i = 0; i < passages.size(); i++) {
-    VLOG(5) << i << ": \"" << passages[i] << '"';
+  VLOG(4) << "All " << noncached_passages.size()
+          << " noncached passages for url_id " << url_data.url_id << ":";
+  for (size_t i = 0; i < noncached_passages.size(); i++) {
+    VLOG(5) << i << ": \"" << noncached_passages[i] << '"';
   }
 
   // TODO(crbug.com/390241271): Move this inside Embedder implementations once
   //  they are no longer wrapped inside the SchedulingEmbedder.
   if (GetFeatureParameters().erase_non_ascii_characters) {
-    EraseNonAsciiCharacters(passages);
+    EraseNonAsciiCharacters(noncached_passages);
   }
   embedder_->ComputePassagesEmbeddings(
-      passage_embeddings::PassagePriority::kPassive, std::move(passages),
+      passage_embeddings::PassagePriority::kPassive,
+      std::move(noncached_passages),
       base::BindOnce(&HistoryEmbeddingsService::OnPassagesEmbeddingsComputed,
                      weak_ptr_factory_.GetWeakPtr(), std::move(url_data)));
 }

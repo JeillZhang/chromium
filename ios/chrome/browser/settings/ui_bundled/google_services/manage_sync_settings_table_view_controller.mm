@@ -14,7 +14,7 @@
 #import "ios/chrome/browser/settings/ui_bundled/google_services/manage_sync_settings_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/manage_sync_settings_service_delegate.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/manage_sync_settings_table_view_controller_model_delegate.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
+#import "ios/chrome/browser/shared/model/profile/features.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_info_button_cell.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_switch_cell.h"
@@ -208,9 +208,9 @@ CGFloat kDefaultSectionFooterHeightPointSize = 10.;
 - (void)updatePrimaryAccountWithAvatarImage:(UIImage*)avatarImage
                                        name:(NSString*)name
                                       email:(NSString*)email
-                            managementState:(ManagementState)managementState {
-  CHECK(email, base::NotFatalUntil::M135);
-  CHECK(avatarImage, base::NotFatalUntil::M135);
+                      managementDescription:(NSString*)managementDescription {
+  CHECK(email);
+  CHECK(avatarImage);
   // Put a small non-empty frame to avoid layout constraint error during
   // initialization. The actual frame size is changed by the CentralAccountView.
   CentralAccountView* identityAccountItem =
@@ -218,7 +218,7 @@ CGFloat kDefaultSectionFooterHeightPointSize = 10.;
                                     avatarImage:avatarImage
                                            name:name
                                           email:email
-                                managementState:std::move(managementState)
+                          managementDescription:managementDescription
                                 useLargeMargins:YES];
   self.tableView.tableHeaderView = identityAccountItem;
   [self.tableView reloadData];

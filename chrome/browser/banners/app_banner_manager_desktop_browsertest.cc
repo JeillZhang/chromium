@@ -16,7 +16,7 @@
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/banners/app_banner_manager_browsertest_base.h"
 #include "chrome/browser/banners/test_app_banner_manager_desktop.h"
@@ -46,10 +46,6 @@
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/common/extension.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "ash/constants/ash_features.h"
-#endif
-
 namespace webapps {
 
 using State = AppBannerManager::State;
@@ -57,7 +53,9 @@ using State = AppBannerManager::State;
 class AppBannerManagerDesktopBrowserTest
     : public AppBannerManagerBrowserTestBase {
  public:
-  AppBannerManagerDesktopBrowserTest() = default;
+  AppBannerManagerDesktopBrowserTest()
+      : auto_accept_pwa_install_confirmation_(
+            web_app::SetAutoAcceptPWAInstallConfirmationForTesting()) {}
 
   void SetUp() override {
     TestAppBannerManagerDesktop::SetUp();
@@ -65,19 +63,16 @@ class AppBannerManagerDesktopBrowserTest
   }
 
   void SetUpOnMainThread() override {
-    web_app::SetAutoAcceptPWAInstallConfirmationForTesting(true);
-
     AppBannerManagerBrowserTestBase::SetUpOnMainThread();
-  }
-
-  void TearDown() override {
-    web_app::SetAutoAcceptPWAInstallConfirmationForTesting(false);
   }
 
   AppBannerManagerDesktopBrowserTest(
       const AppBannerManagerDesktopBrowserTest&) = delete;
   AppBannerManagerDesktopBrowserTest& operator=(
       const AppBannerManagerDesktopBrowserTest&) = delete;
+
+ private:
+  base::AutoReset<bool> auto_accept_pwa_install_confirmation_;
 };
 
 IN_PROC_BROWSER_TEST_F(AppBannerManagerDesktopBrowserTest,
@@ -234,10 +229,8 @@ IN_PROC_BROWSER_TEST_F(AppBannerManagerDesktopBrowserTest,
   }
 
   // Install the app via the menu instead of the banner.
-  web_app::SetAutoAcceptPWAInstallConfirmationForTesting(true);
   browser()->command_controller()->ExecuteCommand(IDC_INSTALL_PWA);
   manager->AwaitAppInstall();
-  web_app::SetAutoAcceptPWAInstallConfirmationForTesting(false);
 
   EXPECT_FALSE(manager->IsPromptAvailableForTesting());
 
@@ -265,11 +258,9 @@ IN_PROC_BROWSER_TEST_F(AppBannerManagerDesktopBrowserTest,
   }
 
   // Install the app via the menu instead of the banner.
-  web_app::SetAutoAcceptPWAInstallConfirmationForTesting(true);
   browser()->window()->ExecutePageActionIconForTesting(
       PageActionIconType::kPwaInstall);
   manager->AwaitAppInstall();
-  web_app::SetAutoAcceptPWAInstallConfirmationForTesting(false);
 
   EXPECT_FALSE(manager->IsPromptAvailableForTesting());
 
@@ -319,17 +310,25 @@ IN_PROC_BROWSER_TEST_F(AppBannerManagerDesktopBrowserTest,
   options.user_display_mode = web_app::mojom::UserDisplayMode::kBrowser;
   web_app::ExternallyManagedAppManagerInstall(profile, options);
 
-  // Uninstall web app by policy.
+  // Uninstall web app by policy by synchronizing with an empty
+  // `ExternalInstallOptions` vector.
   {
     base::RunLoop run_loop;
     web_app::WebAppProvider::GetForTest(profile)
         ->externally_managed_app_manager()
-        .UninstallApps(
-            {GetBannerURL()}, web_app::ExternalInstallSource::kExternalPolicy,
+        .SynchronizeInstalledApps(
+            {}, web_app::ExternalInstallSource::kExternalPolicy,
             base::BindLambdaForTesting(
-                [&run_loop](const GURL& app_url,
-                            webapps::UninstallResultCode code) {
-                  EXPECT_EQ(code, webapps::UninstallResultCode::kAppRemoved);
+                [&](std::map<GURL /*install_url*/,
+                             web_app::ExternallyManagedAppManagerInstallResult>
+                        install_results,
+                    std::map<GURL /*install_url*/, webapps::UninstallResultCode>
+                        uninstall_results) {
+                  EXPECT_TRUE(install_results.empty());
+                  ASSERT_TRUE(
+                      base::Contains(uninstall_results, GetBannerURL()));
+                  EXPECT_EQ(webapps::UninstallResultCode::kAppRemoved,
+                            uninstall_results[GetBannerURL()]);
                   run_loop.Quit();
                 }));
     run_loop.Run();
@@ -371,10 +370,8 @@ IN_PROC_BROWSER_TEST_F(AppBannerManagerDesktopBrowserTest,
   }
 
   // Install the app via the menu instead of the banner.
-  web_app::SetAutoAcceptPWAInstallConfirmationForTesting(true);
   browser()->command_controller()->ExecuteCommand(IDC_INSTALL_PWA);
   manager->AwaitAppInstall();
-  web_app::SetAutoAcceptPWAInstallConfirmationForTesting(false);
 
   EXPECT_FALSE(manager->IsPromptAvailableForTesting());
 

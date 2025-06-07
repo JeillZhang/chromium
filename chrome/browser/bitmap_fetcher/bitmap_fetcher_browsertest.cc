@@ -8,6 +8,7 @@
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/run_loop.h"
+#include "base/strings/string_view_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -156,7 +157,7 @@ IN_PROC_BROWSER_TEST_F(BitmapFetcherBrowserTest, StartTest) {
   // an image in a callback to OnImageDecoded().
   fetcher.Init(
       net::ReferrerPolicy::REDUCE_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN,
-      network::mojom::CredentialsMode::kInclude);
+      network::mojom::CredentialsMode::kOmit);
   fetcher.Start(browser()
                     ->profile()
                     ->GetDefaultStoragePartition()
@@ -202,7 +203,7 @@ IN_PROC_BROWSER_TEST_F(BitmapFetcherBrowserTest, OnURLFetchFailureTest) {
 
   fetcher.Init(
       net::ReferrerPolicy::REDUCE_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN,
-      network::mojom::CredentialsMode::kInclude);
+      network::mojom::CredentialsMode::kOmit);
   fetcher.Start(browser()
                     ->profile()
                     ->GetDefaultStoragePartition()
@@ -222,7 +223,7 @@ IN_PROC_BROWSER_TEST_F(BitmapFetcherBrowserTest, HandleImageFailedTest) {
 
   fetcher.Init(
       net::ReferrerPolicy::REDUCE_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN,
-      network::mojom::CredentialsMode::kInclude);
+      network::mojom::CredentialsMode::kOmit);
   fetcher.Start(browser()
                     ->profile()
                     ->GetDefaultStoragePartition()
@@ -242,7 +243,7 @@ IN_PROC_BROWSER_TEST_F(BitmapFetcherBrowserTest, DataURLNonImage) {
 
   fetcher.Init(
       net::ReferrerPolicy::REDUCE_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN,
-      network::mojom::CredentialsMode::kInclude);
+      network::mojom::CredentialsMode::kOmit);
   fetcher.Start(browser()
                     ->profile()
                     ->GetDefaultStoragePartition()
@@ -265,7 +266,7 @@ IN_PROC_BROWSER_TEST_F(BitmapFetcherBrowserTest, DataURLImage) {
 
   fetcher.Init(
       net::ReferrerPolicy::REDUCE_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN,
-      network::mojom::CredentialsMode::kInclude);
+      network::mojom::CredentialsMode::kOmit);
   fetcher.Start(browser()
                     ->profile()
                     ->GetDefaultStoragePartition()
@@ -295,7 +296,7 @@ IN_PROC_BROWSER_TEST_F(BitmapFetcherBrowserTest,
 
     fetcher.Init(
         net::ReferrerPolicy::REDUCE_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN,
-        network::mojom::CredentialsMode::kInclude);
+        network::mojom::CredentialsMode::kOmit);
     fetcher.Start(browser()
                       ->profile()
                       ->GetDefaultStoragePartition()
@@ -345,7 +346,7 @@ IN_PROC_BROWSER_TEST_F(BitmapFetcherInitiatorBrowserTest, SameOrigin) {
   BitmapFetcher fetcher(image_url, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS);
 
   fetcher.Init(net::ReferrerPolicy::NEVER_CLEAR,
-               network::mojom::CredentialsMode::kInclude,
+               network::mojom::CredentialsMode::kOmit,
                net::HttpRequestHeaders(),
                /*initiator=*/url::Origin::Create(image_url));
   fetcher.Start(browser()

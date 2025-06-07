@@ -6,9 +6,11 @@
 
 #include "base/strings/pattern.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/values_test_util.h"
 #include "base/test/with_feature_override.h"
 #include "build/build_config.h"
 #include "content/browser/devtools/render_frame_devtools_agent_host.h"
+#include "content/browser/permissions/permission_controller_impl.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/common/content_switches.h"
@@ -24,6 +26,7 @@
 #include "content/test/content_browser_test_utils_internal.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "storage/browser/blob/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
@@ -42,6 +45,17 @@ class MockContentBrowserClient : public ContentBrowserTestContentBrowserClient {
               LogWebFeatureForCurrentPage,
               (content::RenderFrameHost*, blink::mojom::WebFeature),
               (override));
+
+  bool IsFullCookieAccessAllowed(
+      content::BrowserContext* browser_context,
+      content::WebContents* web_contents,
+      const GURL& url,
+      const blink::StorageKey& storage_key,
+      net::CookieSettingOverrides overrides) override {
+    return allow_cookie_access_;
+  }
+
+  bool allow_cookie_access_ = false;
 };
 }  // namespace
 
@@ -49,7 +63,6 @@ class MockContentBrowserClient : public ContentBrowserTestContentBrowserClient {
 class BlobUrlBrowserTest : public ContentBrowserTest {
  public:
   BlobUrlBrowserTest() = default;
-
   BlobUrlBrowserTest(const BlobUrlBrowserTest&) = delete;
   BlobUrlBrowserTest& operator=(const BlobUrlBrowserTest&) = delete;
 
@@ -65,6 +78,7 @@ class BlobUrlBrowserTest : public ContentBrowserTest {
   void TearDownOnMainThread() override { client_.reset(); }
 
  private:
+  base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<MockContentBrowserClient> client_;
 };
 
@@ -205,7 +219,8 @@ IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest, ReplaceStateToAddAuthorityToBlob) {
 }
 
 IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest,
-                       TestUseCounterForCrossPartitionBlobURLFetch) {
+                       TestUseCounterForCrossPartitionSameOriginBlobURLFetch) {
+  GetMockClient().allow_cookie_access_ = true;
   GURL main_url = embedded_test_server()->GetURL(
       "c.com", "/cross_site_iframe_factory.html?c(b(c))");
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
@@ -227,65 +242,82 @@ IN_PROC_BROWSER_TEST_F(BlobUrlBrowserTest,
   EXPECT_CALL(
       GetMockClient(),
       LogWebFeatureForCurrentPage(
-          testing::_, blink::mojom::WebFeature::kCrossPartitionBlobURLFetch))
+          testing::_,
+          blink::mojom::WebFeature::kCrossPartitionSameOriginBlobURLFetch))
       .Times(1);
 
-  EXPECT_TRUE(ExecJs(
-      rfh_c_2,
-      JsReplace(
-          "async function test() {"
-          "const blob = await fetch($1).then(response => response.blob());"
-          "await blob.text();}"
-          "test();",
-          blob_url)));
+  std::string fetch_blob_url_js = JsReplace(
+      "async function test() {"
+      " const blob = await fetch($1).then(response => response.blob());"
+      " await blob.text();}"
+      "test();",
+      blob_url);
+
+  EXPECT_FALSE(ExecJs(rfh_b, fetch_blob_url_js));
+
+  EXPECT_TRUE(ExecJs(rfh_c_2, fetch_blob_url_js));
+
+  EXPECT_TRUE(ExecJs(rfh_c, JsReplace("URL.revokeObjectURL($1)", blob_url)));
+
+  EXPECT_FALSE(ExecJs(rfh_c_2, fetch_blob_url_js));
 }
 
 class BlobUrlDevToolsIssueTest : public ContentBrowserTest {
  protected:
+  BlobUrlDevToolsIssueTest() {
+    feature_list_.InitWithFeatures(
+        {features::kBlockCrossPartitionBlobUrlFetching,
+         blink::features::kEnforceNoopenerOnBlobURLNavigation},
+        {});
+  }
+
   void SetUpOnMainThread() override {
     ContentBrowserTest::SetUpOnMainThread();
     host_resolver()->AddRule("*", "127.0.0.1");
     SetupCrossSiteRedirector(embedded_test_server());
     ASSERT_TRUE(embedded_test_server()->Start());
+    client_ = std::make_unique<MockContentBrowserClient>();
   }
+
+  void TearDownOnMainThread() override { client_.reset(); }
 
   void WaitForIssueAndCheckUrl(const std::string& url,
                                TestDevToolsProtocolClient* client,
                                const std::string& expected_info_enum) {
-    auto is_blob_url_issue = [](const base::Value::Dict& params) {
-      const std::string* issue_code =
-          params.FindStringByDottedPath("issue.code");
-      return issue_code && *issue_code == "PartitioningBlobURLIssue";
-    };
-
     // Wait for notification of a Partitioning Blob URL Issue.
     base::Value::Dict params = client->WaitForMatchingNotification(
-        "Audits.issueAdded", base::BindRepeating(is_blob_url_issue));
+        "Audits.issueAdded",
+        base::BindRepeating([](const base::Value::Dict& params) {
+          const std::string* issue_code =
+              params.FindStringByDottedPath("issue.code");
+          return issue_code && *issue_code == "PartitioningBlobURLIssue";
+        }));
 
-    EXPECT_EQ(*params.FindStringByDottedPath("issue.code"),
-              "PartitioningBlobURLIssue");
-
-    base::Value::Dict* partitioning_blob_url_issue_details =
-        params.FindDictByDottedPath(
-            "issue.details.partitioningBlobURLIssueDetails");
-    ASSERT_TRUE(partitioning_blob_url_issue_details);
-
-    // Verify the reported blob_url match the expected url.
-    std::string* blob_url_ptr =
-        partitioning_blob_url_issue_details->FindString("url");
-    EXPECT_EQ(*blob_url_ptr, url);
-
-    // Verify the reported partitioningBlobURLInfo matches the expected enum.
-    std::string* info_enum_ptr =
-        partitioning_blob_url_issue_details->FindString(
-            "partitioningBlobURLInfo");
-    ASSERT_TRUE(info_enum_ptr);
-    EXPECT_EQ(*info_enum_ptr, expected_info_enum);
+    EXPECT_THAT(params, base::test::IsSupersetOfValue(
+                            base::test::ParseJson(content::JsReplace(
+                                R"({
+                  "issue": {
+                    "code": "PartitioningBlobURLIssue",
+                    "details": {
+                      "partitioningBlobURLIssueDetails": {
+                        "url": $1,
+                        "partitioningBlobURLInfo": $2,
+                      }
+                    }
+                  }
+                })",
+                                url, expected_info_enum))));
 
     // Clear existing notifications so subsequent calls don't fail by checking
     // `url` against old notifications.
     client->ClearNotifications();
   }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+
+ private:
+  std::unique_ptr<MockContentBrowserClient> client_;
 };
 
 IN_PROC_BROWSER_TEST_F(BlobUrlDevToolsIssueTest, PartitioningBlobUrlIssue) {
@@ -309,13 +341,19 @@ IN_PROC_BROWSER_TEST_F(BlobUrlDevToolsIssueTest, PartitioningBlobUrlIssue) {
   RenderFrameHost* rfh_b = ChildFrameAt(rfh_c, 0);
   RenderFrameHost* rfh_c_2 = ChildFrameAt(rfh_b, 0);
 
+  static_cast<PermissionControllerImpl*>(
+      rfh_c_2->GetBrowserContext()->GetPermissionController())
+      ->SetPermissionOverride(/*origin=*/std::nullopt,
+                              blink::PermissionType::STORAGE_ACCESS_GRANT,
+                              blink::mojom::PermissionStatus::DENIED);
+
   std::unique_ptr<content::TestDevToolsProtocolClient> client =
       std::make_unique<content::TestDevToolsProtocolClient>();
   client->AttachToFrameTreeHost(rfh_c_2);
   client->SendCommandSync("Audits.enable");
   client->ClearNotifications();
 
-  EXPECT_TRUE(ExecJs(
+  EXPECT_FALSE(ExecJs(
       rfh_c_2,
       JsReplace(
           "async function test() {"

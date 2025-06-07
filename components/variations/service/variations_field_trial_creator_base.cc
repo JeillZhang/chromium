@@ -19,6 +19,7 @@
 #include <set>
 #include <utility>
 
+#include "base/base64.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/debug/dump_without_crashing.h"
@@ -31,7 +32,9 @@
 #include "base/process/process.h"
 #include "base/sequence_checker.h"
 #include "base/strings/pattern.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/system/sys_info.h"
 #include "base/trace_event/trace_event.h"
@@ -43,13 +46,11 @@
 #include "components/variations/active_field_trials.h"
 #include "components/variations/entropy_provider.h"
 #include "components/variations/field_trial_config/field_trial_util.h"
-#include "components/variations/limited_entropy_mode_gate.h"
 #include "components/variations/platform_field_trials.h"
 #include "components/variations/pref_names.h"
 #include "components/variations/proto/variations_seed.pb.h"
 #include "components/variations/service/buildflags.h"
 #include "components/variations/service/limited_entropy_randomization.h"
-#include "components/variations/service/limited_entropy_synthetic_trial.h"
 #include "components/variations/service/safe_seed_manager.h"
 #include "components/variations/service/variations_service_client.h"
 #include "components/variations/service/variations_service_utils.h"
@@ -178,16 +179,6 @@ void MaybeExtendVariationsSafeMode(
       /*is_extended_safe_mode=*/true);
 }
 
-// Returns true iff the given seed contains a layer with LIMITED entropy mode.
-bool ContainsLimitedEntropyLayer(const VariationsSeed& seed) {
-  for (const Layer& layer_proto : seed.layers()) {
-    if (layer_proto.entropy_mode() == Layer::LIMITED) {
-      return true;
-    }
-  }
-  return false;
-}
-
 }  // namespace
 
 BASE_FEATURE(kForceFieldTrialSetupCrashForTesting,
@@ -214,15 +205,11 @@ Study::Channel ConvertProductChannelToStudyChannel(
 VariationsFieldTrialCreatorBase::VariationsFieldTrialCreatorBase(
     VariationsServiceClient* client,
     std::unique_ptr<VariationsSeedStore> seed_store,
-    base::OnceCallback<std::string(PrefService*)> locale_cb,
-    LimitedEntropySyntheticTrial* limited_entropy_synthetic_trial)
+    base::OnceCallback<std::string(PrefService*)> locale_cb)
     : client_(client),
       seed_store_(std::move(seed_store)),
-      create_trials_from_seed_called_(false),
-      application_locale_(std::move(locale_cb).Run(seed_store_->local_state())),
-      has_platform_override_(false),
-      platform_override_(Study::PLATFORM_WINDOWS),
-      limited_entropy_synthetic_trial_(limited_entropy_synthetic_trial) {}
+      application_locale_(
+          std::move(locale_cb).Run(seed_store_->local_state())) {}
 
 VariationsFieldTrialCreatorBase::~VariationsFieldTrialCreatorBase() = default;
 
@@ -318,8 +305,8 @@ bool VariationsFieldTrialCreatorBase::SetUpFieldTrials(
   }
 #endif  // BUILDFLAG(FIELDTRIAL_TESTING_ENABLED)
   if (command_line->HasSwitch(switches::kVariationsTestSeedJsonPath)) {
-    LoadSeedFromJsonFile(
-        command_line->GetSwitchValuePath(switches::kVariationsTestSeedJsonPath));
+    LoadSeedFromJsonFile(command_line->GetSwitchValuePath(
+        switches::kVariationsTestSeedJsonPath));
   }
 
   // Get client filterable state to be used by CreateTrialsFromSeed()
@@ -518,13 +505,12 @@ void VariationsFieldTrialCreatorBase::StoreVariationsOverriddenCountry(
 
 void VariationsFieldTrialCreatorBase::OverrideVariationsPlatform(
     Study::Platform platform_override) {
-  has_platform_override_ = true;
   platform_override_ = platform_override;
 }
 
 Study::Platform VariationsFieldTrialCreatorBase::GetPlatform() {
-  if (has_platform_override_) {
-    return platform_override_;
+  if (platform_override_.has_value()) {
+    return platform_override_.value();
   }
   return ClientFilterableState::GetCurrentPlatform();
 }
@@ -629,22 +615,6 @@ VariationsFieldTrialCreatorBase::GetGoogleGroupsFromPrefs() {
   return groups;
 }
 
-bool VariationsFieldTrialCreatorBase::
-    ShouldActivateLimitedEntropySyntheticTrial(const VariationsSeed& seed) {
-  return limited_entropy_synthetic_trial_ &&
-         IsLimitedEntropyModeEnabled(client_->GetChannelForVariations()) &&
-         ContainsLimitedEntropyLayer(seed);
-}
-
-void VariationsFieldTrialCreatorBase::
-    RegisterLimitedEntropySyntheticTrialIfNeeded(
-        const VariationsSeed& seed,
-        SyntheticTrialRegistry* synthetic_trial_registry) {
-  if (ShouldActivateLimitedEntropySyntheticTrial(seed)) {
-    limited_entropy_synthetic_trial_->Register(*synthetic_trial_registry);
-  }
-}
-
 bool VariationsFieldTrialCreatorBase::CreateTrialsFromSeed(
     const EntropyProviders& entropy_providers,
     base::FeatureList* feature_list,
@@ -705,7 +675,6 @@ bool VariationsFieldTrialCreatorBase::CreateTrialsFromSeed(
                                              : SeedUsage::kRegularSeedUsed);
   SetSeedVersion(seed.version());
 
-  RegisterLimitedEntropySyntheticTrialIfNeeded(seed, synthetic_trial_registry);
   VariationsLayers layers(seed, entropy_providers);
 
   // The server is not expected to send a seed with misconfigured entropy. Just
@@ -714,14 +683,12 @@ bool VariationsFieldTrialCreatorBase::CreateTrialsFromSeed(
   // Also, generate a crash report, so that the misconfigured seed can be
   // identified and rolled back.
   //
-  // Checking `IsLimitedEntropyModeEnabled()` is a safety measure, but is
-  // redundant given that `VariationsLayers` ensures that no layer with
-  // `EntropyMode.LIMITED` is marked as active for clients without a limited
-  // entropy provider (i.e. have limited entropy mode disabled, see
-  // `IsLimitedEntropyRandomizationSourceEnabled()`). For such clients,
-  // `SeedHasMisconfiguredEntropy()` will always be false.
-  if (IsLimitedEntropyModeEnabled(client_->GetChannelForVariations()) &&
-      SeedHasMisconfiguredEntropy(layers, seed)) {
+  // Note that `VariationsLayers` ensures that no limited-entropy-mode layer
+  // is marked as active for clients without a limited entropy provider, which
+  // is the case for clients on platforms, like Android WebView, that do not
+  // support limited entropy randomization. For such clients,
+  // `SeedHasMisconfiguredEntropy()`is always false.
+  if (SeedHasMisconfiguredEntropy(layers, seed)) {
     base::debug::DumpWithoutCrashing();
     return false;
   }
@@ -783,14 +750,14 @@ void VariationsFieldTrialCreatorBase::LoadSeedFromJsonFile(
 
   if (!seed_data || !seed_data->is_string()) {
     ExitWithMessage(
-        base::StringPrintf("Missing or invalid seed data in contents of \"%s\"",
-                           json_seed_path.AsUTF8Unsafe().c_str()));
+        base::StrCat({"Missing or invalid seed data in contents of \"",
+                      json_seed_path.AsUTF8Unsafe(), "\""}));
   }
 
   if (!seed_signature || !seed_signature->is_string()) {
-    ExitWithMessage(base::StringPrintf(
-        "Missing or invalid seed signature in contents of \"%s\"",
-        json_seed_path.AsUTF8Unsafe().c_str()));
+    ExitWithMessage(
+        base::StrCat({"Missing or invalid seed signature in contents of \"",
+                      json_seed_path.AsUTF8Unsafe(), "\""}));
   }
 
   // Set fail counters to 0 to make sure Chrome doesn't run in variations safe
@@ -799,32 +766,23 @@ void VariationsFieldTrialCreatorBase::LoadSeedFromJsonFile(
   local_state()->SetInteger(prefs::kVariationsFailedToFetchSeedStreak, 0);
 
   // Override Local State seed prefs.
-  // TODO(crbug.com/369080917): Use SeedReaderWriter to store a seed.
-  local_state()->SetString(prefs::kVariationsCompressedSeed,
-                           seed_data->GetString());
-  local_state()->SetString(prefs::kVariationsSeedSignature,
-                           seed_signature->GetString());
-
-  local_state()->CommitPendingWrite();  // Schedule a write to Local State.
+  std::string decoded_seed;
+  if (!base::Base64Decode(seed_data->GetString(), &decoded_seed)) {
+    ExitWithMessage(
+        base::StrCat({"Failed to decode seed data in contents of \"",
+                      json_seed_path.AsUTF8Unsafe(), "\""}));
+  }
+  seed_store_->StoreSeedData(decoded_seed, seed_signature->GetString(),
+                             /*country_code=*/"",
+                             /*date_fetched=*/base::Time(),
+                             /*is_delta_compressed=*/false,
+                             /*is_gzip_compressed=*/true,
+                             /*done_callback=*/base::DoNothing(),
+                             /*require_synchronous=*/true);
 }
 
 VariationsSeedStore* VariationsFieldTrialCreatorBase::GetSeedStore() {
   return seed_store_.get();
-}
-
-// static
-bool VariationsFieldTrialCreatorBase::
-    IsLimitedEntropyRandomizationSourceEnabled(
-        version_info::Channel channel,
-        LimitedEntropySyntheticTrial* trial) {
-  // Channel gated clients should not generate a limited entropy randomization
-  // source.
-  if (!IsLimitedEntropyModeEnabled(channel)) {
-    return false;
-  }
-  // Only clients in the enabled group of the limited entropy synthetic trial
-  // should have a limited entropy randomization source.
-  return trial && trial->IsEnabled();
 }
 
 }  // namespace variations

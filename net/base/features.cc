@@ -4,12 +4,17 @@
 
 #include "net/base/features.h"
 
+#include <string>
 #include <vector>
 
 #include "base/feature_list.h"
 #include "build/build_config.h"
 #include "net/base/cronet_buildflags.h"
 #include "net/net_buildflags.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "base/win/windows_version.h"
+#endif
 
 namespace net::features {
 
@@ -73,10 +78,6 @@ const base::FeatureParam<base::TimeDelta> kUseDnsHttpsSvcbSecureExtraTimeMin{
     &kUseDnsHttpsSvcb, "UseDnsHttpsSvcbSecureExtraTimeMin",
     base::Milliseconds(5)};
 
-BASE_FEATURE(kUseDnsHttpsSvcbAlpn,
-             "UseDnsHttpsSvcbAlpn",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kUseHostResolverCache,
              "UseHostResolverCache",
              base::FEATURE_DISABLED_BY_DEFAULT);
@@ -128,21 +129,12 @@ BASE_FEATURE(kSplitCacheByNetworkIsolationKey,
              "SplitCacheByNetworkIsolationKey",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
+// Note: Use of this feature is gated on the HTTP cache itself being
+// partitioned, which is controlled by the kSplitCacheByNetworkIsolationKey
+// feature.
 BASE_FEATURE(kSplitCacheByCrossSiteMainFrameNavigationBoolean,
              "SplitCacheByCrossSiteMainFrameNavigationBoolean",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kSplitCacheByMainFrameNavigationInitiator,
-             "SplitCacheByMainFrameNavigationInitiator",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kSplitCacheByNavigationInitiator,
-             "SplitCacheByNavigationInitiator",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kHttpCacheKeyingExperimentControlGroup2024,
-             "HttpCacheKeyingExperimentControlGroup2024",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kSplitCodeCacheByNetworkIsolationKey,
              "SplitCodeCacheByNetworkIsolationKey",
@@ -152,15 +144,36 @@ BASE_FEATURE(kPartitionConnectionsByNetworkIsolationKey,
              "PartitionConnectionsByNetworkIsolationKey",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kPostQuantumKyber,
-             "PostQuantumKyber",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kUseMLKEM, "UseMLKEM", base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kSearchEnginePreconnectInterval,
              "SearchEnginePreconnectInterval",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kSearchEnginePreconnect2,
+             "SearchEnginePreconnect2",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE_PARAM(int,
+                   kIdleTimeoutInSeconds,
+                   &kSearchEnginePreconnect2,
+                   "IdleTimeoutInSeconds",
+                   120);
+
+BASE_FEATURE_PARAM(base::TimeDelta,
+                   kShortSessionThreshold,
+                   &kSearchEnginePreconnect2,
+                   "MaxShortSessionThreshold",
+                   base::Seconds(30));
+
+extern const base::FeatureParam<int> kMaxPreconnectRetryInterval(
+    &kSearchEnginePreconnect2,
+    "MaxPreconnectRetryInterval",
+    30);
+
+BASE_FEATURE_PARAM(int,
+                   kPingIntervalInSeconds,
+                   &kSearchEnginePreconnect2,
+                   "PingIntervalInSeconds",
+                   30);
 
 BASE_FEATURE(kShortLaxAllowUnsafeThreshold,
              "ShortLaxAllowUnsafeThreshold",
@@ -169,10 +182,6 @@ BASE_FEATURE(kShortLaxAllowUnsafeThreshold,
 BASE_FEATURE(kSameSiteDefaultChecksMethodRigorously,
              "SameSiteDefaultChecksMethodRigorously",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kSchemefulSameSite,
-             "SchemefulSameSite",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kLimitOpenUDPSockets,
              "LimitOpenUDPSockets",
@@ -208,7 +217,7 @@ BASE_FEATURE(kCookieSameSiteConsidersRedirectChain,
 
 BASE_FEATURE(kAllowSameSiteNoneCookiesInSandbox,
              "AllowSameSiteNoneCookiesInSandbox",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kWaitForFirstPartySetsInit,
              "WaitForFirstPartySetsInit",
@@ -221,10 +230,6 @@ extern const base::FeatureParam<base::TimeDelta>
         &kWaitForFirstPartySetsInit,
         "kWaitForFirstPartySetsInitNavigationThrottleTimeout",
         base::Seconds(0)};
-
-BASE_FEATURE(kAncestorChainBitEnabledInPartitionedCookies,
-             "AncestorChainBitEnabledInPartitionedCookies",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kRequestStorageAccessNoCorsRequired,
              "RequestStorageAccessNoCorsRequired",
@@ -288,9 +293,19 @@ BASE_FEATURE(kEnableGetNetworkConnectivityHintAPI,
              "EnableGetNetworkConnectivityHintAPI",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kEnableTcpPortRandomization,
-             "EnableTcpPortRandomization",
+BASE_FEATURE(kTcpPortRandomizationWin,
+             "TcpPortRandomizationWin",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE_PARAM(int,
+                   kTcpPortRandomizationWinVersionMinimum,
+                   &kTcpPortRandomizationWin,
+                   "TcpPortRandomizationWinVersionMinimum",
+                   static_cast<int>(base::win::Version::WIN10_20H1));
+
+BASE_FEATURE(kTcpPortReuseMetricsWin,
+             "TcpPortReuseMetricsWin",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kTcpSocketIoCompletionPortWin,
              "TcpSocketIoCompletionPortWin",
@@ -303,12 +318,6 @@ BASE_FEATURE(kAvoidEntryCreationForNoStore,
 const base::FeatureParam<int> kAvoidEntryCreationForNoStoreCacheSize{
     &kAvoidEntryCreationForNoStore, "AvoidEntryCreationForNoStoreCacheSize",
     1000};
-
-// Prefetch to follow normal semantics instead of 5-minute rule
-// https://crbug.com/1345207
-BASE_FEATURE(kPrefetchFollowsNormalCacheSemantics,
-             "PrefetchFollowsNormalCacheSemantics",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // A flag for new Kerberos feature, that suggests new UI
 // when Kerberos authentication in browser fails on ChromeOS.
@@ -337,6 +346,58 @@ BASE_FEATURE(kAsyncMultiPortPath,
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
+// Probabilistic reveal tokens configuration settings
+BASE_FEATURE(kEnableProbabilisticRevealTokens,
+             "EnableProbabilisticRevealTokens",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+const base::FeatureParam<std::string> kProbabilisticRevealTokenServer{
+    &kEnableProbabilisticRevealTokens,
+    /*name=*/"ProbabilisticRevealTokenServer",
+    /*default_value=*/"https://aaftokenissuer.pa.googleapis.com"};
+
+const base::FeatureParam<std::string> kProbabilisticRevealTokenServerPath{
+    &kEnableProbabilisticRevealTokens,
+    /*name=*/"ProbabilisticRevealTokenServerPath",
+    /*default_value=*/"/v1/issueprts"};
+
+const base::FeatureParam<bool> kBypassProbabilisticRevealTokenRegistry{
+    &kEnableProbabilisticRevealTokens,
+    /*name=*/"BypassProbabilisticRevealTokenRegistry",
+    /*default_value=*/false};
+
+const base::FeatureParam<bool> kUseCustomProbabilisticRevealTokenRegistry{
+    &kEnableProbabilisticRevealTokens,
+    /*name=*/"UseCustomProbabilisticRevealTokenRegistry",
+    /*default_value=*/false};
+
+const base::FeatureParam<std::string> kCustomProbabilisticRevealTokenRegistry{
+    &kEnableProbabilisticRevealTokens,
+    /*name=*/"CustomProbabilisticRevealTokenRegistry",
+    /*default_value=*/""};
+
+const base::FeatureParam<bool> kProbabilisticRevealTokensOnlyInIncognito{
+    &kEnableProbabilisticRevealTokens,
+    /*name=*/"ProbabilisticRevealTokensOnlyInIncognito",
+    /*default_value=*/false};
+
+const base::FeatureParam<bool> kProbabilisticRevealTokenFetchOnly{
+    &kEnableProbabilisticRevealTokens,
+    /*name=*/"ProbabilisticRevealTokenFetchOnly",
+    /*default_value=*/false};
+
+const base::FeatureParam<bool>
+    kEnableProbabilisticRevealTokensForNonProxiedRequests{
+        &kEnableProbabilisticRevealTokens,
+        /*name=*/"EnableProbabilisticRevealTokensForNonProxiedRequests",
+        /*default_value=*/false};
+
+const base::FeatureParam<bool>
+    kProbabilisticRevealTokensAddHeaderToProxiedRequests{
+        &kEnableProbabilisticRevealTokens,
+        /*name=*/"ProbabilisticRevealTokensAddHeaderToProxiedRequests",
+        /*default_value=*/false};
+
 // IP protection experiment configuration settings
 BASE_FEATURE(kEnableIpProtectionProxy,
              "EnableIpPrivacyProxy",
@@ -346,24 +407,10 @@ const base::FeatureParam<std::string> kIpPrivacyTokenServer{
     &kEnableIpProtectionProxy, /*name=*/"IpPrivacyTokenServer",
     /*default_value=*/"https://prod.ipprotectionauth.goog"};
 
-const base::FeatureParam<std::string> kIpPrivacyIssuerTokenServer{
-    &kEnableIpProtectionProxy, /*name=*/"IpPrivacyIssuerTokenServer",
-    /*default_value=*/"https://prod.issuertoken.goog"};
-
 const base::FeatureParam<std::string> kIpPrivacyTokenServerGetInitialDataPath{
     &kEnableIpProtectionProxy,
     /*name=*/"IpPrivacyTokenServerGetInitialDataPath",
     /*default_value=*/"/v1/ipblinding/getInitialData"};
-
-const base::FeatureParam<std::string> kIpPrivacyIssuerTokenServerPath{
-    &kEnableIpProtectionProxy,
-    /*name=*/"IpPrivacyIssuerTokenServerPath",
-    /*default_value=*/"/v1/ipblinding/getIssuerToken"};
-
-const base::FeatureParam<bool> kIpPrivacyStoreIssuerTokens{
-    &kEnableIpProtectionProxy,
-    /*name=*/"IpPrivacyStoreIssuerTokens",
-    /*default_value=*/false};
 
 const base::FeatureParam<std::string> kIpPrivacyTokenServerGetTokensPath{
     &kEnableIpProtectionProxy, /*name=*/"IpPrivacyTokenServerGetTokensPath",
@@ -460,11 +507,6 @@ const base::FeatureParam<int> kIpPrivacyDebugExperimentArm{
     /*name=*/"IpPrivacyDebugExperimentArm",
     /*default_value=*/0};
 
-const base::FeatureParam<bool> kIpPrivacyCacheTokensByGeo{
-    &kEnableIpProtectionProxy,
-    /*name=*/"IpPrivacyCacheTokensByGeo",
-    /*default_value=*/false};
-
 const base::FeatureParam<bool> kIpPrivacyAlwaysCreateCore{
     &kEnableIpProtectionProxy,
     /*name=*/"IpPrivacyAlwaysCreateCore",
@@ -474,6 +516,30 @@ const base::FeatureParam<bool> kIpPrivacyOnlyInIncognito{
     &kEnableIpProtectionProxy,
     /*name=*/"IpPrivacyOnlyInIncognito",
     /*default_value=*/false};
+
+const base::FeatureParam<bool> kIpPrivacyEnableUserBypass{
+    &kEnableIpProtectionProxy,
+    /*name=*/"IpPrivacyEnableUserBypass",
+    /*default_value=*/false};
+
+const base::FeatureParam<bool> kIpPrivacyDisableForEnterpriseByDefault{
+    &kEnableIpProtectionProxy,
+    /*name=*/"IpPrivacyDisableForEnterpriseByDefault",
+    /*default_value=*/false};
+
+BASE_FEATURE(kExcludeLargeBodyReports,
+             "ExcludeLargeReportBodies",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE_PARAM(size_t,
+                   kMaxReportBodySizeKB,
+                   &kExcludeLargeBodyReports,
+                   "max_report_body_size_kb",
+                   1024);
+
+BASE_FEATURE(kRelatedWebsitePartitionAPI,
+             "RelatedWebsitePartitionAPI",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Network-change migration requires NetworkHandle support, which are currently
 // only supported on Android (see
@@ -544,18 +610,12 @@ BASE_FEATURE(kSpdyHeadersToHttpResponseUseBuilder,
              "SpdyHeadersToHttpResponseUseBuilder",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kReportEcn, "ReportEcn", base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kUseNewAlpsCodepointHttp2,
              "UseNewAlpsCodepointHttp2",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kUseNewAlpsCodepointQUIC,
              "UseNewAlpsCodepointQUIC",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kTreatHTTPExpiresHeaderValueZeroAsExpired,
-             "TreatHTTPExpiresHeaderValueZeroAsExpired",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kTruncateBodyToContentLength,
@@ -574,10 +634,18 @@ BASE_FEATURE(kDeviceBoundSessions,
 BASE_FEATURE(kPersistDeviceBoundSessions,
              "PersistDeviceBoundSessions",
              base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE_PARAM(bool,
+                   kDeviceBoundSessionsForceEnableForTesting,
+                   &kDeviceBoundSessions,
+                   "ForceEnableForTesting",
+                   false);
+BASE_FEATURE(kDeviceBoundSessionsRefreshQuota,
+             "DeviceBoundSessionsRefreshQuota",
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kPartitionProxyChains,
              "PartitionProxyChains",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kSpdySessionForProxyAdditionalChecks,
              "SpdySessionForProxyAdditionalChecks",
@@ -598,10 +666,6 @@ BASE_FEATURE(kCompressionDictionaryTransportRequireKnownRootCert,
 BASE_FEATURE(kReportingApiEnableEnterpriseCookieIssues,
              "ReportingApiEnableEnterpriseCookieIssues",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-BASE_FEATURE(kOptimizeParsingDataUrls,
-             "OptimizeParsingDataUrls",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kSimdutfBase64Support,
              "SimdutfBase64Support",
@@ -651,7 +715,7 @@ BASE_FEATURE(kIgnoreHSTSForLocalhost,
 
 BASE_FEATURE(kSimpleCachePrioritizedCaching,
              "SimpleCachePrioritizedCaching",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 const base::FeatureParam<int>
     kSimpleCachePrioritizedCachingPrioritizationFactor{
@@ -666,7 +730,7 @@ const base::FeatureParam<base::TimeDelta>
         /*default_value=*/base::Days(1)};
 
 #if BUILDFLAG(USE_NSS_CERTS)
-// TODO(crbug.com/40928765): Remove this flag after a few milestones.
+// TODO(crbug.com/390333881): Remove this flag after a few milestones.
 BASE_FEATURE(kNewClientCertPathBuilding,
              "NewClientCertPathBuilding",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -695,5 +759,31 @@ BASE_FEATURE(kUseCertTransparencyAwareApiForOsCertVerify,
              "UseCertTransparencyAwareApiForOsCertVerify",
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif  // BUILDFLAG(IS_ANDROID)
+
+BASE_FEATURE(kSelfSignedLocalNetworkInterstitial,
+             "SelfSignedLocalNetworkInterstitial",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+#if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
+BASE_FEATURE(kVerifyQWACs, "VerifyQWACs", base::FEATURE_DISABLED_BY_DEFAULT);
+#endif  // BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
+
+#if BUILDFLAG(IS_MAC)
+BASE_FEATURE(kIncludeDeprecatedClientCertLookup,
+             "IncludeDeprecatedClientCertLookup",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
+
+BASE_FEATURE(kRestrictAbusePorts,
+             "RestrictAbusePorts",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kRestrictAbusePortsOnLocalhost,
+             "RestrictAbusePortsOnLocalhost",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kTLSTrustAnchorIDs,
+             "TLSTrustAnchorIDs",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace net::features

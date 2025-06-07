@@ -13,6 +13,8 @@
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
@@ -24,7 +26,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/content/browser/test_autofill_manager_injector.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/foundations/browser_autofill_manager.h"
 #include "components/autofill/core/browser/foundations/browser_autofill_manager_test_api.h"
 #include "components/autofill/core/browser/foundations/test_autofill_manager_waiter.h"
@@ -132,9 +134,9 @@ void FillCard(content::RenderFrameHost* rfh,
   test::SetCreditCardInfo(&card, kNameFull, kNumber, kExpMonth, kExpYear, "",
                           base::ASCIIToUTF16(std::string_view(kCvc)));
   auto& manager = TestAutofillManager::GetForRenderFrameHost(rfh);
-  manager.FillOrPreviewCreditCardForm(mojom::ActionPersistence::kFill, form,
-                                      triggered_field.global_id(), card,
-                                      AutofillTriggerSource::kPopup);
+  manager.FillOrPreviewForm(mojom::ActionPersistence::kFill, form,
+                            triggered_field.global_id(), &card,
+                            AutofillTriggerSource::kPopup);
 }
 
 // Returns the values of all fields in the  frames of `web_contents`.
@@ -966,78 +968,6 @@ class AutofillAcrossIframesTest_FullIframes
  private:
   base::test::ScopedFeatureList feature_list_;
 };
-
-class AutofillAcrossIframesTest_FullIframes_ElementRemovalDetection
-    : public AutofillAcrossIframesTest_FullIframes {
-  base::test::ScopedFeatureList scoped_feature_list_{
-      features::kAutofillDetectRemovedFormControls};
-};
-
-// Tests that autofilling on a main-origin field fills all same-origin fields.
-IN_PROC_BROWSER_TEST_F(
-    AutofillAcrossIframesTest_FullIframes_ElementRemovalDetection,
-    FillAll) {
-  ASSERT_TRUE(LoadForm());
-  const FormStructure* form = FormAfterRemovalOfExtraFields();
-  ASSERT_TRUE(form);
-  EXPECT_THAT(FillForm(*form, *form->field(0)),
-              ElementsAre(kNameFull, kNumber, kExp, kCvc));
-}
-
-IN_PROC_BROWSER_TEST_F(
-    AutofillAcrossIframesTest_FullIframes_ElementRemovalDetection,
-    Submit) {
-  ASSERT_TRUE(LoadForm());
-  const FormStructure* form = FormAfterRemovalOfExtraFields();
-  ASSERT_TRUE(form);
-  ASSERT_THAT(FillForm(*form, *form->field(0)),
-              ElementsAre(kNameFull, kNumber, kExp, kCvc));
-  ASSERT_TRUE(SubmitInMainFrame());
-  EXPECT_THAT(
-      main_autofill_manager().submitted_form(),
-      Optional(Property(&FormData::fields,
-                        ElementsAre(HasValue(kNameFull), HasValue(kNumber),
-                                    HasValue(kExp), HasValue(kCvc)))));
-}
-
-// Tests that the Autofill Manager notices if an entire <form> is removed.
-IN_PROC_BROWSER_TEST_F(
-    AutofillAcrossIframesTest_FullIframes_ElementRemovalDetection,
-    DetectFormRemoval) {
-  // This loads 4 iframes, each containing a <form> element with 4 fields.
-  ASSERT_TRUE(LoadForm());
-
-  // This removes the entire <form> element for the first iframe.
-  ASSERT_TRUE(content::ExecJs(web_contents(), R"(
-      document.getElementsByTagName("IFRAME")[0]
-        .contentWindow
-        .deleteForm();
-  )"));
-
-  // As a consequence only 3 forms of 4 fields remain.
-  EXPECT_TRUE(GetOrWaitForFormWithFocusableFields(
-      /*num_fields=*/3 * 4));
-}
-
-// Tests that the Autofill Manager notices if the parent containing a <form> is
-// removed.
-IN_PROC_BROWSER_TEST_F(
-    AutofillAcrossIframesTest_FullIframes_ElementRemovalDetection,
-    DetectParentOfFormRemoval) {
-  // This loads 4 iframes, each containing a <form> element with 4 fields.
-  ASSERT_TRUE(LoadForm());
-
-  // This removes the entire <form> element for the first iframe.
-  ASSERT_TRUE(content::ExecJs(web_contents(), R"(
-      document.getElementsByTagName("IFRAME")[0]
-        .contentWindow
-        .deleteParentOfForm();
-  )"));
-
-  // As a consequence only 3 forms of 4 fields remain.
-  EXPECT_TRUE(GetOrWaitForFormWithFocusableFields(
-      /*num_fields=*/3 * 4));
-}
 
 }  // namespace
 }  // namespace autofill

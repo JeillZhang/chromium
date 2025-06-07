@@ -63,18 +63,14 @@ class GcmApiTest : public ExtensionApiTest {
  protected:
   // BrowserTestBase overrides.
   void SetUpCommandLine(base::CommandLine* command_line) override;
-  void SetUpInProcessBrowserTestFixture() override;
+  void SetUpBrowserContextKeyedServices(
+      content::BrowserContext* context) override;
 
   void StartCollecting();
 
   const Extension* LoadTestExtension(const std::string& extension_path,
                                      const std::string& page_name);
   gcm::FakeGCMProfileService* service() const;
-
- private:
-  void OnWillCreateBrowserContextServices(content::BrowserContext* context);
-
-  base::CallbackListSubscription create_services_subscription_;
 };
 
 void GcmApiTest::SetUpCommandLine(base::CommandLine* command_line) {
@@ -87,17 +83,9 @@ void GcmApiTest::SetUpCommandLine(base::CommandLine* command_line) {
   ExtensionApiTest::SetUpCommandLine(command_line);
 }
 
-void GcmApiTest::SetUpInProcessBrowserTestFixture() {
-  create_services_subscription_ =
-      BrowserContextDependencyManager::GetInstance()
-          ->RegisterCreateServicesCallbackForTesting(base::BindRepeating(
-              &GcmApiTest::OnWillCreateBrowserContextServices,
-              base::Unretained(this)));
-  ExtensionApiTest::SetUpInProcessBrowserTestFixture();
-}
-
-void GcmApiTest::OnWillCreateBrowserContextServices(
+void GcmApiTest::SetUpBrowserContextKeyedServices(
     content::BrowserContext* context) {
+  ExtensionApiTest::SetUpBrowserContextKeyedServices(context);
   gcm::GCMProfileServiceFactory::GetInstance()->SetTestingFactory(
       context, base::BindRepeating(&gcm::FakeGCMProfileService::Build));
 }
@@ -118,8 +106,9 @@ const Extension* GcmApiTest::LoadTestExtension(
   const Extension* extension =
       LoadExtension(test_data_dir_.AppendASCII(extension_path));
   if (extension) {
-    EXPECT_TRUE(ui_test_utils::NavigateToURL(
-        browser(), extension->GetResourceURL(page_name)));
+    const GURL extension_url = extension->ResolveExtensionURL(page_name);
+    EXPECT_TRUE(extension_url.is_valid());
+    EXPECT_TRUE(ui_test_utils::NavigateToURL(browser(), extension_url));
   }
   return extension;
 }

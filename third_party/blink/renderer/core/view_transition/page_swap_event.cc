@@ -15,6 +15,7 @@
 #include "third_party/blink/renderer/core/navigation_api/navigation_api.h"
 #include "third_party/blink/renderer/core/view_transition/dom_view_transition.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/wtf/uuid.h"
 
 namespace blink {
 namespace {
@@ -43,8 +44,6 @@ PageSwapEvent::PageSwapEvent(
     : Event(event_type_names::kPageswap, Bubbles::kNo, Cancelable::kNo),
       dom_view_transition_(view_transition) {
   CHECK(RuntimeEnabledFeatures::PageSwapEventEnabled());
-  CHECK(!view_transition ||
-        RuntimeEnabledFeatures::ViewTransitionOnNavigationEnabled());
   CHECK(!view_transition || page_swap_event_params);
 
   if (page_swap_event_params) {

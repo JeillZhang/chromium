@@ -15,13 +15,13 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/commerce/commerce_ui_tab_helper.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
-#include "chrome/browser/ui/tabs/public/tab_interface.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/collaboration_messaging_observer.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/collaboration_messaging_observer_factory.h"
 #include "chrome/browser/ui/toasts/api/toast_id.h"
 #include "chrome/browser/ui/toasts/api/toast_registry.h"
 #include "chrome/browser/ui/toasts/api/toast_specification.h"
 #include "chrome/browser/ui/toasts/toast_controller.h"
+#include "chrome/browser/ui/toasts/toast_features.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_entry_id.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_enums.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
@@ -29,18 +29,18 @@
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/commerce/core/commerce_feature_list.h"
+#include "components/data_sharing/public/features.h"
 #include "components/omnibox/browser/vector_icons.h"
 #include "components/plus_addresses/features.h"
 #include "components/plus_addresses/grit/plus_addresses_strings.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
-#include "components/saved_tab_groups/public/features.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/tabs/public/tab_interface.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/menus/simple_menu_model.h"
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-#include "chrome/browser/ui/views/user_education/low_usage_promo.h"
 #include "components/plus_addresses/resources/vector_icons.h"
 #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 
@@ -67,6 +67,11 @@ void ToastService::RegisterToasts(
   toast_registry_->RegisterToast(
       ToastId::kImageCopied,
       ToastSpecification::Builder(kCopyMenuIcon, IDS_IMAGE_COPIED_TOAST_BODY)
+          .Build());
+  toast_registry_->RegisterToast(
+      ToastId::kVideoFrameCopied,
+      ToastSpecification::Builder(kCopyMenuIcon,
+                                  IDS_VIDEO_FRAME_COPIED_TOAST_BODY)
           .Build());
 
   toast_registry_->RegisterToast(
@@ -193,7 +198,7 @@ void ToastService::RegisterToasts(
             .Build());
   }
 
-  if (tab_groups::IsTabGroupsSaveV2Enabled()) {
+  if (data_sharing::features::IsDataSharingFunctionalityEnabled()) {
     // Current tab has been removed from the group.
     toast_registry_->RegisterToast(
         ToastId::kTabGroupSyncTabRemoved,
@@ -248,4 +253,13 @@ void ToastService::RegisterToasts(
             .AddGlobalScoped()
             .Build());
   }
-}
+
+  if (toast_features::IsEnabled(toast_features::kPinnedTabToastOnClose)) {
+    toast_registry_->RegisterToast(
+        ToastId::kClosePinnedTab,
+        ToastSpecification::Builder(kKeepIcon, IDS_CLOSE_PINNED_TAB_TOAST_BODY)
+            .SetToastAsActionable()
+            .Build());
+  }
+
+}  // RegisterToasts() end.

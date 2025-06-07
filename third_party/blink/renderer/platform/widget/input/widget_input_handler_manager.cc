@@ -16,8 +16,10 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
+#include "base/task/common/task_annotator.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/trace_event/traced_value.h"
@@ -358,6 +360,7 @@ void WidgetInputHandlerManager::SetHost(
 
 void WidgetInputHandlerManager::SetHidden(bool hidden) {
   if (hidden) {
+    hidden_received_ = base::TimeTicks::Now();
     suppressing_input_events_state_ |=
         static_cast<uint16_t>(SuppressingInputEventsBits::kHidden);
   } else {
@@ -455,8 +458,8 @@ void WidgetInputHandlerManager::InputEventsDispatched(bool raf_aligned) {
   }
 }
 
-void WidgetInputHandlerManager::SetNeedsMainFrame() {
-  widget_->RequestAnimationAfterDelay(base::TimeDelta());
+void WidgetInputHandlerManager::SetNeedsMainFrame(bool urgent) {
+  widget_->RequestAnimationAfterDelay(base::TimeDelta(), urgent);
 }
 
 bool WidgetInputHandlerManager::RequestedMainFramePending() {
@@ -724,7 +727,18 @@ void WidgetInputHandlerManager::DispatchEvent(
   suppress_input &=
       ~static_cast<uint16_t>(SuppressingInputEventsBits::kHasNotPainted);
 
-  if (dev_tools_session_attached_ || !ignore_hidden_input_) {
+  bool remove_hidden_suppression = false;
+  if (dev_tools_session_attached_) {
+    remove_hidden_suppression = true;
+  } else {
+    remove_hidden_suppression = !ignore_hidden_input_;
+    if (suppress_input &
+        static_cast<uint16_t>(SuppressingInputEventsBits::kHidden)) {
+      base::UmaHistogramTimes("Event.ReceivedAfterHidden",
+                              base::TimeTicks::Now() - hidden_received_);
+    }
+  }
+  if (remove_hidden_suppression) {
     suppress_input &=
         ~static_cast<uint16_t>(SuppressingInputEventsBits::kHidden);
   }

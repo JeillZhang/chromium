@@ -23,6 +23,7 @@ import org.chromium.blink.mojom.ViewportFit;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.SwipeRefreshHandler;
 import org.chromium.chrome.browser.app.bluetooth.BluetoothNotificationService;
+import org.chromium.chrome.browser.app.serial.SerialNotificationService;
 import org.chromium.chrome.browser.app.usb.UsbNotificationService;
 import org.chromium.chrome.browser.bluetooth.BluetoothNotificationManager;
 import org.chromium.chrome.browser.display_cutout.DisplayCutoutTabHelper;
@@ -32,11 +33,13 @@ import org.chromium.chrome.browser.media.MediaCaptureNotificationServiceImpl;
 import org.chromium.chrome.browser.pdf.PdfUtils;
 import org.chromium.chrome.browser.policy.PolicyAuditor;
 import org.chromium.chrome.browser.policy.PolicyAuditor.AuditEvent;
+import org.chromium.chrome.browser.serial.SerialNotificationManager;
 import org.chromium.chrome.browser.ui.native_page.NativePage;
 import org.chromium.chrome.browser.usb.UsbNotificationManager;
 import org.chromium.content_public.browser.GlobalRenderFrameHostId;
 import org.chromium.content_public.browser.LifecycleState;
 import org.chromium.content_public.browser.NavigationHandle;
+import org.chromium.content_public.browser.Page;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.net.NetError;
@@ -214,6 +217,7 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
 
         @Override
         public void didFinishLoadInPrimaryMainFrame(
+                Page page,
                 GlobalRenderFrameHostId frameId,
                 GURL url,
                 boolean isKnownValid,
@@ -399,6 +403,13 @@ public class TabWebContentsObserver extends TabWebContentsUserData {
             UsbNotificationManager.updateUsbNotificationForTab(
                     ContextUtils.getApplicationContext(),
                     UsbNotificationService.class,
+                    mTab.getId(),
+                    null,
+                    mLastUrl,
+                    mTab.isIncognito());
+            SerialNotificationManager.updateSerialNotificationForTab(
+                    ContextUtils.getApplicationContext(),
+                    SerialNotificationService.class,
                     mTab.getId(),
                     null,
                     mLastUrl,

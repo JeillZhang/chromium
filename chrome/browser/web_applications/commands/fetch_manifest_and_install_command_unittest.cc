@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 #include "base/containers/contains.h"
@@ -14,11 +15,13 @@
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
+#include "build/build_config.h"
 #include "chrome/browser/shortcuts/shortcut_icon_generator.h"
 #include "chrome/browser/ui/web_applications/web_app_dialog_utils.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
@@ -68,7 +71,7 @@
 #include "ui/gfx/image/image_unittest_util.h"
 #include "ui/gfx/test/sk_gmock_support.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/app_list/arc/arc_app_test.h"
 #include "chromeos/ash/experiences/arc/mojom/intent_helper.mojom.h"
 #include "chromeos/ash/experiences/arc/session/arc_bridge_service.h"
@@ -101,7 +104,7 @@ class FetchManifestAndInstallCommandTest : public WebAppTest {
 
     web_contents_manager().SetUrlLoaded(web_contents(), kWebAppUrl);
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     arc_test_.SetUp(profile());
 
     auto* arc_bridge_service =
@@ -117,7 +120,7 @@ class FetchManifestAndInstallCommandTest : public WebAppTest {
   }
 
   void TearDown() override {
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     arc_test_.arc_service_manager()
         ->arc_bridge_service()
         ->intent_helper()
@@ -143,7 +146,7 @@ class FetchManifestAndInstallCommandTest : public WebAppTest {
     return *fake_provider().file_utils()->AsTestFileUtils();
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   ArcAppTest& arc_test() { return arc_test_; }
 #endif
 
@@ -232,7 +235,7 @@ class FetchManifestAndInstallCommandTest : public WebAppTest {
  private:
   base::HistogramTester histogram_tester_;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   ArcAppTest arc_test_;
   std::unique_ptr<arc::FakeIntentHelperHost> fake_intent_helper_host_;
   std::unique_ptr<arc::FakeIntentHelperInstance> fake_intent_helper_instance_;
@@ -738,7 +741,7 @@ TEST_F(FetchManifestAndInstallCommandTest, WebContentsNavigates) {
   EXPECT_FALSE(provider()->registrar_unsafe().IsInRegistrar(kWebAppId));
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 TEST_F(FetchManifestAndInstallCommandTest, IntentToPlayStore) {
   arc_test().app_instance()->set_is_installable(true);
 
@@ -821,7 +824,7 @@ gfx::Image LoadTestPNG(const base::FilePath& path) {
   return gfx::Image::CreateFrom1xPNGBytes(base::as_byte_span(png_data));
 }
 
-using FaviconOptions = absl::variant<absl::monostate, SkColor, base::FilePath>;
+using FaviconOptions = std::variant<std::monostate, SkColor, base::FilePath>;
 
 using ManifestConfig = std::tuple<
     /*app_name=*/std::optional<std::u16string>,
@@ -851,10 +854,9 @@ class UniversalInstallComboTest
          std::get<0>(config) ? base::UTF16ToUTF8(std::get<0>(config).value())
                              : "Absent",
          "_Favicon",
-         absl::holds_alternative<absl::monostate>(std::get<1>(config))
-             ? "Absent"
-         : absl::holds_alternative<SkColor>(std::get<1>(config))
-             ? ui::SkColorName(absl::get<SkColor>(std::get<1>(config)))
+         std::holds_alternative<std::monostate>(std::get<1>(config)) ? "Absent"
+         : std::holds_alternative<SkColor>(std::get<1>(config))
+             ? ui::SkColorName(std::get<SkColor>(std::get<1>(config)))
              : "IconPathSpecified",
          "_StartUrl", std::get<2>(config) ? "Specified" : "Absent",
          "_ManifestId", std::get<3>(config) ? "Specified" : "Absent",
@@ -870,17 +872,17 @@ class UniversalInstallComboTest
   }
   std::optional<SkColor> GetFaviconColor() {
     auto param = std::get<1>(GetParam());
-    if (!absl::holds_alternative<SkColor>(param)) {
+    if (!std::holds_alternative<SkColor>(param)) {
       return std::nullopt;
     }
-    return absl::get<SkColor>(param);
+    return std::get<SkColor>(param);
   }
   std::optional<std::string> GetFaviconFilePath() {
     auto param = std::get<1>(GetParam());
-    if (!absl::holds_alternative<base::FilePath>(param)) {
+    if (!std::holds_alternative<base::FilePath>(param)) {
       return std::nullopt;
     }
-    base::FilePath file_path = absl::get<base::FilePath>(param);
+    base::FilePath file_path = std::get<base::FilePath>(param);
     return file_path.AsUTF8Unsafe();
   }
 
@@ -929,8 +931,7 @@ class UniversalInstallComboTest
       }
     }
     // This generates the letter icons.
-    return GenerateIcons(
-        base::UTF16ToUTF8(GetAppName().value_or(kPageTitle)))[icon_size::k256];
+    return GenerateIcons(GetAppName().value_or(kPageTitle))[icon_size::k256];
   }
 
   void SetupPageFromParams() {
@@ -1150,8 +1151,9 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Combine(
         testing::Values(u"AppName", std::nullopt),
         testing::Values(FaviconOptions(SK_ColorBLUE),
-                        absl::monostate(),
+                        std::monostate()
 #if BUILDFLAG(IS_MAC)
+                            ,
                         FaviconOptions(base::FilePath(FILE_PATH_LITERAL(
                             "chrome/test/data/web_apps/pattern3-256.png")))
 #endif

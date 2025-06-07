@@ -9,6 +9,7 @@
 #include "base/i18n/time_formatting.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "chrome/browser/new_tab_page/microsoft_auth/microsoft_auth_service.h"
@@ -37,7 +38,19 @@ const char kDocIconUrl[] =
     "https://res.cdn.office.net/files/fabric-cdn-prod_20240925.001/assets/"
     "item-types/16/docx.png";
 
-const char kNonInsightsRequestUrl[] = "https://graph.microsoft.com/v1.0/$batch";
+const char kBatchRequestUrl[] = "https://graph.microsoft.com/v1.0/$batch";
+
+const char kRequestResultHistogramName[] =
+    "NewTabPage.MicrosoftFiles.RequestResult";
+
+const char kResponseResultHistogramName[] =
+    "NewTabPage.MicrosoftFiles.ResponseResult";
+
+const char kThrottlingTimeHistogramName[] =
+    "NewTabPage.MicrosoftFiles.ThrottlingWaitTime";
+
+const char kSubstitutionTypeHistogramName[] =
+    "NewTabPage.MicrosoftFiles.SubstitutionType";
 
 }  // namespace
 
@@ -65,6 +78,9 @@ class MicrosoftFilesPageHandlerTest : public testing::Test {
     access_token->expiration = base::Time::Now() + base::Hours(24);
     MicrosoftAuthServiceFactory::GetForProfile(profile_.get())
         ->SetAccessToken(std::move(access_token));
+  }
+
+  void SetUp() override {
     handler_ = std::make_unique<MicrosoftFilesPageHandler>(
         mojo::PendingReceiver<
             file_suggestion::mojom::MicrosoftFilesPageHandler>(),
@@ -84,6 +100,7 @@ class MicrosoftFilesPageHandlerTest : public testing::Test {
   content::BrowserTaskEnvironment& task_environment() {
     return task_environment_;
   }
+  base::HistogramTester& histogram_tester() { return histogram_tester_; }
 
  private:
   content::BrowserTaskEnvironment task_environment_{
@@ -92,6 +109,7 @@ class MicrosoftFilesPageHandlerTest : public testing::Test {
   network::TestURLLoaderFactory test_url_loader_factory_;
   base::test::ScopedFeatureList feature_list_;
   std::unique_ptr<MicrosoftFilesPageHandler> handler_;
+  base::HistogramTester histogram_tester_;
 };
 
 class MicrosoftFilesPageHandlerTestForTrending
@@ -121,14 +139,48 @@ class MicrosoftFilesPageHandlerTestForNonInsights
   }
 };
 
-TEST_F(MicrosoftFilesPageHandlerTest, GetFakeTrendingFiles) {
-  feature_list().InitWithFeaturesAndParameters(
-      /*enabled_features=*/
-      {{ntp_features::kNtpSharepointModule,
-        {{ntp_features::kNtpSharepointModuleDataParam.name, "fake-trending"}}},
-       {ntp_features::kNtpMicrosoftAuthenticationModule, {}}},
-      /*disabled_features=*/{});
+class MicrosoftFilesPageHandlerTestForCombinedSuggestions
+    : public MicrosoftFilesPageHandlerTest {
+ public:
+  MicrosoftFilesPageHandlerTestForCombinedSuggestions() {
+    feature_list().InitWithFeaturesAndParameters(
+        /*enabled_features=*/
+        {{ntp_features::kNtpSharepointModule,
+          {{ntp_features::kNtpSharepointModuleDataParam.name, "combined"}}},
+         {ntp_features::kNtpMicrosoftAuthenticationModule, {}}},
+        /*disabled_features=*/{});
+  }
+};
 
+class MicrosoftFilesPageHandlerTestForFakeNonInsights
+    : public MicrosoftFilesPageHandlerTest {
+ public:
+  MicrosoftFilesPageHandlerTestForFakeNonInsights() {
+    feature_list().InitWithFeaturesAndParameters(
+        /*enabled_features=*/
+        {{ntp_features::kNtpSharepointModule,
+          {{ntp_features::kNtpSharepointModuleDataParam.name,
+            "fake-non-insights"}}},
+         {ntp_features::kNtpMicrosoftAuthenticationModule, {}}},
+        /*disabled_features=*/{});
+  }
+};
+
+class MicrosoftFilesPageHandlerTestForFakeTrending
+    : public MicrosoftFilesPageHandlerTest {
+ public:
+  MicrosoftFilesPageHandlerTestForFakeTrending() {
+    feature_list().InitWithFeaturesAndParameters(
+        /*enabled_features=*/
+        {{ntp_features::kNtpSharepointModule,
+          {{ntp_features::kNtpSharepointModuleDataParam.name,
+            "fake-trending"}}},
+         {ntp_features::kNtpMicrosoftAuthenticationModule, {}}},
+        /*disabled_features=*/{});
+  }
+};
+
+TEST_F(MicrosoftFilesPageHandlerTestForFakeTrending, GetFakeTrendingFiles) {
   base::test::TestFuture<std::vector<file_suggestion::mojom::FilePtr>> future;
 
   handler().GetFiles(future.GetCallback());
@@ -234,6 +286,10 @@ TEST_F(MicrosoftFilesPageHandlerTestForTrending, GetTrendingFiles) {
               base::StringPrintf(kBaseWebUrl, base::NumberToString(i)));
     EXPECT_EQ(suggestion->icon_url, kDocIconUrl);
   }
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kSuccess, 1);
+  histogram_tester().ExpectBucketCount(kResponseResultHistogramName, 5, 1);
 }
 
 TEST_F(MicrosoftFilesPageHandlerTestForTrending,
@@ -249,6 +305,10 @@ TEST_F(MicrosoftFilesPageHandlerTestForTrending,
       future.Get();
 
   EXPECT_EQ(suggestions.size(), 0u);
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kJsonParseError,
+      1);
 }
 
 TEST_F(MicrosoftFilesPageHandlerTestForTrending,
@@ -258,7 +318,7 @@ TEST_F(MicrosoftFilesPageHandlerTestForTrending,
   handler().GetFiles(future.GetCallback());
 
   // The `title` property is missing.
-  std::string response = R"(
+  std::string response = R"({
     "value": [
       {
         "id": "0",
@@ -281,6 +341,11 @@ TEST_F(MicrosoftFilesPageHandlerTestForTrending,
       future.Get();
 
   EXPECT_EQ(suggestions.size(), 0u);
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kContentError,
+      1);
+  histogram_tester().ExpectBucketCount(kResponseResultHistogramName, 1, 1);
 }
 
 // Verifies that prefs are accurately set on dismissal and restoring of module.
@@ -300,15 +365,8 @@ TEST_F(MicrosoftFilesPageHandlerTestForTrending, DismissAndRestoreModule) {
             base::Time());
 }
 
-TEST_F(MicrosoftFilesPageHandlerTest, GetFakeNonInsightsFiles) {
-  feature_list().InitWithFeaturesAndParameters(
-      /*enabled_features=*/
-      {{ntp_features::kNtpSharepointModule,
-        {{ntp_features::kNtpSharepointModuleDataParam.name,
-          "fake-non-insights"}}},
-       {ntp_features::kNtpMicrosoftAuthenticationModule, {}}},
-      /*disabled_features=*/{});
-
+TEST_F(MicrosoftFilesPageHandlerTestForFakeNonInsights,
+       GetFakeNonInsightsFiles) {
   base::test::TestFuture<std::vector<file_suggestion::mojom::FilePtr>> future;
 
   handler().GetFiles(future.GetCallback());
@@ -426,8 +484,8 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights, GetNonInsightsFiles) {
 
   handler().GetFiles(future.GetCallback());
 
-  test_url_loader_factory().SimulateResponseForPendingRequest(
-      kNonInsightsRequestUrl, response);
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
   const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
       future.Get();
 
@@ -440,6 +498,10 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights, GetNonInsightsFiles) {
               base::StringPrintf(kBaseWebUrl, base::NumberToString(i)));
     EXPECT_EQ(suggestion->icon_url, kDocIconUrl);
   }
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kSuccess, 1);
+  histogram_tester().ExpectBucketCount(kResponseResultHistogramName, 4, 1);
 }
 
 TEST_F(MicrosoftFilesPageHandlerTestForNonInsights,
@@ -448,8 +510,8 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights,
 
   handler().GetFiles(future.GetCallback());
 
-  test_url_loader_factory().SimulateResponseForPendingRequest(
-      kNonInsightsRequestUrl, "}{");
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              "}{");
   const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
       future.Get();
 
@@ -497,12 +559,16 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights,
 
   handler().GetFiles(future.GetCallback());
 
-  test_url_loader_factory().SimulateResponseForPendingRequest(
-      kNonInsightsRequestUrl, response);
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
   const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
       future.Get();
 
   EXPECT_EQ(suggestions.size(), 1u);
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kSuccess, 1);
+  histogram_tester().ExpectBucketCount(kResponseResultHistogramName, 1, 1);
 }
 
 // Microsoft Graph API recently used or shared files endpoints may return
@@ -543,12 +609,16 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights,
 
   handler().GetFiles(future.GetCallback());
 
-  test_url_loader_factory().SimulateResponseForPendingRequest(
-      kNonInsightsRequestUrl, response);
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
   const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
       future.Get();
 
   EXPECT_EQ(suggestions.size(), 0u);
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kSuccess, 1);
+  histogram_tester().ExpectBucketCount(kResponseResultHistogramName, 1, 1);
 }
 
 // Verifies files aren't created for recent suggestions if there is
@@ -602,12 +672,17 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights,
 
   handler().GetFiles(future.GetCallback());
 
-  test_url_loader_factory().SimulateResponseForPendingRequest(
-      kNonInsightsRequestUrl, response);
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
   const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
       future.Get();
 
   EXPECT_EQ(suggestions.size(), 0u);
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kContentError,
+      1);
+  histogram_tester().ExpectBucketCount(kResponseResultHistogramName, 1, 1);
 }
 
 // Verifies files are not created for shared suggestions if there is
@@ -648,12 +723,17 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights,
 
   handler().GetFiles(future.GetCallback());
 
-  test_url_loader_factory().SimulateResponseForPendingRequest(
-      kNonInsightsRequestUrl, response);
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
   const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
       future.Get();
 
   EXPECT_EQ(suggestions.size(), 0u);
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kContentError,
+      1);
+  histogram_tester().ExpectBucketCount(kResponseResultHistogramName, 1, 1);
 }
 
 // Verifies that a "Retry-After" header is parsed and the earliest next retry
@@ -684,14 +764,19 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights, HandleThrottlingError) {
       "message": "Please retry again later."
     }})";
 
-  test_url_loader_factory().AddResponse(GURL(kNonInsightsRequestUrl),
-                                        std::move(head), response, status);
+  test_url_loader_factory().AddResponse(GURL(kBatchRequestUrl), std::move(head),
+                                        response, status);
 
   EXPECT_EQ(future.Get().size(), 0u);
 
   EXPECT_EQ(profile().GetPrefs()->GetTime(
                 prefs::kNtpMicrosoftFilesModuleRetryAfterTime),
             base::Time::Now() + base::Seconds(20));
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName,
+      MicrosoftFilesRequestResult::kThrottlingError, 1);
+  histogram_tester().ExpectTotalCount(kThrottlingTimeHistogramName, 1);
 }
 
 // Ensures requests aren't made until after the specified wait time when
@@ -880,8 +965,8 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights, RemoveDuplicates) {
       GetTimeNowAsString(), GetTimeNowAsString(), GetTimeNowAsString(),
       GetTimeNowAsString());
 
-  test_url_loader_factory().SimulateResponseForPendingRequest(
-      kNonInsightsRequestUrl, response);
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
   const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
       future.Get();
   EXPECT_EQ(suggestions.size(), 5u);
@@ -896,10 +981,56 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights,
   auto head = network::CreateURLResponseHead(net::HTTP_UNAUTHORIZED);
   head->mime_type = "application/json";
   network::URLLoaderCompletionStatus status;
-  test_url_loader_factory().AddResponse(GURL(kNonInsightsRequestUrl),
-                                        std::move(head), "", status);
+  test_url_loader_factory().AddResponse(GURL(kBatchRequestUrl), std::move(head),
+                                        "", status);
 
   EXPECT_EQ(future.Get().size(), 0u);
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kAuthError, 1);
+}
+
+// Ensures that for the recent & shared experiment arm, the response should have
+// a dictionary for each request.
+TEST_F(MicrosoftFilesPageHandlerTestForNonInsights,
+       NoFilesOnMissingResponseValue) {
+  base::test::TestFuture<std::vector<file_suggestion::mojom::FilePtr>> future;
+
+  // Missing the second dictionary for shared files.
+  std::string response =
+      R"({
+    "responses" : [
+    {
+    "id": "recent",
+    "body": {
+      "value": [
+      {
+        "id": "1",
+        "name": "Document 1.docx",
+        "webUrl": "https://foo.com/document1.docx",
+        "file": {
+          "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+        },
+        "fileSystemInfo": {
+          "lastAccessedDateTime": "2024-01-07T19:13:00Z"
+        },
+        "lastModifiedDateTime": "2024-01-07T19:13:00Z"
+      }
+      ]
+    }
+    }]})";
+
+  handler().GetFiles(future.GetCallback());
+
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
+
+  EXPECT_EQ(future.Get().size(), 0u);
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kContentError,
+      1);
 }
 
 TEST_F(MicrosoftFilesPageHandlerTestForNonInsights, JustificationText_Today) {
@@ -942,8 +1073,8 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights, JustificationText_Today) {
 
   handler().GetFiles(future.GetCallback());
 
-  test_url_loader_factory().SimulateResponseForPendingRequest(
-      kNonInsightsRequestUrl, response);
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
   const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
       future.Get();
 
@@ -994,8 +1125,8 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights,
 
   handler().GetFiles(future.GetCallback());
 
-  test_url_loader_factory().SimulateResponseForPendingRequest(
-      kNonInsightsRequestUrl, response);
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
   const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
       future.Get();
 
@@ -1046,8 +1177,8 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights,
 
   handler().GetFiles(future.GetCallback());
 
-  test_url_loader_factory().SimulateResponseForPendingRequest(
-      kNonInsightsRequestUrl, response);
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
   const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
       future.Get();
 
@@ -1099,10 +1230,546 @@ TEST_F(MicrosoftFilesPageHandlerTestForNonInsights, FilterOlderFiles) {
 
   handler().GetFiles(future.GetCallback());
 
-  test_url_loader_factory().SimulateResponseForPendingRequest(
-      kNonInsightsRequestUrl, response);
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
   const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
       future.Get();
 
   EXPECT_EQ(suggestions.size(), 0u);
+}
+
+TEST_F(MicrosoftFilesPageHandlerTestForCombinedSuggestions,
+       GetCombinedSuggestions) {
+  base::test::TestFuture<std::vector<file_suggestion::mojom::FilePtr>> future;
+  std::string response = base::StringPrintf(
+      R"({
+    "responses": [
+      {
+        "id": "recent",
+        "status": "200",
+        "body": {
+          "value": [
+            {
+              "id": "1",
+              "name": "Document 1.docx",
+              "webUrl": "https://foo.com/document1.docx",
+              "file": {
+                "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+              },
+              "fileSystemInfo": {
+                "lastAccessedDateTime": "%s"
+              },
+              "lastModifiedDateTime": "%s"
+            },
+            {
+              "id": "2",
+              "name": "Presentation.pptx",
+              "webUrl": "https://foo.com/presentation.pptx",
+              "file": {
+                "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.presentationml.presentation"
+              },
+              "fileSystemInfo": {
+                "lastAccessedDateTime": "%s"
+              },
+              "lastModifiedDateTime": "%s"
+            },
+            {
+              "id": "3",
+              "name": "Document xyz.docx",
+              "webUrl": "https://foo.com/documentxyz.docx",
+              "file": {
+                "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+              },
+              "fileSystemInfo": {
+                "lastAccessedDateTime": "%s"
+              },
+              "lastModifiedDateTime": "%s"
+            }
+          ]
+        }
+      },
+      {
+        "id": "shared",
+        "status": "200",
+        "body": {
+          "value": [
+            {
+              "id": "4",
+              "name": "Shared Spreadsheet.xlsx",
+              "webUrl": "https://foo.com/SharedSpreadsheet.xlsx",
+              "file": {
+                "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.spreadsheetml.sheet"
+              },
+              "lastModifiedDateTime": "%s",
+              "remoteItem": {
+                "shared": {
+                  "sharedDateTime": "%s",
+                  "sharedBy": {
+                    "user": {
+                      "displayName": "User 1"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "5",
+              "name": "Shared Document.docx",
+              "webUrl": "https://foo.com/document3.docx",
+              "file": {
+                "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+              },
+              "lastModifiedDateTime": "%s",
+              "remoteItem": {
+                "shared": {
+                  "sharedDateTime": "%s",
+                  "sharedBy": {
+                    "user": {
+                      "displayName": "User 2"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "id": "6",
+              "name": "Roadmap.pptx",
+              "webUrl": "https://foo.com/roadmap.pptx",
+              "file": {
+                "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.presentationml.presentation"
+              },
+              "lastModifiedDateTime": "%s",
+              "remoteItem": {
+                "shared": {
+                  "sharedDateTime": "%s",
+                  "sharedBy": {
+                    "user": {
+                      "displayName": "User 1"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "trending",
+        "status": "200",
+        "body": {
+          "value": [
+            {
+              "id": "50",
+              "resourceVisualization": {
+                  "id": "0-abc",
+                  "title": "Trending 1",
+                  "type": "Word",
+                "mediaType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+              },
+              "resourceReference": {
+                  "webUrl": "https://foo.com/Trending1.docx",
+                  "id": "0-xyz"
+              }
+            },
+            {
+              "id": "51",
+              "resourceVisualization": {
+                  "id": "0-abc",
+                  "title": "Trending 2",
+                  "type": "Word",
+                "mediaType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+              },
+              "resourceReference": {
+                  "webUrl": "https://foo.com/Trending2.docx",
+                  "id": "1-xyz"
+              }
+            },
+            {
+              "id": "52",
+              "resourceVisualization": {
+                  "id": "0-abc",
+                  "title": "Trending 3",
+                  "type": "Word",
+                "mediaType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+              },
+              "resourceReference": {
+                  "webUrl": "https://foo.com/Trending3.docx",
+                  "id": "2-xyz"
+              }
+            },
+            {
+              "id": "53",
+              "resourceVisualization": {
+                  "id": "0-abc",
+                  "title": "Trending 4",
+                  "type": "Word",
+                "mediaType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+              },
+              "resourceReference": {
+                  "webUrl": "https://foo.com/Trending4.docx",
+                  "id": "3-xyz"
+              }
+            },
+            {
+              "id": "54",
+              "resourceVisualization": {
+                  "id": "0-abc",
+                  "title": "Trending 5",
+                  "type": "Word",
+                "mediaType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+              },
+              "resourceReference": {
+                  "webUrl": "https://foo.com/Trending5.docx",
+                  "id": "4-xyz"
+              }
+            }
+          ]
+        }
+
+      }
+    ]
+    })",
+      GetTimeNowAsString(), GetTimeNowAsString(), GetTimeNowAsString(),
+      GetTimeNowAsString(), GetTimeNowAsString(), GetTimeNowAsString(),
+      GetTimeNowAsString(), GetTimeNowAsString(), GetTimeNowAsString(),
+      GetTimeNowAsString(), GetTimeNowAsString(), GetTimeNowAsString());
+
+  handler().GetFiles(future.GetCallback());
+
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
+  const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
+      future.Get();
+
+  EXPECT_EQ(suggestions.size(), 6u);
+
+  // The last 2 suggestions are trending files.
+  EXPECT_EQ(suggestions[4]->title, "Trending 1");
+  EXPECT_EQ(suggestions[5]->title, "Trending 2");
+
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kSuccess, 1);
+  histogram_tester().ExpectBucketCount(kResponseResultHistogramName, 11, 1);
+  histogram_tester().ExpectBucketCount(
+      kSubstitutionTypeHistogramName, MicrosoftFilesSubstitutionType::kNone, 1);
+}
+
+// Ensures that when non-insight files do not fill up the card based on their
+// allotted amount, trending files will be used to fill the card.
+TEST_F(MicrosoftFilesPageHandlerTestForCombinedSuggestions,
+       TrendingAddedOnInsufficientNonInsightFiles) {
+  base::test::TestFuture<std::vector<file_suggestion::mojom::FilePtr>> future;
+  // 3 non-insight files and 4 trending are found in `response.`
+  std::string response = base::StringPrintf(
+      R"({
+  "responses": [
+    {
+      "id": "recent",
+      "status": "200",
+      "body": {
+        "value": [
+          {
+            "id": "1",
+            "name": "Document 1.docx",
+            "webUrl": "https://foo.com/document1.docx",
+            "file": {
+              "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+            },
+            "fileSystemInfo": {
+              "lastAccessedDateTime": "%s"
+            },
+            "lastModifiedDateTime": "%s"
+          },
+          {
+            "id": "2",
+            "name": "Presentation.pptx",
+            "webUrl": "https://foo.com/presentation.pptx",
+            "file": {
+              "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.presentationml.presentation"
+            },
+            "fileSystemInfo": {
+              "lastAccessedDateTime": "%s"
+            },
+            "lastModifiedDateTime": "%s"
+          }
+        ]
+      }
+    },
+    {
+      "id": "shared",
+      "status": "200",
+      "body": {
+        "value": [
+          {
+            "id": "4",
+            "name": "Shared Spreadsheet.xlsx",
+            "webUrl": "https://foo.com/SharedSpreadsheet.xlsx",
+            "file": {
+              "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.spreadsheetml.sheet"
+            },
+            "lastModifiedDateTime": "%s",
+            "remoteItem": {
+              "shared": {
+                "sharedDateTime": "%s",
+                "sharedBy": {
+                  "user": {
+                    "displayName": "User 1"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "trending",
+      "status": "200",
+      "body": {
+        "value": [
+          {
+            "id": "50",
+            "resourceVisualization": {
+                "id": "0-abc",
+                "title": "Document 0",
+                "type": "Word",
+              "mediaType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+            },
+            "resourceReference": {
+                "webUrl": "https://foo.com/Document0.docx",
+                "id": "0-xyz"
+            }
+          },
+          {
+            "id": "51",
+            "resourceVisualization": {
+                "id": "0-abc",
+                "title": "Document 1",
+                "type": "Word",
+              "mediaType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+            },
+            "resourceReference": {
+                "webUrl": "https://foo.com/Document1.docx",
+                "id": "1-xyz"
+            }
+          },
+          {
+            "id": "52",
+            "resourceVisualization": {
+                "id": "0-abc",
+                "title": "Document 2",
+                "type": "Word",
+              "mediaType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+            },
+            "resourceReference": {
+                "webUrl": "https://foo.com/Document2.docx",
+                "id": "2-xyz"
+            }
+          },
+          {
+            "id": "53",
+            "resourceVisualization": {
+                "id": "0-abc",
+                "title": "Document 3",
+                "type": "Word",
+              "mediaType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+            },
+            "resourceReference": {
+                "webUrl": "https://foo.com/Document3.docx",
+                "id": "3-xyz"
+            }
+          }
+        ]
+      }
+
+    }
+  ]
+  })",
+      GetTimeNowAsString(), GetTimeNowAsString(), GetTimeNowAsString(),
+      GetTimeNowAsString(), GetTimeNowAsString(), GetTimeNowAsString());
+
+  handler().GetFiles(future.GetCallback());
+
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
+  const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
+      future.Get();
+
+  EXPECT_EQ(suggestions.size(), 6u);
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kSuccess, 1);
+  histogram_tester().ExpectBucketCount(kResponseResultHistogramName, 7, 1);
+  histogram_tester().ExpectBucketCount(
+      kSubstitutionTypeHistogramName,
+      MicrosoftFilesSubstitutionType::kExtraTrending, 1);
+}
+
+// Ensures that when trending files do not fill up the card based on their
+// allotted amount, non-insight files will be used to fill the card.
+TEST_F(MicrosoftFilesPageHandlerTestForCombinedSuggestions,
+       NonInsightFilesAddedOnInsufficientTrendingFiles) {
+  base::test::TestFuture<std::vector<file_suggestion::mojom::FilePtr>> future;
+  // 5 non-insight files and 1 trending are found in `response.`
+  std::string response = base::StringPrintf(
+      R"({
+    "responses": [
+    {
+    "id": "recent",
+    "status": "200",
+    "body": {
+      "value": [
+        {
+          "id": "1",
+          "name": "Document 1.docx",
+          "webUrl": "https://foo.com/document1.docx",
+          "file": {
+            "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+          },
+          "fileSystemInfo": {
+            "lastAccessedDateTime": "%s"
+          },
+          "lastModifiedDateTime": "%s"
+        },
+        {
+          "id": "2",
+          "name": "Presentation.pptx",
+          "webUrl": "https://foo.com/presentation.pptx",
+          "file": {
+            "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.presentationml.presentation"
+          },
+          "fileSystemInfo": {
+            "lastAccessedDateTime": "%s"
+          },
+          "lastModifiedDateTime": "%s"
+        },
+        {
+          "id": "3",
+          "name": "Presentation 3.pptx",
+          "webUrl": "https://foo.com/presentation3.pptx",
+          "file": {
+            "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.presentationml.presentation"
+          },
+          "fileSystemInfo": {
+            "lastAccessedDateTime": "%s"
+          },
+          "lastModifiedDateTime": "%s"
+        }
+      ]
+    }
+    },
+    {
+    "id": "shared",
+    "status": "200",
+    "body": {
+      "value": [
+        {
+          "id": "4",
+          "name": "Shared Spreadsheet.xlsx",
+          "webUrl": "https://foo.com/SharedSpreadsheet.xlsx",
+          "file": {
+            "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.spreadsheetml.sheet"
+          },
+          "lastModifiedDateTime": "%s",
+          "remoteItem": {
+            "shared": {
+              "sharedDateTime": "%s",
+              "sharedBy": {
+                "user": {
+                  "displayName": "User 1"
+                }
+              }
+            }
+          }
+        },
+        {
+          "id": "5",
+          "name": "Spreadsheet.xlsx",
+          "webUrl": "https://foo.com/Spreadsheet.xlsx",
+          "file": {
+            "mimeType": "application/vnd.)"
+      R"(openxmlformats-officedocument.spreadsheetml.sheet"
+          },
+          "lastModifiedDateTime": "%s",
+          "remoteItem": {
+            "shared": {
+              "sharedDateTime": "%s",
+              "sharedBy": {
+                "user": {
+                  "displayName": "User 1"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+    },
+    {
+    "id": "trending",
+    "status": "200",
+    "body": {
+      "value": [
+        {
+          "id": "50",
+          "resourceVisualization": {
+              "id": "0-abc",
+              "title": "Trending",
+              "type": "Word",
+            "mediaType": "application/vnd.)"
+      R"(openxmlformats-officedocument.wordprocessingml.document"
+          },
+          "resourceReference": {
+              "webUrl": "https://foo.com/trending.docx",
+              "id": "0-xyz"
+          }
+        }
+      ]
+    }
+
+    }
+    ]
+    })",
+      GetTimeNowAsString(), GetTimeNowAsString(), GetTimeNowAsString(),
+      GetTimeNowAsString(), GetTimeNowAsString(), GetTimeNowAsString(),
+      GetTimeNowAsString(), GetTimeNowAsString(), GetTimeNowAsString(),
+      GetTimeNowAsString());
+
+  handler().GetFiles(future.GetCallback());
+
+  test_url_loader_factory().SimulateResponseForPendingRequest(kBatchRequestUrl,
+                                                              response);
+  const std::vector<file_suggestion::mojom::FilePtr>& suggestions =
+      future.Get();
+
+  EXPECT_EQ(suggestions.size(), 6u);
+  // Ensure the trending file is the last suggestion.
+  EXPECT_EQ(suggestions[5]->title, "Trending");
+  histogram_tester().ExpectBucketCount(
+      kRequestResultHistogramName, MicrosoftFilesRequestResult::kSuccess, 1);
+  histogram_tester().ExpectBucketCount(kResponseResultHistogramName, 6, 1);
+  histogram_tester().ExpectBucketCount(
+      kSubstitutionTypeHistogramName,
+      MicrosoftFilesSubstitutionType::kExtraNonInsights, 1);
 }

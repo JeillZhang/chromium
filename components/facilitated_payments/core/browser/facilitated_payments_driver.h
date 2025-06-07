@@ -8,13 +8,15 @@
 #include <memory>
 
 #include "base/functional/callback_forward.h"
+#include "components/facilitated_payments/core/browser/facilitated_payments_api_client.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 
 class GURL;
 
 namespace payments::facilitated {
 
-class EwalletManager;
+class PaymentLinkManager;
+class FacilitatedPaymentsClient;
 class PixManager;
 
 // A cross-platform interface which is a gateway for all Facilitated Payments
@@ -27,8 +29,9 @@ class PixManager;
 // to handle common logics shared by cross-platform.
 class FacilitatedPaymentsDriver {
  public:
-  FacilitatedPaymentsDriver(std::unique_ptr<PixManager> pix_manager,
-                            std::unique_ptr<EwalletManager> ewallet_manager);
+  FacilitatedPaymentsDriver(
+      FacilitatedPaymentsClient* client,
+      FacilitatedPaymentsApiClientCreator api_client_creator);
   FacilitatedPaymentsDriver(const FacilitatedPaymentsDriver&) = delete;
   FacilitatedPaymentsDriver& operator=(const FacilitatedPaymentsDriver&) =
       delete;
@@ -46,21 +49,22 @@ class FacilitatedPaymentsDriver {
                                        const std::u16string& copied_text,
                                        ukm::SourceId ukm_source_id);
 
-  // Inform the `EwalletManager` to trigger the eWallet push payment flow. The
-  // payment information is included in the `payment_link_url` contained by the
-  // page with URL as `page_url`.
-  virtual void TriggerEwalletPushPayment(const GURL& payment_link_url,
-                                         const GURL& page_url,
-                                         ukm::SourceId ukm_source_id);
+  // Inform the `PaymentLinkManager` to trigger the payment link push payment
+  // flow. The payment information is included in the `payment_link_url`
+  // contained by the page with URL as `page_url`.
+  virtual void TriggerPaymentLinkPushPayment(const GURL& payment_link_url,
+                                             const GURL& page_url,
+                                             ukm::SourceId ukm_source_id);
 
   virtual void SetPixManagerForTesting(std::unique_ptr<PixManager> pix_manager);
-  virtual void SetEwalletManagerForTesting(
-      std::unique_ptr<EwalletManager> ewallet_manager);
+  virtual void SetPaymentLinkManagerForTesting(
+      std::unique_ptr<PaymentLinkManager> payment_link_manager);
 
  private:
+  const raw_ref<FacilitatedPaymentsClient> facilitated_payments_client_;
+  FacilitatedPaymentsApiClientCreator api_client_creator_;
   std::unique_ptr<PixManager> pix_manager_;
-
-  std::unique_ptr<EwalletManager> ewallet_manager_;
+  std::unique_ptr<PaymentLinkManager> payment_link_manager_;
 };
 
 }  // namespace payments::facilitated

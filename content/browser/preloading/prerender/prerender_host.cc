@@ -14,6 +14,7 @@
 #include "base/notreached.h"
 #include "base/observer_list.h"
 #include "base/run_loop.h"
+#include "base/strings/string_util.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/trace_event/named_trigger.h"
@@ -43,8 +44,12 @@
 #include "net/base/load_flags.h"
 #include "net/http/http_request_headers.h"
 #include "third_party/blink/public/common/client_hints/enabled_client_hints.h"
-#include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/navigation/preloading_headers.h"
 #include "url/origin.h"
+
+#if BUILDFLAG(IS_ANDROID)
+#include "base/strings/stringprintf.h"
+#endif
 
 namespace content {
 
@@ -101,6 +106,7 @@ bool PrerenderHost::AreHttpRequestHeadersCompatible(
     const std::string& prerender_headers_str,
     PreloadingTriggerType trigger_type,
     const std::string& histogram_suffix,
+    bool allow_x_header_mismatch,
     PrerenderCancellationReason& reason) {
   net::HttpRequestHeaders prerender_headers;
   prerender_headers.AddHeadersFromString(prerender_headers_str);
@@ -118,10 +124,14 @@ bool PrerenderHost::AreHttpRequestHeadersCompatible(
   // `potential_activation_headers` doesn't contain it. Remove "Purpose" and
   // "Sec-Purpose" matching from consideration so that activation works with the
   // header.
-  prerender_headers.RemoveHeader("Purpose");
-  potential_activation_headers.RemoveHeader("Purpose");
-  prerender_headers.RemoveHeader("Sec-Purpose");
-  potential_activation_headers.RemoveHeader("Sec-Purpose");
+  prerender_headers.RemoveHeader(blink::kPurposeHeaderName);
+  potential_activation_headers.RemoveHeader(blink::kPurposeHeaderName);
+  prerender_headers.RemoveHeader(blink::kSecPurposeHeaderName);
+  potential_activation_headers.RemoveHeader(blink::kSecPurposeHeaderName);
+  // Ditto for "Sec-Speculation-Tags".
+  prerender_headers.RemoveHeader(blink::kSecSpeculationTagsHeaderName);
+  CHECK(!potential_activation_headers.HasHeader(
+      blink::kSecSpeculationTagsHeaderName));
 
   prerender_headers.RemoveHeader("RTT");
   potential_activation_headers.RemoveHeader("RTT");
@@ -148,6 +158,29 @@ bool PrerenderHost::AreHttpRequestHeadersCompatible(
   // Don't need to handle "viewport-height" as it is not defined in the specs.
   prerender_headers.RemoveHeader("sec-ch-viewport-height");
   potential_activation_headers.RemoveHeader("sec-ch-viewport-height");
+
+  // Allow mismatches on `X-` headers. Currently this is allowed only on the
+  // WebView.
+  // TODO(crbug.com/40244149): Expand this to other platforms and non-x-headers.
+  if (allow_x_header_mismatch) {
+    std::set<std::string> headers_to_be_removed;
+    for (net::HttpRequestHeaders::Iterator it(prerender_headers);
+         it.GetNext();) {
+      if (it.name().starts_with("X-") || it.name().starts_with("x-")) {
+        headers_to_be_removed.insert(it.name());
+      }
+    }
+    for (net::HttpRequestHeaders::Iterator it(potential_activation_headers);
+         it.GetNext();) {
+      if (it.name().starts_with("X-") || it.name().starts_with("x-")) {
+        headers_to_be_removed.insert(it.name());
+      }
+    }
+    for (const std::string& name : headers_to_be_removed) {
+      prerender_headers.RemoveHeader(name);
+      potential_activation_headers.RemoveHeader(name);
+    }
+  }
 
   return PrerenderHost::IsActivationHeaderMatch(potential_activation_headers,
                                                 prerender_headers, reason);
@@ -493,9 +526,6 @@ bool PrerenderHost::StartPrerendering() {
 }
 
 void PrerenderHost::DidStartNavigation(NavigationHandle* navigation_handle) {
-  CHECK(base::FeatureList::IsEnabled(
-      blink::features::kPrerender2MainFrameNavigation));
-
   auto* navigation_request = NavigationRequest::From(navigation_handle);
   CHECK(navigation_request->IsInPrerenderedMainFrame());
 
@@ -528,8 +558,7 @@ void PrerenderHost::ReadyToCommitNavigation(
     return;
   }
 
-  if (base::FeatureList::IsEnabled(blink::features::kPrerender2NoVarySearch) &&
-      navigation_request->response() &&
+  if (navigation_request->response() &&
       navigation_request->response()->parsed_headers &&
       navigation_request->response()
           ->parsed_headers->no_vary_search_with_parse_error) {
@@ -544,7 +573,7 @@ void PrerenderHost::ReadyToCommitNavigation(
   // ReadyToCommitNavigation is called when the headers are received.
   were_headers_received_ = true;
   for (auto& observer : observers_) {
-    observer.OnHeadersReceived();
+    observer.OnHeadersReceived(*navigation_handle);
   }
 }
 
@@ -788,18 +817,17 @@ bool PrerenderHost::AreInitialPrerenderNavigationParamsCompatibleWithNavigation(
     return false;
   }
 
-  // Relaxes checks for initiator and transition type. This logic is intended to
-  // be used for WebView, as WebView is intended to host embedder-trusted
-  // contests.
-  bool allow_initiator_and_transition_mismatch =
+  // Relaxes checks for initiator, transition type, and headers. This logic is
+  // intended to be used for WebView, as WebView is intended to host
+  // embedder-trusted contests.
+  bool allow_partial_mismatch =
       web_contents_->GetDelegate()->ShouldAllowPartialParamMismatchOfPrerender2(
           navigation_request);
   // Compare BeginNavigationParams.
   ActivationNavigationParamsMatch result =
       AreBeginNavigationParamsCompatibleWithNavigation(
           navigation_request.common_params().url,
-          navigation_request.begin_params(),
-          allow_initiator_and_transition_mismatch, reason);
+          navigation_request.begin_params(), allow_partial_mismatch, reason);
   if (result != ActivationNavigationParamsMatch::kOk) {
     RecordPrerenderActivationNavigationParamsMatch(result,
                                                    GetHistogramSuffix());
@@ -808,8 +836,7 @@ bool PrerenderHost::AreInitialPrerenderNavigationParamsCompatibleWithNavigation(
 
   // Compare CommonNavigationParams.
   result = AreCommonNavigationParamsCompatibleWithNavigation(
-      navigation_request.common_params(),
-      allow_initiator_and_transition_mismatch);
+      navigation_request.common_params(), allow_partial_mismatch);
   if (result != ActivationNavigationParamsMatch::kOk) {
     RecordPrerenderActivationNavigationParamsMatch(result,
                                                    GetHistogramSuffix());
@@ -821,31 +848,48 @@ bool PrerenderHost::AreInitialPrerenderNavigationParamsCompatibleWithNavigation(
   return true;
 }
 
+#if BUILDFLAG(IS_ANDROID)
+// The flag below is provided in case the workaround had a bug. Use the flag to
+// revert back to the previous behavior.
+// TODO(crbug.com/399478939): Remove the workaround and this flag.
+BASE_FEATURE(kPrerenderActivationMismatchWebViewWorkaround,
+             "PrerenderActivationMismatchWebViewWorkaround",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+#endif
+
 PrerenderHost::ActivationNavigationParamsMatch
 PrerenderHost::AreBeginNavigationParamsCompatibleWithNavigation(
     const GURL& potential_activation_url,
     const blink::mojom::BeginNavigationParams& potential_activation,
-    bool allow_initiator_and_transition_mismatch,
+    bool allow_partial_mismatch,
     PrerenderCancellationReason& reason) {
   CHECK(begin_params_);
 
   // TODO(https://crbug.com/340416082): Check details of security properties,
   // update the check to appropriate form and remove differences among all
   // platforms.
-  if (!allow_initiator_and_transition_mismatch &&
-      (potential_activation.initiator_frame_token !=
-       begin_params_->initiator_frame_token)) {
+  if (!allow_partial_mismatch && (potential_activation.initiator_frame_token !=
+                                  begin_params_->initiator_frame_token)) {
     return ActivationNavigationParamsMatch::kInitiatorFrameToken;
   }
 
-  if (!AreHttpRequestHeadersCompatible(
-          potential_activation.headers,
 #if BUILDFLAG(IS_ANDROID)
-          web_contents_->GetBrowserContext()->GetExtraHeadersForUrl(
-              potential_activation_url),
+  std::string activation_additional_headers_str;
+  bool workaround_enabled = base::FeatureList::IsEnabled(
+      kPrerenderActivationMismatchWebViewWorkaround);
+  if (!workaround_enabled || !IsSpeculationRuleType(trigger_type())) {
+    activation_additional_headers_str =
+        web_contents_->GetBrowserContext()->GetExtraHeadersForUrl(
+            potential_activation_url);
+  }
 #endif  // BUILDFLAG(IS_ANDROID)
-          begin_params_->headers, trigger_type(), GetHistogramSuffix(),
-          reason)) {
+  if (!AreHttpRequestHeadersCompatible(potential_activation.headers,
+#if BUILDFLAG(IS_ANDROID)
+                                       activation_additional_headers_str,
+#endif  // BUILDFLAG(IS_ANDROID)
+                                       begin_params_->headers, trigger_type(),
+                                       GetHistogramSuffix(),
+                                       allow_partial_mismatch, reason)) {
     return ActivationNavigationParamsMatch::kHttpRequestHeader;
   }
 
@@ -928,7 +972,7 @@ PrerenderHost::AreBeginNavigationParamsCompatibleWithNavigation(
 PrerenderHost::ActivationNavigationParamsMatch
 PrerenderHost::AreCommonNavigationParamsCompatibleWithNavigation(
     const blink::mojom::CommonNavigationParams& potential_activation,
-    bool allow_initiator_and_transition_mismatch) {
+    bool allow_partial_mismatch) {
   // The CommonNavigationParams::url field is expected to match both initial and
   // activation prerender navigations, as the PrerenderHost selection would have
   // already checked for matching values. Adding a CHECK here to be safe.
@@ -951,9 +995,8 @@ PrerenderHost::AreCommonNavigationParamsCompatibleWithNavigation(
   // TODO(https://crbug.com/340416082): Check details of security properties,
   // update the check to appropriate form and remove differences among all
   // platforms.
-  if (!allow_initiator_and_transition_mismatch &&
-      (potential_activation.initiator_origin !=
-       common_params_->initiator_origin)) {
+  if (!allow_partial_mismatch && (potential_activation.initiator_origin !=
+                                  common_params_->initiator_origin)) {
     return ActivationNavigationParamsMatch::kInitiatorOrigin;
   }
 
@@ -963,7 +1006,7 @@ PrerenderHost::AreCommonNavigationParamsCompatibleWithNavigation(
   // history entry (e.g., a renderer-initiated navigation to the current URL).
   int32_t potential_activation_transition =
       potential_activation.transition & ~ui::PAGE_TRANSITION_CLIENT_REDIRECT;
-  if (!allow_initiator_and_transition_mismatch &&
+  if (!allow_partial_mismatch &&
       (potential_activation_transition != common_params_->transition)) {
     RecordPrerenderActivationTransition(potential_activation_transition,
                                         GetHistogramSuffix());
@@ -1180,14 +1223,12 @@ void PrerenderHost::SetFailureReason(
     case PrerenderFinalStatus::kTabClosedWithoutUserGesture:
     case PrerenderFinalStatus::kSpeculationRuleRemoved:
     case PrerenderFinalStatus::kOtherPrerenderedPageActivated:
-    case PrerenderFinalStatus::kBrowsingDataRemoved:
       return;
     case PrerenderFinalStatus::kDestroyed:
     case PrerenderFinalStatus::kLowEndDevice:
     case PrerenderFinalStatus::kInvalidSchemeRedirect:
     case PrerenderFinalStatus::kInvalidSchemeNavigation:
     case PrerenderFinalStatus::kNavigationRequestBlockedByCsp:
-    case PrerenderFinalStatus::kMainFrameNavigation:
     case PrerenderFinalStatus::kMojoBinderPolicy:
     case PrerenderFinalStatus::kRendererProcessCrashed:
     case PrerenderFinalStatus::kRendererProcessKilled:
@@ -1249,6 +1290,7 @@ void PrerenderHost::SetFailureReason(
     case PrerenderFinalStatus::kWindowClosed:
     case PrerenderFinalStatus::kSlowNetwork:
     case PrerenderFinalStatus::kPrerenderFailedDuringPrefetch:
+    case PrerenderFinalStatus::kBrowsingDataRemoved:
       if (attempt_) {
         attempt_->SetFailureReason(
             ToPreloadingFailureReason(reason.final_status()));
@@ -1399,8 +1441,8 @@ bool PrerenderHost::IsInitialNavigation(
 base::TimeDelta PrerenderHost::WaitUntilHeadTimeout() {
   int timeout_in_milliseconds = 0;
   if (IsSpeculationRuleType(attributes_.trigger_type)) {
-    CHECK(attributes_.eagerness.has_value());
-    switch (attributes_.eagerness.value()) {
+    CHECK(eagerness().has_value());
+    switch (eagerness().value()) {
       case blink::mojom::SpeculationEagerness::kEager:
         timeout_in_milliseconds =
             features::kPrerender2NoVarySearchWaitForHeadersTimeoutEagerPrerender
@@ -1438,7 +1480,6 @@ void PrerenderHost::OnWaitingForHeadersStarted(
 }
 
 void PrerenderHost::OnWaitingForHeadersFinished(
-    NavigationHandle& navigation_handle,
     WaitingForHeadersFinishedReason reason) {
   // Prerender frame tree is alive. This check is also done by the caller.
   CHECK(frame_tree_);
@@ -1449,13 +1490,12 @@ void PrerenderHost::OnWaitingForHeadersFinished(
       reason);
 
   for (auto& observer : observers_) {
-    observer.OnWaitingForHeadersFinished(navigation_handle, reason);
+    observer.OnWaitingForHeadersFinished(reason);
   }
 }
 
 bool PrerenderHost::ShouldAbortNavigationBecausePrefetchUnavailable() const {
-  CHECK(base::FeatureList::IsEnabled(
-      features::kPrerender2FallbackPrefetchSpecRules));
+  CHECK(features::UsePrefetchPrerenderIntegration());
 
   auto is_prefetch_used =
       [](const std::optional<PrefetchStatus>& prefetch_status) -> bool {
@@ -1470,6 +1510,10 @@ bool PrerenderHost::ShouldAbortNavigationBecausePrefetchUnavailable() const {
       case PrefetchStatus::kPrefetchNotStarted:
       case PrefetchStatus::kPrefetchIneligibleUserHasCookies:
       case PrefetchStatus::kPrefetchIneligibleUserHasServiceWorker:
+      case PrefetchStatus::
+          kPrefetchIneligibleUserHasServiceWorkerNoFetchHandler:
+      case PrefetchStatus::kPrefetchIneligibleRedirectFromServiceWorker:
+      case PrefetchStatus::kPrefetchIneligibleRedirectToServiceWorker:
       case PrefetchStatus::kPrefetchIneligibleSchemeIsNotHttps:
       case PrefetchStatus::kPrefetchIneligibleNonDefaultStoragePartition:
       case PrefetchStatus::kPrefetchNotFinishedInTime:
@@ -1494,6 +1538,7 @@ bool PrerenderHost::ShouldAbortNavigationBecausePrefetchUnavailable() const {
       case PrefetchStatus::kPrefetchIneligiblePreloadingDisabled:
       case PrefetchStatus::kPrefetchEvictedAfterCandidateRemoved:
       case PrefetchStatus::kPrefetchEvictedForNewerPrefetch:
+      case PrefetchStatus::kPrefetchEvictedAfterBrowsingDataRemoved:
         return false;
     }
   };
@@ -1502,6 +1547,9 @@ bool PrerenderHost::ShouldAbortNavigationBecausePrefetchUnavailable() const {
     switch (prefetch_eligibility) {
       // Prefetch is not available if SW exists, but prerender is.
       case PreloadingEligibility::kUserHasServiceWorker:
+      case PreloadingEligibility::kUserHasServiceWorkerNoFetchHandler:
+      case PreloadingEligibility::kRedirectFromServiceWorker:
+      case PreloadingEligibility::kRedirectToServiceWorker:
         // Prefetch is not available for HTTP, but prerender is available
         // for HTTPS/HTTP.
       case PreloadingEligibility::kSchemeIsNotHttps:
@@ -1541,7 +1589,7 @@ bool PrerenderHost::ShouldAbortNavigationBecausePrefetchUnavailable() const {
     }
   };
   // If a prerender navigation reached to `PrefetchURLLoaderInterceptor`, it is
-  // blocked by `PrefetchMatchResolver2` and prefetch ahead of prerender. So, we
+  // blocked by `PrefetchMatchResolver` and prefetch ahead of prerender. So, we
   // should've got prefetch eligibility when it reached to
   // `PrerenderURLLoaderThrottle`. Therefore, if prefetch eligibility is
   // `PreloadingEligibility::kUnspecified`, it implies that the navigation is
@@ -1582,6 +1630,35 @@ bool PrerenderHost::ShouldAbortNavigationBecausePrefetchUnavailable() const {
 
   // Otherwise, abort this prerender.
   return true;
+}
+
+void PrerenderHost::AddAdditionalRequestHeaders(
+    net::HttpRequestHeaders& headers,
+    FrameTreeNode& navigating_frame_tree_node) {
+  // The given FrameTreeNode should be in the same prerendering FrameTree.
+  CHECK_EQ(&navigating_frame_tree_node.frame_tree(), &GetPrerenderFrameTree());
+
+  // Add the "Sec-Purpose: prefetch;prerender" header to prerender navigations
+  // including subframe navigations. Add "Purpose: prefetch" as well for
+  // compatibility concerns (See
+  // https://github.com/WICG/nav-speculation/issues/133).
+  headers.SetHeader(blink::kSecPurposeHeaderName,
+                    blink::kSecPurposePrefetchPrerenderHeaderValue);
+  if (!base::FeatureList::IsEnabled(
+          blink::features::kRemovePurposeHeaderForPrefetch)) {
+    headers.SetHeader(blink::kPurposeHeaderName,
+                      blink::kSecPurposePrefetchHeaderValue);
+  }
+
+  // Add the "Sec-Speculation-Tags" header to main frame initial prerender
+  // navigation.
+  // https://wicg.github.io/nav-speculation/prefetch.html#sec-speculation-tags-header
+  std::optional<SpeculationRulesTags> tags = attributes_.GetTags();
+  if (navigating_frame_tree_node.IsMainFrame() &&
+      !GetInitialNavigationId().has_value() && tags.has_value()) {
+    headers.SetHeader(blink::kSecSpeculationTagsHeaderName,
+                      tags->ConvertStringToHeaderString().value());
+  }
 }
 
 }  // namespace content

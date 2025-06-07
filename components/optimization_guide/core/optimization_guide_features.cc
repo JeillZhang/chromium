@@ -14,12 +14,12 @@
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/rand_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/to_string.h"
 #include "base/system/sys_info.h"
 #include "components/optimization_guide/core/feature_registry/mqls_feature_registry.h"
-#include "components/optimization_guide/core/insertion_ordered_set.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/core/optimization_guide_enums.h"
@@ -115,7 +115,8 @@ BASE_FEATURE(kModelQualityLogging,
              "ModelQualityLogging",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Enables fetching personalized metadata from Optimization Guide Service.
+// Enables fetching personalized metadata from the Optimization Guide Service
+// (on-demand fetching).
 BASE_FEATURE(kOptimizationGuidePersonalizedFetching,
              "OptimizationPersonalizedHintsFetching",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -176,18 +177,17 @@ BASE_FEATURE(kOnDeviceModelFetchPerformanceClassEveryStartup,
              "OnDeviceModelFetchPerformanceClassEveryStartup",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-// Enable the "Synapse" refreshed AI settings page.
-BASE_FEATURE(kAiSettingsPageRefresh,
-             "AiSettingsPageRefresh",
+// Force show the AI page and all AI feature sub-pages in settings, even if they
+// would be unavailable otherwise. This is meant for development and test
+// purposes only.
+BASE_FEATURE(kAiSettingsPageForceAvailable,
+             "AiSettingsPageForceAvailable",
              base::FEATURE_DISABLED_BY_DEFAULT);
-
-const base::FeatureParam<bool> kShowAiSettingsForTesting{
-    &kAiSettingsPageRefresh, "show_ai_settings_for_testing", false};
 
 // Enable AI settings page integration with Privacy Guide.
 BASE_FEATURE(kPrivacyGuideAiSettings,
              "PrivacyGuideAiSettings",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kAiSettingsPageEnterpriseDisabledUi,
              "AiSettingsPageEnterpriseDisabledUi",
@@ -197,17 +197,39 @@ BASE_FEATURE(kOnDeviceModelPerformanceParams,
              "OnDeviceModelPerformanceParams",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
+BASE_FEATURE(kAnnotatedPageContentWithActionableElements,
+             "AnnotatedPageContentWithActionableElements",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
 const base::FeatureParam<std::string> kPerformanceClassListForOnDeviceModel{
     &kOnDeviceModelPerformanceParams,
-    "compatible_on_device_performance_classes", "5,6"};
+    "compatible_on_device_performance_classes", "3,4,5,6"};
 
 const base::FeatureParam<std::string>
     kLowTierPerformanceClassListForOnDeviceModel{
         &kOnDeviceModelPerformanceParams,
-        "compatible_low_tier_on_device_performance_classes", ""};
+        "compatible_low_tier_on_device_performance_classes", "3,4"};
+
+const base::FeatureParam<std::string> kPerformanceClassListForImageInput{
+    &kOnDeviceModelPerformanceParams,
+    "compatible_on_device_performance_classes_image_input", "3,4,5,6"};
+
+const base::FeatureParam<std::string> kPerformanceClassListForAudioInput{
+    &kOnDeviceModelPerformanceParams,
+    "compatible_on_device_performance_classes_audio_input", "5,6"};
 
 BASE_FEATURE(kOptimizationGuideIconView,
              "OptimizationGuideIconView",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+BASE_FEATURE(kBrokerModelSessionsForUntrustedProcesses,
+             "BrokerModelSessionsForUntrustedProcesses",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Enables proactively sending GAIA information to the Optimization Guide
+// Service.
+BASE_FEATURE(kOptimizationGuideProactivePersonalizedHintsFetching,
+             "OptimizationGuideProactivePersonalizedHintsFetching",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // The default value here is a bit of a guess.
@@ -473,6 +495,30 @@ RequestContextSet GetAllowedContextsForPersonalizedMetadata() {
   return allowed_contexts;
 }
 
+OptimizationTypeSet GetAllowedOptimizationTypesForProactivePersonalization() {
+  OptimizationTypeSet allowed_optimization_types;
+  if (!base::FeatureList::IsEnabled(
+          kOptimizationGuideProactivePersonalizedHintsFetching)) {
+    return allowed_optimization_types;
+  }
+  base::FieldTrialParams params;
+  if (base::GetFieldTrialParamsByFeature(
+          kOptimizationGuideProactivePersonalizedHintsFetching, &params) &&
+      params.contains("allowed_optimization_types")) {
+    for (const auto& context_str : base::SplitString(
+             base::GetFieldTrialParamValueByFeature(
+                 kOptimizationGuideProactivePersonalizedHintsFetching,
+                 "allowed_optimization_types"),
+             ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+      proto::OptimizationType optimization_type;
+      if (proto::OptimizationType_Parse(context_str, &optimization_type)) {
+        allowed_optimization_types.Put(optimization_type);
+      }
+    }
+  }
+  return allowed_optimization_types;
+}
+
 bool ShouldOverrideOptimizationTargetDecisionForMetricsPurposes(
     proto::OptimizationTarget optimization_target) {
   if (optimization_target != proto::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD) {
@@ -654,7 +700,7 @@ int GetOnDeviceModelMinTokensForContext() {
 int GetOnDeviceModelMaxTokensForContext() {
   static const base::FeatureParam<int> kOnDeviceModelMaxTokensForContext{
       &kOptimizationGuideOnDeviceModel,
-      "on_device_model_max_tokens_for_context", 4096};
+      "on_device_model_max_tokens_for_context", 8192};
   return kOnDeviceModelMaxTokensForContext.Get();
 }
 
@@ -843,6 +889,13 @@ std::vector<uint32_t> GetOnDeviceModelAllowedAdaptationRanks() {
   return ranks;
 }
 
+bool ForceCpuBackendForOnDeviceModel() {
+  static const base::FeatureParam<bool> kForceCpuBackend{
+      &kOptimizationGuideOnDeviceModel, "on_device_model_force_cpu_backend",
+      false};
+  return kForceCpuBackend.Get();
+}
+
 bool IsOnDeviceModelValidationEnabled() {
   return base::FeatureList::IsEnabled(kOnDeviceModelValidation);
 }
@@ -876,12 +929,6 @@ int GetOnDeviceModelValidationAttemptCount() {
 
 bool ShouldEnableOptimizationGuideIconView() {
   return base::FeatureList::IsEnabled(kOptimizationGuideIconView);
-}
-
-bool IsAiSettingsPageRefreshEnabled() {
-  return base::FeatureList::IsEnabled(kAiSettingsPageRefresh) ||
-         base::FeatureList::IsEnabled(kPrivacyGuideAiSettings) ||
-         base::FeatureList::IsEnabled(kAiSettingsPageEnterpriseDisabledUi);
 }
 
 bool IsPrivacyGuideAiSettingsEnabled() {

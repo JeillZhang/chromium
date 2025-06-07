@@ -4,22 +4,25 @@
 
 package org.chromium.chrome.browser.magic_stack;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType.AUXILIARY_SEARCH;
 import static org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType.DEFAULT_BROWSER_PROMO;
+import static org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType.HISTORY_SYNC_PROMO;
 import static org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType.PRICE_CHANGE;
 import static org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType.QUICK_DELETE_PROMO;
 import static org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType.SAFETY_HUB;
 import static org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType.SINGLE_TAB;
 import static org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType.TAB_GROUP_PROMO;
 import static org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType.TAB_GROUP_SYNC_PROMO;
-import static org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType.TAB_RESUMPTION;
 
+import android.content.Context;
 import android.os.SystemClock;
 
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.TimeUtils;
 import org.chromium.base.shared_preferences.SharedPreferencesManager;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.magic_stack.ModuleDelegate.ModuleType;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
@@ -31,6 +34,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 
 /** Utility class for the magic stack. */
+@NullMarked
 public class HomeModulesUtils {
     static final long INVALID_TIMESTAMP = -1;
     static final int INVALID_FRESHNESS_SCORE = -1;
@@ -39,8 +43,6 @@ public class HomeModulesUtils {
     private static final String SINGLE_TAB_FRESHNESS_INPUT_CONTEXT = "single_tab_freshness";
 
     private static final String PRICE_CHANGE_FRESHNESS_INPUT_CONTEXT = "price_change_freshness";
-
-    private static final String TAB_RESUMPTION_FRESHNESS_INPUT_CONTEXT = "tab_resumption_freshness";
 
     private static final String SAFETY_HUB_FRESHNESS_INPUT_CONTEXT = "safety_hub_freshness";
 
@@ -54,7 +56,8 @@ public class HomeModulesUtils {
                             DEFAULT_BROWSER_PROMO,
                             TAB_GROUP_PROMO,
                             TAB_GROUP_SYNC_PROMO,
-                            QUICK_DELETE_PROMO));
+                            QUICK_DELETE_PROMO,
+                            HISTORY_SYNC_PROMO));
 
     static boolean belongsToEducationalTipModule(@ModuleType int moduleType) {
         return sEducationalTipCardList.contains(moduleType);
@@ -75,15 +78,41 @@ public class HomeModulesUtils {
                 return SINGLE_TAB_FRESHNESS_INPUT_CONTEXT;
             case PRICE_CHANGE:
                 return PRICE_CHANGE_FRESHNESS_INPUT_CONTEXT;
-            case TAB_RESUMPTION:
-                return TAB_RESUMPTION_FRESHNESS_INPUT_CONTEXT;
             case SAFETY_HUB:
                 return SAFETY_HUB_FRESHNESS_INPUT_CONTEXT;
             case AUXILIARY_SEARCH:
                 return AUXILIARY_SEARCH_FRESHNESS_INPUT_CONTEXT;
             default:
                 assert false : "Module type not supported!";
-                return null;
+                return assumeNonNull(null);
+        }
+    }
+
+    /**
+     * @param moduleType Type of the home module
+     * @param context The application {@link Context} instance.
+     * @return The string of switch title for the module type.
+     */
+    public static String getTitleForModuleType(@ModuleType int moduleType, Context context) {
+        switch (moduleType) {
+            case SINGLE_TAB:
+                return context.getString(R.string.home_modules_single_tab_title);
+            case PRICE_CHANGE:
+                return context.getString(R.string.price_change_module_name);
+            case SAFETY_HUB:
+                return context.getString(R.string.safety_hub_magic_stack_module_name);
+            case DEFAULT_BROWSER_PROMO:
+            case TAB_GROUP_PROMO:
+            case TAB_GROUP_SYNC_PROMO:
+            case QUICK_DELETE_PROMO:
+            case HISTORY_SYNC_PROMO:
+                // All tips use the same name.
+                return context.getString(R.string.educational_tip_module_name);
+            case AUXILIARY_SEARCH:
+                return context.getString(R.string.auxiliary_search_module_name);
+            default:
+                assert false : "Module type not supported!";
+                return assumeNonNull(null);
         }
     }
 

@@ -18,7 +18,8 @@
 @class ShareKitLeaveConfiguration;
 @class ShareKitLookupGaiaIDConfiguration;
 @class ShareKitManageConfiguration;
-@class ShareKitReadConfiguration;
+@class ShareKitReadGroupWithTokenConfiguration;
+@class ShareKitReadGroupsConfiguration;
 @class ShareKitShareGroupConfiguration;
 
 // Service for ShareKit, allowing to manage tab groups sharing.
@@ -51,12 +52,17 @@ class ShareKitService : public KeyedService {
   // sessionID.
   virtual NSString* JoinTabGroup(ShareKitJoinConfiguration* config) = 0;
 
-  // Returns a new FacePile view controller for the given `config`.
-  virtual UIViewController* FacePile(ShareKitFacePileConfiguration* config) = 0;
+  // Returns a new FacePile view for the given `config`.
+  virtual UIView* FacePileView(ShareKitFacePileConfiguration* config) = 0;
 
   // Reads the info for the groups passed in `config` and returns the result
   // through the config callback.
-  virtual void ReadGroups(ShareKitReadConfiguration* config) = 0;
+  virtual void ReadGroups(ShareKitReadGroupsConfiguration* config) = 0;
+
+  // Reads the info for the group passed in `config` and returns the result
+  // through the config callback.
+  virtual void ReadGroupWithToken(
+      ShareKitReadGroupWithTokenConfiguration* config) = 0;
 
   // Leaves the group passed in `config` and returns the result through the
   // config callback.

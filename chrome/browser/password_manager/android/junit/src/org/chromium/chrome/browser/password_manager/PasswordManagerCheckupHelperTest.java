@@ -4,8 +4,10 @@
 
 package org.chromium.chrome.browser.password_manager;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -18,6 +20,11 @@ import static org.mockito.Mockito.when;
 
 import android.app.PendingIntent;
 import android.app.PendingIntent.CanceledException;
+import android.content.Context;
+import android.content.pm.PackageInfo;
+
+import androidx.fragment.app.FragmentActivity;
+import androidx.test.core.content.pm.PackageInfoBuilder;
 
 import com.google.android.gms.common.api.ApiException;
 import com.google.android.gms.common.api.CommonStatusCodes;
@@ -27,26 +34,37 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
+import org.robolectric.ParameterizedRobolectricTestRunner;
+import org.robolectric.Robolectric;
+import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
+import org.robolectric.shadows.ShadowPackageManager;
 import org.robolectric.shadows.ShadowSystemClock;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.FeatureOverrides;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.BaseRobolectricTestRule;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.HistogramWatcher;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.loading_modal.LoadingModalDialogCoordinator;
-import org.chromium.chrome.browser.password_manager.CredentialManagerLauncher.CredentialManagerBackendException;
 import org.chromium.chrome.browser.password_manager.CredentialManagerLauncher.CredentialManagerError;
 import org.chromium.chrome.browser.password_manager.PasswordCheckupClientHelper.PasswordCheckBackendException;
 import org.chromium.chrome.browser.password_manager.PasswordManagerHelper.PasswordCheckOperation;
+import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.pwm_disabled.PasswordCsvDownloadFlowController;
+import org.chromium.chrome.browser.pwm_disabled.PasswordCsvDownloadFlowControllerFactory;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
+import org.chromium.components.browser_ui.settings.SettingsCustomTabLauncher;
+import org.chromium.components.browser_ui.test.BrowserUiDummyFragmentActivity;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.base.GaiaId;
@@ -55,22 +73,36 @@ import org.chromium.components.sync.UserSelectableType;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.components.user_prefs.UserPrefsJni;
 import org.chromium.ui.modaldialog.ModalDialogManager;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
+import org.chromium.ui.modelutil.PropertyModel;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 
-/** Tests for the password checkup-related methods in {@link PasswordManagerHelper}.* */
-@RunWith(BaseRobolectricTestRunner.class)
+/** Tests for the password checkup-related methods in {@link PasswordManagerHelper}. */
+@RunWith(ParameterizedRobolectricTestRunner.class)
 @Config(
         manifest = Config.NONE,
         shadows = {ShadowSystemClock.class})
 @Batch(Batch.PER_CLASS)
 public class PasswordManagerCheckupHelperTest {
+    @ParameterizedRobolectricTestRunner.Parameters
+    public static Collection testCases() {
+        return Arrays.asList(
+                /* isLoginDbDeprecationEnabled= */ true, /* isLoginDbDeprecationEnabled= */ false);
+    }
+
+    @Rule(order = -2)
+    public BaseRobolectricTestRule mBaseRule = new BaseRobolectricTestRule();
+
     private static final String TEST_EMAIL_ADDRESS = "test@email.com";
     private static final String TEST_NO_EMAIL_ADDRESS = null;
 
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
+    @ParameterizedRobolectricTestRunner.Parameter public boolean mIsLoginDbDeprecationEnabled;
 
     // TODO(crbug.com/40854050): Use a fake for PasswordCheckupClientHelper.
     @Mock private PasswordCheckupClientHelperFactory mPasswordCheckupClientHelperFactoryMock;
@@ -93,6 +125,8 @@ public class PasswordManagerCheckupHelperTest {
     // TODO(crbug.com/40854050): Use fake instead of mock
     @Mock private PasswordManagerBackendSupportHelper mBackendSupportHelperMock;
 
+    private SettingsCustomTabLauncher mSettingsCustomTabLauncher;
+
     private ModalDialogManager mModalDialogManager;
 
     @Mock private LoadingModalDialogCoordinator mLoadingModalDialogCoordinator;
@@ -101,14 +135,17 @@ public class PasswordManagerCheckupHelperTest {
     private PasswordManagerHelper mPasswordManagerHelper;
 
     @Before
-    public void setUp() throws PasswordCheckBackendException, CredentialManagerBackendException {
-        // TODO(crbug.com/40940922): Parametrise the tests for local and account.
+    public void setUp() throws PasswordCheckBackendException {
+        if (mIsLoginDbDeprecationEnabled) {
+            FeatureOverrides.enable(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID);
+        } else {
+            FeatureOverrides.disable(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID);
+        }
         UserPrefsJni.setInstanceForTesting(mUserPrefsJniMock);
         PasswordManagerUtilBridgeJni.setInstanceForTesting(mPasswordManagerUtilBridgeJniMock);
         mPasswordManagerHelper = new PasswordManagerHelper(mProfile);
         when(mUserPrefsJniMock.get(mProfile)).thenReturn(mPrefService);
         SyncServiceFactory.setInstanceForTesting(mSyncServiceMock);
-        when(mSyncServiceMock.isEngineInitialized()).thenReturn(true);
         when(mLoadingModalDialogCoordinator.getState())
                 .thenReturn(LoadingModalDialogCoordinator.State.PENDING);
         mModalDialogManager =
@@ -125,12 +162,42 @@ public class PasswordManagerCheckupHelperTest {
                 .addObserver(any(LoadingModalDialogCoordinator.Observer.class));
         PasswordManagerBackendSupportHelper.setInstanceForTesting(mBackendSupportHelperMock);
         when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
-        when(mPasswordManagerUtilBridgeJniMock.areMinUpmRequirementsMet()).thenReturn(true);
-
+        if (mIsLoginDbDeprecationEnabled) {
+            when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
+                            eq(mPrefService), eq(true)))
+                    .thenReturn(true);
+        } else {
+            when(mPasswordManagerUtilBridgeJniMock.areMinUpmRequirementsMet()).thenReturn(true);
+        }
         when(mPasswordCheckupClientHelperFactoryMock.createHelper())
                 .thenReturn(mPasswordCheckupClientHelperMock);
         PasswordCheckupClientHelperFactory.setFactoryForTesting(
                 mPasswordCheckupClientHelperFactoryMock);
+        mSettingsCustomTabLauncher = (Context context, String url) -> {};
+    }
+
+    @Test
+    public void testThrowsPasswordManagerNotAvailableException() {
+        // This test only applies if the login DB deprecation is enabled.
+        assumeTrue(ChromeFeatureList.isEnabled(ChromeFeatureList.LOGIN_DB_DEPRECATION_ANDROID));
+        when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
+                        eq(mPrefService), eq(true)))
+                .thenReturn(false);
+        chooseToSyncPasswords();
+        setUpSuccessfulRunPasswordCheckup();
+
+        Callback<Exception> failureCallback = mock(Callback.class);
+        mPasswordManagerHelper.runPasswordCheckupInBackground(
+                org.chromium.chrome.browser.password_manager.PasswordCheckReferrer.SAFETY_CHECK,
+                TEST_EMAIL_ADDRESS,
+                mock(Callback.class),
+                failureCallback);
+        final ArgumentCaptor<PasswordCheckBackendException> captor =
+                ArgumentCaptor.forClass(PasswordCheckBackendException.class);
+
+        verify(failureCallback).onResult(captor.capture());
+        assertEquals(
+                CredentialManagerError.PASSWORD_MANAGER_NOT_AVAILABLE, captor.getValue().errorCode);
     }
 
     @Test
@@ -150,7 +217,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_EMAIL_ADDRESS);
+                TEST_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         assertNotNull(mModalDialogManager.getCurrentDialogForTest());
     }
@@ -172,7 +240,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_NO_EMAIL_ADDRESS);
+                TEST_NO_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         assertNotNull(mModalDialogManager.getCurrentDialogForTest());
     }
@@ -187,7 +256,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_EMAIL_ADDRESS);
+                TEST_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         assertNull(mModalDialogManager.getCurrentDialogForTest());
     }
@@ -202,20 +272,22 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_NO_EMAIL_ADDRESS);
+                TEST_NO_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         assertNull(mModalDialogManager.getCurrentDialogForTest());
     }
 
     @Test
-    public void testLaunchesPasswordCheckupSync() {
+    public void testRetrievesIntentForAccountCheckup() {
         chooseToSyncPasswords();
 
         mPasswordManagerHelper.showPasswordCheckup(
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_EMAIL_ADDRESS);
+                TEST_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         verify(mPasswordCheckupClientHelperMock)
                 .getPasswordCheckupIntent(
@@ -234,7 +306,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_NO_EMAIL_ADDRESS);
+                TEST_NO_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         verify(mPasswordCheckupClientHelperMock)
                 .getPasswordCheckupIntent(
@@ -252,7 +325,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_EMAIL_ADDRESS);
+                TEST_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
         verify(mPendingIntentMock).send();
     }
 
@@ -266,7 +340,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_NO_EMAIL_ADDRESS);
+                TEST_NO_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
         verify(mPendingIntentMock).send();
     }
 
@@ -289,7 +364,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_EMAIL_ADDRESS);
+                TEST_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         histogram.assertExpected();
     }
@@ -313,7 +389,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_NO_EMAIL_ADDRESS);
+                TEST_NO_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         histogram.assertExpected();
     }
@@ -340,7 +417,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_EMAIL_ADDRESS);
+                TEST_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         histogram.assertExpected();
     }
@@ -368,7 +446,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_NO_EMAIL_ADDRESS);
+                TEST_NO_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         histogram.assertExpected();
     }
@@ -395,7 +474,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_EMAIL_ADDRESS);
+                TEST_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         histogram.assertExpected();
     }
@@ -422,7 +502,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_NO_EMAIL_ADDRESS);
+                TEST_NO_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         histogram.assertExpected();
     }
@@ -691,7 +772,8 @@ public class PasswordManagerCheckupHelperTest {
                 ContextUtils.getApplicationContext(),
                 PasswordCheckReferrer.SAFETY_CHECK,
                 mModalDialogManagerSupplier,
-                TEST_EMAIL_ADDRESS);
+                TEST_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
 
         histogram.assertExpected();
     }
@@ -705,7 +787,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         verify(mLoadingModalDialogCoordinator).show();
     }
@@ -720,7 +803,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         verify(mLoadingModalDialogCoordinator).dismiss();
     }
@@ -737,7 +821,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         verify(mLoadingModalDialogCoordinator).dismiss();
     }
@@ -755,7 +840,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         verify(mLoadingModalDialogCoordinator).dismiss();
     }
@@ -773,7 +859,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         verify(mPendingIntentMock, never()).send();
     }
@@ -791,7 +878,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         verify(mPendingIntentMock, never()).send();
     }
@@ -808,7 +896,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         verify(mPendingIntentMock, never()).send();
 
@@ -828,7 +917,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         verify(mLoadingModalDialogCoordinator).dismiss();
     }
@@ -846,7 +936,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
         verify(mLoadingModalDialogCoordinator).dismiss();
@@ -866,7 +957,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         mLoadingDialogCoordinatorObserver.onDismissable();
 
@@ -886,7 +978,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
     }
 
     @Test
@@ -902,7 +995,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         when(mLoadingModalDialogCoordinator.getState())
                 .thenReturn(LoadingModalDialogCoordinator.State.CANCELLED);
@@ -922,7 +1016,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
     }
 
     @Test
@@ -938,7 +1033,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         when(mLoadingModalDialogCoordinator.getState())
                 .thenReturn(LoadingModalDialogCoordinator.State.TIMED_OUT);
@@ -961,7 +1057,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         verify(mLoadingModalDialogCoordinator).dismiss();
     }
@@ -979,7 +1076,8 @@ public class PasswordManagerCheckupHelperTest {
                 Optional.of(TEST_EMAIL_ADDRESS),
                 mLoadingModalDialogCoordinator,
                 mModalDialogManagerSupplier,
-                ContextUtils.getApplicationContext());
+                ContextUtils.getApplicationContext(),
+                mSettingsCustomTabLauncher);
 
         verify(mLoadingModalDialogCoordinator).dismiss();
     }
@@ -1038,6 +1136,135 @@ public class PasswordManagerCheckupHelperTest {
                 TEST_EMAIL_ADDRESS,
                 mock(Callback.class),
                 mock(Callback.class));
+    }
+
+    @Test
+    public void testShowDownloadCsvDialogIfCsvIsPresentAndPwmNotAvailable() {
+        // The dialog exists only if the login db deprecation is enabled.
+        assumeTrue(mIsLoginDbDeprecationEnabled);
+        when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
+        when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
+                        eq(mPrefService), eq(true)))
+                .thenReturn(false);
+        when(mPrefService.getBoolean(Pref.UPM_UNMIGRATED_PASSWORDS_EXPORTED)).thenReturn(true);
+        LoginDbDeprecationUtilBridge.setHasCsvFileForTesting(true);
+
+        FragmentActivity testActivity =
+                Robolectric.buildActivity(BrowserUiDummyFragmentActivity.class).setup().get();
+        setUpUpdatableGmsCore(testActivity);
+
+        PasswordCsvDownloadFlowController mockController =
+                mock(PasswordCsvDownloadFlowController.class);
+        PasswordCsvDownloadFlowControllerFactory.setControllerForTesting(mockController);
+        mPasswordManagerHelper.showPasswordCheckup(
+                testActivity,
+                PasswordCheckReferrer.SAFETY_CHECK,
+                mModalDialogManagerSupplier,
+                TEST_NO_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
+
+        verify(mockController)
+                .showDialogAndStartFlow(
+                        eq(testActivity),
+                        eq(mProfile),
+                        /* isGooglePlayServicesAvailable= */ eq(true),
+                        /* isPasswordManagerAvailable= */ eq(false),
+                        eq(mSettingsCustomTabLauncher));
+    }
+
+    @Test
+    public void testShowDownloadCsvDialogIfCsvIsPresentAndNoGms() {
+        // The dialog exists only if the login db deprecation is enabled.
+        assumeTrue(mIsLoginDbDeprecationEnabled);
+        when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
+        when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
+                        eq(mPrefService), eq(true)))
+                .thenReturn(false);
+        when(mPrefService.getBoolean(Pref.UPM_UNMIGRATED_PASSWORDS_EXPORTED)).thenReturn(true);
+        LoginDbDeprecationUtilBridge.setHasCsvFileForTesting(true);
+
+        FragmentActivity testActivity =
+                Robolectric.buildActivity(BrowserUiDummyFragmentActivity.class).setup().get();
+
+        PasswordCsvDownloadFlowController mockController =
+                mock(PasswordCsvDownloadFlowController.class);
+        PasswordCsvDownloadFlowControllerFactory.setControllerForTesting(mockController);
+        mPasswordManagerHelper.showPasswordCheckup(
+                testActivity,
+                PasswordCheckReferrer.SAFETY_CHECK,
+                mModalDialogManagerSupplier,
+                TEST_NO_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
+
+        verify(mockController)
+                .showDialogAndStartFlow(
+                        eq(testActivity),
+                        eq(mProfile),
+                        /* isGooglePlayServicesAvailable= */ eq(false),
+                        /* isPasswordManagerAvailable= */ eq(false),
+                        eq(mSettingsCustomTabLauncher));
+    }
+
+    @Test
+    public void testShowPwmUnavailableDialogNoCsvNoGms() {
+        // The dialog exists only if the login db deprecation is enabled.
+        assumeTrue(mIsLoginDbDeprecationEnabled);
+        when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
+        when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
+                        eq(mPrefService), eq(true)))
+                .thenReturn(false);
+        when(mPrefService.getBoolean(Pref.UPM_UNMIGRATED_PASSWORDS_EXPORTED)).thenReturn(true);
+        LoginDbDeprecationUtilBridge.setHasCsvFileForTesting(false);
+
+        FragmentActivity testActivity =
+                Robolectric.buildActivity(BrowserUiDummyFragmentActivity.class).setup().get();
+
+        mPasswordManagerHelper.showPasswordCheckup(
+                testActivity,
+                PasswordCheckReferrer.SAFETY_CHECK,
+                mModalDialogManagerSupplier,
+                TEST_NO_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
+        PropertyModel dialogModel = mModalDialogManager.getCurrentDialogForTest();
+        assertNotNull(dialogModel);
+        assertEquals(
+                testActivity
+                        .getResources()
+                        .getString(
+                                org.chromium.chrome.browser.access_loss.R.string
+                                        .pwm_disabled_no_gms_dialog_title),
+                dialogModel.get(ModalDialogProperties.TITLE));
+    }
+
+    @Test
+    public void testShowPwmUnavailableDialogNoCsvUpdatableGms() {
+        // The dialog exists only if the login db deprecation is enabled.
+        assumeTrue(mIsLoginDbDeprecationEnabled);
+        when(mBackendSupportHelperMock.isBackendPresent()).thenReturn(true);
+        when(mPasswordManagerUtilBridgeJniMock.isPasswordManagerAvailable(
+                        eq(mPrefService), eq(true)))
+                .thenReturn(false);
+        when(mPrefService.getBoolean(Pref.UPM_UNMIGRATED_PASSWORDS_EXPORTED)).thenReturn(true);
+        LoginDbDeprecationUtilBridge.setHasCsvFileForTesting(false);
+
+        FragmentActivity testActivity =
+                Robolectric.buildActivity(BrowserUiDummyFragmentActivity.class).setup().get();
+        setUpUpdatableGmsCore(testActivity);
+        mPasswordManagerHelper.showPasswordCheckup(
+                testActivity,
+                PasswordCheckReferrer.SAFETY_CHECK,
+                mModalDialogManagerSupplier,
+                TEST_NO_EMAIL_ADDRESS,
+                mSettingsCustomTabLauncher);
+        PropertyModel dialogModel = mModalDialogManager.getCurrentDialogForTest();
+        assertNotNull(dialogModel);
+        assertEquals(
+                testActivity
+                        .getResources()
+                        .getString(
+                                org.chromium.chrome.browser.access_loss.R.string
+                                        .access_loss_update_gms_title),
+                dialogModel.get(ModalDialogProperties.TITLE));
     }
 
     private void chooseToSyncPasswords() {
@@ -1234,5 +1461,16 @@ public class PasswordManagerCheckupHelperTest {
             default:
                 throw new AssertionError();
         }
+    }
+
+    private void setUpUpdatableGmsCore(Context context) {
+        ShadowPackageManager shadowPackageManager = Shadows.shadowOf(context.getPackageManager());
+        PackageInfo gmsPackageInfo =
+                PackageInfoBuilder.newBuilder().setPackageName("com.google.android.gms").build();
+        shadowPackageManager.installPackage(gmsPackageInfo);
+
+        PackageInfo playStorePackageInfo =
+                PackageInfoBuilder.newBuilder().setPackageName("com.android.vending").build();
+        shadowPackageManager.installPackage(playStorePackageInfo);
     }
 }

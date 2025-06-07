@@ -125,4 +125,16 @@ public interface WebSettingsBoundaryInterface {
     void setBackForwardCacheEnabled(boolean backForwardCacheEnabled);
 
     boolean getBackForwardCacheEnabled();
+
+    void setPaymentRequestEnabled(boolean enabled);
+
+    boolean getPaymentRequestEnabled();
+
+    void setHasEnrolledInstrumentEnabled(boolean enabled);
+
+    boolean getHasEnrolledInstrumentEnabled();
+
+    void setIncludeCookiesOnIntercept(boolean includeCookiesOnIntercept);
+
+    boolean getIncludeCookiesOnIntercept();
 }

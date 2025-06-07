@@ -26,7 +26,6 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/prefs/chrome_pref_service_factory.h"
 #include "chrome/browser/prefs/profile_pref_store_manager.h"
@@ -52,7 +51,7 @@
 #include "extensions/common/extension.h"
 #include "services/preferences/public/cpp/tracked/tracked_preference_histogram_names.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_switches.h"
 #endif
 
@@ -155,7 +154,7 @@ int GetTrackedPrefHistogramCount(const char* histogram_name,
   return GetTrackedPrefHistogramCount(histogram_name, "", allowed_buckets);
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 std::optional<base::Value::Dict> ReadPrefsDictionary(
     const base::FilePath& pref_file) {
   JSONFileValueDeserializer deserializer(pref_file);
@@ -215,7 +214,7 @@ class PrefHashBrowserTestBase : public extensions::ExtensionBrowserTest {
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     extensions::ExtensionBrowserTest::SetUpCommandLine(command_line);
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     command_line->AppendSwitch(
         ash::switches::kIgnoreUserProfileMappingForTests);
 #endif
@@ -227,7 +226,7 @@ class PrefHashBrowserTestBase : public extensions::ExtensionBrowserTest {
     if (content::IsPreTest())
       return extensions::ExtensionBrowserTest::SetUpUserDataDirectory();
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     // For some reason, the Preferences file does not exist in the location
     // below on Chrome OS. Since protection is disabled on Chrome OS, it's okay
     // to simply not attack preferences at all (and still assert that no
@@ -491,18 +490,14 @@ class PrefHashBrowserTestUnchangedDefault : public PrefHashBrowserTestBase {
     EXPECT_EQ(0, GetTrackedPrefHistogramCount(
                      user_prefs::tracked::kTrackedPrefHistogramNullInitialized,
                      ALLOW_NONE));
-    EXPECT_EQ(
-        0, GetTrackedPrefHistogramCount(
-               user_prefs::tracked::kTrackedPrefHistogramMigratedLegacyDeviceId,
-               ALLOW_NONE));
 
     histograms_.ExpectUniqueSample(
         DefaultSearchManager::kDefaultSearchEngineMirroredMetric, true,
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
         2);  // CHROMEOS doesn't support Preference tracking.
 #else
         1);
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
     if (SupportsRegistryValidation()) {
       // Expect all prefs to be reported as Unchanged.
@@ -528,8 +523,8 @@ class PrefHashBrowserTestUnchangedCustom
   void SetupPreferences() override {
     profile()->GetPrefs()->SetString(prefs::kHomePage, "http://example.com");
 
-    InstallExtensionWithUIAutoConfirm(
-        test_data_dir_.AppendASCII("good.crx"), 1, browser());
+    InstallExtensionWithUIAutoConfirm(test_data_dir_.AppendASCII("good.crx"),
+                                      1);
   }
 
   void VerifyReactionToPrefAttack() override {
@@ -600,10 +595,6 @@ class PrefHashBrowserTestClearedAtomic : public PrefHashBrowserTestBase {
     EXPECT_EQ(0, GetTrackedPrefHistogramCount(
                      user_prefs::tracked::kTrackedPrefHistogramNullInitialized,
                      ALLOW_NONE));
-    EXPECT_EQ(
-        0, GetTrackedPrefHistogramCount(
-               user_prefs::tracked::kTrackedPrefHistogramMigratedLegacyDeviceId,
-               ALLOW_NONE));
 
     if (SupportsRegistryValidation()) {
       // Expect homepage clearance to have been noticed by registry validation.
@@ -631,12 +622,7 @@ class PrefHashBrowserTestUntrustedInitialized : public PrefHashBrowserTestBase {
             profile()),
         CHECK_DEREF(TemplateURLPrepopulateData::ResolverFactory::GetForProfile(
             profile())),
-        DefaultSearchManager::ObserverCallback()
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-            ,
-        profile()->IsMainProfile()
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
-    );
+        DefaultSearchManager::ObserverCallback());
     DefaultSearchManager::Source dse_source =
         static_cast<DefaultSearchManager::Source>(-1);
 
@@ -721,12 +707,7 @@ class PrefHashBrowserTestUntrustedInitialized : public PrefHashBrowserTestBase {
             profile()),
         CHECK_DEREF(TemplateURLPrepopulateData::ResolverFactory::GetForProfile(
             profile())),
-        DefaultSearchManager::ObserverCallback()
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-            ,
-        profile()->IsMainProfile()
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
-    );
+        DefaultSearchManager::ObserverCallback());
     DefaultSearchManager::Source dse_source =
         static_cast<DefaultSearchManager::Source>(-1);
     default_search_manager.GetDefaultSearchEngine(&dse_source);
@@ -749,10 +730,6 @@ class PrefHashBrowserTestUntrustedInitialized : public PrefHashBrowserTestBase {
     EXPECT_EQ(
         0, GetTrackedPrefHistogramCount(
                user_prefs::tracked::kTrackedPrefHistogramCleared, ALLOW_NONE));
-    EXPECT_EQ(
-        0, GetTrackedPrefHistogramCount(
-               user_prefs::tracked::kTrackedPrefHistogramMigratedLegacyDeviceId,
-               ALLOW_NONE));
 
     if (SupportsRegistryValidation()) {
       // The MACs have been cleared but the preferences have not been tampered.
@@ -827,7 +804,7 @@ class PrefHashBrowserTestChangedAtomic : public PrefHashBrowserTestBase {
 
 // TODO(gab): This doesn't work on OS_CHROMEOS because we fail to attack
 // Preferences.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
     // Explicitly verify the result of reported resets.
     EXPECT_EQ(
         protection_level_ >= PROTECTION_ENABLED_BASIC ? 0U : 2U,
@@ -848,10 +825,6 @@ class PrefHashBrowserTestChangedAtomic : public PrefHashBrowserTestBase {
     EXPECT_EQ(0, GetTrackedPrefHistogramCount(
                      user_prefs::tracked::kTrackedPrefHistogramNullInitialized,
                      ALLOW_NONE));
-    EXPECT_EQ(
-        0, GetTrackedPrefHistogramCount(
-               user_prefs::tracked::kTrackedPrefHistogramMigratedLegacyDeviceId,
-               ALLOW_NONE));
 
     if (SupportsRegistryValidation()) {
       // Expect a single Changed event for tracked pref #4 (startup URLs).
@@ -871,8 +844,8 @@ PREF_HASH_BROWSER_TEST(PrefHashBrowserTestChangedAtomic, ChangedAtomic);
 class PrefHashBrowserTestChangedSplitPref : public PrefHashBrowserTestBase {
  public:
   void SetupPreferences() override {
-    InstallExtensionWithUIAutoConfirm(
-        test_data_dir_.AppendASCII("good.crx"), 1, browser());
+    InstallExtensionWithUIAutoConfirm(test_data_dir_.AppendASCII("good.crx"),
+                                      1);
   }
 
   void AttackPreferencesOnDisk(
@@ -892,10 +865,11 @@ class PrefHashBrowserTestChangedSplitPref : public PrefHashBrowserTestBase {
     // Tamper with any installed setting for good.crx
     base::Value::Dict* good_crx_dict = extensions_dict->FindDict(kGoodCrxId);
     ASSERT_TRUE(good_crx_dict);
-    std::optional<int> good_crx_state = good_crx_dict->FindInt("state");
-    ASSERT_TRUE(good_crx_state);
-    EXPECT_EQ(extensions::Extension::ENABLED, *good_crx_state);
-    good_crx_dict->Set("state", extensions::Extension::DISABLED);
+
+    std::optional<int> good_crx_incognito_access =
+        good_crx_dict->FindBool("incognito");
+    ASSERT_FALSE(good_crx_incognito_access.has_value());
+    good_crx_dict->Set("incognito", true);
 
     // Drop a fake extension (for the purpose of this test, dropped settings
     // don't need to be valid extension settings).
@@ -949,10 +923,6 @@ class PrefHashBrowserTestChangedSplitPref : public PrefHashBrowserTestBase {
     EXPECT_EQ(0, GetTrackedPrefHistogramCount(
                      user_prefs::tracked::kTrackedPrefHistogramNullInitialized,
                      ALLOW_NONE));
-    EXPECT_EQ(
-        0, GetTrackedPrefHistogramCount(
-               user_prefs::tracked::kTrackedPrefHistogramMigratedLegacyDeviceId,
-               ALLOW_NONE));
 
     if (SupportsRegistryValidation()) {
       // Expect that the registry validation caught the invalid MAC in split
@@ -1032,10 +1002,6 @@ class PrefHashBrowserTestUntrustedAdditionToPrefs
     EXPECT_EQ(0, GetTrackedPrefHistogramCount(
                      user_prefs::tracked::kTrackedPrefHistogramNullInitialized,
                      ALLOW_NONE));
-    EXPECT_EQ(
-        0, GetTrackedPrefHistogramCount(
-               user_prefs::tracked::kTrackedPrefHistogramMigratedLegacyDeviceId,
-               ALLOW_NONE));
 
     if (SupportsRegistryValidation()) {
       EXPECT_EQ((protection_level_ > PROTECTION_DISABLED_ON_PLATFORM &&
@@ -1117,10 +1083,6 @@ class PrefHashBrowserTestUntrustedAdditionToPrefsAfterWipe
     EXPECT_EQ(0, GetTrackedPrefHistogramCount(
                      user_prefs::tracked::kTrackedPrefHistogramNullInitialized,
                      ALLOW_NONE));
-    EXPECT_EQ(
-        0, GetTrackedPrefHistogramCount(
-               user_prefs::tracked::kTrackedPrefHistogramMigratedLegacyDeviceId,
-               ALLOW_NONE));
 
     if (SupportsRegistryValidation()) {
       EXPECT_EQ(changed_expected,
@@ -1197,12 +1159,7 @@ class PrefHashBrowserTestDefaultSearch : public PrefHashBrowserTestBase {
             profile()),
         CHECK_DEREF(TemplateURLPrepopulateData::ResolverFactory::GetForProfile(
             profile())),
-        DefaultSearchManager::ObserverCallback()
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-            ,
-        profile()->IsMainProfile()
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
-    );
+        DefaultSearchManager::ObserverCallback());
     DefaultSearchManager::Source dse_source =
         static_cast<DefaultSearchManager::Source>(-1);
 
@@ -1272,12 +1229,7 @@ class PrefHashBrowserTestDefaultSearch : public PrefHashBrowserTestBase {
             profile()),
         CHECK_DEREF(TemplateURLPrepopulateData::ResolverFactory::GetForProfile(
             profile())),
-        DefaultSearchManager::ObserverCallback()
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-            ,
-        profile()->IsMainProfile()
-#endif  // BUILDFLAG(IS_CHROMEOS_LACROS)
-    );
+        DefaultSearchManager::ObserverCallback());
     DefaultSearchManager::Source dse_source =
         static_cast<DefaultSearchManager::Source>(-1);
 
@@ -1286,7 +1238,7 @@ class PrefHashBrowserTestDefaultSearch : public PrefHashBrowserTestBase {
 
     if (protection_level_ < PROTECTION_ENABLED_DSE) {
 // This doesn't work on OS_CHROMEOS because we fail to attack Preferences.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
       // Attack is successful.
       EXPECT_EQ(DefaultSearchManager::FROM_USER, dse_source);
       EXPECT_EQ(current_dse->keyword(), u"badkeyword");
@@ -1303,13 +1255,13 @@ class PrefHashBrowserTestDefaultSearch : public PrefHashBrowserTestBase {
                 "http://bad_default_engine/search?q=dirty_user_query");
     }
 // This doesn't work on OS_CHROMEOS because we fail to attack Preferences.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
     // This test creates 2 DefaultSearchManagers, because the browser creates
     // one, and this function creates a second one, so 2 samples are emitted,
     // both attacked by the PRE_ test.
     histograms_.ExpectUniqueSample(
         DefaultSearchManager::kDefaultSearchEngineMirroredMetric, false, 2);
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
   }
 };
 
@@ -1321,8 +1273,8 @@ class PrefHashBrowserTestExtensionDictTypeChanged
     : public PrefHashBrowserTestBase {
  public:
   void SetupPreferences() override {
-    InstallExtensionWithUIAutoConfirm(test_data_dir_.AppendASCII("good.crx"), 1,
-                                      browser());
+    InstallExtensionWithUIAutoConfirm(test_data_dir_.AppendASCII("good.crx"),
+                                      1);
   }
 
   void AttackPreferencesOnDisk(
@@ -1418,11 +1370,11 @@ class PrefHashBrowserTestAccountValueUntrustedAddition
 
 // TODO(gab): This doesn't work on OS_CHROMEOS because we fail to attack
 // Preferences.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
     // Explicitly verify the result of reported resets.
     EXPECT_EQ(protection_level_ < PROTECTION_ENABLED_BASIC,
               profile()->GetPrefs()->GetBoolean(prefs::kShowHomeButton));
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
     // Nothing else should have triggered.
     EXPECT_EQ(
@@ -1438,10 +1390,6 @@ class PrefHashBrowserTestAccountValueUntrustedAddition
     EXPECT_EQ(0, GetTrackedPrefHistogramCount(
                      user_prefs::tracked::kTrackedPrefHistogramNullInitialized,
                      ALLOW_NONE));
-    EXPECT_EQ(
-        0, GetTrackedPrefHistogramCount(
-               user_prefs::tracked::kTrackedPrefHistogramMigratedLegacyDeviceId,
-               ALLOW_NONE));
 
     if (SupportsRegistryValidation()) {
       // Expect a single Changed event for tracked pref #0 (show home button).

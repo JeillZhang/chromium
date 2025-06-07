@@ -6,6 +6,7 @@
 
 #include "base/allocator/partition_alloc_support.h"
 #include "base/command_line.h"
+#include "base/debug/alias.h"
 #include "base/debug/leak_annotations.h"
 #include "base/functional/bind.h"
 #include "base/message_loop/message_pump_type.h"
@@ -28,6 +29,7 @@
 #include "content/public/common/main_function_params.h"
 #include "content/public/utility/content_utility_client.h"
 #include "content/utility/utility_thread_impl.h"
+#include "media/gpu/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "sandbox/policy/mojom/sandbox.mojom.h"
 #include "sandbox/policy/sandbox.h"
@@ -44,16 +46,25 @@
 #include "content/common/gpu_pre_sandbox_hook_linux.h"
 #include "content/public/common/content_descriptor_keys.h"
 #include "content/utility/speech/speech_recognition_sandbox_hook_linux.h"
-#include "gpu/config/gpu_info_collector.h"
-#include "media/gpu/sandbox/hardware_video_decoding_sandbox_hook_linux.h"
-#include "media/gpu/sandbox/hardware_video_encoding_sandbox_hook_linux.h"
 #include "sandbox/policy/linux/sandbox_linux.h"
 #include "services/audio/audio_sandbox_hook_linux.h"
 #include "services/network/network_sandbox_hook_linux.h"
 #include "services/screen_ai/buildflags/buildflags.h"
-// gn check is not smart enough to realize that this include only applies to
-// Linux/ChromeOS and the BUILD.gn dependencies correctly account for that.
+
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
+#include "gpu/config/gpu_info_collector.h"
+#include "media/gpu/sandbox/hardware_video_decoding_sandbox_hook_linux.h"
+#include "media/gpu/sandbox/hardware_video_encoding_sandbox_hook_linux.h"
+// gn check is not smart enough to realize that this include is guarded behind
+// some BUILDFLAG()s and the BUILD.gn dependencies correctly account for that.
 #include "third_party/angle/src/gpu_info_util/SystemInfo.h"  //nogncheck
+
+#if BUILDFLAG(USE_VAAPI)
+#include "media/gpu/vaapi/vaapi_wrapper.h"
+#include "media/mojo/mojom/video_decoder_factory_process.mojom.h"
+#endif  // BUILDFLAG(USE_VAAPI)
+
+#endif  // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
 
 #if BUILDFLAG(ENABLE_PRINTING)
 #include "printing/sandbox/print_backend_sandbox_hook_linux.h"
@@ -68,7 +79,7 @@
 
 #if BUILDFLAG(ENABLE_VIDEO_EFFECTS) && BUILDFLAG(IS_LINUX)
 #include "services/video_effects/video_effects_sandbox_hook_linux.h"  // nogncheck
-#endif  // BUILDFLAG(ENABLE_VIDEO_EFFECTS) && BUILDFLAG(IS_LINUX)
+#endif  // BUILDFLAG(IS_LINUX)
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chromeos/ash/components/assistant/buildflags.h"
@@ -137,6 +148,7 @@ std::vector<std::string> GetNetworkContextsParentDirectories() {
 }
 
 bool ShouldUseAmdGpuPolicy(sandbox::mojom::Sandbox sandbox_type) {
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
   const bool obtain_gpu_info =
       sandbox_type == sandbox::mojom::Sandbox::kHardwareVideoDecoding ||
       sandbox_type == sandbox::mojom::Sandbox::kHardwareVideoEncoding;
@@ -148,7 +160,7 @@ bool ShouldUseAmdGpuPolicy(sandbox::mojom::Sandbox sandbox_type) {
     gpu::CollectBasicGraphicsInfo(&gpu_info);
     return angle::IsAMD(gpu_info.active_gpu().vendor_id);
   }
-
+#endif
   return false;
 }
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -247,6 +259,15 @@ int UtilityMain(MainFunctionParams parameters) {
     CHECK(on_device_model::OnDeviceModelService::PreSandboxInit());
   }
 
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION) && BUILDFLAG(USE_VAAPI)
+  // Regardless of the sandbox status, the VaapiWrapper needs to be initialized
+  // for decoder utility processes on devices that use VA-API.
+  if (utility_sub_type == media::mojom::VideoDecoderFactoryProcess::Name_) {
+    media::VaapiWrapper::PreSandboxInitialization(
+        /*allow_disabling_global_lock=*/true);
+  }
+#endif  // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION) && BUILDFLAG(USE_VAAPI)
+
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   // Thread type delegate of the process should be registered before first
   // thread type change in ChildProcess constructor. It also needs to be
@@ -305,20 +326,22 @@ int UtilityMain(MainFunctionParams parameters) {
 #endif
 #if BUILDFLAG(IS_LINUX)
     case sandbox::mojom::Sandbox::kVideoEffects:
+#if BUILDFLAG(ENABLE_VIDEO_EFFECTS)
       pre_sandbox_hook =
           base::BindOnce(&video_effects::VideoEffectsPreSandboxHook);
+#endif
       break;
 #endif  // BUILDFLAG(IS_LINUX)
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
     case sandbox::mojom::Sandbox::kHardwareVideoDecoding:
       pre_sandbox_hook =
           base::BindOnce(&media::HardwareVideoDecodingPreSandboxHook);
       break;
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
     case sandbox::mojom::Sandbox::kHardwareVideoEncoding:
       pre_sandbox_hook =
           base::BindOnce(&media::HardwareVideoEncodingPreSandboxHook);
       break;
+#endif
 #if BUILDFLAG(IS_CHROMEOS)
     case sandbox::mojom::Sandbox::kIme:
       pre_sandbox_hook = base::BindOnce(&ash::ime::ImePreSandboxHook);
@@ -359,9 +382,7 @@ int UtilityMain(MainFunctionParams parameters) {
 
 #elif BUILDFLAG(IS_WIN)
   std::optional<base::win::ScopedCOMInitializer> scoped_com_initializer;
-  if (message_pump_type == base::MessagePumpType::UI &&
-      base::FeatureList::IsEnabled(
-          features::kUtilityWithUiPumpInitializesCom)) {
+  if (message_pump_type == base::MessagePumpType::UI) {
     scoped_com_initializer.emplace();
     CHECK(scoped_com_initializer->Succeeded());
   }

@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 #include "base/time/time.h"
@@ -55,7 +56,7 @@ class ChromeMainDelegate : public content::ContentMainDelegate {
   std::optional<int> BasicStartupComplete() override;
   void PreSandboxStartup() override;
   void SandboxInitialized(const std::string& process_type) override;
-  absl::variant<int, content::MainFunctionParams> RunProcess(
+  std::variant<int, content::MainFunctionParams> RunProcess(
       const std::string& process_type,
       content::MainFunctionParams main_function_params) override;
   void ProcessExiting(const std::string& process_type) override;
@@ -80,7 +81,7 @@ class ChromeMainDelegate : public content::ContentMainDelegate {
   content::ContentUtilityClient* CreateContentUtilityClient() override;
 
   // Initialization that happens in all process types.
-  void CommonEarlyInitialization(InvokedIn invoked_in);
+  void CommonEarlyInitialization();
 
   // Initializes |tracing_sampler_profiler_|. Deletes any existing
   // |tracing_sampler_profiler_| as well.

@@ -8,26 +8,30 @@
 #include "base/check_deref.h"
 #include "base/check_is_test.h"
 #include "base/containers/contains.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
-#include "build/chromeos_buildflags.h"
+#include "build/build_config.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/device_api/device_attribute_api.h"
 #include "chrome/browser/policy/policy_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_policy_constants.h"
 #include "chrome/browser/web_applications/policy/web_app_policy_constants.h"
 #include "chrome/browser/web_applications/proto/proto_helpers.h"
+#include "chrome/browser/web_applications/proto/web_app.pb.h"
 #include "chrome/browser/web_applications/proto/web_app_install_state.pb.h"
 #include "chrome/browser/web_applications/proto/web_app_os_integration_state.pb.h"
-#include "chrome/browser/web_applications/proto/web_app_proto_package.pb.h"
 #include "chrome/browser/web_applications/web_app_filter.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
+#include "chrome/browser/web_applications/web_app_tab_helper.h"
 #include "chrome/common/pref_names.h"
 #include "components/permissions/features.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -35,9 +39,8 @@
 #include "ash/constants/ash_features.h"
 #include "chrome/browser/ash/app_mode/isolated_web_app/kiosk_iwa_data.h"
 #include "chrome/browser/ash/app_mode/isolated_web_app/kiosk_iwa_manager.h"
-#include "chrome/browser/ash/app_mode/web_app/web_kiosk_app_data.h"
-#include "chrome/browser/ash/app_mode/web_app/web_kiosk_app_manager.h"
-#include "chrome/browser/web_applications/isolated_web_apps/policy/isolated_web_app_policy_constants.h"
+#include "chrome/browser/ash/app_mode/web_app/kiosk_web_app_data.h"
+#include "chrome/browser/ash/app_mode/web_app/kiosk_web_app_manager.h"
 #include "chrome/common/url_constants.h"
 #include "components/user_manager/user_manager.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -47,7 +50,7 @@ namespace {
 // Checks that current user is a web kiosk.
 bool IsWebKiosk() {
   return user_manager::UserManager::IsInitialized() &&
-         user_manager::UserManager::Get()->IsLoggedInAsWebKioskApp();
+         user_manager::UserManager::Get()->IsLoggedInAsKioskWebApp();
 }
 
 // Checks that current user is an IWA kiosk.
@@ -62,9 +65,9 @@ bool IsIwaKiosk() {
 url::Origin GetWebKioskOrigin() {
   const AccountId& account_id =
       user_manager::UserManager::Get()->GetPrimaryUser()->GetAccountId();
-  CHECK(ash::WebKioskAppManager::IsInitialized());
-  const ash::WebKioskAppData* app_data =
-      ash::WebKioskAppManager::Get()->GetAppByAccountId(account_id);
+  CHECK(ash::KioskWebAppManager::IsInitialized());
+  const ash::KioskWebAppData* app_data =
+      ash::KioskWebAppManager::Get()->GetAppByAccountId(account_id);
   return url::Origin::Create(CHECK_DEREF(app_data).install_url());
 }
 
@@ -164,6 +167,39 @@ bool IsTrustedContext(content::RenderFrameHost& host,
   return IsForceInstalledOrigin(host, origin);
 }
 
+bool IsIwa(content::RenderFrameHost& host) {
+  if (auto* web_app_id = web_app::WebAppTabHelper::GetAppId(
+          content::WebContents::FromRenderFrameHost(&host))) {
+    return web_app::WebAppProvider::GetForWebApps(GetProfile(host))
+        ->registrar_unsafe()
+        .IsIsolated(*web_app_id);
+  }
+  return false;
+}
+
+bool IsPermissionsPolicyFeatureEnabled() {
+  return base::FeatureList::IsEnabled(
+      blink::features::kDeviceAttributesPermissionPolicy);
+}
+
+bool IsAllowedByPermissionsPolicy(content::RenderFrameHost& host) {
+  if (!IsPermissionsPolicyFeatureEnabled()) {
+    return true;
+  }
+  return host.IsFeatureEnabled(
+      network::mojom::PermissionsPolicyFeature::kDeviceAttributes);
+}
+
+bool IsBlockedByAdminPolicy(content::RenderFrameHost& host,
+                            const url::Origin& origin) {
+  if (IsPermissionsPolicyFeatureEnabled() && IsIwa(host)) {
+    return false;
+  }
+  return !policy::IsOriginInAllowlist(
+      origin.GetURL(), GetPrefs(host),
+      prefs::kDeviceAttributesAllowedForOrigins);
+}
+
 }  // namespace
 
 DeviceServiceImpl::DeviceServiceImpl(
@@ -182,11 +218,11 @@ DeviceServiceImpl::DeviceServiceImpl(
       prefs::kWebAppInstallForceList,
       base::BindRepeating(&DeviceServiceImpl::OnDisposingIfNeeded,
                           base::Unretained(this)));
-#if BUILDFLAG(IS_CHROMEOS)
   pref_change_registrar_.Add(
       prefs::kIsolatedWebAppInstallForceList,
       base::BindRepeating(&DeviceServiceImpl::OnDisposingIfNeeded,
                           base::Unretained(this)));
+#if BUILDFLAG(IS_CHROMEOS)
   pref_change_registrar_.Add(
       prefs::kKioskBrowserPermissionsAllowedForOrigins,
       base::BindRepeating(&DeviceServiceImpl::OnDisposingIfNeeded,
@@ -207,10 +243,19 @@ void DeviceServiceImpl::Create(
   CHECK(host);
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  if (!IsTrustedContext(*host,
-                        host->GetMainFrame()->GetLastCommittedOrigin())) {
+  if (host->GetParentOrOuterDocument()) {
+    mojo::ReportBadMessage(
+        "Device Attributes are allowed only in top level frames.");
+    return;
+  }
+  if (!IsTrustedContext(*host, host->GetLastCommittedOrigin())) {
     // Not sending bad message here since the API is always exposed to the end
     // user.
+    return;
+  }
+  if (!IsAllowedByPermissionsPolicy(*host)) {
+    mojo::ReportBadMessage(
+        "Permissions policy blocks access to Device Attributes.");
     return;
   }
   // The object is bound to the lifetime of |host| and the mojo
@@ -294,9 +339,7 @@ void DeviceServiceImpl::GetDeviceAttribute(
     return;
   }
 
-  if (!policy::IsOriginInAllowlist(origin().GetURL(),
-                                   GetPrefs(render_frame_host()),
-                                   prefs::kDeviceAttributesAllowedForOrigins)) {
+  if (IsBlockedByAdminPolicy(render_frame_host(), origin())) {
     device_attribute_api_->ReportNotAllowedError(std::move(callback));
     return;
   }

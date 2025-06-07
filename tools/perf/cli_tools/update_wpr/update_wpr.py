@@ -18,7 +18,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-import sys
+import shlex
 import webbrowser
 
 from chrome_telemetry_build import chromium_config
@@ -54,7 +54,6 @@ MISSING_RESOURCE_RE = re.compile(
     r'of 404 \(\) ([^\s]+)')
 TELEMETRY_BIN_DEPS_CONFIG = os.path.join(
     path_util.GetTelemetryDir(), 'telemetry', 'binary_dependencies.json')
-PY_EXECUTABLE = [sys.executable]
 
 
 def _GetBranchName():
@@ -93,7 +92,7 @@ def _EnsureEditor():
 
 
 def _OpenEditor(filepath):
-  subprocess.check_call([os.environ['EDITOR'], filepath])
+  subprocess.check_call(shlex.split(os.environ['EDITOR']) + [filepath])
 
 
 def _PrepareEnv():
@@ -377,8 +376,13 @@ class WprUpdater(object):
     Returns:
       Path to the filtered log.
     """
-    with open(log_filename) as src, tempfile.NamedTemporaryFile(
-        suffix='diff', dir=self.output_dir, delete=False) as dest:
+    with open(log_filename,
+              encoding='utf-8') as src, tempfile.NamedTemporaryFile(
+                  encoding='utf-8',
+                  mode='w+',
+                  suffix='diff',
+                  dir=self.output_dir,
+                  delete=False) as dest:
       for line in src:
         # Remove timestamps.
         line = re.sub(
@@ -393,7 +397,7 @@ class WprUpdater(object):
         # Remove random durations in ms.
         line = re.sub(r'\d+ ms', r'<duration>', line)
         dest.write(line)
-        return dest.name
+      return dest.name
 
   def _GetTargetFromConfiguration(self, configuration):
     """Returns the target that should be used for a Pinpoint job."""
@@ -752,6 +756,7 @@ class CrossbenchWprUpdater(object):
         'branch. If you need to create a new branch or have uncommitted '
         'changes, please stop the script and create a fresh branch. Do '
         'you want to continue?',
+        answers={'yes': True, 'no': False},
         default='no'):
       return
     cb_wprgo = self.RecordWpr()
@@ -760,6 +765,7 @@ class CrossbenchWprUpdater(object):
         f'The {cb_wprgo} file has been generated and replayed. Please '
         f'see the Crossbench log file in {self.output_dir}. Are you sure '
         'to upload the new archive file to the cloud?',
+        answers={'yes': True, 'no': False},
         default='no'):
       return
     if not self.UploadWpr(cb_wprgo):
@@ -826,7 +832,7 @@ class CrossbenchWprUpdater(object):
   def _GenerateCommandList(self, args=None, cb_output_dir=None):
     args = args or []
     cb_output_dir = cb_output_dir or self.output_dir
-    command = PY_EXECUTABLE + [
+    command = [
         f'{self._CB_TOOL}',
         self.bss,
         '--repeat=1',

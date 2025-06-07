@@ -15,7 +15,8 @@ namespace collaboration {
 
 // Helper class responsible for bridging the CollaborationService between
 // C++ and Java.
-class CollaborationServiceAndroid : public base::SupportsUserData::Data {
+class CollaborationServiceAndroid : public base::SupportsUserData::Data,
+                                    public CollaborationService::Observer {
  public:
   explicit CollaborationServiceAndroid(CollaborationService* service);
   ~CollaborationServiceAndroid() override;
@@ -29,7 +30,15 @@ class CollaborationServiceAndroid : public base::SupportsUserData::Data {
   void StartShareOrManageFlow(
       JNIEnv* env,
       jlong delegate,
-      const base::android::JavaParamRef<jstring>& j_sync_group_id);
+      const base::android::JavaParamRef<jstring>& j_sync_group_id,
+      const base::android::JavaParamRef<jobject>& j_local_group_id,
+      jint entry);
+  void StartLeaveOrDeleteFlow(
+      JNIEnv* env,
+      jlong delegate,
+      const base::android::JavaParamRef<jstring>& j_sync_group_id,
+      const base::android::JavaParamRef<jobject>& j_local_group_id,
+      jint entry);
   base::android::ScopedJavaLocalRef<jobject> GetServiceStatus(JNIEnv* env);
   jint GetCurrentUserRoleForGroup(
       JNIEnv* env,
@@ -46,6 +55,9 @@ class CollaborationServiceAndroid : public base::SupportsUserData::Data {
 
   // Returns the CollaborationServiceImpl java object.
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
+
+  // CollaborationService::Observer overrides.
+  void OnServiceStatusChanged(const ServiceStatusUpdate& update) override;
 
  private:
   // A reference to the Java counterpart of this class.  See

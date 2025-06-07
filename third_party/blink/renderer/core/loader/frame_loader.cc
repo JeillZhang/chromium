@@ -449,7 +449,7 @@ void FrameLoader::FinishedParsing() {
 
   if (Client()) {
     Client()->RunScriptsAtDocumentReady(
-        document_loader_ ? document_loader_->IsCommittedButEmpty() : true);
+        !document_loader_ || document_loader_->IsCommittedButEmpty());
   }
 
   if (frame_->View()) {
@@ -831,16 +831,13 @@ void FrameLoader::StartNavigation(FrameLoadRequest& request,
     }
     return;
   }
-  // If kStandardCompliantNonSpecialSchemeURLParsing feature is enabled,
-  // "javascript:" scheme URL can be a invalid URL. e.g. "javascript://a b".
-  //
-  // We shouldn't navigate to such an invalid "javascript:" scheme URL.
+
+  // Do not navigate to an invalid "javascript:" scheme URL under the standard
+  // compliant non special scheme url parsing.
   //
   // See wpt/url/javascript-urls.window.js test for the standard compliant
   // behaviors.
-  if (url::IsUsingStandardCompliantNonSpecialSchemeURLParsing() &&
-      ProtocolIsJavaScript(url.GetString())) {
-    DCHECK(!url.IsValid());
+  if (ProtocolIsJavaScript(url.GetString()) && !url.IsValid()) {
     return;
   }
 
@@ -889,9 +886,17 @@ void FrameLoader::StartNavigation(FrameLoadRequest& request,
     }
   }
 
-  probe::FrameRequestedNavigation(frame_.Get(), frame_.Get(), url,
-                                  request.GetClientNavigationReason(),
-                                  request.GetNavigationPolicy());
+  bool is_form_submission = request.GetClientNavigationReason() ==
+                                ClientNavigationReason::kFormSubmissionGet ||
+                            request.GetClientNavigationReason() ==
+                                ClientNavigationReason::kFormSubmissionPost;
+  if (!is_form_submission) {
+    // This signal for form submissions is issued earlier when scheduling
+    // the form submission task. See Frame::ScheduleFormSubmission.
+    probe::FrameRequestedNavigation(frame_.Get(), frame_.Get(), url,
+                                    request.GetClientNavigationReason(),
+                                    request.GetNavigationPolicy());
+  }
 
   // TODO(crbug.com/896041): Instead of just bypassing the CSP for navigations
   // from isolated world, ideally we should enforce the isolated world CSP by
@@ -913,9 +918,9 @@ void FrameLoader::StartNavigation(FrameLoadRequest& request,
           IsOnInitialEmptyDocument()) == ClientRedirectPolicy::kClientRedirect,
       request.IsUnfencedTopNavigation(), request.GetTriggeringEventInfo(),
       request.Form(), should_check_main_world_csp, request.GetBlobURLToken(),
-      request.GetInputStartTime(), request.HrefTranslate().GetString(),
-      request.Impression(), request.GetInitiatorFrameToken(),
-      request.TakeSourceLocation(),
+      request.GetInputStartTime(), request.GetCreationTime(),
+      request.HrefTranslate().GetString(), request.Impression(),
+      request.GetInitiatorFrameToken(), request.GetSourceLocation(),
       request.TakeInitiatorNavigationStateKeepAliveHandle(),
       request.IsContainerInitiated(),
       request.GetWindowFeatures().explicit_opener);
@@ -1789,7 +1794,7 @@ void FrameLoader::ModifyRequestForCSP(
 
   MixedContentChecker::UpgradeInsecureRequest(
       resource_request, fetch_client_settings_object, window_for_logging,
-      frame_type, frame_->GetContentSettingsClient());
+      frame_type, frame_->GetContentSettingsClient(), frame_);
 }
 
 void FrameLoader::WriteIntoTrace(perfetto::TracedValue context) const {
@@ -1816,7 +1821,7 @@ mojo::PendingRemote<mojom::blink::CodeCacheHost>
 FrameLoader::CreateWorkerCodeCacheHost() {
   if (!document_loader_)
     return mojo::NullRemote();
-  return document_loader_->CreateWorkerCodeCacheHost();
+  return document_loader_->CreateCodeCacheHost();
 }
 
 }  // namespace blink

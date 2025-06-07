@@ -464,7 +464,6 @@
   E(kActionContentContextAccessibilityLabelsToggleOnce, \
     IDC_CONTENT_CONTEXT_ACCESSIBILITY_LABELS_TOGGLE_ONCE) \
   /* Tab Search */ \
-  E(kActionTabSearch, IDC_TAB_SEARCH) \
   E(kActionTabSearchClose, IDC_TAB_SEARCH_CLOSE) \
   /* Views debug commands. */ \
   E(kActionDebugToggleTabletMode, IDC_DEBUG_TOGGLE_TABLET_MODE) \
@@ -488,7 +487,16 @@
   E(kActionLiveCaption, IDC_LIVE_CAPTION) \
   /* Device API system tray icon */ \
   E(kActionDeviceSystemTrayIconFirst, IDC_DEVICE_SYSTEM_TRAY_ICON_FIRST) \
-  E(kActionDeviceSystemTrayIconLast, IDC_DEVICE_SYSTEM_TRAY_ICON_LAST)
+  E(kActionDeviceSystemTrayIconLast, IDC_DEVICE_SYSTEM_TRAY_ICON_LAST) \
+  /*Shows the Intent Picker bubble */ \
+  E(kActionShowIntentPicker) \
+  /*Shows the File System Access bubble */ \
+  E(kActionShowFileSystemAccess) \
+  /*Toolbar pinning*/ \
+  E(kActionPinActionToToolbar) \
+  E(kActionUnpinActionFromToolbar) \
+  /*Commerce*/ \
+  E(kActionCommercePriceInsights) \
 
 #if BUILDFLAG(IS_CHROMEOS)
 #define CHROME_PLATFORM_SPECIFIC_ACTION_IDS \
@@ -519,8 +527,10 @@
   E(kActionSidePanelShowAssistant) \
   E(kActionSidePanelShowBookmarks, IDC_SHOW_BOOKMARK_SIDE_PANEL) \
   E(kActionSidePanelShowCustomizeChrome) \
+  E(kActionSidePanelShowCustomizeChromeToolbar) \
   E(kActionSidePanelShowFeed) \
   E(kActionSidePanelShowHistoryCluster) \
+  E(kActionSidePanelShowHistory) \
   E(kActionSidePanelShowLens) \
   E(kActionSidePanelShowLensOverlayResults, IDC_CONTENT_CONTEXT_LENS_OVERLAY) \
   E(kActionSidePanelShowReadAnything) \
@@ -556,6 +566,8 @@
   E(kActionShowPasswordsBubbleOrPage) \
   E(kActionManagePasswordsForPage, IDC_MANAGE_PASSWORDS_FOR_PAGE) \
   E(kActionCopyUrl, IDC_COPY_URL) \
+  E(kActionTabSearch, IDC_TAB_SEARCH) \
+  E(kActionSplitTab, IDC_SPLIT_TAB) \
 
 #define CHROME_ACTION_IDS \
     CHROME_COMMON_ACTION_IDS \

@@ -41,7 +41,7 @@ upb_proto_reflection_library(
 
 upb_proto_reflection_library(
     name = "ads_upb_proto_reflection",
-    deps = ["@com_google_googleapis//:ads_proto"],
+    deps = ["@googleapis//google/ads/googleads/v17/services:services_proto"],
 )
 
 cc_proto_library(
@@ -69,18 +69,18 @@ cc_test(
         ":benchmark_descriptor_sv_cc_proto",
         ":benchmark_descriptor_upb_proto",
         ":benchmark_descriptor_upb_proto_reflection",
-        "//:protobuf",
+        "//src/google/protobuf",
         "//src/google/protobuf/json",
         "//upb:base",
         "//upb:json",
         "//upb:mem",
         "//upb:reflection",
         "//upb:wire",
-        "@com_github_google_benchmark//:benchmark_main",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log:absl_check",
-        "@com_google_googletest//:gtest",
-        "@com_google_googletest//:gtest_main",
+        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/log:absl_check",
+        "@google_benchmark//:benchmark_main",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
     ],
 )
 
@@ -98,19 +98,16 @@ SIZE_BENCHMARKS = {
 py_binary(
     name = "gen_synthetic_protos",
     srcs = ["gen_synthetic_protos.py"],
-    python_version = "PY3",
 )
 
 py_binary(
     name = "gen_upb_binary_c",
     srcs = ["gen_upb_binary_c.py"],
-    python_version = "PY3",
 )
 
 py_binary(
     name = "gen_protobuf_binary_cc",
     srcs = ["gen_protobuf_binary_cc.py"],
-    python_version = "PY3",
 )
 
 genrule(

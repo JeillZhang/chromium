@@ -35,6 +35,7 @@
 #include "content/public/browser/renderer_preferences_util.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_features.h"
 #include "net/http/http_util.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "third_party/blink/public/common/features.h"
@@ -663,9 +664,6 @@ void AwSettings::PopulateWebPreferencesLocked(JNIEnv* env,
   web_prefs->local_storage_enabled =
       Java_AwSettings_getDomStorageEnabledLocked(env, obj);
 
-  web_prefs->databases_enabled =
-      Java_AwSettings_getDatabaseEnabledLocked(env, obj);
-
   web_prefs->wide_viewport_quirk = true;
   web_prefs->use_wide_viewport =
       Java_AwSettings_getUseWideViewportLocked(env, obj);
@@ -773,6 +771,10 @@ void AwSettings::PopulateWebPreferencesLocked(JNIEnv* env,
   if (Java_AwSettings_getWebauthnSupportLocked(env, obj) != 0) {
     web_prefs->disable_webauthn = false;
   }
+
+  web_prefs->payment_request_enabled =
+      Java_AwSettings_getPaymentRequestEnabled(env, obj) &&
+      base::FeatureList::IsEnabled(::features::kWebPayments);
 }
 
 bool AwSettings::IsForceDarkApplied(JNIEnv* env,

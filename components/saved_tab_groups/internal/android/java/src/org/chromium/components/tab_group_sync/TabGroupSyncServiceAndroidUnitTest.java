@@ -44,7 +44,7 @@ public class TabGroupSyncServiceAndroidUnitTest {
 
     private TabGroupSyncService mService;
     private TabGroupSyncService.Observer mObserver;
-    private ArgumentCaptor<SavedTabGroup> mTabGroupCaptor =
+    private final ArgumentCaptor<SavedTabGroup> mTabGroupCaptor =
             ArgumentCaptor.forClass(SavedTabGroup.class);
 
     @CalledByNative
@@ -75,6 +75,7 @@ public class TabGroupSyncServiceAndroidUnitTest {
         Assert.assertEquals(3, group.savedTabs.size());
         Assert.assertEquals("creator_cache_guid", group.creatorCacheGuid);
         Assert.assertEquals("last_updater_cache_guid", group.lastUpdaterCacheGuid);
+        Assert.assertNotNull(group.archivalTimeMs);
 
         SavedTabGroupTab tab1 = group.savedTabs.get(0);
         Assert.assertNotNull(tab1.syncId);
@@ -153,7 +154,8 @@ public class TabGroupSyncServiceAndroidUnitTest {
 
     @CalledByNative
     public void testMakeTabGroupShared(String collaborationId) {
-        mService.makeTabGroupShared(LOCAL_TAB_GROUP_ID_1, collaborationId);
+        mService.makeTabGroupShared(
+                LOCAL_TAB_GROUP_ID_1, collaborationId, /* tabGroupSharingCallback= */ null);
     }
 
     @CalledByNative
@@ -249,5 +251,10 @@ public class TabGroupSyncServiceAndroidUnitTest {
     public void testOnTabSelected(
             LocalTabGroupId localTabGroupId, int localTabId, String tabTitle) {
         mService.onTabSelected(localTabGroupId, localTabId, tabTitle);
+    }
+
+    @CalledByNative
+    public void testUpdateArchivalStatus(String uuid, boolean archivalStatus) {
+        mService.updateArchivalStatus(uuid, archivalStatus);
     }
 }

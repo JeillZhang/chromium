@@ -15,7 +15,7 @@ import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutView;
 
 /** Class for a CompositorButton that uses tint instead of multiple drawable resources. */
 public class TintedCompositorButton extends CompositorButton {
-    private Context mContext;
+    private final Context mContext;
 
     private @ColorInt int mBackgroundDefaultTint;
     private @ColorInt int mBackgroundPressedTint;
@@ -38,10 +38,21 @@ public class TintedCompositorButton extends CompositorButton {
             StripLayoutView parentView,
             float width,
             float height,
+            TooltipHandler tooltipHandler,
             StripLayoutViewOnClickHandler clickHandler,
+            StripLayoutViewOnKeyboardFocusHandler keyboardFocusHandler,
             @DrawableRes int resource,
             float clickSlopDp) {
-        super(context, type, parentView, width, height, clickHandler, clickSlopDp);
+        super(
+                context,
+                type,
+                parentView,
+                width,
+                height,
+                tooltipHandler,
+                clickHandler,
+                keyboardFocusHandler,
+                clickSlopDp);
         mContext = context;
         mResource = resource;
     }

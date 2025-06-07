@@ -495,7 +495,7 @@ void InspectorOverlayAgent::EnsureAXContext(Node* node) {
 
 void InspectorOverlayAgent::EnsureAXContext(Document& document) {
   if (!document_to_ax_context_.Contains(&document)) {
-    auto context = std::make_unique<AXContext>(document, ui::kAXModeComplete);
+    auto context = std::make_unique<AXContext>(document, ui::kAXModeInspector);
     document_to_ax_context_.Set(&document, std::move(context));
   }
 }
@@ -1483,7 +1483,7 @@ void InspectorOverlayAgent::EvaluateInOverlay(
   std::vector<uint8_t> json;
   ConvertCBORToJSON(SpanFrom(command->Serialize()), &json);
   ClassicScript::CreateUnspecifiedScript(
-      "dispatch(" + String(base::span(json)) + ")",
+      WTF::StrCat({"dispatch(", StringView(base::span(json)), ")"}),
       ScriptSourceLocationType::kInspector)
       ->RunScript(To<LocalFrame>(OverlayMainFrame())->DomWindow(),
                   ExecuteScriptPolicy::kExecuteScriptWhenScriptsDisabled);
@@ -1583,7 +1583,7 @@ protocol::Response InspectorOverlayAgent::setInspectMode(
       mode != protocol::Overlay::InspectModeEnum::CaptureAreaScreenshot &&
       mode != protocol::Overlay::InspectModeEnum::ShowDistances) {
     return protocol::Response::ServerError(
-        String("Unknown mode \"" + mode + "\" was provided.").Utf8());
+        WTF::StrCat({"Unknown mode \"", mode, "\" was provided."}).Utf8());
   }
 
   std::vector<uint8_t> serialized_config;

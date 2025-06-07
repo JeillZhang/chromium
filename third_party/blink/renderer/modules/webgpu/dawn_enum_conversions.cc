@@ -32,7 +32,6 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_texture_view_dimension.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_vertex_format.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_gpu_vertex_step_mode.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_types.h"
 
 namespace blink {
 
@@ -690,10 +689,14 @@ wgpu::FeatureName AsDawnEnum(const V8GPUFeatureName& webgpu_enum) {
   switch (webgpu_enum.AsEnum()) {
     case V8GPUFeatureName::Enum::kTextureCompressionBc:
       return wgpu::FeatureName::TextureCompressionBC;
+    case V8GPUFeatureName::Enum::kTextureCompressionBcSliced3d:
+      return wgpu::FeatureName::TextureCompressionBCSliced3D;
     case V8GPUFeatureName::Enum::kTextureCompressionEtc2:
       return wgpu::FeatureName::TextureCompressionETC2;
     case V8GPUFeatureName::Enum::kTextureCompressionAstc:
       return wgpu::FeatureName::TextureCompressionASTC;
+    case V8GPUFeatureName::Enum::kTextureCompressionAstcSliced3d:
+      return wgpu::FeatureName::TextureCompressionASTCSliced3D;
     case V8GPUFeatureName::Enum::kTimestampQuery:
       return wgpu::FeatureName::TimestampQuery;
     case V8GPUFeatureName::Enum::
@@ -719,6 +722,8 @@ wgpu::FeatureName AsDawnEnum(const V8GPUFeatureName& webgpu_enum) {
       return wgpu::FeatureName::DualSourceBlending;
     case V8GPUFeatureName::Enum::kSubgroups:
       return wgpu::FeatureName::Subgroups;
+    case V8GPUFeatureName::Enum::kCoreFeaturesAndLimits:
+      return wgpu::FeatureName::CoreFeaturesAndLimits;
     case V8GPUFeatureName::Enum::kClipDistances:
       return wgpu::FeatureName::ClipDistances;
     case V8GPUFeatureName::Enum::kChromiumExperimentalMultiDrawIndirect:
@@ -727,6 +732,8 @@ wgpu::FeatureName AsDawnEnum(const V8GPUFeatureName& webgpu_enum) {
       return wgpu::FeatureName::Unorm16TextureFormats;
     case V8GPUFeatureName::Enum::kChromiumExperimentalSnorm16TextureFormats:
       return wgpu::FeatureName::Snorm16TextureFormats;
+    case V8GPUFeatureName::Enum::kChromiumExperimentalSubgroupMatrix:
+      return wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix;
   }
 }
 
@@ -1027,6 +1034,20 @@ const char* FromDawnEnum(wgpu::AdapterType dawn_enum) {
       return "CPU";
     case wgpu::AdapterType::Unknown:
       return "unknown";
+    default:
+      break;
+  }
+  NOTREACHED();
+}
+
+const char* FromDawnEnum(wgpu::PowerPreference dawn_enum) {
+  switch (dawn_enum) {
+    case wgpu::PowerPreference::Undefined:
+      return "";
+    case wgpu::PowerPreference::LowPower:
+      return "low-power";
+    case wgpu::PowerPreference::HighPerformance:
+      return "high-performance";
     default:
       break;
   }

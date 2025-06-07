@@ -54,14 +54,14 @@
 #include "extensions/common/extension_id.h"
 #include "extensions/common/manifest.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ash/input_method/input_method_manager_impl.h"
 #include "chromeos/ash/components/network/managed_network_configuration_handler.h"
 #include "chromeos/ash/components/network/network_state_handler.h"
 #include "components/language/core/browser/pref_names.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
 #include "components/spellcheck/browser/pref_names.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_WIN)
 #include "base/base_paths.h"
@@ -113,7 +113,7 @@ ProfileResetter::ProfileResetter(Profile* profile)
 }
 
 void ProfileResetter::OnDefaultSettingsFetched() {
-  CHECK(config_fetcher_, base::NotFatalUntil::M135);
+  CHECK(config_fetcher_);
   DCHECK(!config_fetcher_->IsActive());
 }
 
@@ -200,11 +200,11 @@ void ProfileResetter::ResetSettingsImpl(
       {SHORTCUTS, &ProfileResetter::ResetShortcuts},
       {NTP_CUSTOMIZATIONS, &ProfileResetter::ResetNtpCustomizations},
       {LANGUAGES, &ProfileResetter::ResetLanguages},
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       {DNS_CONFIGURATIONS, &ProfileResetter::ResetDnsConfigurations},
       {PROXY_SETTINGS, &ProfileResetter::ResetProxySettings},
       {KEYBOARD_SETTINGS, &ProfileResetter::ResetKeyboardInputSettings},
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
   });
 
   ResettableFlags reset_triggered_for_flags = 0;
@@ -356,8 +356,9 @@ void ProfileResetter::ResetExtensions() {
         extensions::mojom::ManifestLocation::kExternalComponent)
       extension_ids_to_reenable.push_back(extension->id());
   }
+  auto* extension_registrar = extensions::ExtensionRegistrar::Get(profile_);
   for (const auto& extension_id : extension_ids_to_reenable) {
-    extension_service->EnableExtension(extension_id);
+    extension_registrar->EnableExtension(extension_id);
   }
 
   MarkAsDone(EXTENSIONS);
@@ -446,7 +447,7 @@ void ProfileResetter::OnBrowsingDataRemoverDone(uint64_t failed_data_types) {
   MarkAsDone(COOKIES_AND_SITE_DATA);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 void ProfileResetter::ResetDnsConfigurations() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // Since certain extensions can modify DNS configurations we want
@@ -554,7 +555,7 @@ void ProfileResetter::ResetKeyboardInputSettings() {
 
   MarkAsDone(KEYBOARD_SETTINGS);
 }
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_WIN)
 std::vector<ShortcutCommand> GetChromeLaunchShortcuts(

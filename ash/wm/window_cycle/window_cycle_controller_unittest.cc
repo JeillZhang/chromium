@@ -2,14 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/wm/window_cycle/window_cycle_controller.h"
 
 #include <algorithm>
+#include <array>
 #include <memory>
 
 #include "ash/accelerators/accelerator_controller_impl.h"
@@ -38,7 +34,6 @@
 #include "ash/style/tab_slider_button.h"
 #include "ash/system/unified/unified_system_tray.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/raster_scale_change_tracker.h"
 #include "ash/test_shell_delegate.h"
 #include "ash/wm/desks/desk.h"
 #include "ash/wm/desks/desks_controller.h"
@@ -919,10 +914,10 @@ TEST_F(WindowCycleControllerTest, CycleShowsAllDesksWindows) {
 TEST_F(WindowCycleControllerTest, FrameThrottling) {
   FrameThrottlingController* frame_throttling_controller =
       Shell::Get()->frame_throttling_controller();
-  const int window_count = 5;
+  constexpr int window_count = 5;
   std::vector<viz::FrameSinkId> ids{
       {1u, 1u}, {2u, 2u}, {3u, 3u}, {4u, 4u}, {5u, 5u}};
-  std::unique_ptr<aura::Window> windows[window_count];
+  std::array<std::unique_ptr<aura::Window>, window_count> windows;
   for (int i = 0; i < window_count; ++i) {
     windows[i] = CreateAppWindow(gfx::Rect(), chromeos::AppType::BROWSER);
     windows[i]->SetEmbedFrameSinkId(ids[i]);
@@ -1797,31 +1792,6 @@ TEST_F(WindowCycleControllerTest, ArrowKeyBeforeCycleViewUI) {
   controller->HandleKeyboardNavigation(
       WindowCycleController::KeyboardNavDirection::kRight);
   CompleteCycling(controller);
-}
-
-// Tests that raster scale is not set for alt-tab on visible windows.
-TEST_F(WindowCycleControllerTest, RasterScaleNotSetForVisibleWindows) {
-  WindowCycleController* controller = Shell::Get()->window_cycle_controller();
-
-  std::unique_ptr<Window> window0(CreateAppWindow(gfx::Rect(600, 600)));
-  std::unique_ptr<Window> window1(CreateAppWindow(gfx::Rect(600, 600)));
-  wm::ActivateWindow(window0.get());
-
-  auto tracker0 = RasterScaleChangeTracker(window0.get());
-  auto tracker1 = RasterScaleChangeTracker(window1.get());
-
-  // Simulate pressing and releasing Alt-tab.
-  EXPECT_TRUE(wm::IsActiveWindow(window0.get()));
-  controller->HandleCycleWindow(
-      WindowCycleController::WindowCyclingDirection::kForward);
-
-  EXPECT_EQ(std::vector<float>{}, tracker0.TakeRasterScaleChanges());
-  EXPECT_EQ(std::vector<float>{}, tracker1.TakeRasterScaleChanges());
-
-  CompleteCycling(controller);
-
-  EXPECT_EQ(std::vector<float>{}, tracker0.TakeRasterScaleChanges());
-  EXPECT_EQ(std::vector<float>{}, tracker1.TakeRasterScaleChanges());
 }
 
 // Tests the UAF issue reported in https://crbug.com/1350558. `OnFlingStep()`
@@ -3226,15 +3196,6 @@ class MultiUserWindowCycleControllerTest
     shelf_view_test_->SetAnimationDuration(base::Milliseconds(1));
 
     generator_ = GetEventGenerator();
-
-    TestSessionControllerClient* session_controller =
-        GetSessionControllerClient();
-    session_controller->Reset();
-
-    session_controller->AddUserSession(kUser1Email,
-                                       user_manager::UserType::kRegular);
-    session_controller->AddUserSession(kUser2Email,
-                                       user_manager::UserType::kRegular);
   }
 
   void TearDown() override {
@@ -3296,13 +3257,14 @@ class MultiUserWindowCycleControllerTest
   }
 
   void SimulateUserLogin(const AccountId& account_id) {
-    SwitchActiveUser(account_id);
-    multi_user_window_manager_ =
-        MultiUserWindowManager::Create(this, account_id);
-    MultiUserWindowManagerImpl::Get()->SetAnimationSpeedForTest(
-        MultiUserWindowManagerImpl::ANIMATION_SPEED_DISABLED);
-    GetSessionControllerClient()->SetSessionState(
-        session_manager::SessionState::ACTIVE);
+    if (!multi_user_window_manager_) {
+      multi_user_window_manager_ =
+          MultiUserWindowManager::Create(this, account_id);
+      CHECK(MultiUserWindowManagerImpl::Get());
+      MultiUserWindowManagerImpl::Get()->SetAnimationSpeedForTest(
+          MultiUserWindowManagerImpl::ANIMATION_SPEED_DISABLED);
+    }
+    AshTestBase::SimulateUserLogin(account_id);
   }
 
   const aura::Window::Windows GetWindows(WindowCycleController* controller) {
@@ -3389,7 +3351,7 @@ TEST_F(MultiUserWindowCycleControllerTest, AltTabModePrefsUpdateUI) {
   CompleteCycling(cycle_controller);
 
   // Switch to the secondary user_2 and setup the profile with four windows.
-  SwitchActiveUser(GetUser2AccountId());
+  SimulateUserLogin(GetUser2AccountId());
   const Desk* desk_1 = desks_controller->GetDeskAtIndex(0);
   EXPECT_TRUE(desk_1->is_active());
   auto win3 = CreateAppWindow(gfx::Rect(0, 0, 250, 200));
@@ -3469,7 +3431,7 @@ TEST_F(MultiUserWindowCycleControllerTest,
   CompleteCycling(cycle_controller);
 
   // Switch to user_2 and open up two windows out of four in the current desk.
-  SwitchActiveUser(GetUser2AccountId());
+  SimulateUserLogin(GetUser2AccountId());
   const Desk* desk_1 = desks_controller->GetDeskAtIndex(0);
   EXPECT_TRUE(desk_1->is_active());
   auto win3 = CreateAppWindow(gfx::Rect(0, 0, 250, 200));

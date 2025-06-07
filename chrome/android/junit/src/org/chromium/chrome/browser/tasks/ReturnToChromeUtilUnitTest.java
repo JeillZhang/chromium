@@ -30,13 +30,16 @@ import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
-import org.mockito.MockitoAnnotations;
+import org.mockito.Spy;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.Implementation;
 import org.robolectric.annotation.Implements;
@@ -92,11 +95,12 @@ public class ReturnToChromeUtilUnitTest {
 
     private static final int ON_RETURN_THRESHOLD_SECOND = 1000;
     private static final int DELTA_MS = 100;
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private Context mContext;
     @Mock private TabModelSelector mTabModelSelector;
     @Mock private ChromeInactivityTracker mInactivityTracker;
     @Mock private Resources mResources;
-    @Mock private TabModel mCurrentTabModel;
+    @Spy private TabModel mCurrentTabModel;
     @Mock private TabCreator mTabCreater;
     @Mock private Tab mTab1;
     @Mock private Tab mNtpTab;
@@ -108,7 +112,6 @@ public class ReturnToChromeUtilUnitTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         doReturn(JUnitTestGURLs.NTP_NATIVE_URL).when(mNtpTab).getUrl();
 
         // HomepageManager:

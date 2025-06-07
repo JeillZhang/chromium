@@ -26,7 +26,6 @@ All changes to this list should go through Blink's feature review process: http:
     -webkit-mask-position-y
     -webkit-perspective-origin-x
     -webkit-perspective-origin-y
-    -webkit-print-color-adjust
     -webkit-rtl-ordering
     -webkit-ruby-position
     -webkit-tap-highlight-color
@@ -136,6 +135,7 @@ All changes to this list should go through Blink's feature review process: http:
     caption-side
     caret-animation
     caret-color
+    caret-shape
     clear
     clip
     clip-path
@@ -148,11 +148,15 @@ All changes to this list should go through Blink's feature review process: http:
     column-count
     column-fill
     column-gap
+    column-height
+    column-rule-break
     column-rule-color
+    column-rule-outset
     column-rule-style
     column-rule-width
     column-span
     column-width
+    column-wrap
     contain
     contain-intrinsic-block-size
     contain-intrinsic-height
@@ -217,6 +221,7 @@ All changes to this list should go through Blink's feature review process: http:
     font-variation-settings
     font-weight
     forced-color-adjust
+    gap-rule-paint-order
     grid-auto-columns
     grid-auto-flow
     grid-auto-rows
@@ -244,6 +249,7 @@ All changes to this list should go through Blink's feature review process: http:
     interest-target-show-delay
     interpolate-size
     isolation
+    item-tolerance
     justify-content
     justify-items
     justify-self
@@ -278,7 +284,6 @@ All changes to this list should go through Blink's feature review process: http:
     masonry-auto-tracks
     masonry-direction
     masonry-fill
-    masonry-slack
     masonry-template-tracks
     masonry-track-end
     masonry-track-start
@@ -341,6 +346,7 @@ All changes to this list should go through Blink's feature review process: http:
     position-try-fallbacks
     position-try-order
     position-visibility
+    print-color-adjust
     quotes
     r
     reading-flow
@@ -349,6 +355,11 @@ All changes to this list should go through Blink's feature review process: http:
     right
     rotate
     row-gap
+    row-rule-break
+    row-rule-color
+    row-rule-outset
+    row-rule-style
+    row-rule-width
     ruby-align
     ruby-position
     rx
@@ -380,6 +391,7 @@ All changes to this list should go through Blink's feature review process: http:
     scroll-start-inline
     scroll-start-x
     scroll-start-y
+    scroll-target-group
     scroll-timeline-axis
     scroll-timeline-name
     scrollbar-color
@@ -418,11 +430,13 @@ All changes to this list should go through Blink's feature review process: http:
     text-emphasis-color
     text-emphasis-position
     text-emphasis-style
+    text-grow
     text-indent
     text-orientation
     text-overflow
     text-rendering
     text-shadow
+    text-shrink
     text-size-adjust
     text-spacing-trim
     text-transform
@@ -812,6 +826,26 @@ All changes to this list should go through Blink's feature review process: http:
     position-try
         position-try-fallbacks
         position-try-order
+    row-rule
+        row-rule-color
+        row-rule-style
+        row-rule-width
+    rule
+        column-rule-color
+        column-rule-style
+        column-rule-width
+        row-rule-color
+        row-rule-style
+        row-rule-width
+    rule-color
+        column-rule-color
+        row-rule-color
+    rule-style
+        column-rule-style
+        row-rule-style
+    rule-width
+        column-rule-width
+        row-rule-width
     scroll-margin
         scroll-margin-bottom
         scroll-margin-left
@@ -851,6 +885,9 @@ All changes to this list should go through Blink's feature review process: http:
     text-emphasis
         text-emphasis-color
         text-emphasis-style
+    text-spacing
+        text-autospace
+        text-spacing-trim
     text-wrap
         text-wrap-mode
         text-wrap-style
@@ -1063,6 +1100,8 @@ All changes to this list should go through Blink's feature review process: http:
         perspective
     -webkit-perspective-origin
         perspective-origin
+    -webkit-print-color-adjust
+        print-color-adjust
     -webkit-shape-image-threshold
         shape-image-threshold
     -webkit-shape-margin

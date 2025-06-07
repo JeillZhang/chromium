@@ -34,6 +34,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_service.h"
 #include "components/vector_icons/vector_icons.h"
+#include "ui/accessibility/platform/ax_platform.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/models/image_model.h"
@@ -42,6 +43,8 @@
 #include "ui/base/mojom/menu_source_type.mojom-forward.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_type.h"
+#include "ui/gfx/native_widget_types.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/label.h"
@@ -82,22 +85,28 @@ TaskManagerView* g_task_manager_view = nullptr;
 
 }  // namespace
 
-const auto kTabDefinitions = std::to_array<TaskManagerView::FilterTab>(
-    {{
-         .associated_category = DisplayCategory::kTabsAndExtensions,
-         .title_id = IDS_TASK_MANAGER_CATEGORY_TABS_AND_EXTENSIONS_NAME,
-         .icon = &views::kNewTabIcon,
-     },
-     {
-         .associated_category = DisplayCategory::kSystem,
+const auto kTabDefinitions = std::to_array<TaskManagerView::FilterTab>({
+    {
+        .associated_category = DisplayCategory::kTabsAndExtensions,
+        .title_id = IDS_TASK_MANAGER_CATEGORY_TABS_AND_EXTENSIONS_NAME,
+        .icon = &kNewTabRefreshIcon,
+    },
+    {
+        .associated_category = DisplayCategory::kSystem,
 #if BUILDFLAG(IS_CHROMEOS)
-         .title_id = IDS_TASK_MANAGER_CATEGORY_SYSTEM_NAME,
-         .icon = &kLaptopIcon,
+        .title_id = IDS_TASK_MANAGER_CATEGORY_SYSTEM_NAME,
+        .icon = &kLaptopIcon,
 #else
-         .title_id = IDS_TASK_MANAGER_CATEGORY_BROWSER_NAME,
-         .icon = &kBrowserLogoIcon,
+        .title_id = IDS_TASK_MANAGER_CATEGORY_BROWSER_NAME,
+        .icon = &kBrowserLogoIcon,
 #endif
-     }});
+    },
+    {
+        .associated_category = DisplayCategory::kAll,
+        .title_id = IDS_TASK_MANAGER_CATEGORY_ALL_NAME,
+        .icon = &kViewListIcon,
+    },
+});
 
 TaskManagerView::~TaskManagerView() {
   // Delete child views now, while our table model still exists.
@@ -124,8 +133,8 @@ task_manager::TaskManagerTableModel* TaskManagerView::Show(
   // On Chrome OS, pressing Search-Esc when there are no open browser windows
   // will open the task manager on the root window for new windows.
   gfx::NativeWindow context =
-      browser ? browser->window()->GetNativeWindow() : nullptr;
-  CreateDialogWidget(g_task_manager_view, context, nullptr);
+      browser ? browser->window()->GetNativeWindow() : gfx::NativeWindow();
+  CreateDialogWidget(g_task_manager_view, context, gfx::NativeView());
   g_task_manager_view->GetDialogClientView()->SetBackgroundColor(
       kColorTaskManagerBackground);
   g_task_manager_view->InitAlwaysOnTopState();
@@ -145,6 +154,13 @@ task_manager::TaskManagerTableModel* TaskManagerView::Show(
   g_task_manager_view->SelectTaskOfActiveTab(browser);
   g_task_manager_view->GetWidget()->Show();
 
+  if (g_task_manager_view->table_config_.layout_refresh &&
+      ui::AXPlatform::GetInstance().IsScreenReaderActive()) {
+    // For a11y: with the refreshed layout, the top-left most item should be
+    // focused by default so screen readers read out the layout ltr (or flipped
+    // for rtl).
+    g_task_manager_view->tabs_->GetSelectedTab()->RequestFocus();
+  }
 #if BUILDFLAG(IS_CHROMEOS)
   aura::Window* window = g_task_manager_view->GetWidget()->GetNativeWindow();
   // An app id for task manager windows, also used to identify the shelf item.
@@ -206,15 +222,6 @@ void TaskManagerView::SetSortDescriptor(const TableSortDescriptor& descriptor) {
   }
 
   tab_table_->SetSortDescriptors(descriptor_list);
-}
-
-void TaskManagerView::MaybeHighlightActiveTask() {
-  if (table_model_ && tab_table_->selection_model().empty()) {
-    std::optional<size_t> row = table_model_->GetRowForActiveTask();
-    if (row.has_value()) {
-      tab_table_->Select(row.value());
-    }
-  }
 }
 
 gfx::Size TaskManagerView::CalculatePreferredSize(
@@ -307,6 +314,11 @@ void TaskManagerView::OnKeyDown(ui::KeyboardCode keycode) {
   }
 }
 
+void TaskManagerView::OnWidgetInitialized() {
+  GetOkButton()->GetViewAccessibility().SetDescription(
+      l10n_util::GetStringUTF16(IDS_TASK_MANAGER_KILL_ACCESSIBILITY_NAME));
+}
+
 void TaskManagerView::ShowContextMenuForViewImpl(
     views::View* source,
     const gfx::Point& point,
@@ -343,13 +355,9 @@ void TaskManagerView::MenuClosed(ui::SimpleMenuModel* source) {
 }
 
 void TaskManagerView::SearchBarOnInputChanged(std::u16string_view query) {
-  const auto selected_category =
-      query.empty()
-          ? kTabDefinitions[tabs_->GetSelectedTabIndex()].associated_category
-          : DisplayCategory::kAll;
-
-  tabs_->SetEnabled(query.empty());
-  PerformFilter(selected_category, query);
+  search_terms_ = query;
+  PerformFilter(
+      kTabDefinitions[tabs_->GetSelectedTabIndex()].associated_category);
 }
 
 TaskManagerView::TaskManagerView(StartAction start_action)
@@ -475,8 +483,9 @@ std::unique_ptr<views::View> TaskManagerView::CreateHeaderSeparatorUnderlay(
   return separator_container;
 }
 
-void TaskManagerView::PerformFilter(DisplayCategory category,
-                                    std::u16string_view search_term) {
+void TaskManagerView::PerformFilter(DisplayCategory category) {
+  SaveCategoryToLocalState(category);
+
   // When `select_on_remove_` is enabled, the selection will automatically jump
   // to some next/previous row if available. However, this setting needs to be
   // temporarily disabled during model updates to achieve the desired selection
@@ -489,7 +498,7 @@ void TaskManagerView::PerformFilter(DisplayCategory category,
   // no other selection should be applied (a.k.a the selection should clear).
 
   tab_table_->SetSelectOnRemove(false);
-  if (table_model_->UpdateModel(category, search_term)) {
+  if (table_model_->UpdateModel(category, search_terms_)) {
     // Model row count may differ, leading to off-screen row rendering.
     // Recompute scroll position.
     tab_table_->InvalidateLayout();
@@ -540,7 +549,7 @@ std::unique_ptr<views::View> TaskManagerView::CreateSearchBar(
   search_bar_layout->set_cross_axis_alignment(views::LayoutAlignment::kStart);
 
   auto search_bar_container = std::make_unique<views::View>();
-  search_bar_container->SetBackground(views::CreateThemedRoundedRectBackground(
+  search_bar_container->SetBackground(views::CreateRoundedRectBackground(
       kColorTaskManagerSearchBarBackground, search_bar_container_radius));
   search_bar_container->SetLayoutManager(std::move(search_bar_layout));
   const gfx::Size search_bar_size{
@@ -554,19 +563,6 @@ std::unique_ptr<views::View> TaskManagerView::CreateSearchBar(
   search_bar_container->AddChildView(std::move(search_bar));
 
   return search_bar_container;
-}
-
-std::unique_ptr<views::MdTextButton> TaskManagerView::CreateEndProcessButton(
-    const gfx::Insets& margins) {
-  auto button = std::make_unique<views::MdTextButton>();
-  button->SetText(l10n_util::GetStringUTF16(IDS_TASK_MANAGER_KILL));
-  button->SetAccessibleName(
-      l10n_util::GetStringUTF16(IDS_TASK_MANAGER_KILL_ACCESSIBILITY_NAME));
-  button->SetStyle(ui::ButtonStyle::kProminent);
-  button->SetProperty(views::kMarginsKey, margins);
-  button->SetCallback(base::BindRepeating(&TaskManagerView::EndSelectedProcess,
-                                          base::Unretained(this)));
-  return button;
 }
 
 std::unique_ptr<views::ScrollView> TaskManagerView::CreateProcessView(
@@ -623,18 +619,26 @@ void TaskManagerView::Init() {
 
   SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
   SetButtonLabel(ui::mojom::DialogButton::kOk,
-                 l10n_util::GetStringUTF16(IDS_TASK_MANAGER_KILL));
+                 l10n_util::GetStringUTF16(table_config_.layout_refresh
+                                               ? IDS_TASK_MANAGER_KILL_V2
+                                               : IDS_TASK_MANAGER_KILL));
+
+  const auto* provider = ChromeLayoutProvider::Get();
+  const float corner_radius =
+      provider->GetCornerRadiusMetric(views::Emphasis::kHigh);
 
   if (table_config_.header_style) {
-    views::TableHeaderStyle header_style = {
-        .cell_vertical_padding = 14,
-        .cell_horizontal_padding = 12,
-        .resize_bar_vertical_padding = 16,
-        .separator_horizontal_padding = 0,
-        .font_weight = gfx::Font::Weight::MEDIUM,
-        .separator_horizontal_color_id = ui::kColorSysDivider,
-        .separator_vertical_color_id = ui::kColorSysDivider,
-        .background_color_id = kColorTaskManagerTableHeaderBackground};
+    views::TableHeaderStyle header_style(
+        /*cell_vertical_padding=*/14, /*cell_horizontal_padding=*/12,
+        /*resize_bar_vertical_padding=*/16,
+        /*separator_horizontal_padding=*/0,
+        /*font_weight=*/gfx::Font::Weight::MEDIUM,
+        /*separator_horizontal_color_id=*/ui::kColorSysDivider,
+        /*separator_vertical_color_id=*/ui::kColorSysDivider,
+        /*background_color_id=*/kColorTaskManagerTableHeaderBackground,
+        /*focus_ring_upper_corner_radius=*/corner_radius,
+        /*header_sort_state=*/
+        base::FeatureList::IsEnabled(features::kTaskManagerDesktopRefresh));
     tab_table->SetHeaderStyle(header_style);
   }
 
@@ -650,11 +654,10 @@ void TaskManagerView::Init() {
                     kColorTaskManagerTableBackgroundSelectedUnfocused,
             },
         .icons_have_background = true,
+        .inset_focus_ring = true,
     };
     tab_table->SetTableStyle(table_style);
   }
-
-  const auto* provider = ChromeLayoutProvider::Get();
 
   // Margins around all contents
   const gfx::Insets dialog_insets = provider->GetInsetsMetric(
@@ -687,16 +690,19 @@ void TaskManagerView::Init() {
 
   if (table_config_.scroll_view_rounded) {
     tab_table_parent_->SetPaintToLayer(ui::LAYER_TEXTURED);
+
     ui::Layer* scroll_view_layer = tab_table_parent_->layer();
-
-    scroll_view_layer->SetRoundedCornerRadius(gfx::RoundedCornersF(
-        provider->GetCornerRadiusMetric(views::Emphasis::kHigh)));
-
+    scroll_view_layer->SetRoundedCornerRadius(
+        gfx::RoundedCornersF(corner_radius));
     scroll_view_layer->SetIsFastRoundedCorner(true);
   }
 
   table_model_->RetrieveSavedColumnsSettingsAndUpdateTable(
       table_config_.sort_on_cpu_by_default);
+
+  if (table_config_.layout_refresh) {
+    RestoreSavedCategory();
+  }
 
   AddAccelerator(ui::Accelerator(ui::VKEY_W, ui::EF_CONTROL_DOWN));
   AddAccelerator(
@@ -737,11 +743,62 @@ void TaskManagerView::RetrieveSavedAlwaysOnTopState() {
   is_always_on_top_ = dictionary.FindBool("always_on_top").value_or(false);
 }
 
+void TaskManagerView::RestoreSavedCategory() {
+  if (!g_browser_process->local_state()) {
+    return;
+  }
+
+  int category =
+      g_browser_process->local_state()->GetInteger(prefs::kTaskManagerCategory);
+  int max = static_cast<int>(DisplayCategory::kMax);
+
+  // Bounds check the retrieved pref.
+  if (category < 0 || category > max) {
+    category = static_cast<int>(TaskManagerTableModel::kDefaultCategory);
+  }
+
+  const auto parsed_category = static_cast<DisplayCategory>(category);
+
+  // Finds the tab index of the category to restore, or does nothing if the
+  // category no longer exists as a tab.
+  for (size_t i = 0; i < kTabDefinitions.size(); ++i) {
+    if (kTabDefinitions[i].associated_category == parsed_category) {
+      tabs_->SelectTab(tabs_->GetTabAtIndex(i), /*animate=*/false);
+      break;
+    }
+  }
+}
+
+void TaskManagerView::SaveCategoryToLocalState(DisplayCategory category) {
+  PrefService* local_state = g_browser_process->local_state();
+  if (!local_state) {
+    return;
+  }
+
+  // Stores the current tab to be restored again at startup.
+  int category_to_save = static_cast<int>(category);
+  int max = static_cast<int>(DisplayCategory::kMax);
+  int default_category =
+      static_cast<int>(TaskManagerTableModel::kDefaultCategory);
+
+  // Bounds check to ensure that the category is set appropriately.
+  if (category_to_save < 0 || category_to_save > max) {
+    category_to_save = default_category;
+  }
+  local_state->SetInteger(prefs::kTaskManagerCategory, category_to_save);
+}
+
 void TaskManagerView::EndSelectedProcess() {
   using SelectedIndices = ui::ListSelectionModel::SelectedIndices;
   SelectedIndices selection(tab_table_->selection_model().selected_indices());
+  bool any_task_ended = false;
   for (int index : base::Reversed(selection)) {
-    table_model_->KillTask(index);
+    any_task_ended |= table_model_->KillTask(index);
+  }
+
+  // AX: Announce the result of ending a task group.
+  if (table_config_.layout_refresh) {
+    AnnounceTaskEnded(any_task_ended);
   }
 
   base::TimeTicks current_time = base::TimeTicks::Now();
@@ -750,6 +807,12 @@ void TaskManagerView::EndSelectedProcess() {
                                         ++end_process_count_);
   }
   latest_end_process_time_ = current_time;
+}
+
+void TaskManagerView::AnnounceTaskEnded(bool any_task_ended) {
+  GetViewAccessibility().AnnounceText(l10n_util::GetStringUTF16(
+      any_task_ended ? IDS_TASK_MANAGER_TASK_KILL_SUCCESS_ACCESSIBILITY_MESSAGE
+                     : IDS_TASK_MANAGER_TASK_KILL_FAIL_ACCESSIBILITY_MESSAGE));
 }
 
 bool TaskManagerView::IsEndProcessButtonEnabled() const {

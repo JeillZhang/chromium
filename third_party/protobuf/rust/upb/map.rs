@@ -6,7 +6,7 @@
 // https://developers.google.com/open-source/licenses/bsd
 
 use super::opaque_pointee::opaque_pointee;
-use super::{upb_MessageValue, CType, RawArena};
+use super::{upb_Message, upb_MessageValue, CType, RawArena};
 use core::ptr::NonNull;
 
 opaque_pointee!(upb_Map);
@@ -33,6 +33,7 @@ extern "C" {
         arena: RawArena,
     ) -> MapInsertStatus;
     pub fn upb_Map_Get(map: RawMap, key: upb_MessageValue, value: *mut upb_MessageValue) -> bool;
+    pub fn upb_Map_GetMutable(map: RawMap, key: upb_MessageValue) -> *mut upb_Message;
     pub fn upb_Map_Delete(
         map: RawMap,
         key: upb_MessageValue,
@@ -60,6 +61,7 @@ mod tests {
         assert_linked!(upb_Map_Size);
         assert_linked!(upb_Map_Insert);
         assert_linked!(upb_Map_Get);
+        assert_linked!(upb_Map_GetMutable);
         assert_linked!(upb_Map_Delete);
         assert_linked!(upb_Map_Clear);
         assert_linked!(upb_Map_Next);
@@ -106,7 +108,7 @@ mod tests {
 
             let mut out = upb_MessageValue::zeroed();
             assert!(upb_Map_Get(map, upb_MessageValue { bool_val: true }, &mut out));
-            assert!(matches!(out, upb_MessageValue { double_val: 4.0 }));
+            assert_eq!(out.double_val, 4.0);
         }
     }
 }

@@ -211,12 +211,12 @@ bool PasskeySyncBridge::IsEntityDataValid(
 }
 
 std::string PasskeySyncBridge::GetClientTag(
-    const syncer::EntityData& entity_data) {
+    const syncer::EntityData& entity_data) const {
   return GetStorageKey(entity_data);
 }
 
 std::string PasskeySyncBridge::GetStorageKey(
-    const syncer::EntityData& entity_data) {
+    const syncer::EntityData& entity_data) const {
   DCHECK(entity_data.specifics.has_webauthn_credential());
   return entity_data.specifics.webauthn_credential().sync_id();
 }
@@ -351,6 +351,21 @@ bool PasskeySyncBridge::DeletePasskey(const std::string& credential_id,
                      weak_ptr_factory_.GetWeakPtr()));
   NotifyPasskeysChanged(std::move(changes));
   return true;
+}
+
+bool PasskeySyncBridge::SetPasskeyHidden(const std::string& credential_id,
+                                         bool hidden) {
+  return UpdateSinglePasskey(
+      credential_id,
+      base::BindOnce(
+          [](bool hidden,
+             sync_pb::WebauthnCredentialSpecifics* passkey) -> bool {
+            passkey->set_hidden(hidden);
+            passkey->set_hidden_time(
+                base::Time::Now().InMillisecondsSinceUnixEpoch());
+            return true;
+          },
+          hidden));
 }
 
 // The following implementation is more efficient than the simple one which

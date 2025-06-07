@@ -11,10 +11,8 @@ import android.graphics.drawable.Drawable;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.OptIn;
 import androidx.browser.auth.AuthTabIntent;
 import androidx.browser.auth.AuthTabSessionToken;
-import androidx.browser.auth.ExperimentalAuthTab;
 import androidx.browser.customtabs.CustomTabsIntent;
 
 import org.chromium.base.IntentUtils;
@@ -36,7 +34,6 @@ import org.chromium.url.GURL;
  * re-created when color scheme changes, which happens automatically since color scheme change leads
  * to activity re-creation.
  */
-@OptIn(markerClass = ExperimentalAuthTab.class)
 public class AuthTabIntentDataProvider extends BrowserServicesIntentDataProvider {
     private final @NonNull Intent mIntent;
     private final @Nullable String mClientPackageName;
@@ -66,7 +63,7 @@ public class AuthTabIntentDataProvider extends BrowserServicesIntentDataProvider
             Intent intent, Context context, @CustomTabsIntent.ColorScheme int colorScheme) {
         assert intent != null;
         mIntent = intent;
-        AuthTabSessionToken token = AuthTabSessionToken.getSessionTokenFromIntent(intent);
+        AuthTabSessionToken token = AuthTabSessionToken.createSessionTokenFromIntent(intent);
         mSession = token != null ? new SessionHolder<>(token) : null;
         mClientPackageName =
                 IntentUtils.safeGetStringExtra(
@@ -156,8 +153,8 @@ public class AuthTabIntentDataProvider extends BrowserServicesIntentDataProvider
     }
 
     @Override
-    public int getTitleVisibilityState() {
-        return CustomTabsIntent.SHOW_PAGE_TITLE;
+    public @TitleVisibility int getTitleVisibilityState() {
+        return TitleVisibility.VISIBLE;
     }
 
     @Override

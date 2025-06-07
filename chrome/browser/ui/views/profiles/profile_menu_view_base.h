@@ -18,6 +18,7 @@
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/views/close_bubble_on_tab_activation_helper.h"
+#include "chrome/browser/ui/views/controls/hover_button.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "ui/base/metadata/metadata_header_macros.h"
@@ -77,23 +78,10 @@ class ProfileMenuViewBase : public content::WebContentsDelegate,
     kProfileManagementLabel = 20,
     kSigninReauthButton = 21,
     kAutofillSettingsButton = 22,
-    kMaxValue = kAutofillSettingsButton,
+    kHistorySyncOptInButton = 23,
+    kMaxValue = kHistorySyncOptInButton,
   };
   // LINT.ThenChange(//tools/metrics/histograms/metadata/profile/enums.xml:ProfileMenuActionableItem)
-
-  struct EditButtonParams {
-    EditButtonParams(const gfx::VectorIcon* edit_icon,
-                     const std::u16string& edit_tooltip_text,
-                     base::RepeatingClosure edit_action);
-    EditButtonParams(const EditButtonParams&);
-    ~EditButtonParams();
-
-    // RAW_PTR_EXCLUSION: Never allocated by PartitionAlloc (always points to a
-    // global), so there is no benefit to using a raw_ptr, only cost.
-    RAW_PTR_EXCLUSION const gfx::VectorIcon* edit_icon;
-    std::u16string edit_tooltip_text;
-    base::RepeatingClosure edit_action;
-  };
 
   // Parameters for `SetProfileIdentityWithCallToAction()`
   struct IdentitySectionParams {
@@ -151,8 +139,8 @@ class ProfileMenuViewBase : public content::WebContentsDelegate,
   // Size of the profile image in the "Other profiles" section, matches the
   // icon size of other rows.
   static constexpr int kOtherProfileImageSize = 16;
-  static constexpr int kDeprecatedOtherProfileImageSize = 20;
 
+  // `browser` must not be nullptr.
   ProfileMenuViewBase(views::Button* anchor_button, Browser* browser);
   ~ProfileMenuViewBase() override;
 
@@ -162,56 +150,21 @@ class ProfileMenuViewBase : public content::WebContentsDelegate,
   // This method is called once to add all menu items.
   virtual void BuildMenu() = 0;
 
-  // Override to supply a sync icon for the profile menu.
-  virtual gfx::ImageSkia GetSyncIcon() const;
-
-  // If |profile_name| is empty, no heading will be displayed.
-  // `management_badge` and `image_model` do not need to be circular.
-  void SetProfileIdentityInfo(
-      const std::u16string& profile_name,
-      SkColor profile_background_color,
-      std::optional<EditButtonParams> edit_button_params,
-      const ui::ImageModel& image_model,
-      const ui::ImageModel& management_badge,
-      const std::u16string& title,
-      const std::u16string& subtitle = std::u16string(),
-      const std::u16string& management_label = std::u16string(),
-      const gfx::VectorIcon* header_art_icon = nullptr);
-
   // See `IdentitySectionParams` for documentation of the parameters.
   void SetProfileIdentityWithCallToAction(IdentitySectionParams params);
 
-#if !BUILDFLAG(IS_CHROMEOS)
-  // Displays the sync info section as a rounded rectangle with text on top and
-  // a button on the bottom. Clicking the button triggers |action|. |account| is
-  // only used for the sign-in promo for a web-only signed in account.
-  void BuildSyncInfoWithCallToAction(const std::u16string& description,
-                                     const std::u16string& button_text,
-                                     const base::RepeatingClosure& action,
-                                     bool show_sync_badge,
-                                     AccountInfo account = AccountInfo());
-#endif  // !BUILDFLAG(IS_CHROMEOS)
-
-  // Displays the sync info section as a rectangle with text. Clicking the
-  // rectangle triggers |action|.
-  void BuildSyncInfoWithoutCallToAction(const std::u16string& text,
-                                        const base::RepeatingClosure& action);
-  void AddShortcutFeatureButton(const gfx::VectorIcon& icon,
-                                const std::u16string& text,
-                                base::RepeatingClosure action);
   void AddFeatureButton(
       const std::u16string& text,
       base::RepeatingClosure action,
       const gfx::VectorIcon& icon = gfx::VectorIcon::EmptyIcon(),
-      float icon_to_image_ratio = 1.0f);
+      float icon_to_image_ratio = 1.0f,
+      std::optional<ui::ColorId> background_color = std::nullopt,
+      bool add_vertical_margin = false);
   void SetProfileManagementHeading(const std::u16string& heading);
   void AddAvailableProfile(const ui::ImageModel& image_model,
                            const std::u16string& name,
                            bool is_guest,
                            base::RepeatingClosure action);
-  void AddProfileManagementShortcutFeatureButton(const gfx::VectorIcon& icon,
-                                                 const std::u16string& text,
-                                                 base::RepeatingClosure action);
   void AddProfileManagementFeaturesSeparator();
   void AddProfileManagementFeatureButton(const gfx::VectorIcon& icon,
                                          const std::u16string& text,
@@ -219,12 +172,10 @@ class ProfileMenuViewBase : public content::WebContentsDelegate,
 
   void AddBottomMargin();
 
-  gfx::ImageSkia ColoredImageForMenu(const gfx::VectorIcon& icon,
-                                     ui::ColorId color) const;
   // Should be called inside each button/link action.
   void RecordClick(ActionableItem item);
 
-  Browser* browser() const { return browser_; }
+  Profile& profile() const { return *profile_; }
 
   // Return maximal height for the view after which it becomes scrollable.
   // TODO(crbug.com/40587757): remove when a general solution is available.
@@ -250,21 +201,8 @@ class ProfileMenuViewBase : public content::WebContentsDelegate,
   // exists).
   void FocusFirstProfileButton();
 
-  void BuildIdentityInfoColorCallback(const ui::ColorProvider* color_provider);
-
-  void BuildProfileBackgroundContainer(
-      std::unique_ptr<views::View> heading_label,
-      SkColor background_color,
-      std::unique_ptr<views::View> avatar_image_view,
-      std::unique_ptr<views::View> edit_button,
-      const ui::ThemedVectorIcon& avatar_header_art);
-
-  void BuildSyncInfoCallToActionBackground(
-      const ui::ColorProvider* color_provider);
-
   // views::BubbleDialogDelegateView:
   void Init() final;
-  void OnThemeChanged() override;
 
   // content::WebContentsDelegate:
   bool HandleContextMenu(content::RenderFrameHost& render_frame_host,
@@ -274,27 +212,25 @@ class ProfileMenuViewBase : public content::WebContentsDelegate,
 
   void CreateAXWidgetObserver(views::Widget* widget);
 
-  const raw_ptr<Browser> browser_;
+  std::unique_ptr<HoverButton> CreateMenuRowButton(
+      base::RepeatingClosure action,
+      std::unique_ptr<views::View> icon_view,
+      const std::u16string& text);
 
+  const raw_ref<Profile> profile_;
   const raw_ptr<views::Button> anchor_button_;
 
   // Component containers.
   raw_ptr<views::View> identity_info_container_ = nullptr;
-  raw_ptr<views::View> sync_info_container_ = nullptr;
-  raw_ptr<views::View> shortcut_features_container_ = nullptr;
   raw_ptr<views::View> features_container_ = nullptr;
   raw_ptr<views::View> profile_mgmt_separator_container_ = nullptr;
   raw_ptr<views::View> profile_mgmt_heading_container_ = nullptr;
   raw_ptr<views::View> selectable_profiles_container_ = nullptr;
-  raw_ptr<views::View> profile_mgmt_shortcut_features_container_ = nullptr;
   raw_ptr<views::View> profile_mgmt_features_separator_container_ = nullptr;
   raw_ptr<views::View> profile_mgmt_features_container_ = nullptr;
 
   // Child components of `identity_info_container_`.
   raw_ptr<views::FlexLayoutView> profile_background_container_ = nullptr;
-  raw_ptr<views::Label> heading_label_ = nullptr;
-  raw_ptr<views::Label> title_label_ = nullptr;
-  raw_ptr<views::Label> subtitle_label_ = nullptr;
 
   // The first profile button that should be focused when the menu is opened
   // using a key accelerator.
@@ -305,19 +241,6 @@ class ProfileMenuViewBase : public content::WebContentsDelegate,
   bool perform_menu_actions_ = true;
 
   CloseBubbleOnTabActivationHelper close_bubble_helper_;
-
-  // Builds the colors for `profile_background_container_` and `heading_label_`
-  // in `identity_info_container_`. This requires ui::ColorProvider, which is
-  // only available once OnThemeChanged() is called, so the class caches this
-  // callback and calls it afterwards.
-  base::RepeatingCallback<void(const ui::ColorProvider*)>
-      identity_info_color_callback_ = base::DoNothing();
-
-  // Builds the background for |sync_info_container_|. This requires
-  // ui::ColorProvider, which is only available once OnThemeChanged() is called,
-  // so the class caches this callback and calls it afterwards.
-  base::RepeatingCallback<void(const ui::ColorProvider*)>
-      sync_info_background_callback_ = base::DoNothing();
 
   // Actual heading string would be set by children classes.
   std::u16string profile_mgmt_heading_;

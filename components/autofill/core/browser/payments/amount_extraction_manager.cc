@@ -12,9 +12,11 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
+#include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/foundations/autofill_driver.h"
 #include "components/autofill/core/browser/foundations/browser_autofill_manager.h"
-#include "components/autofill/core/browser/integrators/autofill_optimization_guide.h"
+#include "components/autofill/core/browser/integrators/optimization_guide/autofill_optimization_guide.h"
 #include "components/autofill/core/browser/metrics/payments/amount_extraction_metrics.h"
 #include "components/autofill/core/browser/payments/amount_extraction_heuristic_regexes.h"
 #include "components/autofill/core/browser/payments/bnpl_manager.h"
@@ -44,7 +46,7 @@ AmountExtractionManager::MaybeParseAmountToMonetaryMicroUnits(
   if (!RE2::FullMatch(amount, re, &dollar, nullptr, nullptr, &cent)) {
     return std::nullopt;
   }
-  dollar.erase(std::remove(dollar.begin(), dollar.end(), ','), dollar.end());
+  std::erase(dollar, ',');
 
   uint64_t dollar_value = 0;
   uint64_t cent_value = 0;
@@ -65,47 +67,71 @@ AmountExtractionManager::MaybeParseAmountToMonetaryMicroUnits(
   return micro_amount;
 }
 
-bool AmountExtractionManager::ShouldTriggerAmountExtraction(
-    const SuggestionsContext& context,
-    bool should_suppress_suggestions,
-    bool has_suggestions) const {
+DenseSet<AmountExtractionManager::EligibleFeature>
+AmountExtractionManager::GetEligibleFeatures(const SuggestionsContext& context,
+                                             bool should_suppress_suggestions,
+                                             bool has_suggestions,
+                                             FieldType field_type) const {
   // If there is an ongoing search, do not trigger the search.
   if (search_request_pending_) {
-    return false;
+    return {};
   }
-  // If autofill is not available, do not offer BNPL.
+  // If autofill is not available, do not trigger the search.
   if (!context.is_autofill_available) {
-    return false;
-  }
-  // If there are no suggestions, do not show a BNPL chip as suggestions showing
-  // is a requirement for BNPL.
-  if (!has_suggestions) {
-    return false;
-  }
-  // If there are no suggestions, do not show a BNPL chip as suggestions showing
-  // is a requirement for BNPL.
-  if (should_suppress_suggestions) {
-    return false;
-  }
-  // BNPL is only offered for Credit Card filling scenarios.
-  if (context.filling_product != FillingProduct::kCreditCard) {
-    return false;
-  }
-  // If the webpage is not in the amount extraction allowlist, do not trigger
-  // the search.
-  if (!IsUrlEligibleForAmountExtraction()) {
-    return false;
+    return {};
   }
 
-  // TODO(crbug.com/378531706) check that there is at least one BNPL issuer
-  // present.
+  // If the interacted form field is CVC, do not trigger the search.
+  if (kCvcFieldTypes.find(field_type) != kCvcFieldTypes.end()) {
+    return {};
+  }
+
+  // If there are no suggestions, do not trigger the search as suggestions
+  // showing is a requirement for amount extraction.
+  if (!has_suggestions) {
+    return {};
+  }
+  // If there are no suggestions, do not trigger the search as suggestions
+  // showing is a requirement for amount extraction.
+  if (should_suppress_suggestions) {
+    return {};
+  }
+  // Amount extraction is only offered for Credit Card filling scenarios.
+  if (context.filling_product != FillingProduct::kCreditCard) {
+    return {};
+  }
+
+  // None of the projects that use amount extraction are intended to be enabled
+  // in off-the-record mode, so do not run amount extraction in off-the-record
+  // mode.
+  if (autofill_manager_->client().IsOffTheRecord()) {
+    return {};
+  }
+
   if constexpr (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
                 BUILDFLAG(IS_CHROMEOS)) {
-    return base::FeatureList::IsEnabled(
-        ::autofill::features::kAutofillEnableAmountExtractionDesktop);
-  } else {
-    return false;
+    if (base::FeatureList::IsEnabled(
+            ::autofill::features::
+                kAutofillEnableAmountExtractionDesktopLogging)) {
+      // Insert all amount extraction eligible features for logging.
+      return DenseSet<EligibleFeature>::all();
+    }
   }
+
+  const DenseSet<EligibleFeature> eligible_features =
+      CheckEligiblilityForFeaturesRequiringAmountExtraction();
+
+  // Run after all other feature eligibilities are checked to only check feature
+  // flag for eligible users.
+  // TODO(crbug.com/414648193): Rename amount extraction feature flag to
+  // remove the platform restriction.
+  if (!eligible_features.empty() &&
+      base::FeatureList::IsEnabled(
+          ::autofill::features::kAutofillEnableAmountExtractionDesktop)) {
+    return eligible_features;
+  }
+
+  return {};
 }
 
 void AmountExtractionManager::TriggerCheckoutAmountExtraction() {
@@ -113,30 +139,20 @@ void AmountExtractionManager::TriggerCheckoutAmountExtraction() {
     return;
   }
   search_request_pending_ = true;
+  const AmountExtractionHeuristicRegexes& heuristics =
+      AmountExtractionHeuristicRegexes::GetInstance();
   GetMainFrameDriver()->ExtractLabeledTextNodeValue(
-      base::UTF8ToUTF16(
-          AmountExtractionHeuristicRegexes::GetInstance().amount_pattern()),
-      base::UTF8ToUTF16(
-          AmountExtractionHeuristicRegexes::GetInstance().keyword_pattern()),
-      AmountExtractionHeuristicRegexes::GetInstance()
-          .number_of_ancestor_levels_to_search(),
+      base::UTF8ToUTF16(heuristics.amount_pattern()),
+      base::UTF8ToUTF16(heuristics.keyword_pattern()),
+      heuristics.number_of_ancestor_levels_to_search(),
       base::BindOnce(&AmountExtractionManager::OnCheckoutAmountReceived,
                      weak_ptr_factory_.GetWeakPtr(), base::TimeTicks::Now()));
-}
 
-bool AmountExtractionManager::IsUrlEligibleForAmountExtraction() const {
-  if (AutofillOptimizationGuide* autofill_optimization_guide =
-          autofill_manager_->client().GetAutofillOptimizationGuide()) {
-    const GURL& url =
-        autofill_manager_->client().GetLastCommittedPrimaryMainFrameURL();
-    for (std::string_view issuer : BnplManager::GetSupportedBnplIssuerIds()) {
-      if (autofill_optimization_guide
-              ->IsUrlEligibleForCheckoutAmountSearchForIssuerId(issuer, url)) {
-        return true;
-      }
-    }
-  }
-  return false;
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&AmountExtractionManager::OnTimeoutReached,
+                     weak_ptr_factory_.GetWeakPtr()),
+      kAmountExtractionWaitTime);
 }
 
 void AmountExtractionManager::SetSearchRequestPendingForTesting(
@@ -144,15 +160,86 @@ void AmountExtractionManager::SetSearchRequestPendingForTesting(
   search_request_pending_ = search_request_pending;
 }
 
+bool AmountExtractionManager::GetSearchRequestPendingForTesting() {
+  return search_request_pending_;
+}
+
 void AmountExtractionManager::OnCheckoutAmountReceived(
     base::TimeTicks search_request_start_timestamp,
     const std::string& extracted_amount) {
-  autofill_metrics::LogAmountExtractionLatency(
-      base::TimeTicks::Now() - search_request_start_timestamp,
-      !extracted_amount.empty());
+  base::TimeDelta latency =
+      base::TimeTicks::Now() - search_request_start_timestamp;
+  autofill_metrics::LogAmountExtractionLatency(latency,
+                                               !extracted_amount.empty());
+  autofill_metrics::LogAmountExtractionResult(
+      extracted_amount.empty()
+          ? autofill_metrics::AmountExtractionResult::kAmountNotFound
+          : autofill_metrics::AmountExtractionResult::kSuccessful);
   // Set `search_request_pending_` to false once the search is done.
   search_request_pending_ = false;
+  // Invalidate the WeakPtr instance to ignore the scheduled delay task when the
+  // amount is found.
+  weak_ptr_factory_.InvalidateWeakPtrs();
+
+  std::optional<uint64_t> parsed_extracted_amount =
+      MaybeParseAmountToMonetaryMicroUnits(extracted_amount);
+
+  if (BnplManager* bnpl_manager = autofill_manager_->GetPaymentsBnplManager()) {
+    bnpl_manager->OnAmountExtractionReturned(parsed_extracted_amount);
+  }
+  if constexpr (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
+                BUILDFLAG(IS_CHROMEOS)) {
+    if (base::FeatureList::IsEnabled(
+            ::autofill::features::
+                kAutofillEnableAmountExtractionDesktopLogging)) {
+      VLOG(3) << "The result of amount extraction on domain "
+              << autofill_manager_->client()
+                     .GetLastCommittedPrimaryMainFrameOrigin()
+              << " is " << extracted_amount << " with latency of "
+              << latency.InMilliseconds() << " milliseconds.";
+    }
+  }
+}
+
+void AmountExtractionManager::OnTimeoutReached() {
+  // If the amount is found, ignore this callback.
+  if (!search_request_pending_) {
+    return;
+  }
+  search_request_pending_ = false;
+  weak_ptr_factory_.InvalidateWeakPtrs();
+  autofill_metrics::LogAmountExtractionResult(
+      autofill_metrics::AmountExtractionResult::kTimeout);
   // TODO(crbug.com/378517983): Add BNPL flow action logic here.
+  if constexpr (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
+                BUILDFLAG(IS_CHROMEOS)) {
+    if (base::FeatureList::IsEnabled(
+            ::autofill::features::
+                kAutofillEnableAmountExtractionDesktopLogging)) {
+      VLOG(3) << "The amount extraction on domain "
+              << autofill_manager_->client()
+                     .GetLastCommittedPrimaryMainFrameOrigin()
+              << " reached a timeout.";
+    }
+  }
+}
+
+DenseSet<AmountExtractionManager::EligibleFeature>
+AmountExtractionManager::CheckEligiblilityForFeaturesRequiringAmountExtraction()
+    const {
+  DenseSet<EligibleFeature> eligible_features;
+
+  // Check eligibility of BNPL feature.
+  // Currently, BNPL is only offered for desktop platforms.
+  if constexpr (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
+                BUILDFLAG(IS_CHROMEOS)) {
+    if (BnplManager* bnpl_manager = autofill_manager_->GetPaymentsBnplManager();
+        bnpl_manager && bnpl_manager->IsEligibleForBnpl()) {
+      eligible_features.insert(EligibleFeature::kBnpl);
+    }
+  }
+
+  return eligible_features;
 }
 
 AutofillDriver* AmountExtractionManager::GetMainFrameDriver() {

@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/enterprise/signin/managed_profile_required_navigation_throttle.h"
 #include "chrome/browser/ui/profiles/profile_picker.h"
@@ -71,8 +72,10 @@ void ManagedProfileRequiredPage::PopulateInterstitialStrings(
       l10n_util::GetStringFUTF16(
           IDS_MANAGED_PROFILE_INTERSTITIAL_PRIMARY_PARAGRAPH, email_));
 
-  load_time_data.Set("heading", l10n_util::GetStringUTF16(
-                                    IDS_MANAGED_PROFILE_INTERSTITIAL_HEADING));
+  load_time_data.Set(
+      "heading",
+      l10n_util::GetStringUTF16(
+          IDS_ENTERPRISE_VALUE_PROPOSITION_PROFILE_REQUIRED_BY_ORG_TITLE));
   load_time_data.Set("primaryButtonText",
                      l10n_util::GetStringUTF16(IDS_APP_CONTINUE));
 }
@@ -141,9 +144,6 @@ void ManagedProfileRequiredPage::PopulateStringsForSharedHTML(
   load_time_data.Set("managed-profile-required", true);
   load_time_data.Set("overridable", false);
   load_time_data.Set("hide_primary_button", false);
-  load_time_data.Set("show_recurrent_error_paragraph", false);
-
-  load_time_data.Set("recurrentErrorParagraph", "");
   load_time_data.Set("openDetails", "");
   load_time_data.Set("optInLink", "");
   load_time_data.Set("enhancedProtectionMessage", "");

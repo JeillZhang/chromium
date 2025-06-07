@@ -48,11 +48,13 @@
 #include "chrome/browser/download/notification/download_notification_manager.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+#include "components/download/public/common/desktop/desktop_auto_resumption_handler.h"
+#include "components/download/public/common/download_features.h"
+#endif
+
 namespace {
 
-// DownloadShelfUIControllerDelegate{Android,} is used when a
-// DownloadUIController is
-// constructed without specifying an explicit Delegate.
 #if BUILDFLAG(IS_ANDROID)
 
 class AndroidUIControllerDelegate : public DownloadUIController::Delegate {
@@ -82,53 +84,6 @@ void InitializeDownloadBubbleUpdateService(Profile* profile,
   download_bubble_update_service->Initialize(manager);
 }
 
-class DownloadShelfUIControllerDelegate
-    : public DownloadUIController::Delegate {
- public:
-  // |profile| is required to outlive DownloadShelfUIControllerDelegate.
-  explicit DownloadShelfUIControllerDelegate(Profile* profile)
-      : profile_(profile) {}
-  ~DownloadShelfUIControllerDelegate() override = default;
-
- private:
-  // DownloadUIController::Delegate
-  void OnNewDownloadReady(download::DownloadItem* item) override;
-
-  raw_ptr<Profile> profile_;
-};
-
-void DownloadShelfUIControllerDelegate::OnNewDownloadReady(
-    download::DownloadItem* item) {
-  content::WebContents* web_contents =
-      content::DownloadItemUtils::GetWebContents(item);
-  // For the case of DevTools web contents, we'd like to use target browser
-  // shelf although saving from the DevTools web contents.
-  if (web_contents && DevToolsWindow::IsDevToolsWindow(web_contents)) {
-    DevToolsWindow* devtools_window =
-        DevToolsWindow::AsDevToolsWindow(web_contents);
-    content::WebContents* inspected =
-        devtools_window->GetInspectedWebContents();
-    // Do not overwrite web contents for the case of remote debugging.
-    if (inspected)
-      web_contents = inspected;
-  }
-  Browser* browser =
-      web_contents ? chrome::FindBrowserWithTab(web_contents) : nullptr;
-
-  // As a last resort, use the last active browser for this profile. Not ideal,
-  // but better than not showing the download at all.
-  if (browser == nullptr)
-    browser = chrome::FindLastActiveWithProfile(profile_);
-
-  if (browser && browser->window() && browser->window()->GetDownloadShelf() &&
-      DownloadItemModel(item).ShouldShowInShelf()) {
-    DownloadUIModel::DownloadUIModelPtr model = DownloadItemModel::Wrap(item);
-
-    // GetDownloadShelf creates the download shelf if it was not yet created.
-    browser->window()->GetDownloadShelf()->AddDownload(std::move(model));
-  }
-}
-
 class DownloadBubbleUIControllerDelegate
     : public DownloadUIController::Delegate {
  public:
@@ -151,6 +106,15 @@ class DownloadBubbleUIControllerDelegate
 
 void DownloadBubbleUIControllerDelegate::OnNewDownloadReady(
     download::DownloadItem* item) {
+  // Here the item will be surfaced to the bubble UI and should
+  // subject to the auto resumption logic.
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  if (download::features::IsBackoffInDownloadingEnabled()) {
+    auto* handler = download::DesktopAutoResumptionHandler::Get();
+    item->RemoveObserver(handler);
+    item->AddObserver(handler);
+  }
+#endif
   if (!DownloadItemModel(item).ShouldShowInBubble())
     return;
   // crx downloads are handled by the DownloadBubbleUpdateService.
@@ -248,12 +212,9 @@ DownloadUIController::DownloadUIController(content::DownloadManager* manager,
   if (!delegate_) {
     Profile* profile =
         Profile::FromBrowserContext(manager->GetBrowserContext());
-    if (download::IsDownloadBubbleEnabled()) {
-      delegate_ = std::make_unique<DownloadBubbleUIControllerDelegate>(profile);
-      InitializeDownloadBubbleUpdateService(profile, manager);
-    } else {
-      delegate_ = std::make_unique<DownloadShelfUIControllerDelegate>(profile);
-    }
+    CHECK(download::IsDownloadBubbleEnabled());
+    delegate_ = std::make_unique<DownloadBubbleUIControllerDelegate>(profile);
+    InitializeDownloadBubbleUpdateService(profile, manager);
   }
 #endif  // BUILDFLAG(IS_ANDROID)
 }

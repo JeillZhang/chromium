@@ -59,6 +59,7 @@ class FakeTraceWriter : public perfetto::TraceWriterBase,
   void FinishTracePacket() override { NOTREACHED(); }
   void Flush(std::function<void()> callback = {}) override {}
   uint64_t written() const override { return 0u; }
+  uint64_t drop_count() const override { return 0u; }
 
   // protozero::MessageFinalizationListener:
   void OnMessageFinalized(protozero::Message* message) override {
@@ -510,11 +511,11 @@ TEST_F(EtwConsumerTest, CSwitchEvent) {
   EXPECT_EQ(0x02, c_switch->old_thread_priority());
   EXPECT_EQ(0x03u, c_switch->previous_c_state());
   EXPECT_EQ(perfetto::protos::pbzero::CSwitchEtwEvent::WR_RUNDOWN,
-            c_switch->old_thread_wait_reason());
+            c_switch->old_thread_wait_reason_int());
   EXPECT_EQ(perfetto::protos::pbzero::CSwitchEtwEvent::USER_MODE,
-            c_switch->old_thread_wait_mode());
+            c_switch->old_thread_wait_mode_int());
   EXPECT_EQ(perfetto::protos::pbzero::CSwitchEtwEvent::DEFERRED_READY,
-            c_switch->old_thread_state());
+            c_switch->old_thread_state_int());
   EXPECT_EQ(0x04, c_switch->old_thread_wait_ideal_processor());
   EXPECT_EQ(0x05u, c_switch->new_thread_wait_time());
 }

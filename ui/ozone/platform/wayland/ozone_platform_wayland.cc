@@ -58,6 +58,7 @@
 #include "ui/ozone/public/input_controller.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/ozone/public/platform_menu_utils.h"
+#include "ui/ozone/public/platform_session_manager.h"
 #include "ui/ozone/public/stub_input_controller.h"
 #include "ui/ozone/public/system_input_injector.h"
 #include "ui/platform_window/platform_window_init_properties.h"
@@ -175,7 +176,8 @@ class OzonePlatformWayland : public OzonePlatform,
   std::unique_ptr<InputMethod> CreateInputMethod(
       ImeKeyEventDispatcher* ime_key_event_dispatcher,
       gfx::AcceleratedWidget widget) override {
-    return std::make_unique<InputMethodAuraLinux>(ime_key_event_dispatcher);
+    return std::make_unique<InputMethodAuraLinux>(ime_key_event_dispatcher,
+                                                  widget);
   }
 
   PlatformMenuUtils* GetPlatformMenuUtils() override {
@@ -383,6 +385,7 @@ class OzonePlatformWayland : public OzonePlatform,
           (connection_->xdg_decoration_manager_v1() != nullptr &&
            override_supports_ssd_for_test == SupportsForTest::kNotSet) ||
           override_supports_ssd_for_test == SupportsForTest::kYes;
+      properties.supports_server_window_menus = connection_->shell();
       properties.supports_overlays =
           connection_->ShouldUseOverlayDelegation() &&
           connection_->viewporter();
@@ -403,12 +406,19 @@ class OzonePlatformWayland : public OzonePlatform,
                SupportsForTest::kNotSet) ||
           (override_supports_per_window_scaling_for_test ==
            SupportsForTest::kYes);
+      properties.supports_session_management =
+          connection_->SupportsSessionManagement();
+
+      GetSessionManager();
 
       if (surface_factory_) {
         DCHECK(has_initialized_gpu());
         properties.supports_native_pixmaps =
             surface_factory_->SupportsNativePixmaps();
       }
+
+      properties.supports_global_application_menus =
+          connection_->org_kde_kwin_appmenu_manager() != nullptr;
     } else if (buffer_manager_) {
       DCHECK(has_initialized_gpu());
       // These properties are set when the GetPlatformRuntimeProperties is
@@ -489,6 +499,10 @@ class OzonePlatformWayland : public OzonePlatform,
       case PlatformKeyboardHookTypes::kMedia:
         return nullptr;
     }
+  }
+
+  PlatformSessionManager* GetSessionManager() override {
+    return connection_->session_manager();
   }
 
   // OSExchangeDataProviderFactoryOzone:

@@ -23,13 +23,10 @@
 #include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
 #include "build/build_config.h"
+#include "ui/base/models/image_model.h"
 #include "ui/base/resource/resource_scale_factor.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/image/image.h"
-
-#if BUILDFLAG(IS_CHROMEOS)
-#include "ui/base/models/image_model.h"
-#endif
 
 class SkBitmap;
 
@@ -70,6 +67,13 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
     MediumBoldFont,
     LargeFont,
   };
+
+#if BUILDFLAG(IS_ANDROID)
+  struct FdAndRegion {
+    int fd;
+    base::MemoryMappedFile::Region region;
+  };
+#endif  // BUILDFLAG(IS_ANDROID)
 
   struct COMPONENT_EXPORT(UI_BASE) FontDetails {
     explicit FontDetails(std::string typeface = std::string(),
@@ -159,11 +163,24 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
     virtual ~Delegate() = default;
   };
 
+  // RAII object for tests that wraps SwapSharedInstanceForTesting() to swap out
+  // (and then back in) the current shared instance and, on Android, also the
+  // Android global locale packs.
+  class COMPONENT_EXPORT(UI_BASE) SharedInstanceSwapperForTesting {
+   public:
+    SharedInstanceSwapperForTesting();
+    ~SharedInstanceSwapperForTesting();
+
+   private:
+    raw_ptr<ResourceBundle> instance_;
+#if BUILDFLAG(IS_ANDROID)
+    std::vector<ResourceBundle::FdAndRegion> android_locale_packs_;
+#endif  // BUILDFLAG(IS_ANDROID)
+  };
+
   using LottieData = std::vector<uint8_t>;
-#if BUILDFLAG(IS_CHROMEOS)
   using LottieImageParseFunction = gfx::ImageSkia (*)(LottieData);
   using LottieThemedImageParseFunction = ui::ImageModel (*)(LottieData);
-#endif
 
   // Initialize the ResourceBundle for this process. Does not take ownership of
   // the |delegate| value. Returns the language selected or an empty string if
@@ -201,8 +218,21 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
   // Delete the ResourceBundle for this process if it exists.
   static void CleanupSharedInstance();
 
-  // Returns the existing shared instance and sets it to the given instance.
-  static ResourceBundle* SwapSharedInstanceForTesting(ResourceBundle* instance);
+  // Returns the existing shared instance and sets it to the given instance. On
+  // Android, it also sets the global android locale pack data to
+  // |new_android_locale_packs| and returns the original data in
+  // |old_android_locale_packs|.
+  //
+  // Prefer to use the RAII class SharedInstanceSwapperForTesting instead of
+  // calling this directly when possible.
+  static ResourceBundle* SwapSharedInstanceForTesting(
+      ResourceBundle* instance
+#if BUILDFLAG(IS_ANDROID)
+      ,
+      const std::vector<ResourceBundle::FdAndRegion>& new_android_locale_packs,
+      std::vector<ResourceBundle::FdAndRegion>* old_android_locale_packs
+#endif  // BUILDFLAG(IS_ANDROID)
+  );
 
   // Returns true after the global resource loader instance has been created.
   static bool HasSharedInstance();
@@ -210,12 +240,6 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
   // Initialize the ResourceBundle using data pack from given buffer.
   // Return the global resource loader instance.
   static ResourceBundle& GetSharedInstance();
-
-#if BUILDFLAG(IS_CHROMEOS)
-  static void SetLottieParsingFunctions(
-      LottieImageParseFunction parse_lottie_as_still_image,
-      LottieThemedImageParseFunction parse_lottie_as_themed_still_image);
-#endif
 
   // Exposed for testing, otherwise use GetSharedInstance().
   explicit ResourceBundle(Delegate* delegate);
@@ -292,11 +316,9 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
   // `SkottieWrapper`.
   std::optional<LottieData> GetLottieData(int resource_id) const;
 
-#if BUILDFLAG(IS_CHROMEOS)
   // Gets a themed Lottie image (not animated) with the specified |resource_id|
   // from the current module data. |ResourceBundle| owns the result.
   const ui::ImageModel& GetThemedLottieImageNamed(int resource_id);
-#endif
 
   // Returns true if LoadDataResourceBytes would return non-null data for the
   // specified |resource_id|.
@@ -510,9 +532,7 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
   // Returns an empty image for when a resource cannot be loaded. This is a
   // bright red bitmap.
   gfx::Image& GetEmptyImage();
-#if BUILDFLAG(IS_CHROMEOS)
   const ui::ImageModel& GetEmptyImageModel();
-#endif
 
   const base::FilePath& GetOverriddenPakPath() const;
 
@@ -536,8 +556,7 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
   std::unique_ptr<base::Lock> locale_resources_data_lock_;
 
   // Handles for data sources.
-  std::unique_ptr<ResourceHandle> locale_resources_data_;
-  std::unique_ptr<ResourceHandle> secondary_locale_resources_data_;
+  std::vector<std::unique_ptr<ResourceHandle>> locale_resources_data_;
   std::vector<std::unique_ptr<ResourceHandle>> resource_handles_;
 
   // The maximum scale factor currently loaded.
@@ -547,15 +566,11 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
   // ownership of the pointers.
   using ImageMap = std::map<int, gfx::Image>;
   ImageMap images_;
-#if BUILDFLAG(IS_CHROMEOS)
   using ImageModelMap = std::map<int, ui::ImageModel>;
   ImageModelMap image_models_;
-#endif
 
   gfx::Image empty_image_;
-#if BUILDFLAG(IS_CHROMEOS)
   ui::ImageModel empty_image_model_;
-#endif
 
   // The various font lists used, as a map from a signed size delta from the
   // platform base font size, plus style, to the FontList. Cached to avoid

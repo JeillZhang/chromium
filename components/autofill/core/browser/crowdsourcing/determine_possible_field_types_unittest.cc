@@ -4,16 +4,21 @@
 
 #include "components/autofill/core/browser/crowdsourcing/determine_possible_field_types.h"
 
+#include "base/containers/to_vector.h"
 #include "base/feature_list.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/test/task_environment.h"
-#include "components/autofill/core/browser/data_model/autofill_i18n_api.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "base/types/zip.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_i18n_api.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/foundations/test_autofill_client.h"
 #include "components/autofill/core/browser/geo/alternative_state_name_map_test_utils.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
+#include "components/autofill/core/browser/test_utils/valuables_data_test_utils.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_test_utils.h"
 #include "components/autofill/core/common/form_data_test_api.h"
@@ -27,7 +32,13 @@ using ::autofill::test::CreateTestFormField;
 using ::autofill::test::CreateTestSelectField;
 using ::testing::Contains;
 using ::testing::ElementsAre;
+using ::testing::Field;
+using ::testing::IsEmpty;
+using ::testing::Matcher;
 using ::testing::Not;
+using ::testing::Pair;
+using ::testing::UnorderedElementsAre;
+using ::testing::UnorderedElementsAreArray;
 
 // Fakes that a `form` has been seen (without its field value) and parsed and
 // then values have been entered. Returns the resulting FormStructure.
@@ -145,11 +156,7 @@ class ProfileMatchingTypesTest
  public:
   ProfileMatchingTypesTest() {
     features_.InitWithFeatures(
-        {features::kAutofillUseCAAddressModel,
-         features::kAutofillUseFRAddressModel,
-         features::kAutofillUseITAddressModel,
-         features::kAutofillUseNLAddressModel,
-         features::kAutofillUseNegativePatternForAllAttributes,
+        {features::kAutofillUseNegativePatternForAllAttributes,
          features::kAutofillSupportLastNamePrefix},
         {});
   }
@@ -321,8 +328,12 @@ TEST_P(ProfileMatchingTypesTest, DeterminePossibleFieldTypesForUpload) {
   std::unique_ptr<FormStructure> form_structure =
       ConstructFormStructureFromFormData(form);
 
-  DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+  DeterminePossibleFieldTypesForUpload(
+      profiles, credit_cards, std::vector<EntityInstance>(),
+      std::vector<LoyaltyCard>(),
+      /*fields_that_match_state=*/{},
+      /*last_unlocked_credit_card_cvc=*/u"", /*dates_and_formats=*/{}, "en-us",
+      *form_structure);
 
   ASSERT_EQ(1U, form_structure->field_count());
 
@@ -335,8 +346,19 @@ INSTANTIATE_TEST_SUITE_P(DeterminePossibleFieldTypesForUploadTest,
                          testing::ValuesIn(kProfileMatchingTypesTestCases));
 
 class DeterminePossibleFieldTypesForUploadTest : public ::testing::Test {
- protected:
+ public:
+  DeterminePossibleFieldTypesForUploadTest() {
+    scoped_feature_list_.InitWithFeatures(
+        {features::kAutofillAiWithDataSchema,
+         features::kAutofillAiVoteForFormatStringsFromSingleFields,
+         features::kAutofillAiVoteForFormatStringsFromMultipleFields,
+         features::kAutofillEnableLoyaltyCardsFilling},
+        {});
+  }
+
+ private:
   test::AutofillUnitTestEnvironment autofill_test_environment_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // If a server-side credit card is unmasked by entering the CVC, the
@@ -368,8 +390,12 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest, CrowdsourceCVCFieldByValue) {
       ConstructFormStructureFromFormData(form);
   form_structure->field(0)->set_possible_types({CREDIT_CARD_NUMBER});
 
-  DeterminePossibleFieldTypesForUpload(profiles, credit_cards, kCvc16, "en-us",
-                                       &*form_structure);
+  DeterminePossibleFieldTypesForUpload(
+      profiles, credit_cards, std::vector<EntityInstance>(),
+      std::vector<LoyaltyCard>(),
+      /*fields_that_match_state=*/{},
+      /*last_unlocked_credit_card_cvc=*/kCvc16, /*dates_and_formats=*/{},
+      "en-us", *form_structure);
 
   CheckThatOnlyFieldByIndexHasThisPossibleType(
       *form_structure, 2, CREDIT_CARD_VERIFICATION_CODE,
@@ -416,8 +442,12 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest,
   // Set up the test profiles.
   std::vector<AutofillProfile> profiles;
 
-  DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+  DeterminePossibleFieldTypesForUpload(
+      profiles, credit_cards, std::vector<EntityInstance>(),
+      std::vector<LoyaltyCard>(),
+      /*fields_that_match_state=*/{},
+      /*last_unlocked_credit_card_cvc=*/std::u16string(),
+      /*dates_and_formats=*/{}, "en-us", *form_structure);
 
   CheckThatOnlyFieldByIndexHasThisPossibleType(*form_structure, 2,
                                                CREDIT_CARD_VERIFICATION_CODE,
@@ -464,8 +494,12 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest,
   // Set up the test profiles.
   std::vector<AutofillProfile> profiles;
 
-  DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+  DeterminePossibleFieldTypesForUpload(
+      profiles, credit_cards, std::vector<EntityInstance>(),
+      std::vector<LoyaltyCard>(),
+      /*fields_that_match_state=*/{},
+      /*last_unlocked_credit_card_cvc=*/std::u16string(),
+      /*dates_and_formats=*/{}, "en-us", *form_structure);
 
   CheckThatOnlyFieldByIndexHasThisPossibleType(*form_structure, 2,
                                                CREDIT_CARD_VERIFICATION_CODE,
@@ -511,8 +545,12 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest,
   // Set up the test profiles.
   std::vector<AutofillProfile> profiles;
 
-  DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+  DeterminePossibleFieldTypesForUpload(
+      profiles, credit_cards, std::vector<EntityInstance>(),
+      std::vector<LoyaltyCard>(),
+      /*fields_that_match_state=*/{},
+      /*last_unlocked_credit_card_cvc=*/std::u16string(),
+      /*dates_and_formats=*/{}, "en-us", *form_structure);
 
   CheckThatOnlyFieldByIndexHasThisPossibleType(*form_structure, 1,
                                                CREDIT_CARD_VERIFICATION_CODE,
@@ -558,8 +596,12 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest,
   // Set up the test profiles.
   std::vector<AutofillProfile> profiles;
 
-  DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+  DeterminePossibleFieldTypesForUpload(
+      profiles, credit_cards, std::vector<EntityInstance>(),
+      std::vector<LoyaltyCard>(),
+      /*fields_that_match_state=*/{},
+      /*last_unlocked_credit_card_cvc=*/std::u16string(),
+      /*dates_and_formats=*/{}, "en-us", *form_structure);
   CheckThatNoFieldHasThisPossibleType(*form_structure,
                                       CREDIT_CARD_VERIFICATION_CODE);
 }
@@ -602,11 +644,110 @@ TEST_F(DeterminePossibleFieldTypesForUploadTest,
   // Set up the test profiles.
   std::vector<AutofillProfile> profiles;
 
-  DeterminePossibleFieldTypesForUpload(profiles, credit_cards, std::u16string(),
-                                       "en-us", &*form_structure);
+  DeterminePossibleFieldTypesForUpload(
+      profiles, credit_cards, std::vector<EntityInstance>(),
+      std::vector<LoyaltyCard>(),
+      /*fields_that_match_state=*/{},
+      /*last_unlocked_credit_card_cvc=*/u"", /*dates_and_formats=*/{}, "en-us",
+      *form_structure);
 
   CheckThatNoFieldHasThisPossibleType(*form_structure,
                                       CREDIT_CARD_VERIFICATION_CODE);
+}
+
+// Tests if the loyalty card field detected.
+TEST_F(DeterminePossibleFieldTypesForUploadTest, CrowdsourceLoyaltyCardField) {
+  constexpr char loyalty_card_program[] = "test_program";
+  constexpr char loyalty_card_number[] = "4234567890123456";
+
+  FormData form;
+  form.set_fields(
+      {// Loyalty card program field.
+       CreateTestFormField("program", "program", loyalty_card_program,
+                           FormControlType::kInputText),
+       // Loyalty card number field.
+       CreateTestFormField("loyalty_number", "loyalty_number",
+                           loyalty_card_number, FormControlType::kInputText)});
+
+  std::unique_ptr<FormStructure> form_structure =
+      ConstructFormStructureFromFormData(form);
+
+  // Set the field types.
+  form_structure->field(0)->set_possible_types({LOYALTY_MEMBERSHIP_PROGRAM});
+
+  // Set up the test loyalty cards.
+  std::vector<LoyaltyCard> loyalty_cards;
+  LoyaltyCard loyalty_card = test::CreateLoyaltyCard();
+  loyalty_card.set_loyalty_card_number(loyalty_card_number);
+  loyalty_cards.push_back(loyalty_card);
+  DeterminePossibleFieldTypesForUpload(
+      std::vector<AutofillProfile>(), std::vector<CreditCard>(),
+      std::vector<EntityInstance>(), loyalty_cards,
+      /*fields_that_match_state=*/{},
+      /*last_unlocked_credit_card_cvc=*/u"", /*dates_and_formats=*/{}, "en-us",
+      *form_structure);
+
+  CheckThatOnlyFieldByIndexHasThisPossibleType(*form_structure, 1,
+                                               LOYALTY_MEMBERSHIP_ID,
+                                               FieldPropertiesFlags::kNoFlags);
+}
+
+// Tests if the Autofill AI field types are crowdsourced.
+TEST_F(DeterminePossibleFieldTypesForUploadTest, CrowdsourceAutofillAiTypes) {
+  FormData form;
+  form.set_fields({
+      CreateTestFormField("first-name", "first-name", "Pippi",
+                          FormControlType::kInputText),
+      CreateTestFormField("last-name", "last-name", "Longstocking",
+                          FormControlType::kInputText),
+      CreateTestFormField("number", "number", "1234567",
+                          FormControlType::kInputText),
+      CreateTestFormField("expiry-date", "expiry-date", "30/08/2019",
+                          FormControlType::kInputText),
+      CreateTestFormField("issue", "issue-day", "01",
+                          FormControlType::kInputText),
+      CreateTestFormField("issue", "issue-month", "09",
+                          FormControlType::kInputText),
+      CreateTestFormField("issue", "issue-year", "2010",
+                          FormControlType::kInputText),
+      CreateTestFormField("wrong-country", "wrong-country", "Finland",
+                          FormControlType::kInputText),
+  });
+  std::unique_ptr<FormStructure> form_structure =
+      ConstructFormStructureFromFormData(form);
+
+  EntityInstance entity = test::GetPassportEntityInstance({
+      .name = u"Pippi Longstocking",
+      .number = u"1234567",
+      .country = u"Sweden",
+      .expiry_date = u"2019-08-30",
+      .issue_date = u"2010-09-01",
+  });
+
+  DeterminePossibleFieldTypesForUpload(
+      std::vector<AutofillProfile>(), std::vector<CreditCard>(),
+      base::span_from_ref(entity), std::vector<LoyaltyCard>(),
+      /*fields_that_match_state=*/{},
+      /*last_unlocked_credit_card_cvc=*/u"",
+      ExtractDatesInFields(form_structure->fields()), "en-US", *form_structure);
+
+  EXPECT_THAT(form_structure->fields()[0]->possible_types(),
+              UnorderedElementsAre(PASSPORT_NAME_TAG, NAME_FIRST));
+  EXPECT_THAT(
+      form_structure->fields()[1]->possible_types(),
+      UnorderedElementsAre(PASSPORT_NAME_TAG, NAME_LAST, NAME_LAST_SECOND));
+  EXPECT_THAT(form_structure->fields()[2]->possible_types(),
+              UnorderedElementsAre(PASSPORT_NUMBER));
+  EXPECT_THAT(form_structure->fields()[3]->possible_types(),
+              UnorderedElementsAre(PASSPORT_EXPIRATION_DATE));
+  EXPECT_THAT(form_structure->fields()[4]->possible_types(),
+              UnorderedElementsAre(PASSPORT_ISSUE_DATE));
+  EXPECT_THAT(form_structure->fields()[5]->possible_types(),
+              UnorderedElementsAre(PASSPORT_ISSUE_DATE));
+  EXPECT_THAT(form_structure->fields()[6]->possible_types(),
+              UnorderedElementsAre(PASSPORT_ISSUE_DATE));
+  EXPECT_THAT(form_structure->fields()[7]->possible_types(),
+              UnorderedElementsAre(UNKNOWN_TYPE));
 }
 
 // Test fixture for PreProcessStateMatchingTypes().
@@ -637,6 +778,8 @@ class PreProcessStateMatchingTypesTest : public testing::Test {
 TEST_F(PreProcessStateMatchingTypesTest, PreProcessStateMatchingTypes) {
   const char* const kValidMatches[] = {"by", "Bavaria", "Bayern",
                                        "BY", "B.Y",     "B-Y"};
+  std::vector<const AutofillProfile*> profiles = {&profile()};
+
   for (const char* valid_match : kValidMatches) {
     SCOPED_TRACE(valid_match);
     FormData form;
@@ -649,17 +792,12 @@ TEST_F(PreProcessStateMatchingTypesTest, PreProcessStateMatchingTypes) {
     ASSERT_EQ(form_structure.field_count(), 2U);
     form_structure.fields()[0]->set_value(u"Test");
     form_structure.fields()[1]->set_value(base::UTF8ToUTF16(valid_match));
-    if (base::FeatureList::IsEnabled(features::kAutofillFixValueSemantics)) {
-      // If kAutofillFixValueSemantics is disabled, there's no distinction
-      // between the current and initial value.
-      ASSERT_EQ(form_structure.fields()[0]->value(ValueSemantics::kInitial),
-                u"");
-      ASSERT_EQ(form_structure.fields()[1]->value(ValueSemantics::kInitial),
-                u"");
-    }
+    ASSERT_EQ(form_structure.fields()[0]->initial_value(), u"");
+    ASSERT_EQ(form_structure.fields()[1]->initial_value(), u"");
 
-    PreProcessStateMatchingTypes(client(), {profile()}, form_structure);
-    EXPECT_TRUE(form_structure.field(1)->state_is_a_matching_type());
+    EXPECT_THAT(PreProcessStateMatchingTypes(profiles, form_structure,
+                                             client().GetAppLocale()),
+                ElementsAre(form_structure.field(1)->global_id()));
   }
 
   const char* const kInvalidMatches[] = {"Garbage", "BYA",   "BYA is a state",
@@ -675,8 +813,9 @@ TEST_F(PreProcessStateMatchingTypesTest, PreProcessStateMatchingTypes) {
     FormStructure form_structure(form);
     EXPECT_EQ(form_structure.field_count(), 2U);
 
-    PreProcessStateMatchingTypes(client(), {profile()}, form_structure);
-    EXPECT_FALSE(form_structure.field(1)->state_is_a_matching_type());
+    EXPECT_THAT(PreProcessStateMatchingTypes(profiles, form_structure,
+                                             client().GetAppLocale()),
+                IsEmpty());
   }
 
   test::PopulateAlternativeStateNameMapForTesting(
@@ -698,15 +837,310 @@ TEST_F(PreProcessStateMatchingTypesTest, PreProcessStateMatchingTypes) {
   ASSERT_EQ(form_structure.field_count(), 2U);
   form_structure.fields()[0]->set_value(u"Test");
   form_structure.fields()[1]->set_value(u"CA");
-  if (base::FeatureList::IsEnabled(features::kAutofillFixValueSemantics)) {
-    // If kAutofillFixValueSemantics is disabled, there's no distinction between
-    // the current and initial value.
-    ASSERT_EQ(form_structure.fields()[0]->value(ValueSemantics::kInitial), u"");
-    ASSERT_EQ(form_structure.fields()[1]->value(ValueSemantics::kInitial), u"");
+  ASSERT_EQ(form_structure.fields()[0]->initial_value(), u"");
+  ASSERT_EQ(form_structure.fields()[1]->initial_value(), u"");
+
+  EXPECT_THAT(PreProcessStateMatchingTypes(profiles, form_structure,
+                                           client().GetAppLocale()),
+              ElementsAre(form_structure.field(1)->global_id()));
+}
+
+// Test fixture for ExtractDatesInFields().
+class ExtractDatesInFieldsTest : public testing::Test {
+ public:
+  ExtractDatesInFieldsTest() {
+    scoped_feature_list_.InitWithFeatures(
+        {features::kAutofillAiVoteForFormatStringsFromSingleFields,
+         features::kAutofillAiVoteForFormatStringsFromMultipleFields},
+        {});
   }
 
-  PreProcessStateMatchingTypes(client(), {profile()}, form_structure);
-  EXPECT_TRUE(form_structure.field(1)->state_is_a_matching_type());
+  static std::unique_ptr<AutofillField> CreateInput(
+      std::string_view value,
+      FormControlType form_control_type = FormControlType::kInputText) {
+    auto field = std::make_unique<AutofillField>(CreateTestFormField(
+        /*label=*/"", /*name=*/"", /*value=*/value, form_control_type));
+    field->set_is_user_edited(true);
+    return field;
+  }
+
+  static std::unique_ptr<AutofillField> CreateSelect(
+      std::string_view value,
+      const std::vector<const char*>& values) {
+    auto field = std::make_unique<AutofillField>(CreateTestSelectField(
+        /*label=*/"", /*name=*/"", /*value=*/value, /*values=*/values,
+        /*contents=*/values));
+    field->set_is_user_edited(true);
+    return field;
+  }
+
+  static auto AreDatesAndFormatStrings(
+      base::span<const data_util::Date> dates,
+      base::span<const std::string_view> formats) {
+    std::vector<std::u16string> u16formats = base::ToVector(
+        formats, [](std::string_view s) { return base::UTF8ToUTF16(s); });
+    return AllOf(
+        Field(&DatesAndFormats::dates, UnorderedElementsAreArray(dates)),
+        Field(&DatesAndFormats::formats,
+              UnorderedElementsAreArray(u16formats)));
+  }
+
+ private:
+  test::AutofillUnitTestEnvironment autofill_test_environment_;
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// Tests that non-text <input> do not match any format string.
+TEST_F(ExtractDatesInFieldsTest, InputNonText) {
+  using enum FormControlType;
+  EXPECT_THAT(ExtractDatesInFields({
+                  CreateInput("2025-12-31", kInputDate),
+                  CreateInput("2025-12", kInputMonth),
+                  CreateInput("2025-12-31", kInputNumber),
+                  CreateInput("2025-12-31", kInputPassword),
+                  CreateInput("2025-12-31", kInputSearch),
+                  CreateInput("2025-12-31", kInputUrl),
+              }),
+              IsEmpty());
+}
+
+struct DateSingleTextParam {
+  std::string ToString() const {
+    std::vector<std::string> date_strings =
+        base::ToVector(dates, [](data_util::Date date) {
+          return base::UTF16ToUTF8(data_util::FormatDate(date, u"YYYY-MM-DD"));
+        });
+    return base::StrCat(
+        {"value: ", value, "\n",                                    //
+         "dates: [ ", base::JoinString(date_strings, ", "), "]\n",  //
+         "formats: [", base::JoinString(format_strings, ", "), "]"});
+  }
+
+  // The field's fake value.
+  std::string_view value;
+  // The expected date associated with the field.
+  std::vector<data_util::Date> dates;
+  // The expected format string of the field.
+  std::vector<std::string_view> format_strings;
+};
+
+// Test fixture for a single <input type=text> whose value may be a complete
+// date.
+class ExtractDatesInFieldsTest_SingleTextInput
+    : public ExtractDatesInFieldsTest,
+      public testing::WithParamInterface<DateSingleTextParam> {};
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    ExtractDatesInFieldsTest_SingleTextInput,
+    testing::ValuesIn(std::vector<DateSingleTextParam>{
+        {"2025-12-31", {{2025, 12, 31}}, {"YYYY-MM-DD", "YYYY-M-D"}},
+        {"31/12/2025", {{2025, 12, 31}}, {"DD/MM/YYYY", "D/M/YYYY"}},
+        {"31.12.2025", {{2025, 12, 31}}, {"DD.MM.YYYY", "D.M.YYYY"}},
+        {"31-01-2025", {{2025, 01, 31}}, {"DD-MM-YYYY"}},
+        {"31-31-2025", {{}}, {}},
+        {"31012025", {{2025, 01, 31}}, {"DDMMYYYY"}},
+        {"01/01/01", {{2001, 01, 01}}, {"DD/MM/YY", "MM/DD/YY", "YY/MM/DD"}},
+        {"12/12/12",
+         {{2012, 12, 12}},
+         {"DD/MM/YY", "MM/DD/YY", "YY/MM/DD", "D/M/YY", "M/D/YY", "YY/M/D"}},
+        {"31/12/12",
+         {{2012, 12, 31}, {2031, 12, 12}},
+         {"DD/MM/YY", "YY/MM/DD", "D/M/YY", "YY/M/D"}},
+        {"12/13/12", {{2012, 12, 13}}, {"MM/DD/YY", "M/D/YY"}},
+        {"12/12/32",
+         {{2032, 12, 12}},
+         {"DD/MM/YY", "MM/DD/YY", "D/M/YY", "M/D/YY"}},
+        {"13/13/12", {}, {}},
+        {"foobar", {}, {}},
+    }));
+
+// Tests that the values of <input type=text> match certain format strings.
+TEST_P(ExtractDatesInFieldsTest_SingleTextInput, SingleTextInput) {
+  SCOPED_TRACE(testing::Message() << "Values are:\n" << GetParam().ToString());
+  std::unique_ptr<AutofillField> field = CreateInput(GetParam().value);
+  if (GetParam().format_strings.empty()) {
+    EXPECT_THAT(ExtractDatesInFields(base::span_from_ref(field)), IsEmpty());
+  } else {
+    EXPECT_THAT(
+        ExtractDatesInFields(base::span_from_ref(field)),
+        ElementsAre(Pair(field->global_id(),
+                         AreDatesAndFormatStrings(GetParam().dates,
+                                                  GetParam().format_strings))));
+  }
+}
+
+struct DateMultipleTextParam {
+  struct Field {
+    std::string ToString() const {
+      std::vector<std::string> date_strings =
+          base::ToVector(dates, [](data_util::Date date) {
+            return base::UTF16ToUTF8(
+                data_util::FormatDate(date, u"YYYY-MM-DD"));
+          });
+      return base::StrCat(
+          {"- label: ", label, "\n",                                   //
+           "  value: ", value, "\n",                                   //
+           "  dates: [", base::JoinString(date_strings, ", "), "]\n",  //
+           "  format strings: [", base::JoinString(format_strings, ", "), "]"});
+    }
+
+    // The field's fake label.
+    std::string_view label;
+    // The field's fake value.
+    std::string_view value;
+    // The expected date associated with the field.
+    std::vector<data_util::Date> dates;
+    // The expected format string of the field.
+    std::vector<std::string_view> format_strings;
+  };
+
+  std::string ToString() const {
+    return base::JoinString(base::ToVector(fields, &Field::ToString), "\n");
+  }
+
+  std::vector<Field> fields;
+};
+
+// Test fixture for a sequences of <input type=text> whose combined values may
+// be a complete date.
+class ExtractDatesInFieldsTest_MultipleTextInput
+    : public ExtractDatesInFieldsTest,
+      public testing::WithParamInterface<DateMultipleTextParam> {};
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    ExtractDatesInFieldsTest_MultipleTextInput,
+    testing::ValuesIn(std::vector<DateMultipleTextParam>{
+        {{{"Date", "2025", {{2025, 12, 31}}, {"YYYY"}},
+          {"Date", "12", {{2025, 12, 31}}, {"MM", "M"}},
+          {"Date", "31", {{2025, 12, 31}}, {"DD", "D"}}}},
+        {{{"Date", "31", {{2025, 12, 31}}, {"DD", "D"}},
+          {"/", "12", {{2025, 12, 31}}, {"MM", "M"}},
+          {"/", "2025", {{2025, 12, 31}}, {"YYYY"}}}},
+        {{{"Date", "31", {{2025, 12, 31}}, {"DD", "D"}},
+          {".", "12", {{2025, 12, 31}}, {"MM", "M"}},
+          {".", "2025", {{2025, 12, 31}}, {"YYYY"}}}},
+        {{{"Date", "31", {{2025, 12, 31}}, {"DD", "D"}},
+          {".", "12", {{2025, 12, 31}}, {"MM", "M"}},
+          {".", "2025", {{2025, 12, 31}}, {"YYYY"}}}},
+        {{{"Date", "31", {{2025, 01, 31}}, {"DD"}},
+          {"Date", "01", {{2025, 01, 31}}, {"MM"}},
+          {"Date", "2025", {{2025, 01, 31}}, {"YYYY"}}}},
+        {{{"Date", "31", {}, {}},
+          {"Date", "31", {}, {}},
+          {"Date", "2025", {}, {}}}},
+        {{{"Date", "12", {{2012, 12, 12}}, {"DD", "D", "MM", "M", "YY"}},
+          {"Date", "12", {{2012, 12, 12}}, {"DD", "D", "MM", "M"}},
+          {"Date", "12", {{2012, 12, 12}}, {"DD", "D", "YY"}}}},
+        {{{"Date", "31", {{2012, 12, 31}, {2031, 12, 12}}, {"DD", "D", "YY"}},
+          {"Date", "12", {{2012, 12, 31}, {2031, 12, 12}}, {"MM", "M"}},
+          {"Date", "12", {{2012, 12, 31}, {2031, 12, 12}}, {"DD", "D", "YY"}}}},
+        {{{"Date", "12", {{2012, 12, 13}}, {"MM", "M"}},
+          {"Date", "13", {{2012, 12, 13}}, {"DD", "D"}},
+          {"Date", "12", {{2012, 12, 13}}, {"YY"}}}},
+        {{{"Date", "12", {{2032, 12, 12}}, {"DD", "D", "MM", "M"}},
+          {"Date", "12", {{2032, 12, 12}}, {"DD", "D", "MM", "M"}},
+          {"Date", "32", {{2032, 12, 12}}, {"YY"}}}},
+        {{{"Date", "13", {}, {}},
+          {"Date", "13", {}, {}},
+          {"Date", "12", {}, {}}}},
+        {{{"Date", "1", {}, {}},
+          {"Date", "2025", {{2025, 12, 31}}, {"YYYY"}},
+          {"Date", "12", {{2025, 12, 31}}, {"MM", "M"}},
+          {"Date", "31", {{2025, 12, 31}}, {"DD", "D"}}}},
+        {{{"Date", "12", {{2012, 12, 12}}, {"DD", "D", "MM", "M", "YY"}},
+          {"Date", "12", {{2012, 12, 12}}, {"DD", "D", "MM", "M", "YY"}},
+          {"Date", "12", {{2012, 12, 12}}, {"DD", "D", "MM", "M", "YY"}},
+          {"Date", "12", {{2012, 12, 12}}, {"DD", "D", "YY"}}}},
+        {{{"Date", "31", {}, {}},
+          {"Something else", "12", {}, {}},
+          {"Something completely different", "2025", {}, {}}}},
+        {{{"Date", "1", {}, {}},
+          {"Date", "1", {}, {}},
+          {"Date", "1", {}, {}},
+          {"Date", "1", {}, {}}}},
+        {{{"Date", "123", {}, {}},
+          {"Date", "123", {}, {}},
+          {"Date", "123", {}, {}},
+          {"Date", "123", {}, {}}}},
+        {{{"Date", "ash", {}, {}},
+          {"Date", "sho", {}, {}},
+          {"Date", "hte", {}, {}},
+          {"Date", "tne", {}, {}},
+          {"Date", "neo", {}, {}}}}}));
+
+// Tests that the combined values of sequences of <input type=text> match
+// certain format strings. For example,
+//   <input type=text value=31>
+//   <input type=text value=12>
+//   <input type=text value=2025>
+// represents the date 31/12/2025 and the resulting format strings for the
+// three fields should be DD od D, MM or M, and YYYY, respectively.
+TEST_P(ExtractDatesInFieldsTest_MultipleTextInput, MultipleTextInput) {
+  SCOPED_TRACE(testing::Message() << "Fields are:\n" << GetParam().ToString());
+  std::vector<std::unique_ptr<AutofillField>> fields = base::ToVector(
+      GetParam().fields, [](const DateMultipleTextParam::Field& field) {
+        std::unique_ptr<AutofillField> f = CreateInput(field.value);
+        f->set_label(base::UTF8ToUTF16(field.label));
+        return f;
+      });
+
+  std::vector<Matcher<std::pair<FieldGlobalId, const DatesAndFormats&>>>
+      expectations;
+  for (auto [expectation, autofill_field] :
+       base::zip(GetParam().fields, fields)) {
+    if (!expectation.format_strings.empty()) {
+      expectations.emplace_back(
+          Pair(autofill_field->global_id(),
+               AreDatesAndFormatStrings(expectation.dates,
+                                        expectation.format_strings)));
+    }
+  }
+
+  EXPECT_THAT(ExtractDatesInFields(fields),
+              UnorderedElementsAreArray(expectations));
+}
+
+// Test fixture for DetermineAvailableFieldTypes().
+class DetermineAvailableFieldTypesTest : public ::testing::Test {
+ public:
+  DetermineAvailableFieldTypesTest() {
+    features_.InitWithFeatures(
+        {features::kAutofillAiWithDataSchema,
+         features::kAutofillEnableLoyaltyCardsFilling,
+         features::kAutofillEnableEmailOrLoyaltyCardsFilling},
+        {});
+  }
+
+ protected:
+  test::AutofillUnitTestEnvironment autofill_test_environment_;
+  base::test::ScopedFeatureList features_;
+};
+
+// Tests that entities are included in the set of available field types.
+TEST_F(DetermineAvailableFieldTypesTest, Entities) {
+  EntityInstance entity = test::GetPassportEntityInstance();
+  FieldTypeSet available_types = DetermineAvailableFieldTypes(
+      /*profiles=*/{}, /*credit_cards=*/{}, /*entities=*/{entity},
+      /*loyalty_cards=*/{},
+      /*last_unlocked_credit_card_cvc=*/u"",
+      /*app_locale=*/"en-US");
+  EXPECT_THAT(available_types,
+              UnorderedElementsAre(
+                  NAME_FULL, NAME_FIRST, NAME_LAST, NAME_LAST_SECOND,
+                  PASSPORT_NAME_TAG, PASSPORT_NUMBER, PASSPORT_EXPIRATION_DATE,
+                  PASSPORT_ISSUE_DATE, PASSPORT_ISSUING_COUNTRY));
+}
+
+// Tests that loyalty cards are included in the set of available field types.
+TEST_F(DetermineAvailableFieldTypesTest, LoyaltyCards) {
+  LoyaltyCard card = test::CreateLoyaltyCard();
+  FieldTypeSet available_types = DetermineAvailableFieldTypes(
+      /*profiles=*/{}, /*credit_cards=*/{}, /*entities=*/{}, {card},
+      /*last_unlocked_credit_card_cvc=*/u"",
+      /*app_locale=*/"");
+  EXPECT_TRUE(available_types.contains(LOYALTY_MEMBERSHIP_ID));
 }
 
 }  // namespace

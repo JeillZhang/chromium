@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser.hub;
 
-import static org.chromium.chrome.browser.hub.HubPaneHostProperties.COLOR_SCHEME;
 import static org.chromium.chrome.browser.hub.HubPaneHostProperties.HAIRLINE_VISIBILITY;
 import static org.chromium.chrome.browser.hub.HubPaneHostProperties.PANE_ROOT_VIEW;
 import static org.chromium.chrome.browser.hub.HubPaneHostProperties.SNACKBAR_CONTAINER_CALLBACK;
@@ -12,29 +11,30 @@ import static org.chromium.chrome.browser.hub.HubPaneHostProperties.SNACKBAR_CON
 import android.view.View;
 import android.view.ViewGroup;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.TransitiveObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.ui.modelutil.PropertyModel;
 
 /** Logic for hosting a single pane at a time in the Hub. */
+@NullMarked
 public class HubPaneHostMediator {
-    private final @NonNull Callback<Pane> mOnPaneChangeCallback = this::onPaneChange;
-    private final @NonNull Callback<Boolean> mOnHairlineVisibilityChange =
-            this::onHairlineVisibilityChange;
-    private final @NonNull PropertyModel mPropertyModel;
-    private final @NonNull ObservableSupplier<Pane> mPaneSupplier;
-    private final @NonNull TransitiveObservableSupplier<Pane, Boolean> mHairlineVisibilitySupplier;
+    private final Callback<Pane> mOnPaneChangeCallback = this::onPaneChange;
+    private final Callback<Boolean> mOnHairlineVisibilityChange = this::onHairlineVisibilityChange;
+    private final PropertyModel mPropertyModel;
+    private final ObservableSupplier<Pane> mPaneSupplier;
+    private final TransitiveObservableSupplier<Pane, Boolean> mHairlineVisibilitySupplier;
 
-    /** Should be non-null after constructor finishes. */
+    /**
+     * Should be non-null after constructor finishes, cannot be final as the Java compiler can't
+     * figure this out.
+     */
     private ViewGroup mSnackbarContainer;
 
     /** Creates the mediator. */
-    public HubPaneHostMediator(
-            @NonNull PropertyModel propertyModel, @NonNull ObservableSupplier<Pane> paneSupplier) {
+    public HubPaneHostMediator(PropertyModel propertyModel, ObservableSupplier<Pane> paneSupplier) {
         mPropertyModel = propertyModel;
         mPaneSupplier = paneSupplier;
         mPaneSupplier.addObserver(mOnPaneChangeCallback);
@@ -44,7 +44,9 @@ public class HubPaneHostMediator {
                         paneSupplier, p -> p.getHairlineVisibilitySupplier());
         mHairlineVisibilitySupplier.addObserver(mOnHairlineVisibilityChange);
 
+        // This sets mSnackbarContainer to non-null.
         propertyModel.set(SNACKBAR_CONTAINER_CALLBACK, this::consumeSnackbarContainer);
+        assert mSnackbarContainer != null;
     }
 
     /** Cleans up observers. */
@@ -60,14 +62,6 @@ public class HubPaneHostMediator {
     }
 
     private void onPaneChange(@Nullable Pane pane) {
-        @HubColorScheme int newColorScheme = HubColors.getColorSchemeSafe(pane);
-        @HubColorScheme
-        int prevColorScheme =
-                mPropertyModel.get(COLOR_SCHEME) == null
-                        ? newColorScheme
-                        : mPropertyModel.get(COLOR_SCHEME).newColorScheme;
-
-        mPropertyModel.set(COLOR_SCHEME, new HubColorSchemeUpdate(newColorScheme, prevColorScheme));
         View view = pane == null ? null : pane.getRootView();
         mPropertyModel.set(PANE_ROOT_VIEW, view);
     }

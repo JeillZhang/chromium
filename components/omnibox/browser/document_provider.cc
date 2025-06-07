@@ -22,7 +22,6 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/i18n/case_conversion.h"
-#include "base/i18n/time_formatting.h"
 #include "base/json/json_reader.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
@@ -32,6 +31,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
+#include "components/omnibox/browser/autocomplete_enums.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_match_classification.h"
@@ -479,8 +479,7 @@ bool DocumentProvider::IsInputLikelyURL(const AutocompleteInput& input) {
 void DocumentProvider::Start(const AutocompleteInput& input,
                              bool minimal_changes) {
   TRACE_EVENT0("omnibox", "DocumentProvider::Start");
-  Stop(true, false);
-
+  Stop(AutocompleteStopReason::kClobbered);
   // Perform various checks - feature is enabled, user is allowed to use the
   // feature, we're not under backoff, etc.
   if (!IsDocumentProviderAllowed(input))
@@ -499,10 +498,10 @@ void DocumentProvider::Start(const AutocompleteInput& input,
 
   done_ = false;  // Set true in callbacks.
   debouncer_->RequestRun(
-      base::BindOnce(&DocumentProvider::Run, base::Unretained(this)));
+      base::BindOnce(&DocumentProvider::Run, base::Unretained(this), input));
 }
 
-void DocumentProvider::Run() {
+void DocumentProvider::Run(const AutocompleteInput& input) {
   // DocumentSuggestionsServiceFactory does not create a service instance for
   // OTR profiles. We should not get this far for those profiles.
   DCHECK(!client_->IsOffTheRecord());
@@ -510,6 +509,7 @@ void DocumentProvider::Run() {
   client_->GetRemoteSuggestionsService(/*create_if_necessary=*/true)
       ->CreateDocumentSuggestionsRequest(
           input_.text(), /*is_off_the_record=*/false,
+          input.current_page_classification(),
           base::BindOnce(
               &DocumentProvider::OnDocumentSuggestionsLoaderAvailable,
               weak_ptr_factory_.GetWeakPtr()),
@@ -518,12 +518,16 @@ void DocumentProvider::Run() {
               base::Unretained(this) /* this owns SimpleURLLoader */));
 }
 
-void DocumentProvider::Stop(bool clear_cached_results,
-                            bool due_to_user_inactivity) {
+void DocumentProvider::Stop(AutocompleteStopReason stop_reason) {
   TRACE_EVENT0("omnibox", "DocumentProvider::Stop");
-  AutocompleteProvider::Stop(clear_cached_results, due_to_user_inactivity);
+  AutocompleteProvider::Stop(stop_reason);
 
   debouncer_->CancelRequest();
+
+  if (auto* remote_suggestions_service =
+          client_->GetRemoteSuggestionsService(/*create_if_necessary=*/false)) {
+    remote_suggestions_service->StopCreatingDocumentSuggestionsRequest();
+  }
 
   // If the request was sent, then log its duration and that it was invalidated.
   if (loader_) {
@@ -542,11 +546,6 @@ void DocumentProvider::Stop(bool clear_cached_results,
   if (!time_run_invoked_.is_null()) {
     LogTotalTime(time_run_invoked_, true);
     time_run_invoked_ = base::TimeTicks();
-  }
-
-  if (auto* remote_suggestions_service =
-          client_->GetRemoteSuggestionsService(/*create_if_necessary=*/false)) {
-    remote_suggestions_service->StopCreatingDocumentSuggestionsRequest();
   }
 }
 
@@ -681,38 +680,31 @@ std::u16string DocumentProvider::GenerateLastModifiedString(
                               &modified_time))
     return std::u16string();
 
-  // Use shorthand if the times fall on the same day or in the same year.
-  base::Time::Exploded exploded_modified_time;
-  base::Time::Exploded exploded_now;
-  modified_time.LocalExplode(&exploded_modified_time);
-  now.LocalExplode(&exploded_now);
-  if (exploded_modified_time.year == exploded_now.year) {
-    if (exploded_modified_time.month == exploded_now.month &&
-        exploded_modified_time.day_of_month == exploded_now.day_of_month) {
-      // Same local calendar day - use localized time.
-      return base::TimeFormatTimeOfDay(modified_time);
-    }
-    // Same year but not the same day: use abbreviated month/day ("Jan 1").
-    return base::LocalizedTimeFormatWithPattern(modified_time, "MMMd");
-  }
-
-  // No shorthand; display full MM/DD/YYYY.
-  return base::TimeFormatShortDateNumeric(modified_time);
+  return AutocompleteProvider::LocalizedLastModifiedString(now, modified_time);
 }
 
 // static
 std::u16string DocumentProvider::GetProductDescriptionString(
     const std::string& mimetype) {
-  if (mimetype == kDocumentMimetype)
-    return l10n_util::GetStringUTF16(IDS_DRIVE_SUGGESTION_DOCUMENT);
-  if (mimetype == kFormMimetype)
-    return l10n_util::GetStringUTF16(IDS_DRIVE_SUGGESTION_FORM);
-  if (mimetype == kSpreadsheetMimetype)
-    return l10n_util::GetStringUTF16(IDS_DRIVE_SUGGESTION_SPREADSHEET);
-  if (mimetype == kPresentationMimetype)
-    return l10n_util::GetStringUTF16(IDS_DRIVE_SUGGESTION_PRESENTATION);
+  if (mimetype == kDocumentMimetype) {
+    return l10n_util::GetStringUTF16(
+        IDS_CONTENT_SUGGESTION_DESCRIPTION_GOOGLE_DOCS);
+  }
+  if (mimetype == kFormMimetype) {
+    return l10n_util::GetStringUTF16(
+        IDS_CONTENT_SUGGESTION_DESCRIPTION_GOOGLE_FORMS);
+  }
+  if (mimetype == kSpreadsheetMimetype) {
+    return l10n_util::GetStringUTF16(
+        IDS_CONTENT_SUGGESTION_DESCRIPTION_GOOGLE_SHEETS);
+  }
+  if (mimetype == kPresentationMimetype) {
+    return l10n_util::GetStringUTF16(
+        IDS_CONTENT_SUGGESTION_DESCRIPTION_GOOGLE_SLIDES);
+  }
   // Fallback to "Drive" for other filetypes.
-  return l10n_util::GetStringUTF16(IDS_DRIVE_SUGGESTION_GENERAL);
+  return l10n_util::GetStringUTF16(
+      IDS_CONTENT_SUGGESTION_DESCRIPTION_GOOGLE_DRIVE);
 }
 
 // static
@@ -726,16 +718,16 @@ std::u16string DocumentProvider::GetMatchDescription(
         GenerateLastModifiedString(update_time, base::Time::Now());
     return owner.empty()
                ? l10n_util::GetStringFUTF16(
-                     IDS_DRIVE_SUGGESTION_DESCRIPTION_TEMPLATE_WITHOUT_OWNER,
+                     IDS_CONTENT_SUGGESTION_DESCRIPTION_TEMPLATE_WITHOUT_OWNER,
                      date_desc, mime_desc)
                : l10n_util::GetStringFUTF16(
-                     IDS_DRIVE_SUGGESTION_DESCRIPTION_TEMPLATE, date_desc,
+                     IDS_CONTENT_SUGGESTION_DESCRIPTION_TEMPLATE, date_desc,
                      base::UTF8ToUTF16(owner), mime_desc);
   }
   return owner.empty()
              ? std::move(mime_desc)
              : l10n_util::GetStringFUTF16(
-                   IDS_DRIVE_SUGGESTION_DESCRIPTION_TEMPLATE_WITHOUT_DATE,
+                   IDS_CONTENT_SUGGESTION_DESCRIPTION_TEMPLATE_WITHOUT_DATE,
                    base::UTF8ToUTF16(owner), mime_desc);
 }
 
@@ -842,8 +834,9 @@ ACMatches DocumentProvider::ParseDocumentSearchResults(
                                  match.description_for_shortcuts);
     }
 
-    match.TryRichAutocompletion(base::UTF8ToUTF16(match.destination_url.spec()),
-                                match.contents, input_);
+    match.TryRichAutocompletion(input_,
+                                base::UTF8ToUTF16(match.destination_url.spec()),
+                                match.contents);
     match.transition = ui::PAGE_TRANSITION_GENERATED;
     match.RecordAdditionalInfo("owned", is_owned);
     match.RecordAdditionalInfo("completely matched in title and owner",
@@ -865,8 +858,8 @@ void DocumentProvider::CopyCachedMatchesToMatches() {
       [this](auto match) {
         match.allowed_to_be_default_match = false;
         match.TryRichAutocompletion(
-            base::UTF8ToUTF16(match.destination_url.spec()), match.contents,
-            input_);
+            input_, base::UTF8ToUTF16(match.destination_url.spec()),
+            match.contents);
         match.contents_class =
             DocumentProvider::Classify(match.contents, input_.text());
         match.RecordAdditionalInfo("from cache", "true");

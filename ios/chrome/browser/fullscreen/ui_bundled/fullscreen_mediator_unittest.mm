@@ -4,47 +4,54 @@
 
 #import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_mediator.h"
 
+#import "base/test/task_environment.h"
 #import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_model.h"
 #import "ios/chrome/browser/fullscreen/ui_bundled/test/fullscreen_model_test_util.h"
 #import "ios/chrome/browser/fullscreen/ui_bundled/test/test_fullscreen_controller.h"
 #import "ios/chrome/browser/fullscreen/ui_bundled/test/test_fullscreen_controller_observer.h"
 #import "ios/chrome/browser/fullscreen/ui_bundled/test/test_fullscreen_mediator.h"
+#import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
+#import "ios/chrome/browser/shared/model/profile/test/test_profile_ios.h"
+#import "ios/chrome/browser/toolbar/ui_bundled/fullscreen/toolbars_size.h"
 #import "testing/platform_test.h"
 
 // Test fixture for FullscreenMediator.
 class FullscreenMediatorTest : public PlatformTest {
  public:
-  FullscreenMediatorTest()
-      : PlatformTest(), controller_(&model_), mediator_(&controller_, &model_) {
-    SetUpFullscreenModelForTesting(&model_, 100);
-    mediator_.AddObserver(&observer_);
+  FullscreenMediatorTest() {
+    profile_ = TestProfileIOS::Builder().Build();
+    browser_ = std::make_unique<TestBrowser>(profile_.get());
+    TestFullscreenController::CreateForBrowser(browser_.get());
+    mediator_ = std::make_unique<TestFullscreenMediator>(controller(), model());
+    observer_ = std::make_unique<TestFullscreenControllerObserver>();
+    SetUpFullscreenModelForTesting(model(), 100);
+    mediator_->AddObserver(observer_.get());
   }
   ~FullscreenMediatorTest() override {
-    mediator_.Disconnect();
-    mediator_.RemoveObserver(&observer_);
-    EXPECT_TRUE(observer_.is_shut_down());
+    mediator_->Disconnect();
+    mediator_->RemoveObserver(observer_.get());
+    EXPECT_TRUE(observer_->is_shut_down());
   }
 
-  FullscreenController* controller() {
-    // TestFullscreenControllerObserver doesn't use the FullscreenController
-    // passed to its observer methods, so use a dummy pointer.
-    static void* kFullscreenController = &kFullscreenController;
-    return reinterpret_cast<FullscreenController*>(kFullscreenController);
+  TestFullscreenController* controller() {
+    return TestFullscreenController::FromBrowser(browser_.get());
   }
-  FullscreenModel& model() { return model_; }
-  TestFullscreenControllerObserver& observer() { return observer_; }
+
+  FullscreenModel* model() { return controller()->getModel(); }
+  TestFullscreenControllerObserver& observer() { return *observer_; }
 
  private:
-  FullscreenModel model_;
-  TestFullscreenController controller_;
-  TestFullscreenMediator mediator_;
-  TestFullscreenControllerObserver observer_;
+  base::test::TaskEnvironment task_environment_;
+  std::unique_ptr<TestProfileIOS> profile_;
+  std::unique_ptr<TestBrowser> browser_;
+  std::unique_ptr<TestFullscreenMediator> mediator_;
+  std::unique_ptr<TestFullscreenControllerObserver> observer_;
 };
 
 // Tests that progress and scroll end animator are correctly forwarded to the
 // observer.
 TEST_F(FullscreenMediatorTest, ObserveProgressAndScrollEnd) {
-  SimulateFullscreenUserScrollForProgress(&model(), 0.5);
+  SimulateFullscreenUserScrollForProgress(model(), 0.5);
   EXPECT_EQ(observer().progress(), 0.5);
   FullscreenAnimator* animator = observer().animator();
   EXPECT_TRUE(animator);
@@ -55,9 +62,9 @@ TEST_F(FullscreenMediatorTest, ObserveProgressAndScrollEnd) {
 // Tests that the enabled state is correctly forwarded to the observer.
 TEST_F(FullscreenMediatorTest, ObserveEnabledState) {
   EXPECT_TRUE(observer().enabled());
-  model().IncrementDisabledCounter();
+  model()->IncrementDisabledCounter();
   EXPECT_FALSE(observer().enabled());
-  model().DecrementDisabledCounter();
+  model()->DecrementDisabledCounter();
   EXPECT_TRUE(observer().enabled());
 }
 
@@ -67,10 +74,13 @@ TEST_F(FullscreenMediatorTest, ObserveViewportInsets) {
   const CGFloat kCollapsedTopToolbarHeight = 50.0;
   const CGFloat kExpandedBottomToolbarHeight = 60.0;
   const CGFloat kCollapsedBottomToolbarHeight = 1.0;
-  model().SetExpandedTopToolbarHeight(kExpandedTopToolbarHeight);
-  model().SetCollapsedTopToolbarHeight(kCollapsedTopToolbarHeight);
-  model().SetExpandedBottomToolbarHeight(kExpandedBottomToolbarHeight);
-  model().SetCollapsedBottomToolbarHeight(kCollapsedBottomToolbarHeight);
+
+  ToolbarsSize* toolbarsSize = [[ToolbarsSize alloc]
+      initWithCollapsedTopToolbarHeight:kCollapsedTopToolbarHeight
+               expandedTopToolbarHeight:kExpandedTopToolbarHeight
+            expandedBottomToolbarHeight:kExpandedBottomToolbarHeight
+           collapsedBottomToolbarHeight:kCollapsedBottomToolbarHeight];
+  model()->SetToolbarsSize(toolbarsSize);
   EXPECT_TRUE(UIEdgeInsetsEqualToEdgeInsets(
       observer().min_viewport_insets(),
       UIEdgeInsetsMake(kCollapsedTopToolbarHeight, 0,

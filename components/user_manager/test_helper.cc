@@ -4,10 +4,11 @@
 
 #include "components/user_manager/test_helper.h"
 
+#include "base/check_deref.h"
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
 #include "chromeos/ash/components/dbus/userdataauth/userdataauth_client.h"
+#include "chromeos/ash/components/policy/device_local_account/device_local_account_type.h"
 #include "components/account_id/account_id.h"
-#include "components/policy/core/common/device_local_account_type.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
@@ -15,18 +16,73 @@
 #include "components/user_manager/user_names.h"
 
 namespace user_manager {
+namespace {
 
-// static
-void TestHelper::RegisterPersistedUser(PrefService& local_state,
-                                       const AccountId& account_id) {
+void RegisterPersistedUserInternal(PrefService& local_state,
+                                   const AccountId& account_id,
+                                   UserType user_type) {
   {
     ScopedListPrefUpdate update(&local_state, prefs::kRegularUsersPref);
     update->Append(account_id.GetUserEmail());
   }
   {
+    ScopedDictPrefUpdate update(&local_state, prefs::kUserType);
+    update->Set(account_id.GetAccountIdKey(), static_cast<int>(user_type));
+  }
+  {
     KnownUser known_user(&local_state);
     known_user.UpdateId(account_id);
   }
+}
+
+}  // namespace
+
+// static
+void TestHelper::RegisterPersistedUser(PrefService& local_state,
+                                       const AccountId& account_id) {
+  RegisterPersistedUserInternal(local_state, account_id, UserType::kRegular);
+}
+
+// static
+void TestHelper::RegisterPersistedChildUser(PrefService& local_state,
+                                            const AccountId& account_id) {
+  RegisterPersistedUserInternal(local_state, account_id, UserType::kChild);
+}
+
+// static
+void TestHelper::RegisterKioskAppUser(PrefService& local_state,
+                                      std::string_view user_id) {
+  auto type = policy::GetDeviceLocalAccountType(user_id);
+  CHECK_EQ(type, policy::DeviceLocalAccountType::kKioskApp)
+      << user_id << " did not satisfy to be used for a kiosk user. "
+      << "See policy::GetDeviceLocalAccountType for details";
+  ScopedListPrefUpdate update(&local_state,
+                              prefs::kDeviceLocalAccountsWithSavedData);
+  update->Append(user_id);
+}
+
+// static
+void TestHelper::RegisterWebKioskAppUser(PrefService& local_state,
+                                         std::string_view user_id) {
+  auto type = policy::GetDeviceLocalAccountType(user_id);
+  CHECK_EQ(type, policy::DeviceLocalAccountType::kWebKioskApp)
+      << user_id << " did not satisfy to be used for a web kiosk user. "
+      << "See policy::GetDeviceLocalAccountType for details";
+  ScopedListPrefUpdate update(&local_state,
+                              prefs::kDeviceLocalAccountsWithSavedData);
+  update->Append(user_id);
+}
+
+// static
+void TestHelper::RegisterPublicAccountUser(PrefService& local_state,
+                                           std::string_view user_id) {
+  auto type = policy::GetDeviceLocalAccountType(user_id);
+  CHECK_EQ(type, policy::DeviceLocalAccountType::kPublicSession)
+      << user_id << " did not satisfy to be used for a public account user. "
+      << "See policy::GetDeviceLocalAccountType for details";
+  ScopedListPrefUpdate update(&local_state,
+                              prefs::kDeviceLocalAccountsWithSavedData);
+  update->Append(user_id);
 }
 
 // static
@@ -36,8 +92,8 @@ std::string TestHelper::GetFakeUsernameHash(const AccountId& account_id) {
       cryptohome::CreateAccountIdentifierFromAccountId(account_id));
 }
 
-TestHelper::TestHelper(UserManager& user_manager)
-    : user_manager_(user_manager) {}
+TestHelper::TestHelper(UserManager* user_manager)
+    : user_manager_(CHECK_DEREF(user_manager)) {}
 
 TestHelper::~TestHelper() = default;
 
@@ -79,6 +135,38 @@ User* TestHelper::AddKioskAppUser(std::string_view user_id) {
     return nullptr;
   }
 
+  return AddDeviceLocalAccountUserInternal(user_id, UserType::kKioskChromeApp);
+}
+
+User* TestHelper::AddWebKioskAppUser(std::string_view user_id) {
+  // Quick check that the `user_id` satisfies web-kiosk-app type.
+  auto type = policy::GetDeviceLocalAccountType(user_id);
+  if (type != policy::DeviceLocalAccountType::kWebKioskApp) {
+    LOG(ERROR) << "user_id (" << user_id << ") did not satisfy to be used for "
+               << "a web kiosk user. See policy::GetDeviceLocalAccountType for "
+                  "details.";
+    return nullptr;
+  }
+
+  return AddDeviceLocalAccountUserInternal(user_id, UserType::kKioskWebApp);
+}
+
+User* TestHelper::AddPublicAccountUser(std::string_view user_id) {
+  // Quick check that the `user_id` satisfies kiosk-app type.
+  auto type = policy::GetDeviceLocalAccountType(user_id);
+  if (type != policy::DeviceLocalAccountType::kPublicSession) {
+    LOG(ERROR)
+        << "user_id (" << user_id << ") did not satisfy to be used for "
+        << "a public account user. See policy::GetDeviceLocalAccountType "
+        << "for details.";
+    return nullptr;
+  }
+
+  return AddDeviceLocalAccountUserInternal(user_id, UserType::kPublicAccount);
+}
+
+User* TestHelper::AddDeviceLocalAccountUserInternal(std::string_view user_id,
+                                                    UserType user_type) {
   // Build DeviceLocalAccountInfo for the existing users.
   std::vector<UserManager::DeviceLocalAccountInfo> device_local_accounts;
   for (const auto& user : user_manager_->GetPersistedUsers()) {
@@ -98,7 +186,7 @@ User* TestHelper::AddKioskAppUser(std::string_view user_id) {
   }
 
   // Add the given `user_id`.
-  device_local_accounts.emplace_back(std::string(user_id), UserType::kKioskApp);
+  device_local_accounts.emplace_back(std::string(user_id), user_type);
   user_manager_->UpdateDeviceLocalAccountUser(device_local_accounts);
   return user_manager_->FindUserAndModify(AccountId::FromUserEmail(user_id));
 }

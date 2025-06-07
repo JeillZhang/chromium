@@ -29,6 +29,8 @@ typedef NS_ENUM(NSUInteger, SigninCoordinatorResult) {
   // Only triggered by `SceneController` when processing a ShowSigninCommand
   // and when the UI is not ready to present any signin coordinator.
   SigninCoordinatorUINotAvailable,
+  // Sign-in coordinator is stopped because of a change in profile.
+  SigninCoordinatorProfileSwitch,
 };
 
 // Called when the sign-in dialog is closed.
@@ -37,40 +39,8 @@ typedef NS_ENUM(NSUInteger, SigninCoordinatorResult) {
 using SigninCoordinatorCompletionCallback =
     void (^)(SigninCoordinatorResult result, id<SystemIdentity> identity);
 
-// User's signed-in state as defined by AuthenticationService.
-// TODO(crbug.com/40066949): Revisit after phase 3 migration of syncing users.
-typedef NS_ENUM(NSUInteger, IdentitySigninState) {
-  IdentitySigninStateSignedOut,
-  IdentitySigninStateSignedInWithSyncDisabled,
-  IdentitySigninStateSignedInWithSyncEnabled,
-};
-
-// Action to do when the sign-in dialog needs to be interrupted.
-enum class SigninCoordinatorInterrupt {
-  // Stops the sign-in coordinator without dismissing the view. The sign-in
-  // completion block and the interrupt completion block will be called
-  // synchronously.
-  // This should be only used when UI shutdown.
-  // See crbug.com/1455216.
-  UIShutdownNoDismiss,
-  // Stops the sign-in coordinator and dismisses the view without animation.
-  DismissWithoutAnimation,
-  // Stops the sign-in coordinator and dismisses the view with animation.
-  DismissWithAnimation,
-};
-
-// Name of accessibility identifier for the skip sign-in button.
-extern NSString* const kSkipSigninAccessibilityIdentifier;
-// Name of accessibility identifier for the add account button in the sign-in
-// flow.
-extern NSString* const kAddAccountAccessibilityIdentifier;
-// Name of accessibility identifier for the confirmation "Yes I'm In" sign-in
-// button.
-extern NSString* const kConfirmationAccessibilityIdentifier;
 // Name of the accessibility identifier for the History Sync view.
 extern NSString* const kHistorySyncViewAccessibilityIdentifier;
-// Name of accessibility identifier for the more button in the sign-in flow.
-extern NSString* const kMoreAccessibilityIdentifier;
 // Name of accessibility identifier for the web sign-in consistency sheet.
 extern NSString* const kWebSigninAccessibilityIdentifier;
 // Name of accessibility identifier for the primary button that signs in
@@ -79,8 +49,6 @@ extern NSString* const kWebSigninPrimaryButtonAccessibilityIdentifier;
 // Name of accessibility identifier for "Skip" button in the web sign-in
 // consistency sheet.
 extern NSString* const kWebSigninSkipButtonAccessibilityIdentifier;
-// Name of the accessibility identifier for the Tangible Sync view.
-extern NSString* const kTangibleSyncViewAccessibilityIdentifier;
 // Name of the accessibility identifier for the "add account" button in the
 // consistency account chooser.
 extern NSString* const kConsistencyAccountChooserAddAccountIdentifier;
@@ -88,22 +56,24 @@ extern NSString* const kConsistencyAccountChooserAddAccountIdentifier;
 // Name of the accessibility identifier for the managed profile creation screen.
 extern NSString* const kManagedProfileCreationScreenAccessibilityIdentifier;
 
+// Name of the accessibility identifier for the browsing data management screen.
+extern NSString* const kBrowsingDataManagementScreenAccessibilityIdentifier;
+
+// Name of the accessibility identifier for the navigation bar of the managed
+// profile creation screen.
+extern NSString* const
+    kManagedProfileCreationNavigationBarAccessibilityIdentifier;
+
+// Name of the accessibility identifier for the browsing data button on the
+// managed profile creation screen.
+extern NSString* const kBrowsingDataButtonAccessibilityIdentifier;
+
 // Name of the accessibility identifier for the keep browsing data separate
 // cell.
 extern NSString* const kKeepBrowsingDataSeparateCellId;
 
 // Name of the accessibility identifier for the merge browsing data cell.
 extern NSString* const kMergeBrowsingDataCellId;
-
-// Intent for TrustedVaultReauthenticationCoordinator to display either
-// the reauthentication or degraded recoverability dialog.
-typedef NS_ENUM(NSUInteger, SigninTrustedVaultDialogIntent) {
-  // Show reauthentication dialog for fetch keys.
-  SigninTrustedVaultDialogIntentFetchKeys,
-  // Show reauthentication degraded recoverability dialog (to enroll additional
-  // recovery factors).
-  SigninTrustedVaultDialogIntentDegradedRecoverability,
-};
 
 // Max dismissal count for web sign-in consistency dialog (the dismissal value
 // is reset as soon as the user shows sign-in intent).
@@ -140,6 +110,10 @@ extern NSString* const kSigninPromoViewDisplayCountKey;
 // TODO(crbug.com/40831586): Need to merge with kSigninPromoViewDisplayCountKey.
 // Exposed for testing.
 extern NSString* const kDisplayedSSORecallPromoCountKey;
+// Key in NSUserDefaults containing a boolean indicating whether the sign-in
+// fullscreen promo migration to the promo manager has been completed.
+// TODO(crbug.com/396111171): Post migration clean up.
+extern NSString* const kFullscreenSigninPromoManagerMigrationDone;
 // Name of the UMA SSO Recall histogram.
 extern const char* const kUMASSORecallPromoAction;
 // Name of the histogram recording how many accounts were available on the

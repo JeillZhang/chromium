@@ -49,6 +49,7 @@ component("wtf") {
     "assertions.h",
     "atomic_operations.cc",
     "atomic_operations.h",
+    "bind_post_task.h",
     "bit_field.h",
     "bloom_filter.h",
     "casting.h",
@@ -134,6 +135,8 @@ component("wtf") {
     "text/math_transform.h",
     "text/number_parsing_options.h",
     "text/parsing_utilities.h",
+    "text/strcat.cc",
+    "text/strcat.h",
     "text/string_buffer.h",
     "text/string_builder.cc",
     "text/string_builder.h",
@@ -146,6 +149,7 @@ component("wtf") {
     "text/string_impl.cc",
     "text/string_impl.h",
     "text/string_operators.h",
+    "text/string_operators_atomic.h",
     "text/string_statics.cc",
     "text/string_statics.h",
     "text/string_to_number.cc",
@@ -220,7 +224,6 @@ component("wtf") {
 
   deps = [
     "//base/allocator:buildflags",
-    "//build:chromeos_buildflags",
     "//third_party/blink/public/common:common",
     "//third_party/modp_b64",
     "//third_party/rapidhash",
@@ -243,7 +246,6 @@ component("wtf") {
 
   if (is_apple) {
     sources += [
-      "text/atomic_string_cf.cc",
       "text/string_apple.mm",
       "text/string_impl_apple.mm",
     ]
@@ -296,6 +298,7 @@ source_set("wtf_unittests_sources") {
     "allocator/partitions_test.cc",
     "assertions_test.cc",
     "atomic_operations_test.cc",
+    "bind_post_task_test.cc",
     "bit_field_test.cc",
     "bloom_filter_test.cc",
     "casting_test.cc",
@@ -329,6 +332,7 @@ source_set("wtf_unittests_sources") {
     "text/integer_to_string_conversion_test.cc",
     "text/line_ending_test.cc",
     "text/math_transform_test.cc",
+    "text/strcat_test.cc",
     "text/string_buffer_test.cc",
     "text/string_builder_test.cc",
     "text/string_hasher_test.cc",

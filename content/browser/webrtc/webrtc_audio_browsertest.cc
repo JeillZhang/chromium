@@ -112,24 +112,6 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioBrowserTest,
 }
 
 IN_PROC_BROWSER_TEST_F(WebRtcAudioBrowserTest,
-                       EnsureRemoteAudioTrackStopCloneNotStopOriginalTrack) {
-  std::string constraints =
-      BuildConstraints(kAudioConstraints, kVideoConstraints);
-  MakeAudioDetectingPeerConnectionCall(
-      "callAndEnsureRemoteClonedAudioTrackStopNotStopOriginalTrack(" +
-      constraints + ");");
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcAudioBrowserTest,
-                       EnsureRemoteAudioTrackDisableNotDisableClonedTrack) {
-  std::string constraints =
-      BuildConstraints(kAudioConstraints, kVideoConstraints);
-  MakeAudioDetectingPeerConnectionCall(
-      "callAndEnsureRemoteAudioTrackDisableNotDisableClonedTrack(" +
-      constraints + ");");
-}
-
-IN_PROC_BROWSER_TEST_F(WebRtcAudioBrowserTest,
                        EstablishAudioVideoCallAndVerifyLocalMutingWorks) {
   std::string constraints =
       BuildConstraints(kAudioConstraints, kVideoConstraints);
@@ -151,6 +133,13 @@ IN_PROC_BROWSER_TEST_F(WebRtcAudioBrowserTest,
       BuildConstraints(kAudioConstraints, kVideoConstraints);
   MakeAudioDetectingPeerConnectionCall(
       "callAndEnsureRemoteVideoMutingDoesntMuteAudio(" + constraints + ");");
+}
+
+IN_PROC_BROWSER_TEST_F(WebRtcAudioBrowserTest,
+                       EnsureRemoteAudioMuteMakeMediaRecorderSilence) {
+  std::string constraints = BuildConstraints(kAudioConstraints, "");
+  MakeAudioDetectingPeerConnectionCall(
+      "callAndEnsureMuteWorksForMediaRecorder(" + constraints + ");");
 }
 
 IN_PROC_BROWSER_TEST_F(WebRtcAudioBrowserTest,

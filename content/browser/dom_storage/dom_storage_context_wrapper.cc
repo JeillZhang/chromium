@@ -22,13 +22,11 @@
 #include "build/build_config.h"
 #include "components/services/storage/dom_storage/local_storage_impl.h"
 #include "components/services/storage/dom_storage/session_storage_impl.h"
-#include "components/services/storage/public/mojom/partition.mojom.h"
 #include "components/services/storage/public/mojom/storage_policy_update.mojom.h"
 #include "components/services/storage/public/mojom/storage_usage_info.mojom.h"
 #include "content/browser/dom_storage/session_storage_namespace_impl.h"
 #include "content/browser/renderer_host/frame_tree.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
-#include "content/browser/storage_access/storage_access_handle.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -45,6 +43,9 @@
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 
 namespace content {
+
+using LocalStorageLifecycle = storage::mojom::LocalStorageLifecycle;
+
 namespace {
 
 void AdaptSessionStorageUsageInfo(
@@ -71,6 +72,20 @@ void AdaptStorageUsageInfo(
                         info->last_modified);
   }
   std::move(callback).Run(result);
+}
+
+LocalStorageLifecycle GetLocalStorageLifecycle(
+    bool recovering,
+    bool storage_service_remote_was_bound) {
+  if (recovering) {
+    return storage_service_remote_was_bound
+               ? LocalStorageLifecycle::kRecovering
+               : LocalStorageLifecycle::kRecoveringWithUnboundStorageService;
+  } else {
+    return storage_service_remote_was_bound
+               ? LocalStorageLifecycle::kInitializing
+               : LocalStorageLifecycle::kInitializingWithUnboundStorageService;
+  }
 }
 
 }  // namespace
@@ -101,8 +116,17 @@ DOMStorageContextWrapper::DOMStorageContextWrapper(
       base::BindRepeating(&DOMStorageContextWrapper::OnMemoryPressure,
                           base::Unretained(this)));
 
+  // `partition_` can be null in test environments.
+  if (!partition_) {
+    return;
+  }
+
+  // Binding Session or Local storage will result in the storage service getting
+  // bound. So, we capture this state before those calls.
+  LocalStorageLifecycle lifecycle = GetLocalStorageLifecycle(
+      /*recovering=*/false, partition_->IsStorageServiceRemoteValid());
   MaybeBindSessionStorageControl();
-  MaybeBindLocalStorageControl();
+  MaybeBindLocalStorageControl(lifecycle);
 }
 
 DOMStorageContextWrapper::~DOMStorageContextWrapper() {
@@ -307,7 +331,7 @@ bool DOMStorageContextWrapper::IsRequestValid(
     // third_party/blink/renderer/modules/storage_access/README.md
     host_storage_key_matched_or_missing =
         host->GetStorageKey() == storage_key ||
-        (StorageAccessHandle::DoesFrameHaveStorageAccess(host) &&
+        (host->IsFullCookieAccessAllowed() &&
          blink::StorageKey::CreateFirstParty(host->GetStorageKey().origin()) ==
              storage_key);
   }
@@ -332,8 +356,12 @@ bool DOMStorageContextWrapper::IsRequestValid(
 
 void DOMStorageContextWrapper::RecoverFromStorageServiceCrash() {
   DCHECK(partition_);
+  // Binding Session or Local storage will result in the storage service getting
+  // bound. So, we capture this state before those calls.
+  LocalStorageLifecycle lifecycle = GetLocalStorageLifecycle(
+      /*recovering=*/true, partition_->IsStorageServiceRemoteValid());
   MaybeBindSessionStorageControl();
-  MaybeBindLocalStorageControl();
+  MaybeBindLocalStorageControl(lifecycle);
 
   // Make sure the service is aware of namespaces we asked a previous instance
   // to create, so it can properly service renderers trying to manipulate those
@@ -352,12 +380,14 @@ void DOMStorageContextWrapper::MaybeBindSessionStorageControl() {
       session_storage_control_.BindNewPipeAndPassReceiver());
 }
 
-void DOMStorageContextWrapper::MaybeBindLocalStorageControl() {
-  if (!partition_)
+void DOMStorageContextWrapper::MaybeBindLocalStorageControl(
+    LocalStorageLifecycle lifecycle) {
+  if (!partition_) {
     return;
+  }
   local_storage_control_.reset();
   partition_->GetStorageServicePartition()->BindLocalStorageControl(
-      local_storage_control_.BindNewPipeAndPassReceiver());
+      lifecycle, local_storage_control_.BindNewPipeAndPassReceiver());
 }
 
 scoped_refptr<SessionStorageNamespaceImpl>

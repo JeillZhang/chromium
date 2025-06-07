@@ -5,6 +5,7 @@
 #include "components/autofill/core/browser/payments/payments_requests/get_bnpl_payment_instrument_for_fetching_url_request.h"
 
 #include "base/json/json_writer.h"
+#include "base/strings/string_number_conversions.h"
 
 namespace autofill::payments {
 
@@ -12,7 +13,7 @@ namespace {
 using Dict = base::Value::Dict;
 
 const char kGetBnplPaymentInstrumentForFetchingUrlRequestPath[] =
-    "payments/apis/chromepaymentsservice/getpaymentinstrument";
+    "payments/apis-secure/chromepaymentsservice/getpaymentinstrument";
 }  // namespace
 
 GetBnplPaymentInstrumentForFetchingUrlRequest::

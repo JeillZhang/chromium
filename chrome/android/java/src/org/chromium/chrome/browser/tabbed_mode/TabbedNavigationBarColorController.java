@@ -8,7 +8,9 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
+import android.app.Activity;
 import android.content.Context;
+import android.graphics.Color;
 import android.os.Build;
 import android.view.Window;
 
@@ -30,7 +32,8 @@ import org.chromium.chrome.browser.contextualsearch.ContextualSearchManager;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.fullscreen.FullscreenOptions;
-import org.chromium.chrome.browser.keyboard_accessory.AccessorySheetVisualStateProvider;
+import org.chromium.chrome.browser.keyboard_accessory.ManualFillingComponent;
+import org.chromium.chrome.browser.keyboard_accessory.ManualFillingComponentSupplier;
 import org.chromium.chrome.browser.layouts.LayoutManager;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider.LayoutStateObserver;
@@ -38,12 +41,12 @@ import org.chromium.chrome.browser.layouts.LayoutType;
 import org.chromium.chrome.browser.omnibox.suggestions.OmniboxSuggestionsVisualState;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tab.TabObscuringHandler;
 import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeControllerFactory;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
 import org.chromium.chrome.browser.ui.edge_to_edge.NavigationBarColorProvider;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
@@ -51,7 +54,7 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeSupplier.ChangeObserver;
 import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeSystemBarColorHelper;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
-import org.chromium.ui.InsetObserver;
+import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.interpolators.Interpolators;
 import org.chromium.ui.util.ColorUtils;
 
@@ -62,7 +65,7 @@ import java.util.Optional;
 class TabbedNavigationBarColorController
         implements BottomAttachedUiObserver.Observer, NavigationBarColorProvider {
     /** The amount of time transitioning from one color to another should take in ms. */
-    public static final long NAVBAR_COLOR_TRANSITION_DURATION_MS = 250;
+    public static final long NAVBAR_COLOR_TRANSITION_DURATION_MS = 150;
 
     private final Context mContext;
     private final FullscreenManager mFullScreenManager;
@@ -77,7 +80,7 @@ class TabbedNavigationBarColorController
     private final @NonNull Callback<Integer> mOnOverviewColorChanged =
             color -> updateNavigationBarColor();
     private final Callback<EdgeToEdgeController> mEdgeToEdgeRegisterChangeObserverCallback;
-    private final EdgeToEdgeSystemBarColorHelper mEdgeToEdgeSystemBarColorHelper;
+    private EdgeToEdgeSystemBarColorHelper mEdgeToEdgeSystemBarColorHelper;
     private final @Nullable BottomAttachedUiObserver mBottomAttachedUiObserver;
     private final TabObserver mTabObserver;
     private final ObserverList<Observer> mObservers = new ObserverList<>();
@@ -135,14 +138,11 @@ class TabbedNavigationBarColorController
      *     changes to the bottom sheet.
      * @param omniboxSuggestionsVisualState An optional {@link OmniboxSuggestionsVisualState} for
      *     access to the visual state of the omnibox suggestions.
-     * @param accessorySheetVisualStateSupplier Supplies an {@link
-     *     AccessorySheetVisualStateProvider} to watch for visual changes to the keyboard accessory
-     *     sheet.
+     * @param manualFillingComponentSupplier Supplies the {@link ManualFillingComponent} for
+     *     observing the visual state of keyboard accessories.
      * @param overviewColorSupplier Notifies when the overview color changes.
      * @param insetObserver An {@link InsetObserver} to listen for changes to the window insets.
      * @param edgeToEdgeSystemBarColorHelper Helps setting nav bar colors when in edge-to-edge.
-     * @param tabObscuringHandler A {@link TabObscuringHandler} to listen to the tab-obscuring state
-     *     change.
      */
     TabbedNavigationBarColorController(
             Context context,
@@ -156,13 +156,10 @@ class TabbedNavigationBarColorController
             @NonNull ObservableSupplier<ContextualSearchManager> contextualSearchManagerSupplier,
             @NonNull BottomSheetController bottomSheetController,
             Optional<OmniboxSuggestionsVisualState> omniboxSuggestionsVisualState,
-            @NonNull
-                    ObservableSupplier<AccessorySheetVisualStateProvider>
-                            accessorySheetVisualStateSupplier,
+            @NonNull ManualFillingComponentSupplier manualFillingComponentSupplier,
             @NonNull ObservableSupplier<Integer> overviewColorSupplier,
             InsetObserver insetObserver,
-            @NonNull EdgeToEdgeSystemBarColorHelper edgeToEdgeSystemBarColorHelper,
-            @NonNull TabObscuringHandler tabObscuringHandler) {
+            @NonNull EdgeToEdgeSystemBarColorHelper edgeToEdgeSystemBarColorHelper) {
         this(
                 context,
                 tabModelSelector,
@@ -173,16 +170,14 @@ class TabbedNavigationBarColorController
                 edgeToEdgeSystemBarColorHelper,
                 ChromeFeatureList.sNavBarColorMatchesTabBackground.isEnabled()
                         ? new BottomAttachedUiObserver(
-                                context,
                                 bottomControlsStacker,
                                 browserControlsStateProvider,
                                 snackbarManagerSupplier.get(),
                                 contextualSearchManagerSupplier,
                                 bottomSheetController,
                                 omniboxSuggestionsVisualState,
-                                accessorySheetVisualStateSupplier,
-                                insetObserver,
-                                tabObscuringHandler)
+                                manualFillingComponentSupplier,
+                                insetObserver)
                         : null);
     }
 
@@ -308,11 +303,6 @@ class TabbedNavigationBarColorController
         updateNavigationBarColor(forceShowDivider, disableAnimation);
     }
 
-    @Override
-    public void onScrimOverlapChanged(@ColorInt int scrimColor) {
-        setNavigationBarScrimColor(scrimColor);
-    }
-
     /**
      * @param layoutManager The {@link LayoutStateProvider} used to determine whether overview mode
      *     is showing.
@@ -327,9 +317,20 @@ class TabbedNavigationBarColorController
                 new LayoutStateObserver() {
                     @Override
                     public void onStartedShowing(@LayoutType int layoutType) {
-                        if (layoutType != LayoutType.TAB_SWITCHER) return;
-                        updateNavigationBarColor();
-                        enableOverviewMode();
+                        if (layoutType == LayoutType.TAB_SWITCHER) {
+                            updateNavigationBarColor();
+                            enableOverviewMode();
+                        } else if (layoutType == LayoutType.TOOLBAR_SWIPE
+                                && ChromeFeatureList.sNavBarColorAnimation.isEnabled()
+                                && mContext instanceof Activity
+                                && EdgeToEdgeControllerFactory.isSupportedConfiguration(
+                                        (Activity) mContext)) {
+                            // Hide the nav bar during omnibox swipes.
+                            mEdgeToEdgeSystemBarColorHelper.setNavigationBarColor(
+                                    Color.TRANSPARENT);
+                            mEdgeToEdgeSystemBarColorHelper.setNavigationBarDividerColor(
+                                    Color.TRANSPARENT);
+                        }
                     }
 
                     @Override
@@ -452,13 +453,7 @@ class TabbedNavigationBarColorController
      */
     public void setNavigationBarScrimColor(@ColorInt int scrimColor) {
         mCurrentScrimColor = scrimColor;
-        @ColorInt
-        int scrimNavigationBarColor =
-                applyCurrentScrimToColor(getNavigationBarColor(mForceDarkNavigationBarColor));
-        mEdgeToEdgeSystemBarColorHelper.setNavigationBarColor(scrimNavigationBarColor);
-        mEdgeToEdgeSystemBarColorHelper.setNavigationBarDividerColor(
-                applyCurrentScrimToColor(
-                        getNavigationBarDividerColor(mForceDarkNavigationBarColor, false)));
+        updateNavigationBarColor();
     }
 
     @ColorInt
@@ -528,6 +523,14 @@ class TabbedNavigationBarColorController
 
     boolean getUseBottomAttachedUiColorForTesting() {
         return useBottomAttachedUiColor();
+    }
+
+    public void setEdgeToEdgeSystemBarColorHelperForTesting(EdgeToEdgeSystemBarColorHelper helper) {
+        mEdgeToEdgeSystemBarColorHelper = helper;
+    }
+
+    public ValueAnimator getNavbarColorTransitionAnimationForTesting() {
+        return mNavbarColorTransitionAnimation;
     }
 
     private boolean shouldEnableNavBarBottomChinColorAnimations() {

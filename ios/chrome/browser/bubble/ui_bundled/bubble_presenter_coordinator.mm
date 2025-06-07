@@ -4,12 +4,14 @@
 
 #import "ios/chrome/browser/bubble/ui_bundled/bubble_presenter_coordinator.h"
 
+#import "base/notreached.h"
 #import "components/feature_engagement/public/tracker.h"
 #import "ios/chrome/browser/bubble/ui_bundled/bubble_presenter.h"
 #import "ios/chrome/browser/content_settings/model/host_content_settings_map_factory.h"
 #import "ios/chrome/browser/discover_feed/model/discover_feed_service.h"
 #import "ios/chrome/browser/discover_feed/model/discover_feed_service_factory.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
 #import "ios/chrome/browser/overlays/model/public/overlay_presenter.h"
 #import "ios/chrome/browser/segmentation_platform/model/segmentation_platform_service_factory.h"
 #import "ios/chrome/browser/shared/coordinator/layout_guide/layout_guide_util.h"
@@ -23,6 +25,7 @@
 #import "ios/chrome/browser/shared/public/commands/popup_menu_commands.h"
 #import "ios/chrome/browser/shared/public/commands/tab_strip_commands.h"
 #import "ios/chrome/browser/shared/public/commands/toolbar_commands.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ui/base/device_form_factor.h"
 
 @interface BubblePresenterCoordinator () <HelpCommands, BooleanObserver>
@@ -39,10 +42,8 @@
 }
 
 - (void)start {
-  ProfileIOS* profile = self.browser->GetProfile();
-
   feature_engagement::Tracker* engagementTracker =
-      feature_engagement::TrackerFactory::GetForProfile(profile);
+      feature_engagement::TrackerFactory::GetForProfile(self.profile);
   OverlayPresenter* webContentPresenter = OverlayPresenter::FromBrowser(
       self.browser, OverlayModality::kWebContentArea);
   OverlayPresenter* infobarBannerPresenter = OverlayPresenter::FromBrowser(
@@ -97,7 +98,10 @@
 #pragma mark - HelpCommands
 
 - (void)presentInProductHelpWithType:(InProductHelpType)type {
-  ProfileIOS* profile = self.browser->GetProfile();
+  if (IsIPHAblationEnabled()) {
+    return;
+  }
+  ProfileIOS* profile = self.profile;
   raw_ptr<segmentation_platform::DeviceSwitcherResultDispatcher>
       deviceSwitcherResultDispatcher = nullptr;
   if (!profile->IsOffTheRecord()) {
@@ -146,10 +150,6 @@
       [_presenter presentLensKeyboardTipBubble];
       break;
     }
-    case InProductHelpType::kParcelTracking: {
-      [_presenter presentParcelTrackingTipBubble];
-      break;
-    }
     case InProductHelpType::kPullToRefresh: {
       [_presenter
           presentPullToRefreshGestureInProductHelpWithDeviceSwitcherResultDispatcher:
@@ -166,6 +166,29 @@
     }
     case InProductHelpType::kLensOverlayEntrypoint: {
       [_presenter presentLensOverlayTipBubble];
+      break;
+    }
+    case InProductHelpType::kSettingsInOverflowMenu: {
+      [_presenter presentOverflowMenuSettingsBubble];
+      break;
+    }
+    case InProductHelpType::kFeedSwipe: {
+      using enum FeedSwipeIPHVariation;
+      switch (GetFeedSwipeIPHVariation()) {
+        case kStaticAfterFRE:
+        case kStaticInSecondRun:
+          [_presenter presentFeedSwipeBubble];
+          break;
+        case kAnimated:
+          [_presenter presentFeedSwipeGestureInProductHelp];
+          break;
+        case kDisabled:
+          NOTREACHED();
+      }
+      break;
+    }
+    case InProductHelpType::kSwitchAccountsWithNTPAccountParticleDisc: {
+      [_presenter presentSwitchAccountsWithNTPAccountParticleDiscBubble];
       break;
     }
   }

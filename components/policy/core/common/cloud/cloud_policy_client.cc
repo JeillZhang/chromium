@@ -6,9 +6,9 @@
 
 #include <string>
 #include <utility>
+#include <variant>
 
 #include "base/check.h"
-#include "base/check_is_test.h"
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -52,12 +52,6 @@ BASE_FEATURE(kPolicyFetchWithSha256,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 namespace {
-
-#if BUILDFLAG(IS_WIN)
-BASE_FEATURE(kGetBrowserIdentifierAsync,
-             "GetBrowserIdentifierAsync",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-#endif
 
 const char kDmServerCloudPolicyRequestHistogramBase[] =
     "Enterprise.DMServerCloudPolicyRequestStatus";
@@ -306,16 +300,33 @@ CloudPolicyClient::Result::Result(DeviceManagementStatus status)
     : result_(status) {}
 CloudPolicyClient::Result::Result(DeviceManagementStatus status, int net_error)
     : result_(status), net_error_(net_error) {}
+CloudPolicyClient::Result::Result(DeviceManagementStatus status,
+                                  int net_error,
+                                  base::Value::Dict response)
+    : result_(status), net_error_(net_error), response_(std::move(response)) {}
 CloudPolicyClient::Result::Result(NotRegistered) : result_(NotRegistered()) {}
 
+CloudPolicyClient::Result::Result(const Result& other)
+    : result_(other.result_),
+      net_error_(other.net_error_),
+      response_(other.response_.Clone()) {}
+
+CloudPolicyClient::Result& CloudPolicyClient::Result::operator=(
+    const Result& other) {
+  result_ = other.result_;
+  net_error_ = other.net_error_;
+  response_ = other.response_.Clone();
+  return *this;
+}
+
 bool CloudPolicyClient::Result::IsSuccess() const {
-  return result_ == absl::variant<NotRegistered, DeviceManagementStatus>(
-                        DM_STATUS_SUCCESS);
+  return result_ ==
+         std::variant<NotRegistered, DeviceManagementStatus>(DM_STATUS_SUCCESS);
 }
 
 bool CloudPolicyClient::Result::IsClientNotRegisteredError() const {
   return result_ ==
-         absl::variant<NotRegistered, DeviceManagementStatus>(NotRegistered());
+         std::variant<NotRegistered, DeviceManagementStatus>(NotRegistered());
 }
 
 bool CloudPolicyClient::Result::IsDMServerError() const {
@@ -323,11 +334,15 @@ bool CloudPolicyClient::Result::IsDMServerError() const {
 }
 
 DeviceManagementStatus CloudPolicyClient::Result::GetDMServerError() const {
-  return absl::get<DeviceManagementStatus>(result_);
+  return std::get<DeviceManagementStatus>(result_);
 }
 
 int CloudPolicyClient::Result::GetNetError() const {
   return net_error_;
+}
+
+const base::Value::Dict& CloudPolicyClient::Result::GetResponse() const {
+  return response_;
 }
 
 CloudPolicyClient::CloudPolicyClient(
@@ -747,17 +762,18 @@ void CloudPolicyClient::FetchPolicy(PolicyFetchReason reason) {
     if (type_to_fetch.first ==
         dm_protocol::kChromeMachineLevelUserCloudPolicyType) {
 #if BUILDFLAG(IS_WIN)
-      if (base::FeatureList::IsEnabled(kGetBrowserIdentifierAsync)) {
         cbcm_policy_fetch_request = fetch_request;
-      } else
-#endif  // BUILDFLAG(IS_WIN)
-      {
+#else
         fetch_request->set_allocated_browser_device_identifier(
             GetBrowserDeviceIdentifier().release());
-      }
+#endif  // BUILDFLAG(IS_WIN)
     }
 #endif
   }
+
+  void OnPromotionEligibilityDetermined(
+      CloudPolicyClient::PromotionEligibilityCallback callback,
+      DMServerJobResult result);
 
   // Add device state keys.
   if (!state_keys_to_upload_.empty()) {
@@ -790,7 +806,8 @@ void CloudPolicyClient::FetchPolicy(PolicyFetchReason reason) {
   unique_request_job_ = service_->CreateJob(std::move(config));
 }
 
-void CloudPolicyClient::DeterminePromotionEligibility(ResultCallback callback) {
+void CloudPolicyClient::DeterminePromotionEligibility(
+    CloudPolicyClient::PromotionEligibilityCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(service_);
 
@@ -1027,6 +1044,7 @@ void CloudPolicyClient::UploadChromeOsUserReport(
 }
 
 void CloudPolicyClient::UploadChromeProfileReport(
+    bool use_cookies,
     std::unique_ptr<em::ChromeProfileReportRequest> chrome_profile_report,
     CloudPolicyClient::ResultCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -1042,6 +1060,7 @@ void CloudPolicyClient::UploadChromeProfileReport(
           DeviceManagementService::JobConfiguration::TYPE_CHROME_PROFILE_REPORT,
           std::move(callback));
 
+  config->set_use_cookies(use_cookies);
   config->request()->set_allocated_chrome_profile_report_request(
       chrome_profile_report.release());
 
@@ -1125,10 +1144,6 @@ void CloudPolicyClient::FetchRemoteCommands(
 
   // Unsigned commands and NONE signature are not supported.
   DCHECK_NE(signature_type, em::PolicyFetchRequest::NONE);
-
-  if (reason == RemoteCommandsFetchReason::kTest) {
-    CHECK_IS_TEST();
-  }
 
   auto params = DMServerJobConfiguration::CreateParams::WithClient(
       DeviceManagementService::JobConfiguration::TYPE_REMOTE_COMMANDS, this);
@@ -1355,7 +1370,7 @@ void CloudPolicyClient::UploadFmRegistrationToken(
   *config->request()->mutable_fm_registration_token_upload_request() =
       std::move(request);
 
-  unique_request_job_ = service_->CreateJob(std::move(config));
+  request_jobs_.push_back(service_->CreateJob(std::move(config)));
 }
 
 void CloudPolicyClient::OnUploadFmRegistrationTokenResponse(
@@ -1371,6 +1386,7 @@ void CloudPolicyClient::OnUploadFmRegistrationTokenResponse(
     result.dm_status = DM_STATUS_RESPONSE_DECODING_ERROR;
   }
   std::move(callback).Run(CloudPolicyClient::Result(result.dm_status));
+  RemoveJob(result.job);
 }
 
 void CloudPolicyClient::UpdateServiceAccount(const std::string& account_email) {
@@ -1811,7 +1827,13 @@ void CloudPolicyClient::OnRealtimeReportUploadCompleted(
     NotifyClientError();
   }
 
-  std::move(callback).Run(CloudPolicyClient::Result(status));
+  if (response.has_value()) {
+    std::move(callback).Run(CloudPolicyClient::Result(
+        status, reponse_code, std::move(response.value())));
+  } else {
+    std::move(callback).Run(CloudPolicyClient::Result(status, reponse_code));
+  }
+
   RemoveJob(job);
 }
 
@@ -1855,14 +1877,15 @@ void CloudPolicyClient::OnClientCertProvisioningRequestResponse(
 }
 
 void CloudPolicyClient::OnPromotionEligibilityDetermined(
-    ResultCallback callback,
+    PromotionEligibilityCallback callback,
     DMServerJobResult result) {
   last_dm_status_ = result.dm_status;
   if (result.dm_status != DM_STATUS_SUCCESS) {
     NotifyClientError();
   }
 
-  std::move(callback).Run(Result(result.dm_status));
+  std::move(callback).Run(
+      result.response.get_user_eligible_promotions_response());
   RemoveJob(result.job);
 }
 

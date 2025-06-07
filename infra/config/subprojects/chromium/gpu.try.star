@@ -20,6 +20,7 @@ try_.defaults.set(
     # Max. pending time for builds. CQ considers builds pending >2h as timed
     # out: http://shortn/_8PaHsdYmlq. Keep this in sync.
     expiration_timeout = 2 * time.hour,
+    reclient_enabled = False,
     service_account = "chromium-try-gpu-builder@chops-service-accounts.iam.gserviceaccount.com",
     siso_enabled = True,
     siso_project = siso.project.DEFAULT_UNTRUSTED,
@@ -146,6 +147,7 @@ gpu_android_builder(
         configs = [
             "gpu_fyi_tests",
             "android_builder",
+            "android_fastbuild",
             "release_builder",
             "try_builder",
             "remoteexec",
@@ -231,6 +233,15 @@ gpu_linux_builder(
     mirrors = [
         "ci/GPU FYI Linux Builder",
         "ci/Linux FYI Release (AMD RX 5500 XT)",
+    ],
+    gn_args = "ci/GPU FYI Linux Builder",
+)
+
+gpu_linux_builder(
+    name = "gpu-fyi-try-linux-amd-rx-7600-rel",
+    mirrors = [
+        "ci/GPU FYI Linux Builder",
+        "ci/Linux FYI Release (AMD RX 7600)",
     ],
     gn_args = "ci/GPU FYI Linux Builder",
 )
@@ -352,6 +363,10 @@ gpu_mac_builder(
         "ci/Mac FYI Retina ASAN (AMD)",
     ],
     gn_args = "ci/GPU FYI Mac Builder (asan)",
+    # //tools/grit:brotli_mac_asan_workaround doesn't create bundle
+    # `obj/tools/grit/brotli_mac_asan_workaround/` when cross compiling
+    # from ARM host.
+    cpu = cpu.X86_64,
 )
 
 gpu_mac_builder(
@@ -419,12 +434,25 @@ gpu_mac_builder(
 )
 
 gpu_mac_builder(
+    name = "gpu-fyi-try-mac-arm64-apple-m3-retina-rel",
+    mirrors = [
+        "ci/GPU FYI Mac arm64 Builder",
+        "ci/Mac FYI Retina Release (Apple M3)",
+    ],
+    gn_args = "ci/GPU FYI Mac arm64 Builder",
+)
+
+gpu_mac_builder(
     name = "gpu-fyi-try-mac-intel-asan",
     mirrors = [
         "ci/GPU FYI Mac Builder (asan)",
         "ci/Mac FYI ASAN (Intel)",
     ],
     gn_args = "ci/GPU FYI Mac Builder (asan)",
+    # //tools/grit:brotli_mac_asan_workaround doesn't create bundle
+    # `obj/tools/grit/brotli_mac_asan_workaround/` when cross compiling
+    # from ARM host.
+    cpu = cpu.X86_64,
 )
 
 gpu_mac_builder(
@@ -450,27 +478,6 @@ gpu_mac_builder(
     mirrors = [
         "ci/GPU FYI Mac Builder",
         "ci/Mac FYI Release (Intel)",
-    ],
-    gn_args = "ci/GPU FYI Mac Builder",
-)
-
-gpu_mac_builder(
-    name = "gpu-fyi-try-mac-nvidia-retina-exp",
-    mirrors = [
-        "ci/GPU FYI Mac Builder",
-        "ci/Mac FYI Experimental Retina Release (NVIDIA)",
-    ],
-    gn_args = "ci/GPU FYI Mac Builder",
-    # This bot has one machine backing its tests at the moment.
-    # If it gets more, the modified execution_timeout should be removed.
-    execution_timeout = 12 * time.hour,
-)
-
-gpu_mac_builder(
-    name = "gpu-fyi-try-mac-nvidia-retina-rel",
-    mirrors = [
-        "ci/GPU FYI Mac Builder",
-        "ci/Mac FYI Retina Release (NVIDIA)",
     ],
     gn_args = "ci/GPU FYI Mac Builder",
 )
@@ -593,6 +600,15 @@ gpu_win_builder(
     mirrors = [
         "ci/GPU FYI Win x64 Builder",
         "ci/Win10 FYI x64 Release (NVIDIA)",
+    ],
+    gn_args = "ci/GPU FYI Win x64 Builder",
+)
+
+gpu_win_builder(
+    name = "gpu-fyi-try-win11-amd-rel-64",
+    mirrors = [
+        "ci/GPU FYI Win x64 Builder",
+        "ci/Win11 FYI x64 Release (AMD RX 7600)",
     ],
     gn_args = "ci/GPU FYI Win x64 Builder",
 )

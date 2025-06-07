@@ -37,8 +37,8 @@ struct AutocompleteMatchType {
     HISTORY_URL           = 1,  // A past page whose URL contains the input.
     HISTORY_TITLE         = 2,  // A past page whose title contains the input.
     HISTORY_BODY          = 3,  // A past page whose body contains the input.
-    HISTORY_KEYWORD [[deprecated]] = 4,  // A past page whose keyword contains
-                                         // the input (deprecated).
+    HISTORY_KEYWORD       = 4,  // A past page whose keyword contains the
+                                // input.
     NAVSUGGEST            = 5,  // A suggested URL.
     SEARCH_WHAT_YOU_TYPED = 6,  // The input as a search query (with the
                                 // default engine).
@@ -97,7 +97,8 @@ struct AutocompleteMatchType {
                                        // similar embeddings to the query.
     FEATURED_ENTERPRISE_SEARCH  = 37,  // Site search engines featured by
                                        // Enterprise policy.
-    HISTORY_EMBEDDINGS_ANSWER = 38,
+    HISTORY_EMBEDDINGS_ANSWER   = 38,
+    TAB_GROUP                   = 39,  // A tab group match.
     NUM_TYPES,
   };
   // clang-format on
@@ -130,6 +131,7 @@ struct AutocompleteMatchType {
   // like it could replace |match_text|. Investigate this.
   static std::u16string ToAccessibilityLabel(
       const AutocompleteMatch& match,
+      const std::u16string& header_text,
       const std::u16string& match_text,
       size_t match_index = 0,
       size_t total_matches = 0,

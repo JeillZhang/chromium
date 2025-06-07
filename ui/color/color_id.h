@@ -202,6 +202,27 @@
   E_CPONLY(kColorSysShadow) \
   E_CPONLY(kColorSysGradientPrimary) \
   E_CPONLY(kColorSysGradientTertiary) \
+  /* Illustration */ \
+  E_CPONLY(kColorSysIlloPrimaryMin) \
+  E_CPONLY(kColorSysIlloPrimaryLow) \
+  E_CPONLY(kColorSysIlloPrimaryMid) \
+  E_CPONLY(kColorSysIlloPrimaryHigh) \
+  E_CPONLY(kColorSysIlloPrimaryMax) \
+  E_CPONLY(kColorSysIlloSecondaryMin) \
+  E_CPONLY(kColorSysIlloSecondaryLow) \
+  E_CPONLY(kColorSysIlloSecondaryMid) \
+  E_CPONLY(kColorSysIlloSecondaryHigh) \
+  E_CPONLY(kColorSysIlloSecondaryMax) \
+  E_CPONLY(kColorSysIlloTertiaryMin) \
+  E_CPONLY(kColorSysIlloTertiaryLow) \
+  E_CPONLY(kColorSysIlloTertiaryMid) \
+  E_CPONLY(kColorSysIlloTertiaryHigh) \
+  E_CPONLY(kColorSysIlloTertiaryMax) \
+  E_CPONLY(kColorSysIlloNeutralMin) \
+  E_CPONLY(kColorSysIlloNeutralLow) \
+  E_CPONLY(kColorSysIlloNeutralMid) \
+  E_CPONLY(kColorSysIlloNeutralHigh) \
+  E_CPONLY(kColorSysIlloNeutralMax) \
   /* AI. */ \
   E_CPONLY(kColorSysAiIllustrationShapeSurface1) \
   E_CPONLY(kColorSysAiIllustrationShapeSurface2) \
@@ -245,7 +266,6 @@
   E_CPONLY(kColorAppMenuRowBackgroundHovered) \
   E_CPONLY(kColorAppMenuUpgradeRowBackground) \
   E_CPONLY(kColorAppMenuUpgradeRowSubstringForeground) \
-  E_CPONLY(kColorAvatarHeaderArt) \
   E_CPONLY(kColorAvatarIconGuest) \
   E_CPONLY(kColorAvatarIconIncognito) \
   E_CPONLY(kColorBadgeBackground) \
@@ -299,14 +319,19 @@
   /* These colors correspond to the system colors defined in */ \
   /* ui::NativeTheme::SystemThemeColor. They are used to support */ \
   /* CSS system colors. */ \
+  E_CPONLY(kColorCssSystemActiveText) \
   E_CPONLY(kColorCssSystemBtnFace) \
   E_CPONLY(kColorCssSystemBtnText) \
+  E_CPONLY(kColorCssSystemField) \
+  E_CPONLY(kColorCssSystemFieldText) \
   E_CPONLY(kColorCssSystemGrayText) \
   E_CPONLY(kColorCssSystemHighlight) \
   E_CPONLY(kColorCssSystemHighlightText) \
   E_CPONLY(kColorCssSystemHotlight) \
+  E_CPONLY(kColorCssSystemLinkText) \
   E_CPONLY(kColorCssSystemMenuHilight) \
   E_CPONLY(kColorCssSystemScrollbar) \
+  E_CPONLY(kColorCssSystemVisitedText) \
   E_CPONLY(kColorCssSystemWindow) \
   E_CPONLY(kColorCssSystemWindowText) \
   E_CPONLY(kColorCustomFrameCaptionForeground) \
@@ -624,7 +649,7 @@
   E_CPONLY(kColorCrosSysInputFieldOnBase)
 #elif BUILDFLAG(IS_LINUX)
 #define PLATFORM_SPECIFIC_COLOR_IDS \
-  E_CPONLY(kColorNativeButtonBorder)\
+  E_CPONLY(kColorNativeBoxFrameBorder)\
   E_CPONLY(kColorNativeHeaderButtonBorderActive) \
   E_CPONLY(kColorNativeHeaderButtonBorderInactive) \
   E_CPONLY(kColorNativeHeaderSeparatorBorderActive) \

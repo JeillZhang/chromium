@@ -64,14 +64,6 @@ export class SettingsCookiesPageElement extends SettingsCookiesPageElementBase {
   static get properties() {
     return {
       /**
-       * Preferences state.
-       */
-      prefs: {
-        type: Object,
-        notify: true,
-      },
-
-      /**
        * Current search term.
        */
       searchTerm: {
@@ -91,7 +83,7 @@ export class SettingsCookiesPageElement extends SettingsCookiesPageElementBase {
         value: ThirdPartyCookieBlockingSetting,
       },
 
-      contentSetting_: {
+      contentSettingEnum_: {
         type: Object,
         value: ContentSetting,
       },
@@ -113,26 +105,10 @@ export class SettingsCookiesPageElement extends SettingsCookiesPageElementBase {
         observer: 'focusConfigChanged_',
       },
 
-      enableFirstPartySetsUI_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean('firstPartySetsUIEnabled'),
-      },
-
       is3pcdRedesignEnabled_: {
         type: Boolean,
         value: () =>
             loadTimeData.getBoolean('is3pcdCookieSettingsRedesignEnabled'),
-      },
-
-      isIpProtectionAvailable_: {
-        type: Boolean,
-        value: () => loadTimeData.getBoolean('isIpProtectionUxEnabled'),
-      },
-
-      isFingerprintingProtectionAvailable_: {
-        type: Boolean,
-        value: () =>
-            loadTimeData.getBoolean('isFingerprintingProtectionUxEnabled'),
       },
 
       isAlwaysBlock3pcsIncognitoEnabled_: {
@@ -143,14 +119,12 @@ export class SettingsCookiesPageElement extends SettingsCookiesPageElementBase {
     };
   }
 
-  searchTerm: string;
-  private cookiesContentSettingType_: ContentSettingsTypes;
-  private blockAllPref_: chrome.settingsPrivate.PrefObject;
-  focusConfig: FocusConfig;
-  private enableFirstPartySetsUI_: boolean;
-  private is3pcdRedesignEnabled_: boolean;
-  private isIpProtectionAvailable_: boolean;
-  private isFingerprintingProtectionAvailable_: boolean;
+  declare searchTerm: string;
+  declare private cookiesContentSettingType_: ContentSettingsTypes;
+  declare private blockAllPref_: chrome.settingsPrivate.PrefObject;
+  declare focusConfig: FocusConfig;
+  declare private is3pcdRedesignEnabled_: boolean;
+  declare private isAlwaysBlock3pcsIncognitoEnabled_: boolean;
 
   private metricsBrowserProxy_: MetricsBrowserProxy =
       MetricsBrowserProxyImpl.getInstance();
@@ -186,16 +160,6 @@ export class SettingsCookiesPageElement extends SettingsCookiesPageElementBase {
       this.metricsBrowserProxy_.recordAction(
           'Settings.PrivacySandbox.Block3PCookies');
     }
-  }
-
-  private onFpProtectionChanged_() {
-    this.metricsBrowserProxy_.recordSettingsPageHistogram(
-        PrivacyElementInteractions.FINGERPRINTING_PROTECTION);
-  }
-
-  private onIpProtectionChanged_() {
-    this.metricsBrowserProxy_.recordSettingsPageHistogram(
-        PrivacyElementInteractions.IP_PROTECTION);
   }
 
   private showOrHideToast(switchedToBlock3pcs: boolean) {
@@ -254,10 +218,14 @@ export class SettingsCookiesPageElement extends SettingsCookiesPageElementBase {
     if (selection === ThirdPartyCookieBlockingSetting.INCOGNITO_ONLY) {
       this.metricsBrowserProxy_.recordSettingsPageHistogram(
           PrivacyElementInteractions.THIRD_PARTY_COOKIES_BLOCK_IN_INCOGNITO);
+      this.metricsBrowserProxy_.recordAction(
+            'Settings.ThirdPartyCookies.Allow');
     } else {
       assert(selection === ThirdPartyCookieBlockingSetting.BLOCK_THIRD_PARTY);
       this.metricsBrowserProxy_.recordSettingsPageHistogram(
           PrivacyElementInteractions.THIRD_PARTY_COOKIES_BLOCK);
+      this.metricsBrowserProxy_.recordAction(
+            'Settings.ThirdPartyCookies.Block');
     }
 
     const currentThirdPartyCookieBlockingSetting =
@@ -290,12 +258,12 @@ export class SettingsCookiesPageElement extends SettingsCookiesPageElementBase {
                .value !== ThirdPartyCookieBlockingSetting.BLOCK_THIRD_PARTY;
   }
 
-  private getThirdPartyCookiesPageBlockThirdPartyIncognitoBulTwoLabel_():
+  private getThirdPartyCookiesPageDescription_():
       string {
     return this.i18n(
-        this.enableFirstPartySetsUI_ ?
-            'cookiePageBlockThirdIncognitoBulTwoRws' :
-            'thirdPartyCookiesPageBlockIncognitoBulTwo');
+        this.isAlwaysBlock3pcsIncognitoEnabled_ ?
+            'thirdPartyCookiesPageDescription' :
+            'thirdPartyCookiesAlignedPageDescription');
   }
 }
 

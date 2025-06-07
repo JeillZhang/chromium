@@ -62,7 +62,7 @@ public class TabThumbnailViewRenderTest {
     public final ChromeRenderTestRule mRenderTestRule =
             ChromeRenderTestRule.Builder.withPublicCorpus()
                     .setBugComponent(RenderTestRule.Component.UI_BROWSER_MOBILE_TAB_SWITCHER_GRID)
-                    .setRevision(5)
+                    .setRevision(7)
                     .build();
 
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
@@ -224,10 +224,10 @@ public class TabThumbnailViewRenderTest {
         cardView.getBackground().mutate();
         final @ColorInt int backgroundColor =
                 TabUiThemeUtils.getCardViewBackgroundColor(
-                        cardView.getContext(), isIncognito, isSelected);
+                        cardView.getContext(), isIncognito, isSelected, /* colorId */ null);
         ViewCompat.setBackgroundTintList(cardView, ColorStateList.valueOf(backgroundColor));
 
-        mTabThumbnailView.updateThumbnailPlaceholder(isIncognito, isSelected);
+        mTabThumbnailView.updateThumbnailPlaceholder(isIncognito, isSelected, /* colorId */ null);
 
         mTabCard.setTabActionButtonTint(
                 TabUiThemeProvider.getActionButtonTintList(

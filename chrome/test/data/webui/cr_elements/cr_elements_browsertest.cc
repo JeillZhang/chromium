@@ -57,6 +57,10 @@ IN_PROC_BROWSER_TEST_F(CrElementsTest, CrDialog) {
   RunTest("cr_elements/cr_dialog_test.js", "mocha.run()");
 }
 
+IN_PROC_BROWSER_TEST_F(CrElementsTest, CrScrollable) {
+  RunTest("cr_elements/cr_scrollable_test.js", "mocha.run()");
+}
+
 // https://crbug.com/1008122 - Flaky on Mac.
 #if BUILDFLAG(IS_MAC)
 #define MAYBE_CrDrawer DISABLED_CrDrawer
@@ -206,10 +210,6 @@ IN_PROC_BROWSER_TEST_F(CrElementsTest, WebUiListenerMixinLit) {
 
 IN_PROC_BROWSER_TEST_F(CrElementsTest, CrUrlListItem) {
   RunTest("cr_elements/cr_url_list_item_test.js", "mocha.run()");
-}
-
-IN_PROC_BROWSER_TEST_F(CrElementsTest, StoreClient) {
-  RunTest("cr_elements/store_client_test.js", "mocha.run()");
 }
 
 IN_PROC_BROWSER_TEST_F(CrElementsTest, CrLoadingGradient) {

@@ -35,7 +35,7 @@ RetryView::RetryView() {
   AddChildView(views::Builder<views::Label>()
                    .CopyAddressTo(&first_line_label_)
                    .SetVisible(false)
-                   .SetEnabledColorId(ui::kColorLabelForeground)
+                   .SetEnabledColor(ui::kColorLabelForeground)
                    .SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT)
                    .SetProperty(views::kFlexBehaviorKey,
                                 views::FlexSpecification(
@@ -51,7 +51,7 @@ RetryView::RetryView() {
           .AddChild(
               views::Builder<views::Label>()
                   .CopyAddressTo(&second_line_label_)
-                  .SetEnabledColorId(ui::kColorLabelForegroundSecondary)
+                  .SetEnabledColor(ui::kColorLabelForegroundSecondary)
                   .SetText(l10n_util::GetStringUTF16(
                       IDS_QUICK_ANSWERS_VIEW_NETWORK_ERROR))
                   .SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_LEFT)
@@ -64,7 +64,7 @@ RetryView::RetryView() {
                   .CopyAddressTo(&retry_label_button_)
                   .SetText(
                       l10n_util::GetStringUTF16(IDS_QUICK_ANSWERS_VIEW_RETRY))
-                  .SetEnabledTextColorIds(ui::kColorProgressBar)
+                  .SetEnabledTextColors(ui::kColorProgressBar)
                   .SetRequestFocusOnPress(true)
                   .SetCallback(base::BindRepeating(
                       &RetryView::OnRetryButtonPressed, base::Unretained(this)))

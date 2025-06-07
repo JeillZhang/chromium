@@ -19,6 +19,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/sequence_checker.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/task/bind_post_task.h"
@@ -789,6 +790,7 @@ class FileUploadDelegate::FinalContext
     auto resource_request = std::make_unique<::network::ResourceRequest>();
     resource_request->url = resumable_upload_url_;
     resource_request->headers.SetHeader(kUploadCommandHeader, "query");
+    resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
 
     url_loader_ = delegate()->CreatePostLoader(std::move(resource_request));
 

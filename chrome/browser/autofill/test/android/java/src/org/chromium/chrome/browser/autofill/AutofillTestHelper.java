@@ -32,6 +32,7 @@ import org.chromium.components.autofill.AutofillProfile;
 import org.chromium.components.autofill.AutofillSuggestion;
 import org.chromium.components.autofill.IbanRecordType;
 import org.chromium.components.autofill.SubKeyRequester;
+import org.chromium.components.autofill.SuggestionType;
 import org.chromium.components.autofill.VirtualCardEnrollmentState;
 import org.chromium.components.autofill.payments.BankAccount;
 import org.chromium.components.autofill.payments.Ewallet;
@@ -69,6 +70,17 @@ public class AutofillTestHelper {
         return runOnUiThreadBlocking(
                 () ->
                         PersonalDataManagerFactory.getForProfile(
+                                ProfileManager.getLastUsedRegularProfile()));
+    }
+
+    /**
+     * Return the {@link AutofillImageFetcher} associated with {@link
+     * ProfileManager#getLastUsedRegularProfile()}.
+     */
+    public static AutofillImageFetcher getAutofillImageFetcherForLastUsedProfile() {
+        return runOnUiThreadBlocking(
+                () ->
+                        AutofillImageFetcherFactory.getForProfile(
                                 ProfileManager.getLastUsedRegularProfile()));
     }
 
@@ -341,7 +353,7 @@ public class AutofillTestHelper {
     public void clearAllDataForTesting() throws TimeoutException {
         runOnUiThreadBlocking(() -> AutofillTestHelperJni.get().clearServerData());
         runOnUiThreadBlocking(
-                () -> getPersonalDataManagerForLastUsedProfile().clearImageDataForTesting());
+                () -> getAutofillImageFetcherForLastUsedProfile().clearCachedImagesForTesting());
         // Clear remaining local profiles and cards.
         for (AutofillProfile profile : getProfilesForSettings()) {
             runOnUiThreadBlocking(
@@ -466,22 +478,51 @@ public class AutofillTestHelper {
                 /* productTermsUrl= */ null);
     }
 
+    /**
+     * Creates a new {@code AutofillSuggestion} object using a builder pattern.
+     *
+     * @param label The main label of the suggestion.
+     * @param secondaryLabel The secondary label of the suggestion.
+     * @param subLabel The sublabel of the suggestion.
+     * @param secondarySubLabel The secondary sublabel of the suggestion.
+     * @param labelContentDescription The message to be announced for the main label of the
+     *     suggestion.
+     * @param suggestionType Type of the suggestion.
+     * @param customIconUrl The {@link GURL} for the custom icon.
+     * @param iconId The resource ID for the icon associated with the suggestion.
+     * @param applyDeactivatedStyle Whether to apply deactivated style to the suggestion.
+     * @param shouldDisplayTermsAvailable Whether to display terms message with the suggestion.
+     * @param guid The payment method identifier associated with the suggestion.
+     * @param isLocalPaymentsMethod Whether the payment method associated with the suggestion is
+     *     local.
+     * @return A newly created, {@code AutofillSuggestion} object.
+     */
     public static AutofillSuggestion createCreditCardSuggestion(
             String label,
             String secondaryLabel,
             String subLabel,
             String secondarySubLabel,
             String labelContentDescription,
+            @SuggestionType int suggestionType,
+            GURL customIconUrl,
+            int iconId,
             boolean applyDeactivatedStyle,
-            boolean shouldDisplayTermsAvailable) {
+            boolean shouldDisplayTermsAvailable,
+            String guid,
+            boolean isLocalPaymentsMethod) {
         return new AutofillSuggestion.Builder()
                 .setLabel(label)
                 .setSecondaryLabel(secondaryLabel)
                 .setSubLabel(subLabel)
                 .setSecondarySubLabel(secondarySubLabel)
                 .setLabelContentDescription(labelContentDescription)
+                .setSuggestionType(suggestionType)
+                .setCustomIconUrl(customIconUrl)
+                .setIconId(iconId)
                 .setApplyDeactivatedStyle(applyDeactivatedStyle)
                 .setShouldDisplayTermsAvailable(shouldDisplayTermsAvailable)
+                .setGuid(guid)
+                .setIsLocalPaymentsMethod(isLocalPaymentsMethod)
                 .build();
     }
 

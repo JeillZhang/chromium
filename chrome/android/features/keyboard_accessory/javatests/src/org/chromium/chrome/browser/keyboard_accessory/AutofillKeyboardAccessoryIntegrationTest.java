@@ -73,7 +73,7 @@ public class AutofillKeyboardAccessoryIntegrationTest {
 
     private static final String TEST_PAGE = "/chrome/test/data/autofill/autofill_test_form.html";
 
-    private ManualFillingTestHelper mHelper = new ManualFillingTestHelper(mActivityTestRule);
+    private final ManualFillingTestHelper mHelper = new ManualFillingTestHelper(mActivityTestRule);
 
     /**
      * This FakeKeyboard triggers as a regular keyboard but has no measurable height. This simulates
@@ -156,7 +156,7 @@ public class AutofillKeyboardAccessoryIntegrationTest {
      */
     @Test
     @MediumTest
-    @Restriction(DeviceFormFactor.TABLET)
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
     public void testSelectSuggestionHidesKeyboardAccessory()
             throws ExecutionException, TimeoutException {
         loadTestPage(FakeKeyboard::new);

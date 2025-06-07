@@ -27,11 +27,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/core/css/selector_checker.h"
 
 #include "base/auto_reset.h"
@@ -51,6 +46,7 @@
 #include "third_party/blink/renderer/core/dom/nth_index_cache.h"
 #include "third_party/blink/renderer/core/dom/popover_data.h"
 #include "third_party/blink/renderer/core/dom/scroll_button_pseudo_element.h"
+#include "third_party/blink/renderer/core/dom/scroll_marker_group_data.h"
 #include "third_party/blink/renderer/core/dom/scroll_marker_pseudo_element.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/dom/slot_assignment_engine.h"
@@ -67,6 +63,7 @@
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_option_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
+#include "third_party/blink/renderer/core/html/html_anchor_element.h"
 #include "third_party/blink/renderer/core/html/html_details_element.h"
 #include "third_party/blink/renderer/core/html/html_dialog_element.h"
 #include "third_party/blink/renderer/core/html/html_document.h"
@@ -92,6 +89,7 @@
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
 #include "third_party/blink/renderer/core/view_transition/view_transition.h"
+#include "third_party/blink/renderer/core/view_transition/view_transition_pseudo_element_base.h"
 #include "third_party/blink/renderer/core/view_transition/view_transition_utils.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
@@ -406,6 +404,227 @@ bool NeedsScopeActivation(
 }
 
 }  // namespace
+
+SelectorChecker::FeaturelessMatch SelectorChecker::MatchesShadowHostInList(
+    const SelectorCheckingContext& context,
+    const CSSSelector* selector_list,
+    MatchResult& result) const {
+  SelectorCheckingContext sub_context(context);
+  sub_context.is_sub_selector = true;
+  sub_context.in_nested_complex_selector = true;
+  sub_context.pseudo_id = kPseudoIdNone;
+  FeaturelessMatch fail = kFeaturelessUnknown;
+  for (sub_context.selector = selector_list; sub_context.selector;
+       sub_context.selector = CSSSelectorList::Next(*sub_context.selector)) {
+    SubResult sub_result(result);
+    switch (MatchShadowHost(sub_context, sub_result)) {
+      case kFeaturelessMatches:
+        return kFeaturelessMatches;
+      case kFeaturelessFails:
+        fail = kFeaturelessFails;
+        break;
+      case kFeaturelessUnknown:
+        break;
+    }
+  }
+  return fail;
+}
+
+SelectorChecker::FeaturelessMatch SelectorChecker::MatchShadowHost(
+    const SelectorCheckingContext& context,
+    MatchResult& result) const {
+  const CSSSelector& selector = *context.selector;
+  switch (selector.GetPseudoType()) {
+    case CSSSelector::kPseudoIs:
+    case CSSSelector::kPseudoWhere:
+    case CSSSelector::kPseudoAny:
+      return MatchesShadowHostInList(context, selector.SelectorListOrParent(),
+                                     result);
+    case CSSSelector::kPseudoNot: {
+      FeaturelessMatch match = MatchesShadowHostInList(
+          context, selector.SelectorListOrParent(), result);
+      switch (match) {
+        case kFeaturelessMatches:
+          return kFeaturelessFails;
+        case kFeaturelessFails:
+          return kFeaturelessMatches;
+        case kFeaturelessUnknown:
+          return kFeaturelessUnknown;
+      }
+    }
+    case CSSSelector::kPseudoParent: {
+      const CSSSelector* parent = selector.SelectorListOrParent();
+      if (parent == nullptr) {
+        // & at top level matches like :scope.
+        return CheckPseudoScope(context, result) ? kFeaturelessMatches
+                                                 : kFeaturelessFails;
+      } else {
+        return MatchesShadowHostInList(context, parent, result);
+      }
+    }
+    case CSSSelector::kPseudoHostContext:
+      UseCounter::Count(
+          context.element->GetDocument(),
+          mode_ == kQueryingRules
+              ? WebFeature::kCSSSelectorHostContextInSnapshotProfile
+              : WebFeature::kCSSSelectorHostContextInLiveProfile);
+      [[fallthrough]];
+    case CSSSelector::kPseudoHost:
+      return CheckPseudoHost(context, result) ? kFeaturelessMatches
+                                              : kFeaturelessFails;
+    case CSSSelector::kPseudoScope:
+      return CheckPseudoScope(context, result) ? kFeaturelessMatches
+                                               : kFeaturelessFails;
+    case CSSSelector::kPseudoHas:
+      return CheckPseudoHas(context, result) ? kFeaturelessMatches
+                                             : kFeaturelessFails;
+    case CSSSelector::kPseudoActive:
+    case CSSSelector::kPseudoActiveViewTransition:
+    case CSSSelector::kPseudoActiveViewTransitionType:
+    case CSSSelector::kPseudoAfter:
+    case CSSSelector::kPseudoAnyLink:
+    case CSSSelector::kPseudoAutofill:
+    case CSSSelector::kPseudoAutofillPreviewed:
+    case CSSSelector::kPseudoAutofillSelected:
+    case CSSSelector::kPseudoBackdrop:
+    case CSSSelector::kPseudoBefore:
+    case CSSSelector::kPseudoCheckMark:
+    case CSSSelector::kPseudoChecked:
+    case CSSSelector::kPseudoCornerPresent:
+    case CSSSelector::kPseudoCurrent:
+    case CSSSelector::kPseudoDecrement:
+    case CSSSelector::kPseudoDefault:
+    case CSSSelector::kPseudoDetailsContent:
+    case CSSSelector::kPseudoDialogInTopLayer:
+    case CSSSelector::kPseudoDisabled:
+    case CSSSelector::kPseudoDoubleButton:
+    case CSSSelector::kPseudoDrag:
+    case CSSSelector::kPseudoEmpty:
+    case CSSSelector::kPseudoEnabled:
+    case CSSSelector::kPseudoEnd:
+    case CSSSelector::kPseudoFileSelectorButton:
+    case CSSSelector::kPseudoFirstChild:
+    case CSSSelector::kPseudoFirstLetter:
+    case CSSSelector::kPseudoFirstLine:
+    case CSSSelector::kPseudoFirstOfType:
+    case CSSSelector::kPseudoFirstPage:
+    case CSSSelector::kPseudoFocus:
+    case CSSSelector::kPseudoFocusVisible:
+    case CSSSelector::kPseudoFocusWithin:
+    case CSSSelector::kPseudoFullPageMedia:
+    case CSSSelector::kPseudoHasInterest:
+    case CSSSelector::kPseudoHasPartialInterest:
+    case CSSSelector::kPseudoHasSlotted:
+    case CSSSelector::kPseudoHorizontal:
+    case CSSSelector::kPseudoHover:
+    case CSSSelector::kPseudoIncrement:
+    case CSSSelector::kPseudoIndeterminate:
+    case CSSSelector::kPseudoInvalid:
+    case CSSSelector::kPseudoLang:
+    case CSSSelector::kPseudoLastChild:
+    case CSSSelector::kPseudoLastOfType:
+    case CSSSelector::kPseudoLeftPage:
+    case CSSSelector::kPseudoLink:
+    case CSSSelector::kPseudoMarker:
+    case CSSSelector::kPseudoModal:
+    case CSSSelector::kPseudoNoButton:
+    case CSSSelector::kPseudoNthChild:
+    case CSSSelector::kPseudoNthLastChild:
+    case CSSSelector::kPseudoNthLastOfType:
+    case CSSSelector::kPseudoNthOfType:
+    case CSSSelector::kPseudoOnlyChild:
+    case CSSSelector::kPseudoOnlyOfType:
+    case CSSSelector::kPseudoOptional:
+    case CSSSelector::kPseudoPart:
+    case CSSSelector::kPseudoPermissionElementInvalidStyle:
+    case CSSSelector::kPseudoPermissionElementOccluded:
+    case CSSSelector::kPseudoPermissionGranted:
+    case CSSSelector::kPseudoPermissionIcon:
+    case CSSSelector::kPseudoPlaceholder:
+    case CSSSelector::kPseudoPlaceholderShown:
+    case CSSSelector::kPseudoReadOnly:
+    case CSSSelector::kPseudoReadWrite:
+    case CSSSelector::kPseudoRequired:
+    case CSSSelector::kPseudoResizer:
+    case CSSSelector::kPseudoRightPage:
+    case CSSSelector::kPseudoRoot:
+    case CSSSelector::kPseudoScrollbar:
+    case CSSSelector::kPseudoScrollbarButton:
+    case CSSSelector::kPseudoScrollbarCorner:
+    case CSSSelector::kPseudoScrollbarThumb:
+    case CSSSelector::kPseudoScrollbarTrack:
+    case CSSSelector::kPseudoScrollbarTrackPiece:
+    case CSSSelector::kPseudoSearchText:
+    case CSSSelector::kPseudoPickerIcon:
+    case CSSSelector::kPseudoPicker:
+    case CSSSelector::kPseudoSelection:
+    case CSSSelector::kPseudoSelectorFragmentAnchor:
+    case CSSSelector::kPseudoSingleButton:
+    case CSSSelector::kPseudoStart:
+    case CSSSelector::kPseudoState:
+    case CSSSelector::kPseudoTarget:
+    case CSSSelector::kPseudoTargetOfInterest:
+    case CSSSelector::kPseudoTargetOfPartialInterest:
+    case CSSSelector::kPseudoUnknown:
+    case CSSSelector::kPseudoUnparsed:
+    case CSSSelector::kPseudoUserInvalid:
+    case CSSSelector::kPseudoUserValid:
+    case CSSSelector::kPseudoValid:
+    case CSSSelector::kPseudoVertical:
+    case CSSSelector::kPseudoVisited:
+    case CSSSelector::kPseudoWebKitAutofill:
+    case CSSSelector::kPseudoWebkitAnyLink:
+    case CSSSelector::kPseudoWindowInactive:
+    case CSSSelector::kPseudoFullScreen:
+    case CSSSelector::kPseudoFullScreenAncestor:
+    case CSSSelector::kPseudoFullscreen:
+    case CSSSelector::kPseudoInRange:
+    case CSSSelector::kPseudoOutOfRange:
+    case CSSSelector::kPseudoPaused:
+    case CSSSelector::kPseudoPictureInPicture:
+    case CSSSelector::kPseudoPlaying:
+    case CSSSelector::kPseudoXrOverlay:
+    case CSSSelector::kPseudoWebKitCustomElement:
+    case CSSSelector::kPseudoBlinkInternalElement:
+    case CSSSelector::kPseudoColumn:
+    case CSSSelector::kPseudoCue:
+    case CSSSelector::kPseudoDefined:
+    case CSSSelector::kPseudoDir:
+    case CSSSelector::kPseudoFutureCue:
+    case CSSSelector::kPseudoGrammarError:
+    case CSSSelector::kPseudoHasDatalist:
+    case CSSSelector::kPseudoHighlight:
+    case CSSSelector::kPseudoHostHasNonAutoAppearance:
+    case CSSSelector::kPseudoIsHtml:
+    case CSSSelector::kPseudoListBox:
+    case CSSSelector::kPseudoMultiSelectFocus:
+    case CSSSelector::kPseudoOpen:
+    case CSSSelector::kPseudoPastCue:
+    case CSSSelector::kPseudoPopoverInTopLayer:
+    case CSSSelector::kPseudoPopoverOpen:
+    case CSSSelector::kPseudoRelativeAnchor:
+    case CSSSelector::kPseudoSlotted:
+    case CSSSelector::kPseudoSpatialNavigationFocus:
+    case CSSSelector::kPseudoSpellingError:
+    case CSSSelector::kPseudoTargetText:
+    case CSSSelector::kPseudoVideoPersistent:
+    case CSSSelector::kPseudoVideoPersistentAncestor:
+    case CSSSelector::kPseudoTargetCurrent:
+    case CSSSelector::kPseudoViewTransition:
+    case CSSSelector::kPseudoViewTransitionGroup:
+    case CSSSelector::kPseudoViewTransitionGroupChildren:
+    case CSSSelector::kPseudoViewTransitionImagePair:
+    case CSSSelector::kPseudoViewTransitionNew:
+    case CSSSelector::kPseudoViewTransitionOld:
+    case CSSSelector::kPseudoScrollMarker:
+    case CSSSelector::kPseudoScrollMarkerGroup:
+    case CSSSelector::kPseudoScrollButton:
+      // These pseudos are not allowed to match featureless elements. When
+      // adding new pseudos here, they would typically be allowed if they are
+      // logical pseudos which take selector arguments.
+      return kFeaturelessUnknown;
+  }
+}
 
 // Recursive check of selectors and combinators
 // It can return 4 different values:
@@ -743,8 +962,15 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
         // Generally a ::part() rule needs to be in the host’s tree scope, but
         // if (and only if) we are preceded by :host or :host(), then the rule
         // could also be in the same scope as the subject.
+        //
+        // We recognize :is(:host) and :where(:host) because the former could
+        // arise from nesting, but we don't understand the more complex cases
+        // :is(:host, #foo)::part(x), as we'd need to go down the :is() twice;
+        // once in the tree scope of the rule itself, and once more in the
+        // parent scope of the rule but somehow ignoring everything that isn't
+        // :host.
         const TreeScope& host_tree_scope =
-            next_context.selector->IsHostPseudoClass()
+            next_context.selector->IsDeeplyHostPseudoClass()
                 ? *context.tree_scope->ParentTreeScope()
                 : *context.tree_scope;
 
@@ -901,7 +1127,7 @@ static bool AnyAttributeMatches(Element& element,
     DCHECK(element.CouldHaveAttribute(selector_attr))
         << element << " should have contained attribute " << selector_attr
         << ", Bloom bits on element are "
-        << element.AttributeBloomFilterForDebug();
+        << element.AttributeOrClassBloomFilterForDebug();
 #endif
 
     if (AttributeValueMatches(attribute_item, match, selector_value,
@@ -935,18 +1161,21 @@ ALWAYS_INLINE bool SelectorChecker::CheckOne(
   // Also, we need to descend into selectors that contain lists instead of
   // just returning false, such that :is(:host, .doesnotmatch) (see [3]),
   // or similar via nesting, is handled correctly. (This also deals with
-  // :not().) Such cases will eventually recurse back into CheckOne(),
-  // so should do not get false positives from doing this; the featurelessness
-  // will be checked on a lower level.
+  // :not().) Having a separate code path for matching featureless elements
+  // (MatchShadowHost) ensures the featureless matching is done correctly.
   //
   // [1] https://drafts.csswg.org/css-scoping/#host-element-in-tree
   // [2] https://github.com/w3c/csswg-drafts/issues/9025
   // [3] https://drafts.csswg.org/selectors-4/#data-model
   if (ShadowHost(context) == element &&
-      (!selector.IsHostPseudoClass() && !selector.SelectorListOrParent() &&
-       selector.GetPseudoType() != CSSSelector::kPseudoScope &&
-       selector.Match() != CSSSelector::kPseudoElement)) {
-    return false;
+      selector.Match() != CSSSelector::kPseudoElement) {
+    if (!selector.IsHostPseudoClass() && !selector.SelectorListOrParent() &&
+        selector.GetPseudoType() != CSSSelector::kPseudoScope) {
+      return false;
+    }
+    if (RuntimeEnabledFeatures::CSSNegatedFeaturelessEnabled()) {
+      return MatchShadowHost(context, result) == kFeaturelessMatches;
+    }
   }
 
   switch (selector.Match()) {
@@ -955,6 +1184,16 @@ ALWAYS_INLINE bool SelectorChecker::CheckOne(
     case CSSSelector::kUniversalTag:
       return MatchesUniversalTagName(element, selector.TagQName());
     case CSSSelector::kClass:
+      if (!element.CouldHaveClass(selector.Value())) {
+#if DCHECK_IS_ON()
+        DCHECK(!element.HasClass() ||
+               !element.ClassNames().Contains(selector.Value()))
+            << element << " should have matched class " << selector.Value()
+            << ", Bloom bits on element are "
+            << element.AttributeOrClassBloomFilterForDebug();
+#endif
+        return false;
+      }
       return element.HasClass() &&
              element.ClassNames().Contains(selector.Value());
     case CSSSelector::kId:
@@ -1431,7 +1670,32 @@ bool MatchesExternalSVGUseTarget(Element& element) {
 
 bool SelectorChecker::CheckPseudoHas(const SelectorCheckingContext& context,
                                      MatchResult& result) const {
-  if (context.element->GetDocument().InPseudoHasChecking()) {
+  Element& element = *context.element;
+  if (mode_ == kResolvingStyle) {
+    // Set 'AffectedBySubjectHas' or 'AffectedByNonSubjectHas' flag to
+    // indicate that the element is affected by a subject or non-subject
+    // :has() state change. It means that, when we have a mutation on
+    // an element, and the element is in the :has() argument checking scope
+    // of a :has() anchor element, we may need to invalidate the subject
+    // element of the style rule containing the :has() pseudo class because
+    // the mutation can affect the state of the :has().
+    if (ImpactsSubject(context)) {
+      element.SetAffectedBySubjectHas();
+    }
+    if (ImpactsNonSubject(context)) {
+      element.SetAffectedByNonSubjectHas();
+    }
+
+    if (context.selector->ContainsPseudoInsideHasPseudoClass()) {
+      element.SetAffectedByPseudoInHas();
+    }
+
+    if (context.selector
+            ->ContainsComplexLogicalCombinationsInsideHasPseudoClass()) {
+      element.SetAffectedByLogicalCombinationsInHas();
+    }
+  }
+  if (element.GetDocument().InPseudoHasChecking()) {
     // :has() within :has() would normally be rejected parse-time, but we can
     // end up in this situation nevertheless, due to nesting. We just return
     // a not-matched for now; it is possible that we should fail the entire rule
@@ -1441,7 +1705,7 @@ bool SelectorChecker::CheckPseudoHas(const SelectorCheckingContext& context,
     return false;
   }
   CheckPseudoHasCacheScope check_pseudo_has_cache_scope(
-      &context.element->GetDocument(), /*within_selector_checking=*/true);
+      &element.GetDocument(), /*within_selector_checking=*/true);
 
   Element* has_anchor_element = context.element;
   Document& document = has_anchor_element->GetDocument();
@@ -1457,7 +1721,8 @@ bool SelectorChecker::CheckPseudoHas(const SelectorCheckingContext& context,
   bool match_in_shadow_tree = context.selector->HasArgumentMatchInShadowTree();
 
   if (match_in_shadow_tree && !has_anchor_element->GetShadowRoot()) {
-    NOTREACHED();
+    // Able to reach here when :host is after :has(). (e.g. ':has(div):host')
+    return false;
   }
 
   DCHECK(context.selector->SelectorList());
@@ -1657,15 +1922,21 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
       return IsLastOfType(element, element.TagQName());
     }
     case CSSSelector::kPseudoOnlyChild: {
-      if (IsTransitionPseudoElement(context.pseudo_id)) {
-        DCHECK(element.IsDocumentElement());
-        DCHECK(context.pseudo_argument);
+      PseudoId pseudo_id_to_check =
+          element.IsPseudoElement() ? element.GetPseudoId() : context.pseudo_id;
+      if (IsTransitionPseudoElement(pseudo_id_to_check)) {
+        DCHECK(element.IsDocumentElement() && context.pseudo_id ||
+               element.IsPseudoElement());
+        DCHECK(context.pseudo_argument || element.IsPseudoElement());
 
         auto* transition =
             ViewTransitionUtils::GetTransition(element.GetDocument());
         DCHECK(transition);
-        return transition->MatchForOnlyChild(context.pseudo_id,
-                                             *context.pseudo_argument);
+        const AtomicString& pseudo_argument = element.IsPseudoElement()
+                                                  ? element.GetPseudoArgument()
+                                                  : *context.pseudo_argument;
+        return transition->MatchForOnlyChild(pseudo_id_to_check,
+                                             pseudo_argument);
       }
 
       ContainerNode* parent = element.ParentElementOrDocumentFragment();
@@ -1848,8 +2119,35 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
       }
       return element.HasFocusWithin();
     case CSSSelector::kPseudoHasInterest:
-      DCHECK(RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled());
-      return element.HasInterest();
+      DCHECK(RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled(
+          element.GetDocument().GetExecutionContext()));
+      return element.GetInterestState() != Element::InterestState::kNoInterest;
+    case CSSSelector::kPseudoHasPartialInterest:
+      DCHECK(RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled(
+          element.GetDocument().GetExecutionContext()));
+      return element.GetInterestState() ==
+                 Element::InterestState::kPartialInterest ||
+             element.GetInterestState() ==
+                 Element::InterestState::kPotentialPartialInterest;
+    case CSSSelector::kPseudoTargetOfInterest: {
+      DCHECK(RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled(
+          element.GetDocument().GetExecutionContext()));
+      Element* invoker = element.GetInterestInvoker();
+      DCHECK(!invoker || invoker->GetInterestState() !=
+                             Element::InterestState::kNoInterest);
+      return invoker;
+    }
+    case CSSSelector::kPseudoTargetOfPartialInterest: {
+      DCHECK(RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled(
+          element.GetDocument().GetExecutionContext()));
+      Element* invoker = element.GetInterestInvoker();
+      DCHECK(!invoker || invoker->GetInterestState() !=
+                             Element::InterestState::kNoInterest);
+      return invoker && (invoker->GetInterestState() ==
+                             Element::InterestState::kPartialInterest ||
+                         invoker->GetInterestState() ==
+                             Element::InterestState::kPotentialPartialInterest);
+    }
     case CSSSelector::kPseudoHasSlotted:
       DCHECK(RuntimeEnabledFeatures::CSSPseudoHasSlottedEnabled());
       if (auto* slot = DynamicTo<HTMLSlotElement>(element)) {
@@ -2077,6 +2375,12 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
       if (element.IsScrollMarkerPseudoElement()) {
         return To<ScrollMarkerPseudoElement>(element).IsSelected();
       }
+      if (auto* anchor_element = DynamicTo<HTMLAnchorElement>(element)) {
+        if (ScrollMarkerGroupData* data =
+                anchor_element->GetScrollTargetGroupContainerData()) {
+          return data->Selected() == element;
+        }
+      }
       break;
     }
     case CSSSelector::kPseudoIndeterminate: {
@@ -2284,6 +2588,10 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
               : WebFeature::kCSSSelectorHostContextInLiveProfile);
       [[fallthrough]];
     case CSSSelector::kPseudoHost:
+      if (RuntimeEnabledFeatures::CSSNegatedFeaturelessEnabled()) {
+        DCHECK(!IsAtShadowHost(context));
+        return false;
+      }
       return CheckPseudoHost(context, result);
     case CSSSelector::kPseudoSpatialNavigationFocus:
       DCHECK(is_ua_rule_);
@@ -2339,29 +2647,6 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
       }
       return false;
     case CSSSelector::kPseudoHas:
-      if (mode_ == kResolvingStyle) {
-        // Set 'AffectedBySubjectHas' or 'AffectedByNonSubjectHas' flag to
-        // indicate that the element is affected by a subject or non-subject
-        // :has() state change. It means that, when we have a mutation on
-        // an element, and the element is in the :has() argument checking scope
-        // of a :has() anchor element, we may need to invalidate the subject
-        // element of the style rule containing the :has() pseudo class because
-        // the mutation can affect the state of the :has().
-        if (ImpactsSubject(context)) {
-          element.SetAffectedBySubjectHas();
-        }
-        if (ImpactsNonSubject(context)) {
-          element.SetAffectedByNonSubjectHas();
-        }
-
-        if (selector.ContainsPseudoInsideHasPseudoClass()) {
-          element.SetAffectedByPseudoInHas();
-        }
-
-        if (selector.ContainsComplexLogicalCombinationsInsideHasPseudoClass()) {
-          element.SetAffectedByLogicalCombinationsInHas();
-        }
-      }
       return CheckPseudoHas(context, result);
     case CSSSelector::kPseudoRelativeAnchor:
       DCHECK(context.relative_anchor_element);
@@ -2415,13 +2700,13 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
 }
 
 static bool MatchesUAShadowElement(Element& element, const AtomicString& id) {
-  Element* originating_element =
+  Element& originating_element =
       element.IsPseudoElement()
           ? To<PseudoElement>(element).UltimateOriginatingElement()
-          : &element;
-  ShadowRoot* root = originating_element->ContainingShadowRoot();
+          : element;
+  ShadowRoot* root = originating_element.ContainingShadowRoot();
   return root && root->IsUserAgent() &&
-         originating_element->ShadowPseudoId() == id;
+         originating_element.ShadowPseudoId() == id;
 }
 
 bool SelectorChecker::CheckPseudoAutofill(CSSSelector::PseudoType pseudo_type,
@@ -2457,7 +2742,7 @@ bool SelectorChecker::CheckPseudoElement(const SelectorCheckingContext& context,
   const CSSSelector& selector = *context.selector;
   PseudoId pseudo_id = selector.GetPseudoId(selector.GetPseudoType());
   // Only descend down the ancestors chain if matching a (real) PseudoElement.
-  if (pseudo_id != kPseudoIdNone && pseudo_id <= kLastTrackedPublicPseudoId) {
+  if (pseudo_id != kPseudoIdNone && pseudo_id <= kLastPublicPseudoId) {
     result.DescendToNextPseudoElement();
   }
   Element& element =
@@ -2513,6 +2798,9 @@ bool SelectorChecker::CheckPseudoElement(const SelectorCheckingContext& context,
     case CSSSelector::kPseudoDetailsContent:
       return MatchesUAShadowElement(element,
                                     shadow_element_names::kIdDetailsContent);
+    case CSSSelector::kPseudoPermissionIcon:
+      return MatchesUAShadowElement(element,
+                                    shadow_element_names::kIdPermissionIcon);
     case CSSSelector::kPseudoWebKitCustomElement:
       return MatchesUAShadowElement(element, selector.Value());
     case CSSSelector::kPseudoBlinkInternalElement:
@@ -2549,6 +2837,7 @@ bool SelectorChecker::CheckPseudoElement(const SelectorCheckingContext& context,
     }
     case CSSSelector::kPseudoViewTransition:
     case CSSSelector::kPseudoViewTransitionGroup:
+    case CSSSelector::kPseudoViewTransitionGroupChildren:
     case CSSSelector::kPseudoViewTransitionImagePair:
     case CSSSelector::kPseudoViewTransitionOld:
     case CSSSelector::kPseudoViewTransitionNew: {
@@ -2563,7 +2852,14 @@ bool SelectorChecker::CheckPseudoElement(const SelectorCheckingContext& context,
         return true;
       }
 
-      if (selector_pseudo_id != context.pseudo_id) {
+      // Here, and below, the IsPseudoElement check is for a new pseudo element
+      // rules matching approach, where the matching is done based on actual
+      // PseudoElement object and not Element + pseudo_id. We need to keep both
+      // versions as sometimes the matching is happening the old way and
+      // sometimes the new one.
+      PseudoId pseudo_id_to_check =
+          element.IsPseudoElement() ? element.GetPseudoId() : context.pseudo_id;
+      if (selector_pseudo_id != pseudo_id_to_check) {
         return false;
       }
       result.dynamic_pseudo = context.pseudo_id;
@@ -2574,11 +2870,14 @@ bool SelectorChecker::CheckPseudoElement(const SelectorCheckingContext& context,
       CHECK(!selector.IdentList().empty());
       const AtomicString& name_or_wildcard = selector.IdentList()[0];
 
-      // note that the pseudo_ident_list_ is the class list, and
-      // pseudo_argument_ is the name, while in the selector the IdentList() is
+      const String& pseudo_argument = element.IsPseudoElement()
+                                          ? element.GetPseudoArgument()
+                                          : pseudo_argument_;
+      // note that the pseudo_ident_list is the class list, and
+      // pseudo_argument is the name, while in the selector the IdentList() is
       // both the name and the classes.
       if (name_or_wildcard != CSSSelector::UniversalSelectorAtom() &&
-          name_or_wildcard != pseudo_argument_) {
+          name_or_wildcard != pseudo_argument) {
         return false;
       }
 
@@ -2588,15 +2887,20 @@ bool SelectorChecker::CheckPseudoElement(const SelectorCheckingContext& context,
       // element if the class list value in named elements for the
       // pseudo-element’s view-transition-name contains all of those values.
 
+      const Vector<AtomicString>& pseudo_ident_list =
+          element.IsPseudoElement()
+              ? To<ViewTransitionPseudoElementBase>(element)
+                    .ViewTransitionClassList()
+              : pseudo_ident_list_;
       // selector.IdentList() is equivalent to
       // <pt-name-selector><pt-class-selector>, as in [name, class, class, ...]
       // so we check that all of its items excluding the first one are
-      // contained in the pseudo element's classes (pseudo_ident_list_).
-      return std::ranges::all_of(
-          selector.IdentList().begin() + 1, selector.IdentList().end(),
-          [&](const AtomicString& class_from_selector) {
-            return base::Contains(pseudo_ident_list_, class_from_selector);
-          });
+      // contained in the pseudo element's classes (pseudo_ident_list).
+      return std::ranges::all_of(base::span(selector.IdentList()).subspan(1ul),
+                                 [&](const AtomicString& class_from_selector) {
+                                   return base::Contains(pseudo_ident_list,
+                                                         class_from_selector);
+                                 });
     }
     case CSSSelector::kPseudoScrollbarButton:
     case CSSSelector::kPseudoScrollbarCorner:

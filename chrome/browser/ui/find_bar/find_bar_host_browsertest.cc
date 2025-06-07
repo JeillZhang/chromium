@@ -505,7 +505,10 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, SpanSearchable) {
 // TODO(crbug.com/40129326): Test is flaky on Mac debug builds.
 #if BUILDFLAG(IS_MAC) && !defined(NDEBUG)
 #define MAYBE_LargePage DISABLED_LargePage
-#elif BUILDFLAG(IS_LINUX) && (!defined(NDEBUG) || defined(ADDRESS_SANITIZER))
+#elif (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && \
+    (!defined(NDEBUG) || defined(ADDRESS_SANITIZER))
+// TODO(crbug.com/404825193): Test is flaky on Linux ChromiumOS debug and ASAN
+// builds.
 // TODO(crbug.com/40751034): Test is flaky on Linux debug builds.
 // TODO(crbug.com/40760850): Test is flaky on Linux ASAN builds.
 #define MAYBE_LargePage DISABLED_LargePage
@@ -526,7 +529,8 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, MAYBE_LargePage) {
 // TODO(crbug.com/40700976): Test is flaky on Mac debug builds and Linux asan.
 #if (BUILDFLAG(IS_MAC) && !defined(NDEBUG)) || defined(ADDRESS_SANITIZER)
 #define MAYBE_FindLongString DISABLED_FindLongString
-#elif BUILDFLAG(IS_LINUX) && !defined(NDEBUG)
+#elif (BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && !defined(NDEBUG)
+// TODO(crbug.com/404825193): Test is flaky on Linux ChromiumOS debug builds.
 // TODO(crbug.com/40751034): Test is flaky on Linux debug builds.
 #define MAYBE_FindLongString DISABLED_FindLongString
 #else
@@ -1032,14 +1036,8 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest,
   EXPECT_FALSE(fully_visible);
 }
 
-// TODO(crbug.com/353259716): Test is flaky on Mac.
-#if BUILDFLAG(IS_MAC)
-#define MAYBE_FindMovesWhenObscuring DISABLED_FindMovesWhenObscuring
-#else
-#define MAYBE_FindMovesWhenObscuring FindMovesWhenObscuring
-#endif
 // Make sure Find box moves out of the way if it is obscuring the active match.
-IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, MAYBE_FindMovesWhenObscuring) {
+IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, FindMovesWhenObscuring) {
   GURL url = GetURL(kMoveIfOver);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), url));
 
@@ -1053,19 +1051,12 @@ IN_PROC_BROWSER_TEST_F(FindInPageControllerTest, MAYBE_FindMovesWhenObscuring) {
   bool fully_visible = false;
   int ordinal = 0;
 
-  WebContents* web_contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
-
-  // Make a query so the Lens entrypoint disappears. If not, the start position,
-  // will be off since the Lens entrypoint will disappear on the first query,
-  // and the start_position vs position will be comparing the position of the
-  // find bar with vs without the Lens entrypoint.
   // Make sure it is open.
-  FindInPageASCII(web_contents, "a", kFwd, kIgnoreCase, &ordinal);
-
-  // Make sure it is open and store starting position.
   EXPECT_TRUE(GetFindBarWindowInfo(&start_position, &fully_visible));
   EXPECT_TRUE(fully_visible);
+
+  WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
 
   int moved_x_coord = FindInPageTillBoxMoves(web_contents, start_position.x(),
                                              "Chromium", kMoveIterations);

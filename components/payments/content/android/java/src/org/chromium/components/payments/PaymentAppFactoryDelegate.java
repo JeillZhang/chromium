@@ -4,10 +4,14 @@
 
 package org.chromium.components.payments;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+
 /**
  * Interface for providing information to a payment app factory and receiving the list of payment
  * apps.
  */
+@NullMarked
 public interface PaymentAppFactoryDelegate {
     /** @return The information that a factory needs to create payment apps. */
     PaymentAppFactoryParams getParams();
@@ -63,14 +67,28 @@ public interface PaymentAppFactoryDelegate {
     /**
      * @return An instance of a dialog for displaying informational or warning messages.
      */
-    default DialogController getDialogController() {
+    default @Nullable DialogController getDialogController() {
         return null;
     }
 
     /**
      * @return The launcher for Android intent-based payment app.
      */
-    default AndroidIntentLauncher getAndroidIntentLauncher() {
+    default @Nullable AndroidIntentLauncher getAndroidIntentLauncher() {
         return null;
+    }
+
+    /**
+     * Used to check whether payment apps are required to handle shipping address and contact
+     * information, when merchant websites request that information. This information can be
+     * returned either from payment apps or from Chrome's autofill. Result of this method does not
+     * guarantee the payment. Even if this method returns true, there could be no payment apps to
+     * support providing shipping address or contact information.
+     *
+     * @return Whether payment apps are required to provide shipping address and contact
+     *     information.
+     */
+    default boolean isFullDelegationRequired() {
+        return false;
     }
 }

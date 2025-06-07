@@ -78,7 +78,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
     // This should be initialized once.
     private @Nullable File mDirectory;
 
-    private ThumbnailStorageDelegate mDelegate;
+    private final ThumbnailStorageDelegate mDelegate;
 
     // Maximum size in bytes for the disk cache.
     private final int mMaxCacheBytes;
@@ -257,7 +257,7 @@ public class ThumbnailDiskStorage implements ThumbnailGeneratorCallback {
                     new CacheThumbnailTask(contentId, bitmap, iconSizePx)
                             .executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
         }
-        mDelegate.onThumbnailRetrieved(contentId, bitmap);
+        mDelegate.onThumbnailRetrieved(contentId, bitmap, iconSizePx);
     }
 
     /**

@@ -4,7 +4,6 @@
 
 #include "ash/wm/snap_group/snap_group.h"
 
-#include "ash/constants/ash_features.h"
 #include "ash/display/display_move_window_util.h"
 #include "ash/screen_util.h"
 #include "ash/shell.h"
@@ -25,7 +24,6 @@
 #include "ash/wm/window_state.h"
 #include "ash/wm/wm_event.h"
 #include "base/memory/raw_ptr.h"
-#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/new_window/chrome_new_window_client.h"
@@ -38,6 +36,7 @@
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_observer.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/ash/util/ash_test_util.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/browser_test.h"
@@ -113,7 +112,8 @@ IN_PROC_BROWSER_TEST_F(FasterSplitScreenBrowserTest,
   CreateBrowser(browser()->profile());
 
   const ash::WindowSnapWMEvent primary_snap_event(
-      ash::WM_EVENT_SNAP_PRIMARY, ash::WindowSnapActionSource::kTest);
+      ash::WM_EVENT_SNAP_PRIMARY,
+      ash::WindowSnapActionSource::kSnapByWindowLayoutMenu);
   window_state->OnWMEvent(&primary_snap_event);
   ash::WaitForOverviewEntered();
   ASSERT_TRUE(ash::OverviewController::Get()->InOverviewSession());
@@ -136,7 +136,8 @@ IN_PROC_BROWSER_TEST_F(FasterSplitScreenBrowserTest,
   CreateBrowser(browser()->profile());
   ash::WindowState* window_state = ash::WindowState::Get(window);
   const ash::WindowSnapWMEvent primary_snap_event(
-      ash::WM_EVENT_SNAP_PRIMARY, ash::WindowSnapActionSource::kTest);
+      ash::WM_EVENT_SNAP_PRIMARY,
+      ash::WindowSnapActionSource::kSnapByWindowLayoutMenu);
   window_state->OnWMEvent(&primary_snap_event);
   ash::WaitForOverviewEntered();
   ASSERT_TRUE(ash::OverviewController::Get()->InOverviewSession());
@@ -177,21 +178,7 @@ IN_PROC_BROWSER_TEST_F(FasterSplitScreenBrowserTest,
 // -----------------------------------------------------------------------------
 // SnapGroupBrowserTest:
 
-class SnapGroupBrowserTest : public InProcessBrowserTest {
- public:
-  SnapGroupBrowserTest() {
-    scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{ash::features::kForestFeature,
-                              ash::features::kSavedDeskUiRevamp},
-        /*disabled_features=*/{});
-  }
-  SnapGroupBrowserTest(const SnapGroupBrowserTest&) = delete;
-  SnapGroupBrowserTest& operator=(const SnapGroupBrowserTest&) = delete;
-  ~SnapGroupBrowserTest() override = default;
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
+using SnapGroupBrowserTest = InProcessBrowserTest;
 
 // Tests that creating a snap group in a rotated display works correctly.
 // Regression test for http://335323173.

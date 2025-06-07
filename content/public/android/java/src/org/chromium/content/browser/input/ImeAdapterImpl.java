@@ -69,12 +69,12 @@ import org.chromium.content.browser.WindowEventObserver;
 import org.chromium.content.browser.WindowEventObserverManager;
 import org.chromium.content.browser.picker.InputDialogContainer;
 import org.chromium.content.browser.webcontents.WebContentsImpl;
-import org.chromium.content.browser.webcontents.WebContentsImpl.UserDataFactory;
 import org.chromium.content_public.browser.ImeAdapter;
 import org.chromium.content_public.browser.ImeEventObserver;
 import org.chromium.content_public.browser.InputMethodManagerWrapper;
 import org.chromium.content_public.browser.StylusWritingImeCallback;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.WebContents.UserDataFactory;
 import org.chromium.mojo.system.MessagePipeHandle;
 import org.chromium.mojo.system.MojoException;
 import org.chromium.mojo.system.impl.CoreImpl;
@@ -140,7 +140,7 @@ public class ImeAdapterImpl
     private @Nullable ShowKeyboardResultReceiver mShowKeyboardResultReceiver;
 
     private final WebContentsImpl mWebContents;
-    private ViewAndroidDelegate mViewDelegate;
+    private final ViewAndroidDelegate mViewDelegate;
 
     // This holds the information necessary for constructing CursorAnchorInfo, and notifies to
     // InputMethodManager on appropriate timing, depending on how IME requested the information
@@ -174,7 +174,7 @@ public class ImeAdapterImpl
     private boolean mRestartInputOnNextStateUpdate;
     // Do not access directly, use getStylusWritingImeCallback() instead.
     private @Nullable StylusWritingImeCallback mStylusWritingImeCallback;
-    private SparseArray<OngoingGesture> mOngoingGestures = new SparseArray<>();
+    private final SparseArray<OngoingGesture> mOngoingGestures = new SparseArray<>();
 
     // True if ImeAdapter is connected to render process.
     private boolean mIsConnected;
@@ -247,8 +247,8 @@ public class ImeAdapterImpl
      */
     public static ImeAdapterImpl fromWebContents(WebContents webContents) {
         ImeAdapterImpl ret =
-                ((WebContentsImpl) webContents)
-                        .getOrSetUserData(ImeAdapterImpl.class, UserDataFactoryLazyHolder.INSTANCE);
+                webContents.getOrSetUserData(
+                        ImeAdapterImpl.class, UserDataFactoryLazyHolder.INSTANCE);
         assert ret != null;
         return ret;
     }
@@ -257,7 +257,7 @@ public class ImeAdapterImpl
     public static InputMethodManagerWrapper createDefaultInputMethodManagerWrapper(
             Context context,
             @Nullable WindowAndroid windowAndroid,
-            InputMethodManagerWrapper.Delegate delegate) {
+            InputMethodManagerWrapper.@Nullable Delegate delegate) {
         return new InputMethodManagerWrapperImpl(context, windowAndroid, delegate);
     }
 
@@ -419,7 +419,7 @@ public class ImeAdapterImpl
     }
 
     private View getContainerView() {
-        return mViewDelegate.getContainerView();
+        return assumeNonNull(mViewDelegate.getContainerView());
     }
 
     /**
@@ -774,7 +774,7 @@ public class ImeAdapterImpl
         if (!isValid()) return;
         if (DEBUG_LOGS) Log.i(TAG, "hideKeyboard");
         View view = mViewDelegate.getContainerView();
-        if (mInputMethodManagerWrapper.isActive(view)) {
+        if (view != null && mInputMethodManagerWrapper.isActive(view)) {
             // NOTE: we should not set ResultReceiver here. Otherwise, IMM will own
             // ImeAdapter even after input method goes away and result gets received.
             mInputMethodManagerWrapper.hideSoftInputFromWindow(view.getWindowToken(), 0, null);
@@ -864,6 +864,19 @@ public class ImeAdapterImpl
         }
     }
 
+    /** Resets IME adapter and hides keyboard. Note that this will also unblock input connection. */
+    @Override
+    public void resetAndHideKeyboard() {
+        if (DEBUG_LOGS) Log.i(TAG, "resetAndHideKeyboard");
+        mTextInputType = TextInputType.NONE;
+        mTextInputFlags = 0;
+        mTextInputMode = WebTextInputMode.DEFAULT;
+        mRestartInputOnNextStateUpdate = false;
+        mNodeEditable = false;
+        // This will trigger unblocking if necessary.
+        hideKeyboard();
+    }
+
     private static boolean isTextInputType(int type) {
         return type != TextInputType.NONE && !InputDialogContainer.isDialogInputType(type);
     }
@@ -879,17 +892,6 @@ public class ImeAdapterImpl
         }
         if (mInputConnection != null) return mInputConnection.sendKeyEventOnUiThread(event);
         return sendKeyEvent(event);
-    }
-
-    /** Resets IME adapter and hides keyboard. Note that this will also unblock input connection. */
-    public void resetAndHideKeyboard() {
-        if (DEBUG_LOGS) Log.i(TAG, "resetAndHideKeyboard");
-        mTextInputType = TextInputType.NONE;
-        mTextInputFlags = 0;
-        mTextInputMode = WebTextInputMode.DEFAULT;
-        mRestartInputOnNextStateUpdate = false;
-        // This will trigger unblocking if necessary.
-        hideKeyboard();
     }
 
     @CalledByNative
@@ -1266,7 +1268,7 @@ public class ImeAdapterImpl
                 .onFocusedNodeChanged(
                         editableNodeBounds,
                         isEditable,
-                        mViewDelegate.getContainerView(),
+                        assumeNonNull(mViewDelegate.getContainerView()),
                         deviceScale,
                         mWebContents.getRenderCoordinates().getContentOffsetYPixInt());
     }
@@ -1615,11 +1617,6 @@ public class ImeAdapterImpl
     private void cancelComposition() {
         if (DEBUG_LOGS) Log.i(TAG, "cancelComposition");
         if (mInputConnection != null) restartInput();
-    }
-
-    @CalledByNative
-    private void setBounds(float @Nullable [] characterBounds, float @Nullable [] lineBounds) {
-        mCursorAnchorInfoController.setBounds(characterBounds, lineBounds, getContainerView());
     }
 
     @CalledByNative

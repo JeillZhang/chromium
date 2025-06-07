@@ -12,6 +12,7 @@
 #import "base/apple/foundation_util.h"
 #import "base/check_op.h"
 #import "base/containers/contains.h"
+#import "base/dcheck_is_on.h"
 #import "base/files/file_path.h"
 #import "base/files/file_util.h"
 #import "base/functional/bind.h"
@@ -29,6 +30,7 @@
 #import "ios/net/cookies/system_cookie_util.h"
 #import "ios/net/ios_net_buildflags.h"
 #import "net/base/apple/url_conversions.h"
+#import "net/cookies/cookie_access_params.h"
 #import "net/cookies/cookie_constants.h"
 #import "net/cookies/cookie_util.h"
 #import "net/cookies/parsed_cookie.h"
@@ -228,7 +230,10 @@ void CookieStoreIOS::SetCanonicalCookieAsync(
   // instead.
   DCHECK(SystemCookiesAllowed());
 
-  DCHECK(cookie->IsCanonical());
+  if constexpr (DCHECK_IS_ON()) {
+    net::CanonicalCookie::CanonicalizationResult result = cookie->IsCanonical();
+    DCHECK(result) << result;
+  }
   // The exclude_httponly() option would only be used by a javascript
   // engine.
   DCHECK(!options.exclude_httponly());
@@ -550,7 +555,7 @@ CookieChangeDispatcher& CookieStoreIOS::GetChangeDispatcher() {
 }
 
 void CookieStoreIOS::SetCookieableSchemes(
-    const std::vector<std::string>& schemes,
+    std::vector<std::string> schemes,
     SetCookieableSchemesCallback callback) {
   // Not supported on iOS.
   std::move(callback).Run(false);

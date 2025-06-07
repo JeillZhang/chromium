@@ -464,7 +464,7 @@ bool DownloadItemView::OnMouseDragged(const ui::MouseEvent& event) {
     const views::Widget* const widget = GetWidget();
     // TODO(shaktisahu): Make DragDownloadItem work with a model.
     DragDownloadItem(model_->GetDownloadItem(), file_icon,
-                     widget ? widget->GetNativeView() : nullptr);
+                     widget ? widget->GetNativeView() : gfx::NativeView());
     RecordDownloadShelfDragInfo(DownloadDragInfo::DRAG_STARTED);
   }
   return true;
@@ -837,7 +837,7 @@ void DownloadItemView::UpdateLabels() {
                                    download::DownloadItemMode::kDeepScanning);
   if (deep_scanning_label_->GetVisible()) {
     const int id = (model_->GetDownloadItem() &&
-                    safe_browsing::DeepScanningRequest::ShouldUploadBinary(
+                    safe_browsing::ShouldUploadBinaryForDeepScanning(
                         model_->GetDownloadItem()))
                        ? IDS_PROMPT_DEEP_SCANNING_DOWNLOAD
                        : IDS_PROMPT_DEEP_SCANNING_APP_DOWNLOAD;

@@ -26,8 +26,13 @@ try_.defaults.set(
     reclient_enabled = False,
     service_account = try_.DEFAULT_SERVICE_ACCOUNT,
     siso_enabled = True,
+    # Downloading with "minimum" strategy doesn't work
+    # well for the win builder because some steps are missing inputs.
+    # e.g. mini_installer.exe
+    siso_output_local_strategy = "greedy",
     siso_project = siso.project.DEFAULT_UNTRUSTED,
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
+    siso_remote_linking = True,
 )
 
 targets.builder_defaults.set(
@@ -133,6 +138,19 @@ try_.builder(
     tryjob = try_.job(),
 )
 
+try_.builder(
+    name = "win-no-safe-browsing-rel",
+    mirrors = ["ci/win-no-safe-browsing-rel"],
+    gn_args = gn_args.config(
+        configs = [
+            "ci/win-no-safe-browsing-rel",
+            "dcheck_always_on",
+            "no_symbols",
+        ],
+    ),
+    contact_team_email = "chrome-counter-abuse-core@google.com",
+)
+
 try_.orchestrator_builder(
     name = "win-rel",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
@@ -159,8 +177,6 @@ try_.orchestrator_builder(
         "chromium.add_one_test_shard": 5,
         # crbug/940930
         "chromium.enable_cleandead": 100,
-        # b/346598710
-        "chromium.luci_analysis_v2": 100,
     },
     main_list_view = "try",
     # TODO (crbug.com/1372179): Use orchestrator pool once overloaded test pools

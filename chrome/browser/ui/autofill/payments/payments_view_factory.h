@@ -32,6 +32,8 @@ class SaveAndFillDialogView;
 namespace payments {
 class PaymentsWindowUserConsentDialogController;
 class PaymentsWindowUserConsentDialog;
+class SelectBnplIssuerView;
+class SelectBnplIssuerDialogController;
 }  // namespace payments
 
 // Factory function for creating and showing the autofill progress dialog
@@ -87,10 +89,18 @@ std::unique_ptr<BnplTosView> CreateAndShowBnplTos(
 // "Save and Fill" suggestion in the credit card dropdown menu. It presents
 // a centered modal dialog where the user can conveniently save a new
 // credit card and simultaneously fill it into the form with a single click.
-base::WeakPtr<SaveAndFillDialogView> CreateAndShowSaveAndFillDialog(
+std::unique_ptr<SaveAndFillDialogView> CreateAndShowSaveAndFillDialog(
     base::WeakPtr<SaveAndFillDialogController> controller,
     content::WebContents* web_contents);
 #endif  // !BUILDFLAG(IS_ANDROID)
+
+// Factory function for creating and showing the BNPL issuer selection dialog.
+// This dialog is triggered when the BNPL payment method has been selected and
+// the user needs to select an issuer.
+std::unique_ptr<payments::SelectBnplIssuerView>
+CreateAndShowBnplIssuerSelectionDialog(
+    base::WeakPtr<payments::SelectBnplIssuerDialogController> controller,
+    content::WebContents* web_contents);
 
 }  // namespace autofill
 

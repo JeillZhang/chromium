@@ -6,15 +6,19 @@
 
 #import "base/memory/raw_ptr.h"
 #import "base/test/metrics/histogram_tester.h"
-#import "base/test/scoped_feature_list.h"
 #import "base/test/task_environment.h"
 #import "components/commerce/core/mock_shopping_service.h"
-#import "components/metrics/metrics_state_manager.h"
-#import "components/metrics/test/test_enabled_state_provider.h"
-#import "components/variations/service/variations_service.h"
-#import "components/variations/service/variations_service_client.h"
-#import "components/variations/synthetic_trial_registry.h"
+#import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
+#import "ios/chrome/browser/browser_view/model/browser_view_visibility_notifier_browser_agent.h"
 #import "ios/chrome/browser/commerce/model/shopping_service_factory.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/cells/content_suggestions_most_visited_action_item.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/cells/content_suggestions_most_visited_item.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_coordinator.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_mediator.h"
+#import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_view_controller.h"
+#import "ios/chrome/browser/discover_feed/model/discover_feed_service_factory.h"
+#import "ios/chrome/browser/discover_feed/model/discover_feed_visibility_browser_agent.h"
+#import "ios/chrome/browser/discover_feed/model/discover_feed_visibility_observer.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_large_icon_service_factory.h"
 #import "ios/chrome/browser/ntp/model/new_tab_page_tab_helper.h"
 #import "ios/chrome/browser/ntp/shared/metrics/home_metrics.h"
@@ -40,10 +44,11 @@
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
+#import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/help_commands.h"
+#import "ios/chrome/browser/shared/public/commands/lens_commands.h"
 #import "ios/chrome/browser/shared/public/commands/omnibox_commands.h"
-#import "ios/chrome/browser/shared/public/commands/parcel_tracking_opt_in_commands.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
@@ -52,160 +57,86 @@
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity_manager.h"
 #import "ios/chrome/browser/start_surface/ui_bundled/start_surface_recent_tab_browser_agent.h"
+#import "ios/chrome/browser/tips_manager/model/tips_manager_ios_factory.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/public/fakebox_focuser.h"
-#import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_most_visited_action_item.h"
-#import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_most_visited_item.h"
-#import "ios/chrome/browser/ui/content_suggestions/content_suggestions_coordinator.h"
-#import "ios/chrome/browser/ui/content_suggestions/content_suggestions_mediator.h"
-#import "ios/chrome/browser/ui/content_suggestions/content_suggestions_view_controller.h"
 #import "ios/chrome/browser/url_loading/model/fake_url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_notifier_browser_agent.h"
+#import "ios/chrome/test/fakes/fake_discover_feed_eligibility_handler.h"
 #import "ios/chrome/test/ios_chrome_scoped_testing_local_state.h"
-#import "ios/chrome/test/testing_application_context.h"
+#import "ios/chrome/test/providers/discover_feed/test_discover_feed_service.h"
 #import "ios/testing/scoped_block_swizzler.h"
 #import "ios/web/public/test/fakes/fake_navigation_context.h"
 #import "ios/web/public/test/fakes/fake_navigation_manager.h"
 #import "ios/web/public/test/fakes/fake_web_state.h"
 #import "ios/web/public/test/web_task_environment.h"
-#import "services/network/test/test_network_connection_tracker.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/gtest_support.h"
 
-using variations::SyntheticTrialRegistry;
-using variations::UIStringOverrider;
-using variations::VariationsService;
-using variations::VariationsServiceClient;
-
-namespace {
-
-// TODO(crbug.com/40742801): Remove when fake VariationsServiceClient created.
-// TODO(crbug.com/377275759): Check if TestVariationsServiceClient and
-// ScopedVariationsService can be consolidated with implementations elsewhere.
-class TestVariationsServiceClient : public VariationsServiceClient {
- public:
-  TestVariationsServiceClient() = default;
-  TestVariationsServiceClient(const TestVariationsServiceClient&) = delete;
-  TestVariationsServiceClient& operator=(const TestVariationsServiceClient&) =
-      delete;
-  ~TestVariationsServiceClient() override = default;
-
-  // VariationsServiceClient:
-  base::Version GetVersionForSimulation() override { return base::Version(); }
-  scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory()
-      override {
-    return nullptr;
-  }
-  network_time::NetworkTimeTracker* GetNetworkTimeTracker() override {
-    return nullptr;
-  }
-  bool OverridesRestrictParameter(std::string* parameter) override {
-    return false;
-  }
-  bool IsEnterprise() override { return false; }
-  void RemoveGoogleGroupsFromPrefsForDeletedProfiles(
-      PrefService* local_state) override {}
-
- private:
-  // VariationsServiceClient:
-  version_info::Channel GetChannel() override {
-    return version_info::Channel::UNKNOWN;
-  }
-};
-
-// Creates a VariationsService and sets it as the TestingApplicationContext's
-// VariationService for the life of the instance.
-class ScopedVariationsService {
- public:
-  ScopedVariationsService() {
-    EXPECT_EQ(nullptr,
-              TestingApplicationContext::GetGlobal()->GetVariationsService());
-    synthetic_trial_registry_ = std::make_unique<SyntheticTrialRegistry>();
-    enabled_state_provider_ =
-        std::make_unique<metrics::TestEnabledStateProvider>(false, false);
-    metrics_state_manager_ = metrics::MetricsStateManager::Create(
-        TestingApplicationContext::GetGlobal()->GetLocalState(),
-        enabled_state_provider_.get(),
-        /*backup_registry_key=*/std::wstring(),
-        /*user_data_dir=*/base::FilePath(),
-        metrics::StartupVisibility::kUnknown);
-
-    variations_service_ = VariationsService::Create(
-        std::make_unique<TestVariationsServiceClient>(),
-        TestingApplicationContext::GetGlobal()->GetLocalState(),
-        metrics_state_manager_.get(),
-        /*disable_network_switch=*/"dummy-disable-background-switch",
-        UIStringOverrider(),
-        network::TestNetworkConnectionTracker::CreateGetter(),
-        synthetic_trial_registry_.get());
-    TestingApplicationContext::GetGlobal()->SetVariationsService(
-        variations_service_.get());
-  }
-
-  ~ScopedVariationsService() {
-    EXPECT_EQ(variations_service_.get(),
-              TestingApplicationContext::GetGlobal()->GetVariationsService());
-    TestingApplicationContext::GetGlobal()->SetVariationsService(nullptr);
-    variations_service_.reset();
-  }
-
-  VariationsService* Get() { return variations_service_.get(); }
-
-  std::unique_ptr<metrics::MetricsStateManager> metrics_state_manager_;
-  std::unique_ptr<metrics::TestEnabledStateProvider> enabled_state_provider_;
-  std::unique_ptr<VariationsService> variations_service_;
-  std::unique_ptr<SyntheticTrialRegistry> synthetic_trial_registry_;
-};
-
-}  // namespace
-
 // Test fixture for testing NewTabPageCoordinator class.
 class NewTabPageCoordinatorTest : public PlatformTest {
  protected:
   NewTabPageCoordinatorTest()
       : base_view_controller_([[UIViewController alloc] init]) {
-    TestProfileIOS::Builder test_cbs_builder;
-    test_cbs_builder.AddTestingFactory(
+    TestProfileIOS::Builder test_profile_builder;
+    test_profile_builder.AddTestingFactory(
         ios::TemplateURLServiceFactory::GetInstance(),
         ios::TemplateURLServiceFactory::GetDefaultFactory());
-    test_cbs_builder.AddTestingFactory(
+    test_profile_builder.AddTestingFactory(
         IOSChromeLargeIconServiceFactory::GetInstance(),
         IOSChromeLargeIconServiceFactory::GetDefaultFactory());
-    test_cbs_builder.AddTestingFactory(
+    test_profile_builder.AddTestingFactory(
         AuthenticationServiceFactory::GetInstance(),
         AuthenticationServiceFactory::GetFactoryWithDelegate(
             std::make_unique<FakeAuthenticationServiceDelegate>()));
-    test_cbs_builder.AddTestingFactory(
+    test_profile_builder.AddTestingFactory(
         commerce::ShoppingServiceFactory::GetInstance(),
         base::BindRepeating(
             [](web::BrowserState*) -> std::unique_ptr<KeyedService> {
               return std::make_unique<commerce::MockShoppingService>();
             }));
-    test_cbs_builder.AddTestingFactory(
+    test_profile_builder.AddTestingFactory(
         segmentation_platform::SegmentationPlatformServiceFactory::
             GetInstance(),
         segmentation_platform::SegmentationPlatformServiceFactory::
             GetDefaultFactory());
-    test_cbs_builder.AddTestingFactory(
+    test_profile_builder.AddTestingFactory(
         IOSChromeSafetyCheckManagerFactory::GetInstance(),
         IOSChromeSafetyCheckManagerFactory::GetDefaultFactory());
+    test_profile_builder.AddTestingFactory(
+        ios::BookmarkModelFactory::GetInstance(),
+        ios::BookmarkModelFactory::GetDefaultFactory());
+    test_profile_builder.AddTestingFactory(
+        TipsManagerIOSFactory::GetInstance(),
+        TipsManagerIOSFactory::GetDefaultFactory());
 
     profile_ =
-        profile_manager_.AddProfileWithBuilder(std::move(test_cbs_builder));
+        profile_manager_.AddProfileWithBuilder(std::move(test_profile_builder));
 
     toolbar_delegate_ =
         OCMProtocolMock(@protocol(NewTabPageControllerDelegate));
     histogram_tester_ = std::make_unique<base::HistogramTester>();
+  }
 
-    std::vector<base::test::FeatureRef> enabled;
-    enabled.push_back(kEnableWebChannels);
-    std::vector<base::test::FeatureRef> disabled;
-    scoped_feature_list_.InitWithFeatures(enabled, disabled);
+  ~NewTabPageCoordinatorTest() override {
+    EXPECT_OCMOCK_VERIFY(component_factory_mock_);
   }
 
   ProfileIOS* GetProfile() { return profile_.get(); }
+
+  void TearDown() override {
+    PlatformTest::TearDown();
+    EXPECT_OCMOCK_VERIFY(application_handler_mock_);
+    EXPECT_OCMOCK_VERIFY(help_commands_handler_mock_);
+    EXPECT_OCMOCK_VERIFY(omnibox_commands_handler_mock_);
+    EXPECT_OCMOCK_VERIFY(snackbar_commands_handler_mock_);
+    EXPECT_OCMOCK_VERIFY(fakebox_focuser_handler_mock_);
+    EXPECT_OCMOCK_VERIFY(lens_handler_mock_);
+    EXPECT_OCMOCK_VERIFY(browser_coordinator_handler_mock_);
+    EXPECT_OCMOCK_VERIFY(component_factory_mock_);
+  }
 
   std::unique_ptr<web::FakeWebState> CreateWebState(const char* url) {
     auto test_web_state = std::make_unique<web::FakeWebState>();
@@ -224,6 +155,17 @@ class NewTabPageCoordinatorTest : public PlatformTest {
     } else {
       browser_ = std::make_unique<TestBrowser>(GetProfile());
       StartSurfaceRecentTabBrowserAgent::CreateForBrowser(browser_.get());
+      BrowserViewVisibilityNotifierBrowserAgent::CreateForBrowser(
+          browser_.get());
+      // Set up Discover feed.
+      DiscoverFeedVisibilityBrowserAgent::CreateForBrowser(browser_.get());
+      DiscoverFeedVisibilityBrowserAgent::FromBrowser(browser_.get())
+          ->SetEnabled(true);
+      TestDiscoverFeedService* test_discover_feed_service =
+          static_cast<TestDiscoverFeedService*>(
+              DiscoverFeedServiceFactory::GetForProfile(profile_.get()));
+      eligibility_handler_ =
+          test_discover_feed_service->get_eligibility_handler();
       // Create non-NTP WebState
       browser_.get()->GetWebStateList()->InsertWebState(
           CreateWebState("http://chromium.org"),
@@ -249,17 +191,9 @@ class NewTabPageCoordinatorTest : public PlatformTest {
         collectionViewLayout:[[UICollectionViewFlowLayout alloc] init]];
     fakeFeedCollectionView.translatesAutoresizingMaskIntoConstraints = NO;
     [fake_feed_view_controller_.view addSubview:fakeFeedCollectionView];
-    FeedWrapperViewController* feedWrapperViewController =
-        [[FeedWrapperViewController alloc]
-              initWithDelegate:coordinator_
-            feedViewController:fake_feed_view_controller_];
-    OCMExpect([component_factory_mock_ discoverFeedForBrowser:browser_.get()
-                                  viewControllerConfiguration:[OCMArg any]])
+    OCMStub([component_factory_mock_ discoverFeedForBrowser:browser_.get()
+                                viewControllerConfiguration:[OCMArg any]])
         .andReturn(fake_feed_view_controller_);
-    OCMStub([component_factory_mock_
-                feedWrapperViewControllerWithDelegate:[OCMArg any]
-                                   feedViewController:[OCMArg any]])
-        .andReturn(feedWrapperViewController);
 
     coordinator_ =
         [[NewTabPageCoordinator alloc] initWithBrowser:browser_.get()
@@ -271,6 +205,11 @@ class NewTabPageCoordinatorTest : public PlatformTest {
     coordinator_.NTPMetricsRecorder = NTPMetricsRecorder_;
 
     InsertWebState(CreateWebStateWithURL(GURL("chrome://newtab")));
+  }
+
+  // Sets the visibility of the feed.
+  void SetFeedHeaderVisible(bool visible) {
+    eligibility_handler_.enabled = visible;
   }
 
   // Inserts a FakeWebState into the browser's WebStateList.
@@ -318,8 +257,9 @@ class NewTabPageCoordinatorTest : public PlatformTest {
     snackbar_commands_handler_mock_ =
         OCMProtocolMock(@protocol(SnackbarCommands));
     fakebox_focuser_handler_mock_ = OCMProtocolMock(@protocol(FakeboxFocuser));
-    parcel_tracking_commands_handler_mock_ =
-        OCMProtocolMock(@protocol(ParcelTrackingOptInCommands));
+    lens_handler_mock_ = OCMProtocolMock(@protocol(LensCommands));
+    browser_coordinator_handler_mock_ =
+        OCMProtocolMock(@protocol(BrowserCoordinatorCommands));
     [browser_.get()->GetCommandDispatcher()
         startDispatchingToTarget:application_handler_mock_
                      forProtocol:@protocol(ApplicationCommands)];
@@ -336,8 +276,11 @@ class NewTabPageCoordinatorTest : public PlatformTest {
         startDispatchingToTarget:fakebox_focuser_handler_mock_
                      forProtocol:@protocol(FakeboxFocuser)];
     [browser_.get()->GetCommandDispatcher()
-        startDispatchingToTarget:parcel_tracking_commands_handler_mock_
-                     forProtocol:@protocol(ParcelTrackingOptInCommands)];
+        startDispatchingToTarget:lens_handler_mock_
+                     forProtocol:@protocol(LensCommands)];
+    [browser_.get()->GetCommandDispatcher()
+        startDispatchingToTarget:browser_coordinator_handler_mock_
+                     forProtocol:@protocol(BrowserCoordinatorCommands)];
   }
 
   // Dynamically calls a selector on an object.
@@ -395,6 +338,7 @@ class NewTabPageCoordinatorTest : public PlatformTest {
   UIViewController* fake_feed_view_controller_;
   NewTabPageCoordinator* coordinator_;
   NewTabPageMetricsRecorder* NTPMetricsRecorder_;
+  FakeDiscoverFeedEligibilityHandler* eligibility_handler_;
   id component_factory_mock_;
   UIViewController* base_view_controller_;
   id application_handler_mock_;
@@ -402,9 +346,9 @@ class NewTabPageCoordinatorTest : public PlatformTest {
   id omnibox_commands_handler_mock_;
   id snackbar_commands_handler_mock_;
   id fakebox_focuser_handler_mock_;
-  id parcel_tracking_commands_handler_mock_;
+  id lens_handler_mock_;
+  id browser_coordinator_handler_mock_;
   std::unique_ptr<base::HistogramTester> histogram_tester_;
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Tests that the coordinator doesn't vend an IncognitoViewController VC on the
@@ -683,12 +627,10 @@ TEST_F(NewTabPageCoordinatorTest, TestSaveNTPState) {
   EXPECT_NEAR(scrollPosition, -[coordinator_.NTPViewController heightAboveFeed],
               1);
 
-  // Change the selected feed and set some scroll position.
-  [coordinator_ selectFeedType:FeedTypeFollowing];
+  // Set some scroll position.
   [coordinator_.NTPViewController
       setContentOffsetToTopOfFeedOrLess:scrollPosition + 100];
 
-  FeedType selectedFeed = coordinator_.selectedFeed;
   scrollPosition = coordinator_.NTPViewController.scrollPosition;
 
   // Navigate away from the NTP and stop the coordinator.
@@ -700,53 +642,34 @@ TEST_F(NewTabPageCoordinatorTest, TestSaveNTPState) {
   [coordinator_ didNavigateToNTPInWebState:web_state_];
 
   // Check that newly opened NTP restores saved state.
-  EXPECT_EQ(coordinator_.selectedFeed, selectedFeed);
   EXPECT_NEAR(coordinator_.NTPViewController.scrollPosition, scrollPosition, 1);
 
   [coordinator_ stop];
 }
 
-// Tests that following feed and discover feed can be selected.
-TEST_F(NewTabPageCoordinatorTest, SelectFeedType) {
-  // Following feed is only available in the US, so we need to override the
-  // VariationsService's stored permenant country to test.
-  ScopedVariationsService scoped_variations_service;
-  scoped_variations_service.Get()->OverrideStoredPermanentCountry("us");
-
+// Tests that the coordinator shows and hides the feed as expected.
+TEST_F(NewTabPageCoordinatorTest, TestShowsAndHidesFeed) {
   CreateCoordinator(/*off_the_record=*/false);
   SetupCommandHandlerMocks();
   [coordinator_ start];
-  // Simulate the view appearing.
-  [coordinator_.NTPViewController beginAppearanceTransition:YES animated:NO];
-  [coordinator_.NTPViewController endAppearanceTransition];
-  SignIn();
-  // Scroll down slightly.
-  CGFloat scrollPosition =
-      round(coordinator_.NTPViewController.scrollPosition + 100);
-  [coordinator_.NTPViewController
-      setContentOffsetToTopOfFeedOrLess:scrollPosition];
+  [coordinator_ didNavigateToNTPInWebState:web_state_];
 
-  // Expect the Following feed to be loaded, and scroll position to be
-  // maintained.
-  OCMExpect([component_factory_mock_
-                    followingFeedForBrowser:browser_.get()
-                viewControllerConfiguration:[OCMArg any]
-                                   sortType:FollowingFeedSortTypeByLatest])
-      .andReturn(fake_feed_view_controller_);
-  [coordinator_ selectFeedType:FeedTypeFollowing];
-  EXPECT_OCMOCK_VERIFY(component_factory_mock_);
-  EXPECT_EQ(coordinator_.selectedFeed, FeedTypeFollowing);
-  EXPECT_EQ(coordinator_.NTPViewController.scrollPosition, scrollPosition);
+  ASSERT_TRUE([coordinator_
+      conformsToProtocol:@protocol(DiscoverFeedVisibilityObserver)]);
+  ASSERT_TRUE([coordinator_
+      respondsToSelector:@selector(didChangeDiscoverFeedVisibility)]);
+  id<DiscoverFeedVisibilityObserver> observer =
+      static_cast<id<DiscoverFeedVisibilityObserver>>(coordinator_);
 
-  // Expect the Discover feed to be loaded, and scroll position to be
-  // maintained.
-  OCMExpect([component_factory_mock_ discoverFeedForBrowser:browser_.get()
-                                viewControllerConfiguration:[OCMArg any]])
-      .andReturn(fake_feed_view_controller_);
-  [coordinator_ selectFeedType:FeedTypeDiscover];
-  EXPECT_OCMOCK_VERIFY(component_factory_mock_);
-  EXPECT_EQ(coordinator_.selectedFeed, FeedTypeDiscover);
-  EXPECT_EQ(coordinator_.NTPViewController.scrollPosition, scrollPosition);
-
+  EXPECT_EQ(fake_feed_view_controller_.parentViewController,
+            coordinator_.feedWrapperViewController);
+  SetFeedHeaderVisible(false);
+  [observer didChangeDiscoverFeedVisibility];
+  EXPECT_NE(fake_feed_view_controller_.parentViewController,
+            coordinator_.feedWrapperViewController);
+  SetFeedHeaderVisible(true);
+  [observer didChangeDiscoverFeedVisibility];
+  EXPECT_EQ(fake_feed_view_controller_.parentViewController,
+            coordinator_.feedWrapperViewController);
   [coordinator_ stop];
 }

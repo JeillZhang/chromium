@@ -22,6 +22,9 @@
 #include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/enterprise/connectors/core/analysis_settings.h"
+#include "components/safe_browsing/content/browser/safe_browsing_navigation_observer_manager.h"
+#include "components/safe_browsing/core/browser/realtime/url_lookup_service_base.h"
+#include "components/sessions/core/session_id.h"
 #include "content/public/browser/clipboard_types.h"
 #include "url/gurl.h"
 
@@ -33,31 +36,13 @@ class WebContent;
 
 namespace enterprise_connectors {
 
-class ContentAnalysisDialog;
+class ContentAnalysisDialogController;
 class FilesRequestHandler;
+class PagePrintRequestHandler;
+class ClipboardRequestHandler;
 
-// A BinaryUploadService::Request implementation that gets the data to scan
-// from a string.  This class is public to allow testing.
-class StringAnalysisRequest
-    : public safe_browsing::BinaryUploadService::Request {
- public:
-  StringAnalysisRequest(
-      CloudOrLocalAnalysisSettings settings,
-      std::string text,
-      safe_browsing::BinaryUploadService::ContentAnalysisCallback callback);
-  ~StringAnalysisRequest() override;
-
-  StringAnalysisRequest(const StringAnalysisRequest&) = delete;
-  StringAnalysisRequest& operator=(const StringAnalysisRequest&) = delete;
-
-  // safe_browsing::BinaryUploadService::Request implementation.
-  void GetRequestData(DataCallback callback) override;
-
- private:
-  Data data_;
-  safe_browsing::BinaryUploadService::Result result_ =
-      safe_browsing::BinaryUploadService::Result::FILE_TOO_LARGE;
-};
+using ReferrerChain =
+    google::protobuf::RepeatedPtrField<safe_browsing::ReferrerChainEntry>;
 
 // A class that performs deep scans of data (for example malicious or sensitive
 // content checks) before allowing a page to access it.
@@ -284,10 +269,11 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   static void SetOnAckAllRequestsCallbackForTesting(
       OnAckAllRequestsCallback callback);
 
-  void SetPageWarningForTesting(ContentAnalysisResponse page_response);
+  void SetPageWarningForTesting();
 
   // ContentAnalysisInfo:
   const AnalysisSettings& settings() const override;
+  signin::IdentityManager* identity_manager() const override;
   int user_action_requests_count() const override;
   std::string tab_title() const override;
   std::string user_action_id() const override;
@@ -295,6 +281,10 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   std::string url() const override;
   const GURL& tab_url() const override;
   ContentAnalysisRequest::Reason reason() const override;
+  google::protobuf::RepeatedPtrField<::safe_browsing::ReferrerChainEntry>
+  referrer_chain() const override;
+  google::protobuf::RepeatedPtrField<std::string> frame_url_chain()
+      const override;
 
  protected:
   ContentAnalysisDelegate(content::WebContents* web_contents,
@@ -304,14 +294,9 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
 
   // Callbacks from uploading data. Protected so they can be called from
   // testing derived classes.
-  // TODO(crbug.com/40839522): Adapt once TextRequestHandler and
-  // PageRequestHandler are created and move reporting to the RequestHandlers.
-  void StringRequestCallback(safe_browsing::BinaryUploadService::Result result,
-                             ContentAnalysisResponse response);
-  void ImageRequestCallback(safe_browsing::BinaryUploadService::Result result,
-                            ContentAnalysisResponse response);
-  void PageRequestCallback(safe_browsing::BinaryUploadService::Result result,
-                           ContentAnalysisResponse response);
+  void TextRequestCallback(RequestHandlerResult result);
+  void ImageRequestCallback(RequestHandlerResult result);
+  void PageRequestCallback(RequestHandlerResult result);
 
   // Callback called after all files are scanned by the FilesRequestHandler.
   void FilesRequestCallback(std::vector<RequestHandlerResult> results);
@@ -361,7 +346,6 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
 
   // Prepares an upload request for the text in `data_`. If `data_.text` is
   // empty, this method does nothing.
-  // TODO(crbug.com/40839522): Move to TextRequestHandler.
   void PrepareTextRequest();
 
   // Prepares an upload request for the image in `data_`. If `data_.image` is
@@ -370,24 +354,10 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
 
   // Prepares an upload request for the printed page bytes in `data_`. If there
   // aren't any, this method does nothing.
-  // TODO(crbug.com/40839522): Move to PageRequestHandler.
   void PreparePageRequest();
 
   // Fills the arrays in `result_` with the given boolean status.
   void FillAllResultsWith(bool status);
-
-  // Upload the request for deep scanning using the binary upload service.
-  // These methods exist so they can be overridden in tests as needed.
-  // The `result` argument exists as an optimization to finish the request early
-  // when the result is known in advance to avoid using the upload service.
-  // TODO(crbug.com/40839522): Remove once TextRequestHandler and
-  // PageRequestHandler are created.
-  virtual void UploadTextForDeepScanning(
-      std::unique_ptr<safe_browsing::BinaryUploadService::Request> request);
-  virtual void UploadImageForDeepScanning(
-      std::unique_ptr<safe_browsing::BinaryUploadService::Request> request);
-  virtual void UploadPageForDeepScanning(
-      std::unique_ptr<safe_browsing::BinaryUploadService::Request> request);
 
   // Updates the tab modal dialog to show the scanning results. Returns false if
   // the UI was not enabled to indicate no action was taken. Virtual to override
@@ -415,13 +385,12 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   // for the requests of this ContentAnalysisDelegate instance.
   void AckAllRequests();
 
-  void FinishLargeDataRequestEarly(
-      std::unique_ptr<safe_browsing::BinaryUploadService::Request> request,
-      safe_browsing::BinaryUploadService::Result result);
-
   // Returns the BinaryUploadService used to upload content for deep scanning.
   // Virtual to override in tests.
   virtual safe_browsing::BinaryUploadService* GetBinaryUploadService();
+
+  safe_browsing::SafeBrowsingNavigationObserverManager*
+  GetNavigationObserverManager() const;
 
   // Returns the content transfer method for the action. This is only used for
   // reporting and can be empty if the exact transfer method isn't supported in
@@ -439,6 +408,9 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   // The GURL corresponding to the page where the scan triggered.
   GURL url_;
 
+  // Parent URL chain of the frame from which the action was triggered.
+  google::protobuf::RepeatedPtrField<std::string> frame_url_chain_;
+
   // The title corresponding to the WebContents triggering the scan.
   std::string title_;
 
@@ -449,24 +421,14 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   Data data_;
   Result result_;
 
-  // Set to true if the full text got a DLP warning verdict.
-  bool text_warning_ = false;
-  ContentAnalysisResponse text_response_;
-
-  // Set to true if the full image got a DLP warning verdict.
-  bool image_warning_ = false;
-  ContentAnalysisResponse image_response_;
+  // The tab ID of the WebContents that triggered the scan.
+  SessionID tab_id_;
 
   // Indices of warned files.
   std::vector<size_t> warned_file_indices_;
 
   // Set to true if the printed page got a DLP warning verdict.
   bool page_warning_ = false;
-  ContentAnalysisResponse page_response_;
-
-  // Stores the scanned page's size since it moves from `data_` to be uploaded.
-  // TODO(crbug.com/40839522): Move to PageRequestHandler.
-  int64_t page_size_bytes_ = 0;
 
   // Set to true once the scan of text has completed.  If the scan request has
   // no text requiring deep scanning, this is set to true immediately.
@@ -489,7 +451,7 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   CompletionCallback callback_;
 
   // Pointer to UI when enabled.
-  raw_ptr<ContentAnalysisDialog> dialog_ = nullptr;
+  raw_ptr<ContentAnalysisDialogController> dialog_ = nullptr;
 
   // Access point to use to record UMA metrics.
   safe_browsing::DeepScanAccessPoint access_point_;
@@ -509,19 +471,34 @@ class ContentAnalysisDelegate : public ContentAnalysisDelegateBase,
   // Always nullptr for non-file content scanning.
   std::unique_ptr<FilesRequestHandler> files_request_handler_;
 
+  // Responsible for managing the scan of printed pages.
+  // Always nullptr for non-print content scanning.
+  std::unique_ptr<PagePrintRequestHandler> page_print_request_handler_;
+
+  // Responsible for managing the scan of pasted text.
+  // Always nullptr for non-text paste content scanning.
+  std::unique_ptr<ClipboardRequestHandler> text_request_handler_;
+
+  // Responsible for managing the scan of a pasted image.
+  // Always nullptr for non-image paste content scanning.
+  std::unique_ptr<ClipboardRequestHandler> image_request_handler_;
+
   // A mapping of request tokens to ack final actions for all requests that make
   // up the user action represented by this ContentAnalysisDelegate.
   std::map<std::string, ContentAnalysisAcknowledgement::FinalAction>
       final_actions_;
 
-  // Results returned from files_request_handler_.
+  // Results returned from `files_request_handler_`.
   std::vector<RequestHandlerResult> files_request_results_;
 
-  // Result updated in StringRequestCallback().
-  RequestHandlerResult string_request_result_;
+  // Result updated in `StringRequestCallback()`.
+  RequestHandlerResult text_request_result_;
 
-  // Result updated in ImageRequestCallback().
+  // Result updated in `ImageRequestCallback()`.
   RequestHandlerResult image_request_result_;
+
+  // Result updated in `PageRequestCallback()`.
+  RequestHandlerResult page_print_request_result_;
 
   // Indicate that `callback_` is currently being called. This is almost always
   // false, but in some cases UI thread tasks can run while `callback_` is not

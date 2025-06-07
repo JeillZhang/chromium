@@ -24,6 +24,7 @@
 #include "base/run_loop.h"
 #include "base/scoped_observation.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
@@ -35,7 +36,6 @@
 #include "chrome/browser/certificate_provider/test_certificate_provider_extension.h"
 #include "chrome/browser/extensions/api/certificate_provider/certificate_provider_api.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -60,6 +60,7 @@
 #include "extensions/browser/disable_reason.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_host_test_helper.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/process_manager.h"
@@ -323,7 +324,7 @@ class CertificateProviderApiMockedExtensionTest
     extension_path_ = test_data_dir_.AppendASCII("certificate_provider");
     extension_ = LoadExtension(extension_path_);
     ASSERT_TRUE(ui_test_utils::NavigateToURL(
-        browser(), extension_->GetResourceURL("basic.html")));
+        browser(), extension_->ResolveExtensionURL("basic.html")));
 
     extension_contents_ = browser()->tab_strip_model()->GetActiveWebContents();
 
@@ -518,7 +519,7 @@ class CertificateProviderRequestPinTest : public CertificateProviderApiTest {
 
   void NavigateTo(const std::string& test_page_file_name) {
     ASSERT_TRUE(ui_test_utils::NavigateToURL(
-        browser(), extension_->GetResourceURL(test_page_file_name)));
+        browser(), extension_->ResolveExtensionURL(test_page_file_name)));
   }
 
   RequestPinView* GetActivePinDialogView() {
@@ -1237,10 +1238,9 @@ IN_PROC_BROWSER_TEST_F(CertificateProviderRequestPinTest, ExtensionDisable) {
   extensions::TestExtensionRegistryObserver registry_observer(
       extensions::ExtensionRegistry::Get(profile()),
       pin_request_extension_id());
-  extensions::ExtensionSystem::Get(profile())
-      ->extension_service()
-      ->DisableExtension(pin_request_extension_id(),
-                         extensions::disable_reason::DISABLE_USER_ACTION);
+  extensions::ExtensionRegistrar::Get(profile())->DisableExtension(
+      pin_request_extension_id(),
+      {extensions::disable_reason::DISABLE_USER_ACTION});
   registry_observer.WaitForExtensionUnloaded();
   // Let the events from the extensions subsystem propagate to the code that
   // manages the PIN dialog.

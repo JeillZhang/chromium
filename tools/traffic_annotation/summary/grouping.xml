@@ -116,7 +116,6 @@ after discussions on the right group.
       <annotation id="ftl_messaging_client_receive_messages"/>
       <annotation id="ftl_messaging_client_send_messages"/>
       <annotation id="ftl_registration_manager"/>
-      <annotation id="remoting_log_to_server"/>
       <annotation id="remoting_provision_corp_machine"/>
       <annotation id="omnibox_result_change"/>
       <annotation id="browser_switcher_ieem_sitelist"/>
@@ -347,8 +346,6 @@ after discussions on the right group.
       <annotation id="chromeos_emoji_picker_posts_fetcher"/>
       <annotation id="remoting_cloud_generate_ice_config"/>
       <annotation id="demo_login_controller"/>
-      <annotation id="forms_annotations_model_execution"/>
-      <annotation id="forms_predictions_model_execution"/>
       <annotation id="ash_babelorca_tachyon_registrar"/>
       <annotation id="ash_babelorca_transcript_receiver"/>
       <annotation id="ash_babelorca_transcript_sender_impl"/>
@@ -360,16 +357,28 @@ after discussions on the right group.
       <annotation id="chromeos_feedback_report_hpke_public_key_fetch_for_variations"/>
       <annotation id="shared_storage_worklet_host"/>
       <annotation id="webauthn_challenge_fetch"/>
-      <annotation id="chromeos_capture_mode"/>
       <annotation id="outlook_calendar_page_handler"/>
       <annotation id="omnibox_search_aggregator_suggest"/>
       <annotation id="microsoft_files_page_handler"/>
       <annotation id="outlook_calendar_event_attachment"/>
-      <annotation id="ip_protection_service_get_issuer_token"/>
+      <annotation id="ip_protection_service_get_probabilistic_reveal_token"/>
       <annotation id="remoting_compute_engine_instance_identity_token"/>
       <annotation id="remoting_compute_engine_instance_access_token"/>
       <annotation id="remoting_compute_engine_instance_access_token_scopes"/>
       <annotation id="metrics_report_dwa"/>
+      <annotation id="version_history"/>
+      <annotation id="chromeos_scanner_provider"/>
+      <annotation id="glic_fre_preconnect"/>
+      <annotation id="chromeos_lens_web_image_search"/>
+      <annotation id="chromeos_inline_image_request"/>
+      <annotation id="baguette_image_download"/>
+      <annotation id="chromeos_walrus_provider"/>
+      <annotation id="forms_classifications_model_execution"/>
+      <annotation id="gemini_user_status"/>
+      <annotation id="notification_telemetry"/>
+      <annotation id="corp_register_support_host_request"/>
+      <annotation id="zero_state_suggestions_model_execution"/>
+      <annotation id="certificate_verifier_2qwac_loader"/>
     </sender>
   </group>
   <group name="Admin Features" hidden="true">
@@ -396,7 +405,6 @@ after discussions on the right group.
     </sender>
     <sender name="Webstore">
       <annotation id="content_hash_verification_job"/>
-      <annotation id="webstore_data_fetcher"/>
       <annotation id="webstore_install_helper"/>
       <annotation id="webstore_installer"/>
     </sender>
@@ -405,7 +413,6 @@ after discussions on the right group.
       <annotation id="gcm_connection_factory"/>
       <annotation id="gcm_registration"/>
       <annotation id="gcm_unregistration"/>
-      <annotation id="web_push_message"/>
       <annotation id="per_user_topic_registration_request"/>
     </sender>
   </group>
@@ -438,12 +445,6 @@ after discussions on the right group.
     <sender name="Compare">
       <annotation id="chrome_commerce_comparable_products"/>
       <annotation id="product_specifications_fetcher"/>
-    </sender>
-    <sender name="Parcel Tracking">
-      <annotation id="chrome_commerce_parcels_status"/>
-      <annotation id="chrome_commerce_start_tracking_parcel"/>
-      <annotation id="chrome_commerce_stop_tracking_parcel"/>
-      <annotation id="chrome_commerce_stop_tracking_all_parcel"/>
     </sender>
     <sender name="Subscription">
       <annotation id="chrome_commerce_subscriptions_create"/>
@@ -497,6 +498,7 @@ after discussions on the right group.
     </sender>
     <sender name="Payments">
       <annotation id="payments_sync_cards"/>
+      <annotation id="payments_autofill"/>
     </sender>
   </group>
   <group name="K-Anonymity Service" hidden="true">
@@ -593,7 +595,7 @@ after discussions on the right group.
   </group>
   <group name="User Experience" hidden="true">
     <sender name="Autofill">
-      <annotation id="autofill_image_fetcher_card_art_image"/>
+      <annotation id="autofill_image_fetcher"/>
       <annotation id="autofill_query"/>
       <annotation id="autofill_upload"/>
       <annotation id="gstatic_fast_checkout_funnels"/>

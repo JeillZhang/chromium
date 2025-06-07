@@ -18,7 +18,6 @@ import static org.chromium.chrome.browser.tasks.tab_management.TabSwitcherPaneDr
 import android.content.Context;
 
 import androidx.test.core.app.ApplicationProvider;
-import androidx.test.filters.SmallTest;
 
 import org.junit.After;
 import org.junit.Before;
@@ -34,6 +33,7 @@ import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.chrome.browser.tab_ui.TabModelDotInfo;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
@@ -51,8 +51,8 @@ public class TabSwitcherPaneDrawableMediatorUnitTest {
 
     private final ObservableSupplierImpl<Integer> mTabCountSupplier =
             new ObservableSupplierImpl<>();
-    private final ObservableSupplierImpl<Boolean> mNotificationDotSupplier =
-            new ObservableSupplierImpl<>(false);
+    private final ObservableSupplierImpl<TabModelDotInfo> mNotificationDotSupplier =
+            new ObservableSupplierImpl<>(TabModelDotInfo.HIDE);
 
     private Context mContext;
     private PropertyModel mModel;
@@ -75,7 +75,6 @@ public class TabSwitcherPaneDrawableMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testMediatorEarlyTabModelSelectorInit() {
         when(mTabModelSelector.isTabStateInitialized()).thenReturn(true);
         var mediator =
@@ -95,14 +94,13 @@ public class TabSwitcherPaneDrawableMediatorUnitTest {
         assertEquals(mTabCountSupplier.get().intValue(), mModel.get(TAB_COUNT));
         assertFalse(mModel.get(SHOW_NOTIFICATION_DOT));
 
-        mNotificationDotSupplier.set(true);
+        mNotificationDotSupplier.set(new TabModelDotInfo(true, "title"));
         assertTrue(mModel.get(SHOW_NOTIFICATION_DOT));
 
         mediator.destroy();
     }
 
     @Test
-    @SmallTest
     public void testMediatorLateTabModelSelectorInit() {
         when(mTabModelSelector.isTabStateInitialized()).thenReturn(false);
         var mediator =
@@ -125,7 +123,6 @@ public class TabSwitcherPaneDrawableMediatorUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testDestroyBeforeInitAvoidsLeak() {
         when(mTabModelSelector.isTabStateInitialized()).thenReturn(false);
         var mediator =

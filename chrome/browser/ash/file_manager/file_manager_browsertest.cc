@@ -30,8 +30,6 @@
 #include "chrome/browser/ash/file_manager/io_task.h"
 #include "chrome/browser/ash/login/test/device_state_mixin.h"
 #include "chrome/browser/ash/login/test/logged_in_user_mixin.h"
-#include "chrome/browser/ash/settings/scoped_testing_cros_settings.h"
-#include "chrome/browser/ash/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
@@ -41,7 +39,9 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/fake_gaia_mixin.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "chromeos/ash/components/policy/device_policy/cached_device_policy_updater.h"
 #include "chromeos/ash/components/settings/cros_settings_names.h"
+#include "chromeos/ash/components/settings/device_settings_cache_test_support.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/account_id/account_id.h"
 #include "components/download/public/common/download_item.h"
@@ -58,10 +58,11 @@
 
 using file_manager::test::TestCase;
 
+namespace em = enterprise_management;
+
 namespace file_manager {
 namespace {
 constexpr char kOwnerEmail[] = "owner@example.com";
-
 }  // namespace
 
 // FilesApp browser test.
@@ -121,6 +122,10 @@ class LoggedInUserFilesAppBrowserTest : public FilesAppBrowserTest {
         LogInTypeFor(GetOptions().test_account_type),
         /*include_initial_user=*/true,
         AccountIdFor(GetOptions().test_account_type));
+  }
+
+  void SetUpLocalStatePrefService(PrefService* local_state) override {
+    FilesAppBrowserTest::SetUpLocalStatePrefService(local_state);
 
     // Set up owner email of a device. We set up owner email only if a device is
     // kConsumerOwned. If a device is enrolled, an account cannot be an owner of
@@ -141,8 +146,14 @@ class LoggedInUserFilesAppBrowserTest : public FilesAppBrowserTest {
           break;
       }
 
-      scoped_testing_cros_settings_.device_settings()->Set(
-          ash::kDeviceOwner, base::Value(owner_email));
+      ash::device_settings_cache::Update(
+          local_state,
+          [&](em::PolicyData& policy) { policy.set_username(owner_email); });
+
+      policy::CachedDevicePolicyUpdater updater;
+      updater.policy_data().set_username(owner_email);
+      updater.policy_data().set_management_mode(em::PolicyData::LOCAL_OWNER);
+      updater.Commit();
     }
   }
 
@@ -171,8 +182,6 @@ class LoggedInUserFilesAppBrowserTest : public FilesAppBrowserTest {
 
   std::unique_ptr<ash::LoggedInUserMixin> logged_in_user_mixin_;
   std::unique_ptr<ash::DeviceStateMixin> device_state_mixin_;
-
-  ash::ScopedTestingCrosSettings scoped_testing_cros_settings_;
 };
 
 IN_PROC_BROWSER_TEST_P(LoggedInUserFilesAppBrowserTest, Test) {
@@ -665,7 +674,11 @@ WRAPPED_INSTANTIATE_TEST_SUITE_P(
         TestCase("directoryTreeExpandFolderOnDelayExpansionVolume"),
         TestCase("directoryTreeExpandAndSelectedOnDragMove"),
         TestCase("directoryTreeClickDriveRootWhenMyDriveIsActive"),
+#if !defined(ADDRESS_SANITIZER) && defined(NDEBUG)
+        // TODO(crbug.com/339374326): Flaking on
+        // "Linux Chromium OS ASan LSan Tests (1)" and on several dbg bots.
         TestCase("directoryTreeHideExpandIconWhenLastSubFolderIsRemoved"),
+#endif
         TestCase("directoryTreeKeepDriveOrderAfterReconnected")));
 
 WRAPPED_INSTANTIATE_TEST_SUITE_P(

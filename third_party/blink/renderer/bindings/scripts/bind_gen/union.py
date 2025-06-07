@@ -153,11 +153,17 @@ class _UnionMemberSubunion(_UnionMember):
         assert isinstance(union, web_idl.Union)
         assert isinstance(subunion, web_idl.Union)
 
-        _UnionMember.__init__(self, base_name=blink_class_name(subunion))
+        class_name = blink_class_name(subunion)
+        _UnionMember.__init__(self, base_name=class_name)
         self._type_info = blink_type_info(subunion.idl_types[0])
+        # Filter out aliases that match our class name (this may happen due to
+        # union name mapping)
         self._typedef_aliases = tuple(
-            map(lambda typedef: _UnionMemberAlias(impl=self, typedef=typedef),
-                subunion.aliasing_typedefs))
+            map(
+                lambda typedef: _UnionMemberAlias(impl=self, typedef=typedef),
+                filter(
+                    lambda idl_type: blink_class_name(idl_type) != class_name,
+                    subunion.aliasing_typedefs)))
         self._blink_class_name = blink_class_name(subunion)
 
     @property
@@ -386,7 +392,7 @@ def make_factory_methods(cg_context):
     typed_array_types = ("Int8Array", "Int16Array", "Int32Array",
                          "BigInt64Array", "Uint8Array", "Uint16Array",
                          "Uint32Array", "BigUint64Array", "Uint8ClampedArray",
-                         "Float32Array", "Float64Array")
+                         "Float16Array", "Float32Array", "Float64Array")
     for typed_array_type in typed_array_types:
         member = find_by_type(lambda t: t.keyword_typename == typed_array_type)
         if member:

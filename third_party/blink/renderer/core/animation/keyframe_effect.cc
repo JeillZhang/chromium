@@ -225,7 +225,7 @@ KeyframeEffect::KeyframeEffect(Element* target,
     // animating pseudo elements. This requires using the DOM element that the
     // pseudo element originates from.
     target_element_ =
-        DynamicTo<PseudoElement>(target)->UltimateOriginatingElement();
+        &DynamicTo<PseudoElement>(target)->UltimateOriginatingElement();
     DCHECK(!target_element_->IsPseudoElement());
     target_pseudo_ = PseudoElement::PseudoElementNameForEvents(target);
   }
@@ -380,7 +380,7 @@ CompositorAnimations::FailureReasons
 KeyframeEffect::CheckCanStartAnimationOnCompositor(
     const PaintArtifactCompositor* paint_artifact_compositor,
     double animation_playback_rate,
-    PropertyHandleSet* unsupported_properties) const {
+    PropertyHandleSet* unsupported_properties_for_tracing) const {
   CompositorAnimations::FailureReasons reasons =
       CompositorAnimations::kNoFailure;
 
@@ -410,7 +410,7 @@ KeyframeEffect::CheckCanStartAnimationOnCompositor(
     reasons |= CompositorAnimations::CheckCanStartAnimationOnCompositor(
         SpecifiedTiming(), NormalizedTiming(), *effect_target_, GetAnimation(),
         *Model(), paint_artifact_compositor, animation_playback_rate,
-        unsupported_properties);
+        unsupported_properties_for_tracing);
   }
 
   return reasons;
@@ -424,7 +424,7 @@ void KeyframeEffect::StartAnimationOnCompositor(
     CompositorAnimation* compositor_animation,
     bool is_monotonic_timeline,
     bool is_boundary_aligned) {
-  DCHECK(!HasActiveAnimationsOnCompositor());
+  DCHECK(compositor_keyframe_model_ids_.empty());
   // TODO(petermayo): Maybe we should recheck that we can start on the
   // compositor if we have the compositable IDs somewhere.
 
@@ -444,23 +444,30 @@ void KeyframeEffect::StartAnimationOnCompositor(
 }
 
 bool KeyframeEffect::HasActiveAnimationsOnCompositor() const {
-  return !compositor_keyframe_model_ids_.empty();
+  if (compositor_keyframe_model_ids_.empty()) {
+    return false;
+  }
+  return GetAnimation()->HasActiveAnimationsOnCompositor();
 }
 
 bool KeyframeEffect::HasActiveAnimationsOnCompositor(
     const PropertyHandle& property) const {
   return HasActiveAnimationsOnCompositor() &&
-         model_->EnsureDynamicProperties().Contains(property);
+         model_->DynamicProperties().Contains(property);
 }
 
 bool KeyframeEffect::CancelAnimationOnCompositor(
     CompositorAnimation* compositor_animation) {
-  if (!HasActiveAnimationsOnCompositor())
+  if (compositor_keyframe_model_ids_.empty()) {
     return false;
+  }
+
   // Don't check effect_target_->GetLayoutObject(); we might be here because
   // it's *just* been set to null.
-  if (!effect_target_)
+  if (!effect_target_) {
     return false;
+  }
+
   DCHECK(Model());
   for (const auto& compositor_keyframe_model_id :
        compositor_keyframe_model_ids_) {
@@ -482,7 +489,7 @@ void KeyframeEffect::CancelIncompatibleAnimationsOnCompositor() {
 
 void KeyframeEffect::PauseAnimationForTestingOnCompositor(
     base::TimeDelta pause_time) {
-  DCHECK(HasActiveAnimationsOnCompositor());
+  DCHECK(!compositor_keyframe_model_ids_.empty());
   if (!effect_target_ || !effect_target_->GetLayoutObject())
     return;
   DCHECK(GetAnimation());
@@ -592,7 +599,8 @@ void KeyframeEffect::RestartRunningAnimationOnCompositor() {
   if (!animation->StartTimeInternal())
     return;
 
-  animation->RestartAnimationOnCompositor();
+  animation->RestartAnimationOnCompositor(
+      Animation::CompositorPendingReason::kPendingSafeRestart);
 }
 
 bool KeyframeEffect::IsIdentityOrTranslation() const {
@@ -675,9 +683,6 @@ void KeyframeEffect::ApplyEffects() {
 
   if (changed) {
     effect_target_->SetNeedsAnimationStyleRecalc();
-    auto* svg_element = DynamicTo<SVGElement>(effect_target_.Get());
-    if (RuntimeEnabledFeatures::WebAnimationsSVGEnabled() && svg_element)
-      svg_element->SetWebAnimationsPending();
   }
 }
 
@@ -692,9 +697,6 @@ void KeyframeEffect::ClearEffects() {
   if (!effect_target_->GetDocument().Lifecycle().InDetach()) {
     effect_target_->SetNeedsAnimationStyleRecalc();
   }
-  auto* svg_element = DynamicTo<SVGElement>(effect_target_.Get());
-  if (RuntimeEnabledFeatures::WebAnimationsSVGEnabled() && svg_element)
-    svg_element->ClearWebAnimatedAttributes();
   Invalidate();
 }
 
@@ -725,9 +727,6 @@ void KeyframeEffect::AttachTarget(Animation* animation) {
     return;
   effect_target_->EnsureElementAnimations().Animations().insert(animation);
   effect_target_->SetNeedsAnimationStyleRecalc();
-  auto* svg_element = DynamicTo<SVGElement>(effect_target_.Get());
-  if (RuntimeEnabledFeatures::WebAnimationsSVGEnabled() && svg_element)
-    svg_element->SetWebAnimationsPending();
 }
 
 void KeyframeEffect::DetachTarget(Animation* animation) {
@@ -854,15 +853,10 @@ ActiveInterpolationsMap KeyframeEffect::InterpolationsForCommitStyles() {
   if (removed)
     ApplyEffects();
 
-  auto property_pass_filter = [](const PropertyHandle& property) {
-    return property.IsCSSProperty();
-  };
-
   ActiveInterpolationsMap results = EffectStack::ActiveInterpolations(
       &target()->GetElementAnimations()->GetEffectStack(),
       /*new_animations=*/nullptr,
-      /*suppressed_animations=*/nullptr, kDefaultPriority, property_pass_filter,
-      this);
+      /*suppressed_animations=*/nullptr, kDefaultPriority, this);
 
   if (removed) {
     ClearEffects();

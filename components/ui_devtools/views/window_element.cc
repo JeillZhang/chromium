@@ -6,8 +6,8 @@
 
 #include <algorithm>
 
-#include "base/not_fatal_until.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/to_string.h"
 #include "components/ui_devtools/protocol.h"
 #include "components/ui_devtools/ui_element_delegate.h"
 #include "components/ui_devtools/views/devtools_event_util.h"
@@ -26,7 +26,7 @@ namespace {
 int GetIndexOfChildInParent(aura::Window* window) {
   const aura::Window::Windows& siblings = window->parent()->children();
   auto it = std::ranges::find(siblings, window);
-  CHECK(it != siblings.end(), base::NotFatalUntil::M130);
+  CHECK(it != siblings.end());
   return std::distance(siblings.begin(), it);
 }
 
@@ -103,7 +103,7 @@ void WindowElement::SetVisible(bool visible) {
 
 std::vector<std::string> WindowElement::GetAttributes() const {
   return {"name", window_->GetName(), "active",
-          ::wm::IsActiveWindow(window_) ? "true" : "false"};
+          base::ToString(::wm::IsActiveWindow(window_))};
 }
 
 std::pair<gfx::NativeWindow, gfx::Rect>

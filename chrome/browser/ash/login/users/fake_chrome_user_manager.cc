@@ -105,7 +105,8 @@ FakeChromeUserManager::AddUserWithAffiliationAndTypeAndProfile(
 
 user_manager::User* FakeChromeUserManager::AddKioskAppUser(
     const AccountId& account_id) {
-  user_manager::User* user = user_manager::User::CreateKioskAppUser(account_id);
+  user_manager::User* user =
+      user_manager::User::CreateKioskChromeAppUser(account_id);
   user->set_username_hash(
       user_manager::FakeUserManager::GetFakeUsernameHash(account_id));
   user_storage_.emplace_back(user);
@@ -116,7 +117,7 @@ user_manager::User* FakeChromeUserManager::AddKioskAppUser(
 user_manager::User* FakeChromeUserManager::AddWebKioskAppUser(
     const AccountId& account_id) {
   user_manager::User* user =
-      user_manager::User::CreateWebKioskAppUser(account_id);
+      user_manager::User::CreateKioskWebAppUser(account_id);
   user->set_username_hash(
       user_manager::FakeUserManager::GetFakeUsernameHash(account_id));
   user_storage_.emplace_back(user);
@@ -163,8 +164,7 @@ user_manager::User* FakeChromeUserManager::AddPublicAccountUser(
 void FakeChromeUserManager::LoginUser(const AccountId& account_id,
                                       bool set_profile_created_flag) {
   UserLoggedIn(account_id,
-               user_manager::FakeUserManager::GetFakeUsernameHash(account_id),
-               false /* browser_restart */, false /* is_child */);
+               user_manager::FakeUserManager::GetFakeUsernameHash(account_id));
 
   if (!set_profile_created_flag) {
     return;
@@ -247,9 +247,7 @@ const AccountId& FakeChromeUserManager::GetLastSessionActiveAccountId() const {
 }
 
 void FakeChromeUserManager::UserLoggedIn(const AccountId& account_id,
-                                         const std::string& username_hash,
-                                         bool browser_restart,
-                                         bool is_child) {
+                                         const std::string& username_hash) {
   // Please keep the implementation in sync with FakeUserManager::UserLoggedIn.
   // We're in process to merge.
   for (auto& user : user_storage_) {
@@ -381,17 +379,17 @@ bool FakeChromeUserManager::IsLoggedInAsGuest() const {
                      : false;
 }
 
-bool FakeChromeUserManager::IsLoggedInAsKioskApp() const {
+bool FakeChromeUserManager::IsLoggedInAsKioskChromeApp() const {
   const user_manager::User* active_user = GetActiveUser();
   return active_user
-             ? active_user->GetType() == user_manager::UserType::kKioskApp
+             ? active_user->GetType() == user_manager::UserType::kKioskChromeApp
              : false;
 }
 
-bool FakeChromeUserManager::IsLoggedInAsWebKioskApp() const {
+bool FakeChromeUserManager::IsLoggedInAsKioskWebApp() const {
   const user_manager::User* active_user = GetActiveUser();
   return active_user
-             ? active_user->GetType() == user_manager::UserType::kWebKioskApp
+             ? active_user->GetType() == user_manager::UserType::kKioskWebApp
              : false;
 }
 

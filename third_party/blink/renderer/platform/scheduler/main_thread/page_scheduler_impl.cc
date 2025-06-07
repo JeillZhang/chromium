@@ -10,7 +10,6 @@
 
 #include "base/check_op.h"
 #include "base/containers/contains.h"
-#include "base/debug/stack_trace.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/post_delayed_memory_reduction_task.h"
@@ -424,13 +423,15 @@ bool PageSchedulerImpl::OptedOutFromAggressiveThrottling() const {
 }
 
 bool PageSchedulerImpl::RequestBeginMainFrameNotExpected(bool new_state) {
+  CHECK(!base::FeatureList::IsEnabled(kUseWidgetSchedulerForIdlePeriodSignals));
   if (!delegate_)
     return false;
   return delegate_->RequestBeginMainFrameNotExpected(new_state);
 }
 
-scoped_refptr<WidgetScheduler> PageSchedulerImpl::CreateWidgetScheduler() {
-  return main_thread_scheduler_->CreateWidgetScheduler();
+scoped_refptr<WidgetScheduler> PageSchedulerImpl::CreateWidgetScheduler(
+    WidgetScheduler::Delegate* delegate) {
+  return main_thread_scheduler_->CreateWidgetScheduler(delegate);
 }
 
 bool PageSchedulerImpl::IsAudioPlaying() const {

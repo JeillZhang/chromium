@@ -104,7 +104,7 @@ std::unique_ptr<net::CanonicalCookie> ToCanonicalCookie(
       return nullptr;
     }
 
-    domain = String(".") + options->domain();
+    domain = WTF::StrCat({".", options->domain()});
     if (!cookie_url_host.EndsWith(domain) &&
         cookie_url_host != options->domain()) {
       exception_state.ThrowTypeError(
@@ -125,7 +125,7 @@ std::unique_ptr<net::CanonicalCookie> ToCanonicalCookie(
       return nullptr;
     }
     if (!path.EndsWith("/")) {
-      path = path + String("/");
+      path = WTF::StrCat({path, "/"});
     }
   }
 
@@ -257,6 +257,15 @@ const scoped_refptr<const SecurityOrigin> DefaultTopFrameOrigin(
   }
   return SecurityOrigin::CreateFromUrlOrigin(
       url::Origin::Create(net::SchemefulSite(key.GetTopLevelSite()).GetURL()));
+}
+
+bool IsAdTagged(ExecutionContext* context) {
+  if (auto* window = DynamicTo<LocalDOMWindow>(context)) {
+    if (auto* local_frame = window->GetFrame()) {
+      return local_frame->IsAdFrame();
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -464,13 +473,7 @@ void CookieStore::DoRead(ScriptState* script_state,
     return;
   }
 
-  bool is_ad_tagged = false;
-  if (auto* window = DynamicTo<LocalDOMWindow>(context)) {
-    if (auto* local_frame = window->GetFrame()) {
-      is_ad_tagged = local_frame->IsAdFrame();
-    }
-  }
-
+  bool is_ad_tagged = IsAdTagged(context);
   bool should_apply_devtools_overrides = false;
   probe::ShouldApplyDevtoolsCookieSettingOverrides(
       GetExecutionContext(), &should_apply_devtools_overrides);
@@ -557,6 +560,7 @@ ScriptPromise<IDLUndefined> CookieStore::DoWrite(
     return EmptyPromise();
   }
 
+  bool is_ad_tagged = IsAdTagged(context);
   bool should_apply_devtools_overrides = false;
   probe::ShouldApplyDevtoolsCookieSettingOverrides(
       GetExecutionContext(), &should_apply_devtools_overrides);
@@ -566,7 +570,7 @@ ScriptPromise<IDLUndefined> CookieStore::DoWrite(
   backend_->SetCanonicalCookie(
       *std::move(canonical_cookie), default_cookie_url_,
       default_site_for_cookies_, default_top_frame_origin_,
-      context->GetStorageAccessApiStatus(), status,
+      context->GetStorageAccessApiStatus(), status, is_ad_tagged,
       should_apply_devtools_overrides,
       WTF::BindOnce(&CookieStore::OnSetCanonicalCookieResult,
                     WrapPersistent(resolver)));

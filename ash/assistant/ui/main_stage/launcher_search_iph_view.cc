@@ -172,13 +172,13 @@ LauncherSearchIphView::LauncherSearchIphView(
   title_label_ = text_container->AddChildView(std::make_unique<views::Label>(
       l10n_util::GetStringUTF16(IDS_ASH_ASSISTANT_LAUNCHER_SEARCH_IPH_TITLE)));
   title_label_->SetHorizontalAlignment(gfx::HorizontalAlignment::ALIGN_TO_HEAD);
-  title_label_->SetEnabledColorId(kColorAshTextColorPrimary);
+  title_label_->SetEnabledColor(kColorAshTextColorPrimary);
   title_label_->GetViewAccessibility().SetRole(ax::mojom::Role::kHeading);
 
   views::Label* description_label = text_container->AddChildView(
       std::make_unique<views::Label>(l10n_util::GetStringUTF16(
           IDS_ASH_ASSISTANT_LAUNCHER_SEARCH_IPH_DESCRIPTION)));
-  description_label->SetEnabledColorId(kColorAshTextColorPrimary);
+  description_label->SetEnabledColor(kColorAshTextColorPrimary);
 
   const TypographyProvider* typography_provider = TypographyProvider::Get();
   DCHECK(typography_provider) << "TypographyProvider must not be null";
@@ -198,10 +198,10 @@ LauncherSearchIphView::LauncherSearchIphView(
   CreateChips(actions_container);
 
   if (is_in_tablet_mode || location_ == UiLocation::kAssistantPage) {
-    box_layout_view->SetBackground(views::CreateThemedRoundedRectBackground(
+    box_layout_view->SetBackground(views::CreateRoundedRectBackground(
         kColorAshControlBackgroundColorInactive, kBackgroundRadiusTablet));
   } else {
-    box_layout_view->SetBackground(views::CreateThemedRoundedRectBackground(
+    box_layout_view->SetBackground(views::CreateRoundedRectBackground(
         kColorAshControlBackgroundColorInactive,
         base::i18n::IsRTL() ? kBackgroundRadiiClamshellRTL
                             : kBackgroundRadiiClamshellLTR));

@@ -8,9 +8,8 @@
 #include <vector>
 
 #include "base/feature_list.h"
-#include "base/not_fatal_until.h"
 #include "base/values.h"
-#include "chrome/browser/performance_manager/policies/page_discarding_helper.h"
+#include "chrome/browser/performance_manager/policies/discard_eligibility_policy.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/performance_manager/public/features.h"
 #include "components/performance_manager/public/performance_manager.h"
@@ -29,29 +28,16 @@ class ProfileDiscardOptOutListHelperDelegateImpl
   ~ProfileDiscardOptOutListHelperDelegateImpl() override = default;
 
   void ClearPatterns(const std::string& browser_context_id) override {
-    performance_manager::PerformanceManager::CallOnGraph(
-        FROM_HERE,
-        base::BindOnce(
-            [](std::string browser_context_id,
-               performance_manager::Graph* graph) {
-              policies::PageDiscardingHelper::GetFromGraph(graph)
-                  ->ClearNoDiscardPatternsForProfile(browser_context_id);
-            },
-            browser_context_id));
+    Graph* graph = PerformanceManager::GetGraph();
+    policies::DiscardEligibilityPolicy::GetFromGraph(graph)
+        ->ClearNoDiscardPatternsForProfile(browser_context_id);
   }
 
   void SetPatterns(const std::string& browser_context_id,
                    const std::vector<std::string>& patterns) override {
-    performance_manager::PerformanceManager::CallOnGraph(
-        FROM_HERE, base::BindOnce(
-                       [](std::string browser_context_id,
-                          std::vector<std::string> patterns,
-                          performance_manager::Graph* graph) {
-                         policies::PageDiscardingHelper::GetFromGraph(graph)
-                             ->SetNoDiscardPatternsForProfile(
-                                 browser_context_id, patterns);
-                       },
-                       browser_context_id, std::move(patterns)));
+    Graph* graph = PerformanceManager::GetGraph();
+    policies::DiscardEligibilityPolicy::GetFromGraph(graph)
+        ->SetNoDiscardPatternsForProfile(browser_context_id, patterns);
   }
 };
 
@@ -97,7 +83,7 @@ void ProfileDiscardOptOutListHelper::ProfileDiscardOptOutTracker::
   std::vector<std::string> patterns;
   patterns.reserve(user_value_map.size() + managed_value_list.size());
 
-  // Merge the two lists so that the PageDiscardingHelper only sees a single
+  // Merge the two lists so that the DiscardEligibilityPolicy only sees a single
   // list of patterns to exclude from discarding.
   std::ranges::transform(
       user_value_map.begin(), user_value_map.end(),
@@ -137,7 +123,7 @@ void ProfileDiscardOptOutListHelper::OnProfileAddedImpl(
 void ProfileDiscardOptOutListHelper::OnProfileWillBeRemovedImpl(
     const std::string& browser_context_id) {
   auto it = discard_opt_out_trackers_.find(browser_context_id);
-  CHECK(it != discard_opt_out_trackers_.end(), base::NotFatalUntil::M130);
+  CHECK(it != discard_opt_out_trackers_.end());
   discard_opt_out_trackers_.erase(it);
 }
 

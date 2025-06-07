@@ -6,10 +6,9 @@
 
 #include "ash/constants/ash_switches.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/test/ash_test_util.h"
 #include "base/command_line.h"
 #include "base/containers/fixed_flat_map.h"
-#include "base/hash/md5.h"
-#include "base/hash/md5_boringssl.h"
 #include "base/test/metrics/histogram_enum_reader.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -18,18 +17,19 @@ namespace ash {
 namespace {
 
 // The total number of accelerator actions.
-constexpr int kAcceleratorActionsTotalNum = 170;
+constexpr size_t kAcceleratorActionsTotalNum = 172;
 // The toal number of debug accelerators, these will not be used for hashing.
-constexpr int kDebugAcceleratorActionsNum = 28;
+constexpr size_t kDebugAcceleratorActionsNum = 29;
 // The hash of accelerator actions. Please update this when adding a new
 // accelerator action.
-constexpr char kAcceleratorActionsHash[] = "cdcdcd8ea8502dc46c7564f52e56d696";
+constexpr char kAcceleratorActionsHash[] =
+    "5376c379e20a43cf689c1d23bc111305426d078d0a24343e2fd4f63787c61ebc";
 
 // Define the mapping between an AcceleratorAction and its string name.
 // Example:
 //   AcceleratorAction::kDevToggleUnifiedDesktop -> "DevToggleUnifiedDesktop".
 constexpr static auto kAcceleratorActionToName =
-    base::MakeFixedFlatMap<AcceleratorAction, const char*>({
+    base::MakeFixedFlatMap<AcceleratorAction, std::string_view>({
 #define ACCELERATOR_ACTION_ENTRY(action) \
   {AcceleratorAction::k##action, #action},
 #define ACCELERATOR_ACTION_ENTRY_FIXED_VALUE(action, value) \
@@ -100,29 +100,16 @@ TEST_P(AcceleratorActionsTest, AcceleratorActionsHash) {
       "`kDebugAcceleratorActionsNum` (if applicable).";
 
   // First check that the size of the enum is correct.
-  const int current_actions_size = kAcceleratorActionToName.size();
-  EXPECT_EQ(current_actions_size, kAcceleratorActionsTotalNum)
-      << kCommonMessage;
+  ASSERT_EQ(kAcceleratorActionToName.size(), kAcceleratorActionsTotalNum);
+  const size_t kAcceleratorsToHashNum =
+      kAcceleratorActionsTotalNum - kDebugAcceleratorActionsNum;
+  const std::string hash = ash::StableHashOfCollection(
+      base::span(kAcceleratorActionToName).first<kAcceleratorsToHashNum>(),
+      [](const auto& item) { return item.second; });
 
-  // Then check that the hash is correct.
-  base::MD5Context context;
-  base::MD5Init(&context);
-  int iter_count = 0;
-  for (const auto iter : kAcceleratorActionToName) {
-    base::MD5Update(&context, iter.second);
-    // Only hash up non-debug accelerator actions.
-    if (++iter_count >= current_actions_size - kDebugAcceleratorActionsNum) {
-      break;
-    }
-  }
-
-  base::MD5Digest digest;
-  base::MD5Final(&digest, &context);
-  const std::string current_hash = MD5DigestToBase16(digest);
-
-  EXPECT_EQ(current_hash, kAcceleratorActionsHash)
+  EXPECT_EQ(hash, kAcceleratorActionsHash)
       << kCommonMessage << " Please update kAcceleratorActionsHash to: \n"
-      << current_hash << "\n";
+      << hash << "\n";
 }
 
 INSTANTIATE_TEST_SUITE_P(

@@ -235,8 +235,6 @@ void AddPrivacySandboxStrings(content::WebUIDataSource* html_source,
        IDS_SETTINGS_PRIVACY_GUIDE_AD_TOPICS_THINGS_TO_CONSIDER_BULLET1},
       {"privacyGuideAdTopicsThingsToConsiderBullet2",
        IDS_SETTINGS_PRIVACY_GUIDE_AD_TOPICS_THINGS_TO_CONSIDER_BULLET2},
-      {"trackingProtectionExceptionsListDescription",
-       IDS_SETTINGS_TRACKING_PROTECTION_EXCEPTIONS_LIST_DESCRIPTION},
       {"cookiePageSettingsAllowBulletOne",
        IDS_SETTINGS_COOKIES_BLOCK_THIRD_PARTY_SETTINGS_ALLOW_BULLET_ONE},
       {"cookiePageSettingsAllowBulletTwo",
@@ -269,15 +267,58 @@ void AddPrivacySandboxStrings(content::WebUIDataSource* html_source,
        IDS_SETTINGS_PRIVACY_GUIDE_COOKIES_CARD_BLOCK_TPC_ALLOW_SUBHEADER},
       {"privacyGuideCookiesCardBlockTpcBlockSubheader",
        IDS_SETTINGS_PRIVACY_GUIDE_COOKIES_CARD_BLOCK_TPC_BLOCK_SUBHEADER},
-      {"privacyGuideCookiesCardBlockTpcAllowExpandA11yLabel",
-       IDS_SETTINGS_PRIVACY_GUIDE_BLOCK_TPC_ALLOW_EXPAND_A11Y_LABEL},
+      {"allowThirdPartyCookiesExpandA11yLabel",
+       IDS_SETTINGS_ALLOW_THIRD_PARTY_COOKIES_EXPAND_A11Y_LABEL},
+      {"blockThirdPartyCookiesExpandA11yLabel",
+       IDS_SETTINGS_BLOCK_THIRD_PARTY_COOKIES_EXPAND_A11Y_LABEL},
+      // All sites RWS
+      {"allSitesRwsFilterViewTitle", IDS_ALL_SITES_RWS_FILTER_VIEW_TITLE},
+      {"allSitesRwsFilterViewStorageDescription",
+       IDS_ALL_SITES_RWS_FILTER_VIEW_STORAGE_DESCRIPTION},
+      {"allSitesShowRwsButton", IDS_ALL_SITES_SHOW_RWS_BUTTON},
+      {"allSitesRwsMembershipLabel", IDS_ALL_SITES_RWS_LABEL},
+      {"allSitesRwsDeleteDataButtonLabel",
+       IDS_ALL_SITES_RWS_DELETE_DATA_BUTTON_LABEL},
+      {"allSitesRwsDeleteDataDialogTitle",
+       IDS_ALL_SITES_RWS_DELETE_DATA_DIALOG_TITLE},
       // Ad Topics Content Parity - Ad Topics Settings
       {"adTopicsPageToggleSubLabel",
        IDS_SETTINGS_AD_TOPICS_PAGE_TOGGLE_SUB_LABEL},
       {"adTopicsPageActiveTopicsDescription",
        IDS_SETTINGS_AD_TOPICS_PAGE_ACTIVE_TOPICS_DESCRIPTION},
-
-  };
+      // Incognito tracking protections
+      {"incognitoTrackingProtectionsPageTitle",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_PAGE_TITLE},
+      {"incognitoTrackingProtectionsPageEntrypointDescription",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_PAGE_ENTRYPOINT_DESCRIPTION},
+      {"incognitoTrackingProtectionsPageDescription",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_PAGE_DESCRIPTION},
+      {"incognitoTrackingProtectionsHeader",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_HEADER},
+      {"incognitoTrackingProtectionsBlock3pcsToggleLabel",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_BLOCK_3PCS_TOGGLE_LABEL},
+      {"incognitoTrackingProtectionsBlock3pcsToggleSublabel",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_BLOCK_3PCS_TOGGLE_SUBLABEL},
+      {"incognitoTrackingProtectionsIpProtectionToggleLabel",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_IP_PROTECTION_TOGGLE_LABEL},
+      {"incognitoTrackingProtectionsIpProtectionToggleSublabel",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_IP_PROTECTION_TOGGLE_SUBLABEL},
+      {"incognitoTrackingProtectionsFingerprintingProtectionToggleLabel",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_FINGERPRINTING_PROTECTION_TOGGLE_LABEL},
+      {"incognitoTrackingProtectionsFingerprintingProtectionToggleSublabel",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_FINGERPRINTING_PROTECTION_TOGGLE_SUBLABEL},
+      {"incognitoTrackingProtectionsIpProtectionWhenOn",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_IP_PROTECTION_WHEN_ON},
+      {"incognitoTrackingProtectionsIpProtectionThingsToConsiderBulletOne",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_IP_PROTECTION_THINGS_TO_CONSIDER_BULLET_ONE},
+      {"incognitoTrackingProtectionsIpProtectionThingsToConsiderBulletTwo",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_IP_PROTECTION_THINGS_TO_CONSIDER_BULLET_TWO},
+      {"incognitoTrackingProtectionsIpProtectionThingsToConsiderBulletThree",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_IP_PROTECTION_THINGS_TO_CONSIDER_BULLET_THREE},
+      {"incognitoTrackingProtectionsFingerprintingProtectionWhenOn",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_FINGERPRINTING_PROTECTION_WHEN_ON},
+      {"incognitoTrackingProtectionsFingerprintingProtectionThingsToConsider",
+       IDS_INCOGNITO_TRACKING_PROTECTIONS_FINGERPRINTING_PROTECTION_THINGS_TO_CONSIDER}};
   html_source->AddLocalizedStrings(kLocalizedStrings);
 
   html_source->AddString("adPrivacyLearnMoreURL",
@@ -333,10 +374,6 @@ void AddPrivacySandboxStrings(content::WebUIDataSource* html_source,
            chrome::kChromeUIPrivacySandboxManageTopicsLearnMoreURL,
            l10n_util::GetStringUTF16(IDS_SETTINGS_OPENS_IN_NEW_TAB)},
           nullptr));
-  html_source->AddBoolean(
-      "firstPartySetsUIEnabled",
-      base::FeatureList::IsEnabled(
-          privacy_sandbox::kPrivacySandboxFirstPartySetsUI));
   html_source->AddBoolean(
       "isPrivacySandboxAdsApiUxEnhancementsEnabled",
       base::FeatureList::IsEnabled(
@@ -419,6 +456,25 @@ void AddPrivacySandboxStrings(content::WebUIDataSource* html_source,
           l10n_util::GetStringUTF16(
               IDS_SETTINGS_SITE_SUGGESTED_ADS_PAGE_DISCLAIMER_LINK_ARIA_DESCRIPTION),
           kPrivacyPolicyFunc, kPrivacyPolicyId));
+  // RWS description
+  const char* rws_learn_more_url = chrome::kRelatedWebsiteSetsLearnMoreURL;
+  html_source->AddString(
+      "allSitesRwsFilterViewDescription",
+      l10n_util::GetStringFUTF16(
+          IDS_ALL_SITES_RWS_FILTER_VIEW_DESCRIPTION,
+          base::ASCIIToUTF16(rws_learn_more_url),
+          l10n_util::GetStringUTF16(IDS_SETTINGS_OPENS_IN_NEW_TAB)));
+  // Incognito tracking protections description
+  const char* incognito_tracking_protections_learn_more_url =
+      chrome::kIncognitoTrackingProtectionsLearnMoreUrl;
+  html_source->AddString(
+      "incognitoTrackingProtectionsDescription",
+      l10n_util::GetStringFUTF16(
+          IDS_INCOGNITO_TRACKING_PROTECTIONS_DESCRIPTION_DESKTOP,
+          base::ASCIIToUTF16(incognito_tracking_protections_learn_more_url),
+          l10n_util::GetStringUTF16(
+              IDS_INCOGNITO_TRACKING_PROTECTIONS_DESCRIPTION_DESKTOP_A11Y_LABEL),
+          l10n_util::GetStringUTF16(IDS_SETTINGS_OPENS_IN_NEW_TAB)));
 }
 
 }  // namespace settings

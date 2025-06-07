@@ -25,7 +25,7 @@ SafeBrowsingService* FakeSafeBrowsingClient::GetSafeBrowsingService() {
   return safe_browsing_service_.get();
 }
 
-safe_browsing::RealTimeUrlLookupService*
+safe_browsing::RealTimeUrlLookupServiceBase*
 FakeSafeBrowsingClient::GetRealTimeUrlLookupService() {
   return lookup_service_;
 }
@@ -49,4 +49,8 @@ bool FakeSafeBrowsingClient::OnMainFrameUrlQueryCancellationDecided(
     const GURL& url) {
   main_frame_cancellation_decided_called_ = true;
   return main_frame_cancellation_decided_called_;
+}
+
+bool FakeSafeBrowsingClient::ShouldForceSyncRealTimeUrlChecks() const {
+  return should_force_sync_real_time_url_checks_;
 }

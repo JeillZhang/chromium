@@ -15,6 +15,7 @@
 #include "ash/system/focus_mode/focus_mode_chip_carousel.h"
 #include "ash/system/focus_mode/focus_mode_controller.h"
 #include "base/functional/bind.h"
+#include "base/strings/utf_string_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -505,7 +506,7 @@ void FocusModeTaskView::UpdateStyle(bool show_selected_state,
                           : kUnselectedStateBoxInsets));
   textfield_container_->SetBackground(
       show_selected_state ? nullptr
-                          : views::CreateThemedRoundedRectBackground(
+                          : views::CreateRoundedRectBackground(
                                 cros_tokens::kCrosSysInputFieldOnShaded,
                                 kTextfieldCornerRadius));
 

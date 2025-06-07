@@ -14,9 +14,13 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
+#include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "remoting/base/cloud_service_client.h"
 #include "remoting/base/compute_engine_service_client.h"
 #include "remoting/base/http_status.h"
+#include "remoting/base/instance_identity_token.h"
+#include "remoting/base/logging.h"
 #include "remoting/base/oauth_token_info.h"
 #include "remoting/base/passthrough_oauth_token_getter.h"
 #include "remoting/base/service_urls.h"
@@ -90,14 +94,21 @@ void CloudHostStarter::RetrieveApiAccessToken() {
   // the access token request if an API_KEY is provided but we want to try to
   // get the identity token for both scenarios.
   compute_engine_service_client_->GetInstanceIdentityToken(
-      /*audience=*/ServiceUrls::GetInstance()->remoting_cloud_public_endpoint(),
+      base::StringPrintf(
+          "https://%s",
+          ServiceUrls::GetInstance()->remoting_cloud_public_endpoint()),
       base::BindOnce(&CloudHostStarter::OnIdentityTokenRetrieved,
                      weak_ptr_factory_.GetWeakPtr()));
 }
 
 void CloudHostStarter::OnIdentityTokenRetrieved(const HttpStatus& status) {
-  if (status.ok() && !status.response_body().empty()) {
-    instance_identity_token_ = status.response_body();
+  if (status.ok()) {
+    auto jwt = status.response_body();
+    auto validated_token = InstanceIdentityToken::Create(jwt);
+    if (validated_token.has_value()) {
+      HOST_LOG << "Retrieved instance identity token:\n" << *validated_token;
+      instance_identity_token_ = std::move(jwt);
+    }
   } else {
     int error_code = static_cast<int>(status.error_code());
     LOG(WARNING) << "Failed to retrieve an Instance Identity token.\n"
@@ -108,7 +119,7 @@ void CloudHostStarter::OnIdentityTokenRetrieved(const HttpStatus& status) {
 
   // The two modes to configure a Cloud host are to generate an API_KEY and use
   // that to access the provisioning RPC or to generate an access token using
-  // the default service-account. If an API_KEY is being used, we can skip the
+  // the default service account. If an API_KEY is being used, we can skip the
   // access token request since it won't be used.
   if (params().api_key.empty()) {
     compute_engine_service_client_->GetServiceAccountAccessToken(

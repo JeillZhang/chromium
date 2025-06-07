@@ -11,13 +11,15 @@
 #include "base/files/scoped_file.h"
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/no_destructor.h"
-#include "base/not_fatal_until.h"
+#include "base/notreached.h"
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/binary_upload_service.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/file_opening_job.h"
+#include "components/enterprise/common/proto/connectors.pb.h"
 #include "components/file_access/scoped_file_access.h"
 #include "components/file_access/scoped_file_access_delegate.h"
 #include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
@@ -25,6 +27,9 @@
 namespace enterprise_connectors {
 
 namespace {
+
+constexpr char kFileAttachCount[] = "Enterprise.OnFileAttach.FileCount";
+constexpr char kFileTransferCount[] = "Enterprise.OnFileTransfer.FileCount";
 
 // Global pointer of factory function (RepeatingCallback) used to create
 // instances of ContentAnalysisDelegate in tests.  !is_null() only in tests.
@@ -160,7 +165,7 @@ void FilesRequestHandler::FileRequestCallbackForTesting(
     safe_browsing::BinaryUploadService::Result result,
     enterprise_connectors::ContentAnalysisResponse response) {
   auto it = std::ranges::find(paths_, path);
-  CHECK(it != paths_.end(), base::NotFatalUntil::M130);
+  CHECK(it != paths_.end());
   size_t index = std::distance(paths_.begin(), it);
   FileRequestCallback(index, result, response);
 }
@@ -182,6 +187,19 @@ bool FilesRequestHandler::UploadDataImpl() {
         paths_,
         base::BindOnce(&FilesRequestHandler::CreateFileOpeningJob,
                        weak_ptr_factory_.GetWeakPtr(), std::move(tasks)));
+
+    switch (AccessPointToEnterpriseConnector(access_point_)) {
+      case enterprise_connectors::FILE_ATTACHED:
+        base::UmaHistogramCustomCounts(kFileAttachCount, paths_.size(), 1, 1000,
+                                       100);
+        break;
+      case enterprise_connectors::FILE_TRANSFER:
+        base::UmaHistogramCustomCounts(kFileTransferCount, paths_.size(), 1,
+                                       1000, 100);
+        break;
+      default:
+        break;
+    }
 
     return true;
   }

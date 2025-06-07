@@ -47,6 +47,7 @@
 #if BUILDFLAG(IS_CHROMEOS)
 #include "base/json/values_util.h"
 #include "chrome/browser/ash/drive/drive_integration_service.h"
+#include "chrome/browser/ash/drive/drive_integration_service_factory.h"
 #include "chrome/browser/ash/drive/file_system_util.h"
 #include "chrome/browser/ash/file_manager/path_util.h"
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_util.h"
@@ -267,11 +268,12 @@ DownloadPrefs::DownloadPrefs(Profile* profile) : profile_(profile) {
     // automatically can change in the future. When the list is tightened, it is
     // expected that some entries in the users' auto open list will get dropped
     // permanently as a result.
-    if (FileTypePolicies::GetInstance()->IsAllowedToOpenAutomatically(
+    if (!FileTypePolicies::GetInstance()->IsAllowedToOpenAutomatically(
             filename_with_extension)) {
-      auto_open_by_user_.insert(extension);
+      continue;
     }
 #endif
+    auto_open_by_user_.insert(extension);
   }
 }
 
@@ -524,7 +526,7 @@ bool DownloadPrefs::IsAutoOpenPdfEnabled() {
 
 void DownloadPrefs::SaveAutoOpenState() {
   std::string extensions;
-  for (auto it : auto_open_by_user_) {
+  for (const auto& it : auto_open_by_user_) {
 #if BUILDFLAG(IS_WIN)
     // TODO(phajdan.jr): Why we're using Sys conversion here, but not in ctor?
     std::string this_extension = base::SysWideToUTF8(it);

@@ -29,11 +29,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_V8_BINDING_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_BINDINGS_V8_BINDING_H_
 
@@ -139,14 +134,15 @@ inline v8::Local<v8::String> V8String(v8::Isolate* isolate,
         isolate, impl);
   }
   if (string.Is8Bit()) {
-    return v8::String::NewFromOneByte(
-               isolate, reinterpret_cast<const uint8_t*>(string.Characters8()),
-               v8::NewStringType::kNormal, static_cast<int>(string.length()))
+    base::span<const LChar> chars = string.Span8();
+    return v8::String::NewFromOneByte(isolate, chars.data(),
+                                      v8::NewStringType::kNormal,
+                                      static_cast<int>(chars.size()))
         .ToLocalChecked();
   }
-  return v8::String::NewFromTwoByte(
-             isolate, reinterpret_cast<const uint16_t*>(string.Characters16()),
-             v8::NewStringType::kNormal, static_cast<int>(string.length()))
+  return v8::String::NewFromTwoByte(isolate, string.SpanUint16().data(),
+                                    v8::NewStringType::kNormal,
+                                    static_cast<int>(string.length()))
       .ToLocalChecked();
 }
 
@@ -175,16 +171,15 @@ inline v8::Local<v8::String> V8AtomicString(v8::Isolate* isolate,
                                             const StringView& string) {
   DCHECK(isolate);
   if (string.Is8Bit()) {
-    return v8::String::NewFromOneByte(
-               isolate, reinterpret_cast<const uint8_t*>(string.Characters8()),
-               v8::NewStringType::kInternalized,
-               static_cast<int>(string.length()))
+    base::span<const LChar> chars = string.Span8();
+    return v8::String::NewFromOneByte(isolate, chars.data(),
+                                      v8::NewStringType::kInternalized,
+                                      static_cast<int>(chars.size()))
         .ToLocalChecked();
   }
-  return v8::String::NewFromTwoByte(
-             isolate, reinterpret_cast<const uint16_t*>(string.Characters16()),
-             v8::NewStringType::kInternalized,
-             static_cast<int>(string.length()))
+  return v8::String::NewFromTwoByte(isolate, string.SpanUint16().data(),
+                                    v8::NewStringType::kInternalized,
+                                    static_cast<int>(string.length()))
       .ToLocalChecked();
 }
 
@@ -251,22 +246,6 @@ constexpr v8::Intercepted BlinkInterceptorResultToV8Intercepted(
              ? v8::Intercepted::kNo
              : v8::Intercepted::kYes;
 }
-
-// Gets the url of the currently executing script. Returns empty string, if no
-// script is executing (e.g. during parsing of a meta tag in markup), or the
-// script context is otherwise unavailable.
-PLATFORM_EXPORT String GetCurrentScriptUrl(v8::Isolate* isolate);
-
-// Gets the urls of the scripts at the top of the currently executing stack.
-// If available, returns up to |unique_url_count| urls, filtering out duplicate
-// urls (e.g. if the stack includes multiple frames from the same script).
-// Returns an empty vector, if no script is executing (e.g. during parsing of a
-// meta tag in markup), or the script context is otherwise unavailable.
-// To minimize the cost of walking the stack, only the top frames (currently 10)
-// are examined, regardless of the value of |unique_url_count|.
-PLATFORM_EXPORT Vector<String> GetScriptUrlsFromCurrentStack(
-    v8::Isolate* isolate,
-    wtf_size_t unique_url_count);
 
 namespace bindings {
 

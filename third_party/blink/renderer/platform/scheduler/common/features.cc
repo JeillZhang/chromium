@@ -73,20 +73,14 @@ base::TimeDelta GetIntensiveWakeUpThrottlingGracePeriod(bool loading) {
           features::kIntensiveWakeUpThrottling_GracePeriodSeconds_Name,
           kIntensiveWakeUpThrottling_GracePeriodSeconds_Default};
 
-  // Controls the grace period for loaded pages.
-  static const base::FeatureParam<int>
-      kIntensiveWakeUpThrottling_GracePeriodSeconds_Loaded{
-          &features::kQuickIntensiveWakeUpThrottlingAfterLoading,
-          "grace_period_seconds_loaded",
-          kIntensiveWakeUpThrottling_GracePeriodSecondsLoaded_Default};
-
   int seconds = kIntensiveWakeUpThrottling_GracePeriodSeconds_Default;
   if (GetIntensiveWakeUpThrottlingPolicyOverride() ==
       PolicyOverride::kNoOverride) {
-    seconds = kIntensiveWakeUpThrottling_GracePeriodSeconds.Get();
-    if (!loading && base::FeatureList::IsEnabled(
-                        features::kQuickIntensiveWakeUpThrottlingAfterLoading))
-      seconds = kIntensiveWakeUpThrottling_GracePeriodSeconds_Loaded.Get();
+    if (loading) {
+      seconds = kIntensiveWakeUpThrottling_GracePeriodSeconds.Get();
+    } else {
+      seconds = kIntensiveWakeUpThrottling_GracePeriodSecondsLoaded_Default;
+    }
   }
   return base::Seconds(seconds);
 }
@@ -102,19 +96,6 @@ MIRACLE_PARAMETER_FOR_INT(
 base::TimeDelta GetLoadingPhaseBufferTimeAfterFirstMeaningfulPaint() {
   return base::Milliseconds(
       GetLoadingPhaseBufferTimeAfterFirstMeaningfulPaintMillis());
-}
-
-base::TimeDelta GetThreadedScrollRenderingStarvationThreshold() {
-  static const base::FeatureParam<int>
-      kThreadedScrollRenderingStarvationThreshold{
-          &features::kThreadedScrollPreventRenderingStarvation, "threshold_ms",
-          100};
-  if (base::FeatureList::IsEnabled(
-          features::kThreadedScrollPreventRenderingStarvation)) {
-    return base::Milliseconds(
-        kThreadedScrollRenderingStarvationThreshold.Get());
-  }
-  return base::TimeDelta::Max();
 }
 
 BASE_FEATURE(kThrottleTimedOutIdleTasks,

@@ -73,12 +73,11 @@ bool ShouldShowReAuthInterstitial(
     content::NavigationHandle& navigation_handle) {
   Profile* profile = Profile::FromBrowserContext(
       navigation_handle.GetWebContents()->GetBrowserContext());
-  supervised_user::ChildAccountService* child_account_service =
+  ChildAccountService* child_account_service =
       ChildAccountServiceFactory::GetForProfile(profile);
   return SupervisedUserVerificationPage::ShouldShowPage(*child_account_service);
 }
 #endif
-
 }  // namespace
 
 ClassifyUrlNavigationThrottle::ThrottleCheckResult
@@ -137,16 +136,16 @@ void ClassifyUrlNavigationThrottle::CheckURL() {
   ClassifyUrlCheckList::Key key = list_.NewCheck();
 
   if (navigation_handle()->IsInPrimaryMainFrame()) {
-    url_filter_->GetFilteringBehaviorWithAsyncChecks(
+    url_filter()->GetFilteringBehaviorWithAsyncChecks(
         url,
         base::BindOnce(&ClassifyUrlNavigationThrottle::OnURLCheckDone,
                        weak_ptr_factory_.GetWeakPtr(), key),
-        supervised_user::ShouldContentSkipParentAllowlistFiltering(
+        ShouldContentSkipParentAllowlistFiltering(
             navigation_handle()->GetWebContents()->GetOutermostWebContents()),
         FilteringContext::kNavigationThrottle,
         navigation_handle()->GetPageTransition());
   } else {
-    url_filter_->GetFilteringBehaviorForSubFrameWithAsyncChecks(
+    url_filter()->GetFilteringBehaviorForSubFrameWithAsyncChecks(
         url, navigation_handle()->GetWebContents()->GetVisibleURL(),
         base::BindOnce(&ClassifyUrlNavigationThrottle::OnURLCheckDone,
                        weak_ptr_factory_.GetWeakPtr(), key),
@@ -262,16 +261,37 @@ const GURL& ClassifyUrlNavigationThrottle::currently_navigated_url() const {
   return navigation_handle()->GetURL();
 }
 
-std::unique_ptr<content::NavigationThrottle>
-MaybeCreateClassifyUrlNavigationThrottleFor(
-    content::NavigationHandle* navigation_handle) {
+SupervisedUserURLFilter* ClassifyUrlNavigationThrottle::url_filter() const {
+  return SupervisedUserServiceFactory::GetForProfile(
+             Profile::FromBrowserContext(
+                 navigation_handle()->GetWebContents()->GetBrowserContext()))
+      ->GetURLFilter();
+}
+
+void MaybeCreateAndAddClassifyUrlNavigationThrottle(
+    content::NavigationThrottleRegistry& registry) {
   Profile* profile = Profile::FromBrowserContext(
-      navigation_handle->GetWebContents()->GetBrowserContext());
+      registry.GetNavigationHandle().GetWebContents()->GetBrowserContext());
   CHECK(profile);
-  if (!profile->IsChild()) {
-    return nullptr;
+
+  if (!IsSubjectToParentalControls(*profile->GetPrefs())) {
+    base::UmaHistogramEnumeration(kClassifyUrlThrottleUseCaseHistogramName,
+                                  ClassifyUrlThrottleUseCase::kNotAllowed);
+    return;
   }
-  return ClassifyUrlNavigationThrottle::MakeUnique(navigation_handle);
+
+  SupervisedUserService* supervised_user_service =
+      SupervisedUserServiceFactory::GetForProfile(profile);
+  if (!supervised_user_service) {
+    base::UmaHistogramEnumeration(kClassifyUrlThrottleUseCaseHistogramName,
+                                  ClassifyUrlThrottleUseCase::kNotAllowed);
+    return;
+  }
+
+  base::UmaHistogramEnumeration(
+      kClassifyUrlThrottleUseCaseHistogramName,
+      ClassifyUrlThrottleUseCase::kFamilyLinkSupervisedUser);
+  ClassifyUrlNavigationThrottle::CreateAndAdd(registry);
 }
 
 std::optional<ClassifyUrlNavigationThrottle::ThrottleCheckResult>
@@ -338,10 +358,10 @@ void ClassifyUrlNavigationThrottle::CancelDeferredNavigation(
   NextNavigationState(ClassifyUrlThrottleStatus::kCancelDeferredNavigation);
 }
 
-std::unique_ptr<ClassifyUrlNavigationThrottle>
-ClassifyUrlNavigationThrottle::MakeUnique(
-    content::NavigationHandle* navigation_handle) {
-  return base::WrapUnique(new ClassifyUrlNavigationThrottle(navigation_handle));
+void ClassifyUrlNavigationThrottle::CreateAndAdd(
+    content::NavigationThrottleRegistry& registry) {
+  registry.AddThrottle(
+      base::WrapUnique(new ClassifyUrlNavigationThrottle(registry)));
 }
 
 const char* ClassifyUrlNavigationThrottle::GetNameForLogging() {
@@ -349,13 +369,8 @@ const char* ClassifyUrlNavigationThrottle::GetNameForLogging() {
 }
 
 ClassifyUrlNavigationThrottle::ClassifyUrlNavigationThrottle(
-    content::NavigationHandle* navigation_handle)
-    : content::NavigationThrottle(navigation_handle),
-      url_filter_(
-          SupervisedUserServiceFactory::GetForProfile(
-              Profile::FromBrowserContext(
-                  navigation_handle->GetWebContents()->GetBrowserContext()))
-              ->GetURLFilter()) {}
+    content::NavigationThrottleRegistry& registry)
+    : content::NavigationThrottle(registry) {}
 ClassifyUrlNavigationThrottle::~ClassifyUrlNavigationThrottle() = default;
 
 ClassifyUrlNavigationThrottle::ClassifyUrlCheckList::ClassifyUrlCheckList() =

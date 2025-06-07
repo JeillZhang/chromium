@@ -71,6 +71,7 @@ class LayoutShift;
 class MemoryInfo;
 class MemoryMeasurement;
 class Node;
+class PerformanceContainerTiming;
 class PerformanceElementTiming;
 class PerformanceEventTiming;
 class PerformanceMark;
@@ -116,6 +117,7 @@ class CORE_EXPORT Performance : public EventTarget {
       ExceptionState& exception_state) const;
   virtual EventCounts* eventCounts();
   virtual std::uint64_t interactionCount() const = 0;
+  virtual void PopulateContainerTimingEntries() {}
 
   // Reduce the resolution to prevent timing attacks. See:
   // http://www.w3.org/TR/hr-time-2/#privacy-security
@@ -201,6 +203,10 @@ class CORE_EXPORT Performance : public EventTarget {
                          const AtomicString& initiator_type);
 
   void NotifyNavigationTimingToObservers();
+
+  bool IsContainerTimingBufferFull() const;
+  void AddToContainerTimingBuffer(PerformanceContainerTiming&);
+  void NotifyObserversOfContainerTiming();
 
   bool IsElementTimingBufferFull() const;
   void AddToElementTimingBuffer(PerformanceElementTiming&);
@@ -373,6 +379,7 @@ class CORE_EXPORT Performance : public EventTarget {
   void FireResourceTimingBufferFull(TimerBase*);
 
   void NotifyObserversOfEntry(PerformanceEntry&) const;
+  void NotifyObserversOfContainerEntry(PerformanceEntry&) const;
 
   void DeliverObservationsTimerFired(TimerBase*);
 
@@ -397,6 +404,8 @@ class CORE_EXPORT Performance : public EventTarget {
   bool resource_timing_buffer_full_event_pending_ = false;
   PerformanceEntryVector event_timing_buffer_;
   unsigned event_timing_buffer_max_size_;
+  PerformanceEntryVector container_timing_buffer_;
+  unsigned container_timing_buffer_max_size_;
   PerformanceEntryVector element_timing_buffer_;
   unsigned element_timing_buffer_max_size_;
   PerformanceEntryVector layout_shift_buffer_;
@@ -433,6 +442,8 @@ class CORE_EXPORT Performance : public EventTarget {
 
   // Running counter for LongTask observations.
   size_t long_task_counter_ = 0;
+
+  TaskHandle parser_yield_task_handle_;
 };
 
 }  // namespace blink

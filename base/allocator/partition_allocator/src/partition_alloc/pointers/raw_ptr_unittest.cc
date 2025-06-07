@@ -1620,7 +1620,7 @@ namespace base::internal {
     !defined(MEMORY_TOOL_REPLACES_ALLOCATOR)
 
 void HandleOOM(size_t unused_size) {
-  LOG(FATAL) << "Out of memory";
+  PA_LOG(FATAL) << "Out of memory";
 }
 
 class BackupRefPtrTest : public testing::Test {
@@ -1680,8 +1680,10 @@ TEST_F(BackupRefPtrTest, Basic) {
   // In debug builds, the use-after-free should be caught immediately.
   EXPECT_DEATH_IF_SUPPORTED(g_volatile_int_to_ignore = *wrapped_ptr1, "");
 #else   // DCHECK_IS_ON() || PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SLOW_CHECKS)
+#if !PA_BUILDFLAG(IS_IOS)
   // The allocation should be poisoned since there's a raw_ptr alive.
   EXPECT_NE(*wrapped_ptr1, 42);
+#endif  // !PA_BUILDFLAG(IS_IOS)
 
   // The allocator should not be able to reuse the slot at this point.
   void* raw_ptr2 = allocator_.root()->Alloc(sizeof(int), "");
@@ -1869,13 +1871,13 @@ TEST_F(BackupRefPtrTest, Advance) {
   // exactly where the allocation ends.
   size_t raw_size = 300003;
   ASSERT_GT(raw_size, partition_alloc::internal::MaxRegularSlotSpanSize());
-  ASSERT_LE(raw_size, partition_alloc::internal::kMaxBucketed);
+  ASSERT_LE(raw_size, partition_alloc::BucketIndexLookup::kMaxBucketSize);
   requested_size = allocator_.root()->AdjustSizeForExtrasSubtract(raw_size);
   RunBackupRefPtrImplAdvanceTest(allocator_, requested_size);
 
   // Same for direct map.
   raw_size = 1001001;
-  ASSERT_GT(raw_size, partition_alloc::internal::kMaxBucketed);
+  ASSERT_GT(raw_size, partition_alloc::BucketIndexLookup::kMaxBucketSize);
   requested_size = allocator_.root()->AdjustSizeForExtrasSubtract(raw_size);
   RunBackupRefPtrImplAdvanceTest(allocator_, requested_size);
 }
@@ -2398,7 +2400,7 @@ TEST_F(BackupRefPtrTest, WriteAfterFree) {
         // Write something different from |kQuarantinedByte|.
         *ptr = kPayload;
         // Write-after-Free should lead to crash
-        // on |PartitionAllocFreeForRefCounting|.
+        // on |PartitionRoot::FreeAfterBRPQuarantine|.
         ptr = nullptr;
       },
       "");
@@ -2464,7 +2466,7 @@ TEST_F(BackupRefPtrTest, RawPtrTraits_DisableBRP) {
     raw_ptr<unsigned int, DanglingUntriaged> dangling_ptr =
         partition_alloc::internal::TagPtr(ptr.get());
     EXPECT_DEATH_IF_SUPPORTED(*dangling_ptr = 0, "");
-#else
+#elif !PA_BUILDFLAG(IS_IOS)
     EXPECT_EQ(kQuarantined4Bytes,
               *partition_alloc::internal::TagPtr(ptr.get()));
 #endif

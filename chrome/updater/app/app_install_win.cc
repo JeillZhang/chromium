@@ -50,6 +50,8 @@
 #include "chrome/updater/app/app_install_progress.h"
 #include "chrome/updater/app/app_install_util_win.h"
 #include "chrome/updater/app/app_install_win_internal.h"
+#include "chrome/updater/branded_constants.h"
+#include "chrome/updater/constants.h"
 #include "chrome/updater/external_constants.h"
 #include "chrome/updater/registration_data.h"
 #include "chrome/updater/service_proxy_factory.h"
@@ -61,6 +63,7 @@
 #include "chrome/updater/util/util.h"
 #include "chrome/updater/util/win_util.h"
 #include "chrome/updater/win/installer/exit_code.h"
+#include "chrome/updater/win/installer_api.h"
 #include "chrome/updater/win/manifest_util.h"
 #include "chrome/updater/win/protocol_parser_xml.h"
 #include "chrome/updater/win/ui/l10n_util.h"
@@ -639,7 +642,10 @@ void AppInstallControllerImpl::DoInstallAppOffline(
 
   RegistrationRequest request;
   request.app_id = app_id_;
-  request.version = base::Version(kNullVersion);
+  const base::Version installed_version =
+      LookupVersion(GetUpdaterScope(), app_id_, {}, {}, {});
+  request.version = installed_version.IsValid() ? installed_version
+                                                : base::Version(kNullVersion);
 
   std::optional<tagging::AppArgs> app_args = GetAppArgs(app_id_);
   if (app_args) {
@@ -934,7 +940,8 @@ DWORD AppInstallControllerImpl::GetUIThreadID() const {
 bool AppInstallControllerImpl::DoLaunchBrowser(const std::string& url) {
   CHECK_EQ(GetUIThreadID(), GetCurrentThreadId());
 
-  return SUCCEEDED(base::win::RunDeElevatedNoWait(base::UTF8ToWide(url), {}));
+  return SUCCEEDED(base::win::RunDeElevatedNoWait(
+      base::UTF8ToWide(url), {}, base::FilePath::kCurrentDirectory));
 }
 
 bool AppInstallControllerImpl::DoRestartBrowser(bool restart_all_browsers,

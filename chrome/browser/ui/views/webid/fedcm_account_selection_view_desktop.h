@@ -13,12 +13,14 @@
 #include "chrome/browser/ui/views/webid/fedcm_modal_dialog_view.h"
 #include "chrome/browser/ui/webid/account_selection_view.h"
 #include "chrome/browser/ui/webid/identity_dialog_controller.h"
+#include "chrome/browser/ui/webid/identity_ui_utils.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "ui/views/input_event_activation_protector.h"
 
 namespace tabs {
 class TabInterface;
+class ScopedAcceptMouseEventsWhileWindowInactive;
 }  // namespace tabs
 
 namespace webid {
@@ -60,10 +62,6 @@ class FedCmAccountSelectionView : public AccountSelectionView,
                                   public content::WebContentsObserver,
                                   public PictureInPictureOcclusionObserver {
  public:
-  // safe_zone_diameter/icon_size as defined in
-  // https://www.w3.org/TR/appmanifest/#icon-masks
-  static constexpr float kMaskableWebIconSafeZoneRatio = 0.8f;
-
   enum class DialogType {
     // FedCM dialog inherits a bubble dialog, which is typically shown on the
     // top-right corner of the browser. The user can switch tabs and interact
@@ -82,28 +80,32 @@ class FedCmAccountSelectionView : public AccountSelectionView,
 
   // AccountSelectionView:
   bool Show(
-      const std::string& rp_for_display,
+      const content::RelyingPartyData& rp_data,
       const std::vector<IdentityProviderDataPtr>& idp_list,
       const std::vector<IdentityRequestAccountPtr>& accounts,
-      Account::SignInMode sign_in_mode,
       blink::mojom::RpMode rp_mode,
       const std::vector<IdentityRequestAccountPtr>& new_accounts) override;
   bool ShowFailureDialog(
-      const std::string& rp_for_display,
+      const content::RelyingPartyData& rp_data,
       const std::string& idp_etld_plus_one,
       blink::mojom::RpContext rp_context,
       blink::mojom::RpMode rp_mode,
       const content::IdentityProviderMetadata& idp_metadata) override;
-  bool ShowErrorDialog(const std::string& rp_for_display,
+  bool ShowErrorDialog(const content::RelyingPartyData& rp_data,
                        const std::string& idp_etld_plus_one,
                        blink::mojom::RpContext rp_context,
                        blink::mojom::RpMode rp_mode,
                        const content::IdentityProviderMetadata& idp_metadata,
                        const std::optional<TokenError>& error) override;
-  bool ShowLoadingDialog(const std::string& rp_for_display,
+  bool ShowLoadingDialog(const content::RelyingPartyData& rp_data,
                          const std::string& idp_etld_plus_one,
                          blink::mojom::RpContext rp_context,
                          blink::mojom::RpMode rp_mode) override;
+  bool ShowVerifyingDialog(const content::RelyingPartyData& rp_data,
+                           const IdentityProviderDataPtr& idp_data,
+                           const IdentityRequestAccountPtr& account,
+                           Account::SignInMode sign_in_mode,
+                           blink::mojom::RpMode rp_mode) override;
 
   void ShowUrl(LinkType link_type, const GURL& url) override;
   std::string GetTitle() const override;
@@ -220,7 +222,7 @@ class FedCmAccountSelectionView : public AccountSelectionView,
   // Virtual for testing.
   virtual AccountSelectionViewBase* CreateDialogView(
       bool has_modal_support,
-      const std::u16string& rp_for_display,
+      const content::RelyingPartyData& rp_data,
       const std::optional<std::u16string>& idp_title,
       blink::mojom::RpContext rp_context,
       blink::mojom::RpMode rp_mode,
@@ -236,6 +238,8 @@ class FedCmAccountSelectionView : public AccountSelectionView,
   virtual std::unique_ptr<FedCmModalDialogView> CreatePopupWindow();
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(FedCmAccountSelectionViewBrowserTest,
+                           ModalDialogThenShowThenCloseModalDialog);
   FRIEND_TEST_ALL_PREFIXES(FedCmAccountSelectionViewDesktopTest,
                            MismatchDialogDismissedByCloseIconMetric);
   FRIEND_TEST_ALL_PREFIXES(FedCmAccountSelectionViewDesktopTest,
@@ -308,10 +312,6 @@ class FedCmAccountSelectionView : public AccountSelectionView,
     // Shown after the user has triggered a button flow and while the accounts
     // are being fetched.
     LOADING,
-
-    // Shown when we wish to display only a single returning account. Used when
-    // there are multiple IDPs and exactly one returning account.
-    SINGLE_RETURNING_ACCOUNT_PICKER
   };
 
   // This enum describes the outcome of the mismatch dialog and is used for
@@ -319,9 +319,9 @@ class FedCmAccountSelectionView : public AccountSelectionView,
   // values at the end. This enum should be kept in sync with
   // FedCmMismatchDialogResult in tools/metrics/histograms/enums.xml.
   enum class MismatchDialogResult {
-    kContinued,
-    kDismissedByCloseIcon,
-    kDismissedForOtherReasons,
+    kContinued = 0,
+    kDismissedByCloseIcon = 1,
+    kDismissedForOtherReasons = 2,
 
     kMaxValue = kDismissedForOtherReasons
   };
@@ -332,75 +332,12 @@ class FedCmAccountSelectionView : public AccountSelectionView,
   // FedCmPopupWindowResult in
   // tools/metrics/histograms/metadata/blink/enums.xml.
   enum class PopupWindowResult {
-    kAccountsReceivedAndPopupClosedByIdp,
-    kAccountsReceivedAndPopupNotClosedByIdp,
-    kAccountsNotReceivedAndPopupClosedByIdp,
-    kAccountsNotReceivedAndPopupNotClosedByIdp,
+    kAccountsReceivedAndPopupClosedByIdp = 0,
+    kAccountsReceivedAndPopupNotClosedByIdp = 1,
+    kAccountsNotReceivedAndPopupClosedByIdp = 2,
+    kAccountsNotReceivedAndPopupNotClosedByIdp = 3,
 
     kMaxValue = kAccountsNotReceivedAndPopupNotClosedByIdp
-  };
-
-  // This enum describes the outcome of the account chooser and is used for
-  // histograms. Do not remove or modify existing values, but you may add new
-  // values at the end. This enum should be kept in sync with
-  // AccountChooserResult in
-  // chrome/browser/ui/android/webid/AccountSelectionMediator.java as well as
-  // FedCmAccountChooserResult in tools/metrics/histograms/enums.xml.
-  enum class AccountChooserResult {
-    kAccountRow,
-    kCancelButton,
-    kUseOtherAccountButton,
-    kTabClosed,
-    // Android-specific
-    kSwipe,
-    // Android-specific
-    kBackPress,
-    // Android-specific
-    kTapScrim,
-
-    kMaxValue = kTapScrim
-  };
-
-  // This enum describes the outcome of the loading dialog and is used for
-  // histograms. Do not remove or modify existing values, but you may add new
-  // values at the end. This enum should be kept in sync with
-  // LoadingDialogResult in
-  // chrome/browser/ui/android/webid/AccountSelectionMediator.java as well as
-  // FedCmLoadingDialogResult in tools/metrics/histograms/enums.xml.
-  enum class LoadingDialogResult {
-    kProceed,
-    kCancel,
-    kProceedThroughPopup,
-    kDestroy,
-    // Android-specific
-    kSwipe,
-    // Android-specific
-    kBackPress,
-    // Android-specific
-    kTapScrim,
-
-    kMaxValue = kTapScrim
-  };
-
-  // This enum describes the outcome of the disclosure dialog and is used for
-  // histograms. Do not remove or modify existing values, but you may add new
-  // values at the end. This enum should be kept in sync with
-  // DisclosureDialogResult in
-  // chrome/browser/ui/android/webid/AccountSelectionMediator.java as well as
-  // FedCmDisclosureDialogResult in tools/metrics/histograms/enums.xml.
-  enum class DisclosureDialogResult {
-    kContinue,
-    kCancel,
-    kBack,
-    kDestroy,
-    // Android-specific
-    kSwipe,
-    // Android-specific
-    kBackPress,
-    // Android-specific
-    kTapScrim,
-
-    kMaxValue = kTapScrim
   };
 
   // Called when the tab's WebContents is discarded.
@@ -424,7 +361,7 @@ class FedCmAccountSelectionView : public AccountSelectionView,
   void ShowDialogWidget();
 
   // Returns the SheetType to be used for metrics reporting.
-  AccountSelectionView::SheetType GetSheetType();
+  webid::SheetType GetSheetType();
 
   // Returns whether an IDP sign-in pop-up window is currently open.
   bool IsIdpSigninPopupOpen();
@@ -436,8 +373,8 @@ class FedCmAccountSelectionView : public AccountSelectionView,
   void ShowMultiAccountPicker(
       const std::vector<IdentityRequestAccountPtr>& accounts,
       const std::vector<IdentityProviderDataPtr>& idp_list,
-      bool show_back_button,
-      bool is_choose_an_account);
+      const gfx::Image& rp_icon,
+      bool show_back_button);
 
   // PictureInPictureOcclusionObserver:
   void OnOcclusionStateChanged(bool occluded) override;
@@ -448,7 +385,7 @@ class FedCmAccountSelectionView : public AccountSelectionView,
 
   // Creates account_selection_view_ (different subclasses for
   // bubble/modal) and dialog_widget_.
-  void CreateViewAndWidget(const std::u16string& rp_for_display,
+  void CreateViewAndWidget(const content::RelyingPartyData& rp_data,
                            const std::optional<std::u16string>& idp_title,
                            blink::mojom::RpContext rp_context,
                            blink::mojom::RpMode rp_mode,
@@ -485,7 +422,8 @@ class FedCmAccountSelectionView : public AccountSelectionView,
   // are multiple accounts, but it is size 0 when there are no new accounts.
   std::vector<IdentityRequestAccountPtr> new_accounts_;
 
-  std::u16string rp_for_display_;
+  // The RP icon to be displayed in the UI when needed.
+  gfx::Image rp_icon_;
 
   State state_{State::MULTI_ACCOUNT_PICKER};
 
@@ -528,16 +466,6 @@ class FedCmAccountSelectionView : public AccountSelectionView,
   // Blink.FedCm.IdpSigninStatus.MismatchDialogResult metric.
   bool is_mismatch_continue_clicked_{false};
 
-  // Whether the current dialog started as a single returning account dialog.
-  // Used to determine whether the multi IDP picker needs to show a back button
-  // or not.
-  bool started_as_single_returning_account_{false};
-
-  // Whether the last ShowMultiAccountPicker() is from a "Choose an account"
-  // button. This is used to determine whether to show this title when coming
-  // back from the single account confirmation dialog.
-  bool last_multi_account_is_choose_an_account_{false};
-
   // Time when IdentityProvider.close() was called for metrics purposes.
   base::TimeTicks idp_close_popup_time_;
 
@@ -547,15 +475,15 @@ class FedCmAccountSelectionView : public AccountSelectionView,
 
   // The current state of the modal account chooser, if initiated by user. This
   // is nullopt when no modal account chooser has been opened.
-  std::optional<AccountChooserResult> modal_account_chooser_state_;
+  std::optional<webid::AccountChooserResult> modal_account_chooser_state_;
 
   // The current state of the modal loading dialog. This is nullopt when no
   // modal loading dialog has been opened.
-  std::optional<LoadingDialogResult> modal_loading_dialog_state_;
+  std::optional<webid::LoadingDialogResult> modal_loading_dialog_state_;
 
   // The current state of the modal disclosure dialog. This is nullopt when no
   // modal disclosure dialog has been opened.
-  std::optional<DisclosureDialogResult> modal_disclosure_dialog_state_;
+  std::optional<webid::DisclosureDialogResult> modal_disclosure_dialog_state_;
 
   // Whether the widget is occluded by PIP (and therefore we should ignore
   // inputs).

@@ -63,6 +63,7 @@
 #include "chrome/browser/download/download_test_file_activity_observer.h"
 #include "chrome/browser/download/simple_download_manager_coordinator_factory.h"
 #include "chrome/browser/extensions/install_verifier.h"
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_key.h"
@@ -173,7 +174,7 @@
 #include "chrome/browser/ui/download/download_display.h"
 #endif
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 #include "chrome/browser/safe_browsing/download_protection/download_feedback_service.h"
 #include "chrome/browser/safe_browsing/download_protection/download_protection_service.h"
 #include "chrome/browser/safe_browsing/test_safe_browsing_service.h"
@@ -1996,6 +1997,9 @@ IN_PROC_BROWSER_TEST_F(DownloadTest, CrxInstallDenysPermissions) {
 // Download an extension.  Expect a dangerous download warning.
 // Allow the download, and the install.
 IN_PROC_BROWSER_TEST_F(DownloadTest, CrxInstallAcceptPermissions) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
   std::unique_ptr<base::AutoReset<bool>> allow_offstore_install =
       download_crx_util::OverrideOffstoreInstallAllowedForTesting(true);
 
@@ -2256,8 +2260,6 @@ class DownloadTestSplitCacheEnabledBase : public DownloadTest {
 enum class SplitCacheTestCase {
   kEnabledTripleKeyed,
   kEnabledTriplePlusCrossSiteMainFrameNavBool,
-  kEnabledTriplePlusMainFrameNavInitiator,
-  kEnabledTriplePlusNavInitiator
 };
 
 const struct {
@@ -2266,10 +2268,7 @@ const struct {
 } kTestCaseToFeatureMapping[] = {
     {SplitCacheTestCase::kEnabledTriplePlusCrossSiteMainFrameNavBool,
      net::features::kSplitCacheByCrossSiteMainFrameNavigationBoolean},
-    {SplitCacheTestCase::kEnabledTriplePlusMainFrameNavInitiator,
-     net::features::kSplitCacheByMainFrameNavigationInitiator},
-    {SplitCacheTestCase::kEnabledTriplePlusNavInitiator,
-     net::features::kSplitCacheByNavigationInitiator}};
+};
 
 std::string GetSplitCacheTestName(SplitCacheTestCase test_case) {
   switch (test_case) {
@@ -2277,10 +2276,6 @@ std::string GetSplitCacheTestName(SplitCacheTestCase test_case) {
       return "TripleKeyed";
     case (SplitCacheTestCase::kEnabledTriplePlusCrossSiteMainFrameNavBool):
       return "TriplePlusCrossSiteMainFrameNavigationBool";
-    case (SplitCacheTestCase::kEnabledTriplePlusMainFrameNavInitiator):
-      return "TriplePlusMainFrameNavigationInitiator";
-    case (SplitCacheTestCase::kEnabledTriplePlusNavInitiator):
-      return "TriplePlusNavigationInitiator";
   }
 }
 
@@ -2302,9 +2297,7 @@ INSTANTIATE_TEST_SUITE_P(
     DownloadTestSplitCacheEnabled,
     testing::ValuesIn(
         {SplitCacheTestCase::kEnabledTripleKeyed,
-         SplitCacheTestCase::kEnabledTriplePlusCrossSiteMainFrameNavBool,
-         SplitCacheTestCase::kEnabledTriplePlusMainFrameNavInitiator,
-         SplitCacheTestCase::kEnabledTriplePlusNavInitiator}),
+         SplitCacheTestCase::kEnabledTriplePlusCrossSiteMainFrameNavBool}),
     [](const testing::TestParamInfo<SplitCacheTestCase>& info) {
       return GetSplitCacheTestName(info.param);
     });
@@ -2919,9 +2912,7 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Bool(),
         testing::ValuesIn(
             {SplitCacheTestCase::kEnabledTripleKeyed,
-             SplitCacheTestCase::kEnabledTriplePlusCrossSiteMainFrameNavBool,
-             SplitCacheTestCase::kEnabledTriplePlusMainFrameNavInitiator,
-             SplitCacheTestCase::kEnabledTriplePlusNavInitiator})),
+             SplitCacheTestCase::kEnabledTriplePlusCrossSiteMainFrameNavBool})),
     [](const testing::TestParamInfo<std::tuple<bool, SplitCacheTestCase>>&
            info) {
       std::string test_prefix =
@@ -4904,7 +4895,7 @@ IN_PROC_BROWSER_TEST_F(DownloadTest, ContextMenuSaveImageWithAcceptHeader) {
   CheckDownloadStates(1, DownloadItem::COMPLETE);
 }
 
-#if BUILDFLAG(FULL_SAFE_BROWSING)
+#if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)
 
 namespace {
 
@@ -5166,7 +5157,7 @@ IN_PROC_BROWSER_TEST_F(DownloadTestWithFakeSafeBrowsing,
   EXPECT_FALSE(actual_report.did_proceed());
 }
 
-#endif  // FULL_SAFE_BROWSING
+#endif  // SAFE_BROWSING_DOWNLOAD_PROTECTION
 
 // The rest of these tests rely on the download surface, which ChromeOS doesn't
 // use (crbug.com/1323505 is tracking Download Bubble on ChromeOS).

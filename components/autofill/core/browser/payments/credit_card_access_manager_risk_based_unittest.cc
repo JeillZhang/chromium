@@ -7,7 +7,7 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/form_import/form_data_importer_test_api.h"
 #include "components/autofill/core/browser/metrics/form_events/credit_card_form_event_logger.h"
 #include "components/autofill/core/browser/metrics/payments/card_info_retrieval_enrolled_metrics.h"
@@ -37,12 +37,17 @@ using autofill_metrics::CreditCardFormEventLogger;
 class CreditCardAccessManagerRiskBasedMaskedServerCardUnmaskingTest
     : public CreditCardAccessManagerTestBase {
  public:
-  CreditCardAccessManagerRiskBasedMaskedServerCardUnmaskingTest() = default;
+  CreditCardAccessManagerRiskBasedMaskedServerCardUnmaskingTest() {
+    feature_list_.InitWithFeatures(
+        /*enabled_features=*/{features::kAutofillEnableCardInfoRuntimeRetrieval,
+                              features::
+                                  kAutofillEnableFpanRiskBasedAuthentication},
+        /*disabled_features=*/{});
+  }
   ~CreditCardAccessManagerRiskBasedMaskedServerCardUnmaskingTest() override =
       default;
 
-  base::test::ScopedFeatureList feature_list_{
-      features::kAutofillEnableFpanRiskBasedAuthentication};
+  base::test::ScopedFeatureList feature_list_;
 
   void MockRiskBasedAuthSucceedsWithoutPanReturned(
       const CreditCard* card,
@@ -486,7 +491,6 @@ TEST_F(
                    ->risk_based_authentication_invoked());
 }
 
-#if !BUILDFLAG(IS_IOS)
 // Test the green path flow when the masked server card enrolled in card info
 // retrieval is successfully returned from the server during a risk-based
 // retrieval.
@@ -793,7 +797,6 @@ TEST_F(CreditCardAccessManagerRiskBasedMaskedServerCardUnmaskingTest,
   EXPECT_FALSE(
       payments_autofill_client().unmask_authenticator_selection_dialog_shown());
 }
-#endif  // !BUILDFLAG(IS_IOS)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_ANDROID)
 // Params of the

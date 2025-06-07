@@ -12,16 +12,14 @@ import android.os.Looper;
 import android.util.AttributeSet;
 import android.view.View;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.toolbar.ConstraintsChecker;
 import org.chromium.chrome.browser.toolbar.R;
 import org.chromium.chrome.browser.toolbar.ToolbarCaptureType;
-import org.chromium.chrome.browser.toolbar.ToolbarFeatures;
 import org.chromium.components.browser_ui.widget.ViewResourceFrameLayout;
 import org.chromium.ui.resources.dynamics.ViewResourceAdapter;
 
@@ -29,6 +27,7 @@ import org.chromium.ui.resources.dynamics.ViewResourceAdapter;
  * A {@link ViewResourceFrameLayout} that specifically handles redraw of the top shadow of the view
  * it represents.
  */
+@NullMarked
 public class ScrollingBottomViewResourceFrameLayout extends ViewResourceFrameLayout {
     /** A cached rect to avoid extra allocations. */
     private final Rect mCachedRect = new Rect();
@@ -61,28 +60,25 @@ public class ScrollingBottomViewResourceFrameLayout extends ViewResourceFrameLay
         return new ViewResourceAdapter(this) {
             @Override
             public boolean isDirty() {
-                if (ToolbarFeatures.shouldSuppressCaptures()) {
-                    // Dirty rect tracking will claim changes more often than token differences due
-                    // to model changes. It is also cheaper to simply check a boolean, so do it
-                    // first.
-                    if (!super.isDirty()) {
-                        return false;
-                    }
-
-                    if (mConstraintsChecker != null && mConstraintsChecker.areControlsLocked()) {
-                        mConstraintsChecker.scheduleRequestResourceOnUnlock();
-                        return false;
-                    }
-
-                    return mCurrentSnapshotToken != null
-                            && !mCurrentSnapshotToken.equals(mLastCaptureSnapshotToken);
-                } else {
-                    return super.isDirty();
+                // Dirty rect tracking will claim changes more often than token differences due
+                // to model changes. It is also cheaper to simply check a boolean, so do it
+                // first.
+                if (!super.isDirty()) {
+                    return false;
                 }
+
+                if (mConstraintsChecker != null && mConstraintsChecker.areControlsLocked()) {
+                    mConstraintsChecker.scheduleRequestResourceOnUnlock();
+                    return false;
+                }
+
+                return mCurrentSnapshotToken != null
+                        && !mCurrentSnapshotToken.equals(mLastCaptureSnapshotToken);
             }
 
             @Override
-            public void onCaptureStart(Canvas canvas, Rect dirtyRect) {
+            @SuppressWarnings("NullAway")
+            public void onCaptureStart(Canvas canvas, @Nullable Rect dirtyRect) {
                 // The android and composited views both have a shadow. The default state is to
                 // to show only the android shadow. When the bottom controls begin to scroll off,
                 // the android view is hidden, and the composited shadow is made visible. However,
@@ -137,9 +133,10 @@ public class ScrollingBottomViewResourceFrameLayout extends ViewResourceFrameLay
      * Should be invoked any time a model change occurs that that materially impacts the way the
      * view should be drawn such that a new capture is warranted. Should not be affected by
      * animations.
+     *
      * @param token Can be used to compare with object equality against previous model states.
      */
-    public void onModelTokenChange(@NonNull Object token) {
+    public void onModelTokenChange(Object token) {
         mCurrentSnapshotToken = token;
     }
 

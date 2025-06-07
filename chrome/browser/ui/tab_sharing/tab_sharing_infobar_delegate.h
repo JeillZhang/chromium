@@ -11,7 +11,6 @@
 #include "base/memory/raw_ptr.h"
 #include "components/infobars/core/infobar_delegate.h"
 #include "content/public/browser/global_routing_id.h"
-#include "ui/base/models/image_model.h"
 
 namespace content {
 class WebContents;
@@ -42,12 +41,6 @@ class TabSharingUI;
 // "Sharing a tab to |capturer_name_| [Stop] [Share this tab instead]"
 class TabSharingInfoBarDelegate : public infobars::InfoBarDelegate {
  public:
-  // Represents a target to which focus could be switched and its favicon.
-  struct FocusTarget {
-    content::GlobalRenderFrameHostId id;
-    ui::ImageModel icon;
-  };
-
   enum TabSharingInfoBarButton {
     kNone = 0,
     kStop = 1 << 0,
@@ -78,6 +71,9 @@ class TabSharingInfoBarDelegate : public infobars::InfoBarDelegate {
     kOtherTab,
   };
 
+  static bool IsCapturedTab(TabRole role);
+  static bool IsCapturingTab(TabRole role);
+
   class TabSharingInfoBarDelegateButton;
   class StopButton;
   class ShareTabInsteadButton;
@@ -102,16 +98,17 @@ class TabSharingInfoBarDelegate : public infobars::InfoBarDelegate {
   static infobars::InfoBar* Create(
       infobars::InfoBarManager* infobar_manager,
       infobars::InfoBar* old_infobar,
+      content::GlobalRenderFrameHostId shared_tab_id,
+      content::GlobalRenderFrameHostId capturer_id,
       const std::u16string& shared_tab_name,
       const std::u16string& capturer_name,
       content::WebContents* web_contents,
       TabRole role,
       ButtonState share_this_tab_instead_button_state,
-      std::optional<FocusTarget> focus_target,
+      content::GlobalRenderFrameHostId focus_target,
       bool captured_surface_control_active,
       TabSharingUI* ui,
-      TabShareType capture_type,
-      bool favicons_used_for_switch_to_tab_button = false);
+      TabShareType capture_type);
 
   ~TabSharingInfoBarDelegate() override;
 
@@ -139,11 +136,10 @@ class TabSharingInfoBarDelegate : public infobars::InfoBarDelegate {
   TabSharingInfoBarDelegate(content::WebContents* web_contents,
                             TabRole role,
                             ButtonState share_this_tab_instead_button_state,
-                            std::optional<FocusTarget> focus_target,
+                            content::GlobalRenderFrameHostId focus_target,
                             bool captured_surface_control_active,
                             TabSharingUI* ui,
-                            TabShareType capture_type,
-                            bool favicons_used_for_switch_to_tab_button);
+                            TabShareType capture_type);
 
   const TabSharingInfoBarDelegateButton& GetButton(
       TabSharingInfoBarButton button) const;
@@ -163,6 +159,8 @@ class TabSharingInfoBarDelegate : public infobars::InfoBarDelegate {
 
 std::unique_ptr<infobars::InfoBar> CreateTabSharingInfoBar(
     std::unique_ptr<TabSharingInfoBarDelegate> delegate,
+    content::GlobalRenderFrameHostId shared_tab_id,
+    content::GlobalRenderFrameHostId capturer_id,
     const std::u16string& shared_tab_name,
     const std::u16string& capturer_name,
     TabSharingInfoBarDelegate::TabRole role,

@@ -12,6 +12,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/observer_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/signin/signin_modal_dialog.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
@@ -19,6 +20,8 @@
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/sync/base/data_type.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
+#include "ui/base/interaction/element_identifier.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
@@ -61,6 +64,23 @@ class NewTabWebContentsObserver;
 // Chrome OS has its own sign-in flow and doesn't use DICE.
 class SigninViewController {
  public:
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(
+      kSignoutConfirmationDialogViewElementId);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kHistorySyncOptinViewId);
+
+  class Observer : public base::CheckedObserver {
+   public:
+    // Called when a sigin-in modal dialog is closed.
+    virtual void OnModalSigninDialogClosed() {}
+
+   protected:
+    ~Observer() override = default;
+  };
+
+  // Add/Remove an `observer`; cannot be NULL.
+  void AddObserver(Observer* observer);
+  void RemoveObserver(Observer* observer);
+
   explicit SigninViewController(Browser* browser);
 
   SigninViewController(const SigninViewController&) = delete;
@@ -144,6 +164,12 @@ class SigninViewController {
   void ShowModalSyncConfirmationDialog(bool is_signin_intercept,
                                        bool is_sync_promo);
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+  // Shows the modal history sync opt in dialog as a browser-modal dialog on top
+  // of the `browser_`'s window.
+  void ShowModalHistorySyncOptInDialog();
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
   // Shows the modal managed user notice dialog as a browser-modal dialog on
   // top of the `browser_`'s window. `domain_name` is the domain of the
   // enterprise account being shown. `callback` is called with the user's action
@@ -226,7 +252,7 @@ class SigninViewController {
       signin_metrics::AccessPoint reauth_access_point,
       signin_metrics::ProfileSignout profile_signout_source,
       signin_metrics::SourceForRefreshTokenOperation token_signout_source,
-      syncer::DataTypeSet unsynced_datatypes);
+      absl::flat_hash_map<syncer::DataType, size_t> unsynced_datatypes);
 
   void ShowChromeSigninDialogForExtensions(
       const std::u16string& extension_name_for_display,
@@ -239,7 +265,7 @@ class SigninViewController {
   // prompt.
   void ShowSignoutConfirmationPrompt(
       ChromeSignoutConfirmationPromptVariant prompt_variant,
-      base::OnceCallback<void(ChromeSignoutConfirmationChoice)> callback);
+      SignoutConfirmationCallback callback);
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
   // Returns the web contents of the modal dialog.
@@ -261,6 +287,8 @@ class SigninViewController {
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
   std::unique_ptr<NewTabWebContentsObserver> new_tab_web_contents_observer_;
 #endif
+
+  base::ObserverList<Observer> observer_list_;
 
   base::WeakPtrFactory<SigninViewController> weak_ptr_factory_{this};
 };

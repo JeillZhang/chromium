@@ -628,6 +628,12 @@
       "src/third_party/android_sdk/public/platform-tools/adb",
     ],
   },
+  "component_storage_test": {
+    "label": "//build/fuchsia/test:component_storage_test",
+    "type": "script",
+    "script": "//build/fuchsia/test/component_storage_test.py",
+    "skip_usage_check": True,
+  },
   "components/media_router/common/providers/cast/certificate": {
     "label": "//components/media_router/common/providers/cast/certificate",
     "type": "additional_compile_target",
@@ -803,6 +809,21 @@
     "label": "//components/cronet/android:cronet_unittests_android",
     "type": "console_test_launcher",
     "skip_usage_check": True,
+  },
+  "crossbench_smoketests": {
+    "label": "//chrome/test:crossbench_smoketests",
+    "type": "generated_script",
+    "skip_usage_check": True,
+    "args": [
+      "../../third_party/crossbench/cb.py",
+      "--benchmarks=speedometer_3.0",
+      "--isolated-script-test-output=${ISOLATED_OUTDIR}",
+      "--repeat=1",
+      "--iterations=2",
+      "--fast",
+      "--fileserver",
+      "--luci-chromium",
+    ],
   },
   "crypto_unittests": {
     "label": "//crypto:crypto_unittests",
@@ -1171,6 +1192,11 @@
   "ios_web_view_unittests": {
     "label": "//ios/web_view:ios_web_view_unittests",
     "type": "generated_script",
+    "skip_usage_check": True,
+  },
+  "ipc_fuzzer": {
+    "label": "//tools/ipc_fuzzer/fuzzer:ipc_fuzzer",
+    "type": "additional_compile_target",
     "skip_usage_check": True,
   },
   "ipc_tests": {
@@ -1965,7 +1991,7 @@
   },
   "video_encode_accelerator_tests": {
     "label": "//media/gpu/test:video_encode_accelerator_tests",
-    "type": "additional_compile_target",
+    "type": "console_test_launcher",
     "skip_usage_check": True,
   },
   "views_examples_unittests": {
@@ -2085,6 +2111,11 @@
       "--results-directory",
       "${ISOLATED_OUTDIR}",
     ],
+  },
+  "webui_resources_tools_python_unittests": {
+    "label": "//ui/webui/resources/tools:webui_resources_tools_python_unittests",
+    "type": "generated_script",
+    "skip_usage_check": True,
   },
   "webview_64_cts_tests": {
     "label": "//android_webview/test:webview_64_cts_tests",

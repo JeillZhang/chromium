@@ -21,7 +21,7 @@
 #include "base/library_loader_jni/LibraryLoader_jni.h"
 
 #if BUILDFLAG(ORDERFILE_INSTRUMENTATION)
-#include "base/android/orderfile/orderfile_instrumentation.h"
+#include "base/android/orderfile/orderfile_instrumentation.h"  // nogncheck
 #endif
 
 namespace base {
@@ -83,7 +83,6 @@ static jboolean JNI_LibraryLoader_LibraryLoaded(JNIEnv* env,
   }
   if (g_registration_callback &&
       !g_registration_callback(
-          env, nullptr,
           static_cast<LibraryProcessType>(library_process_type))) {
     return false;
   }

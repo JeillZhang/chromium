@@ -49,6 +49,7 @@
 #include "chrome/browser/ui/webui/whats_new/whats_new_util.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/webui_url_constants.h"
 #include "components/custom_handlers/protocol_handler_registry.h"
 #include "components/prefs/pref_service.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
@@ -62,10 +63,6 @@
 #include "base/mac/mac_util.h"
 #include "chrome/browser/app_controller_mac.h"
 #endif  // BUILDFLAG(IS_MAC)
-
-#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
-#include "chrome/browser/win/conflicts/incompatible_applications_updater.h"
-#endif
 
 #if BUILDFLAG(ENABLE_RLZ)
 #include "components/google/core/common/google_util.h"
@@ -174,13 +171,14 @@ Browser* StartupBrowserCreatorImpl::OpenURLsInBrowser(
     const std::vector<GURL>& urls) {
   StartupTabs tabs;
   UrlsToTabs(urls, &tabs);
-  return OpenTabsInBrowser(browser, process_startup, tabs);
+  return OpenTabsInBrowser(browser, process_startup, tabs, TabOverWrite::kNo);
 }
 
 Browser* StartupBrowserCreatorImpl::OpenTabsInBrowser(
     Browser* browser,
     chrome::startup::IsProcessStartup process_startup,
-    const StartupTabs& tabs) {
+    const StartupTabs& tabs,
+    TabOverWrite is_active_tab_overwrite) {
   DCHECK(!tabs.empty());
 
   // If we don't yet have a profile, try to use the one we're given from
@@ -276,6 +274,18 @@ Browser* StartupBrowserCreatorImpl::OpenTabsInBrowser(
               browser->AsWeakPtr(), std::move(profile_keepalive)));
       continue;
     }
+    // Active tab overwrites apply only to one tab per launch, and can only
+    // happen if there is already a tab open to replace
+    if (first_tab && browser->tab_strip_model()->count() &&
+        (is_active_tab_overwrite == TabOverWrite::kYes)) {
+      NavigateParams params(browser, tab.url,
+                            ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
+      params.disposition = WindowOpenDisposition::CURRENT_TAB;
+      params.tabstrip_add_types = ADD_NONE;
+      first_tab = false;
+      Navigate(&params);
+      continue;
+    }
 
     int add_types = first_tab ? AddTabTypes::ADD_ACTIVE : AddTabTypes::ADD_NONE;
     add_types |= AddTabTypes::ADD_FORCE_INDEX;
@@ -325,15 +335,6 @@ void StartupBrowserCreatorImpl::DetermineURLsAndLaunch(
 
   const bool is_incognito_or_guest = profile_->IsOffTheRecord();
   bool is_post_crash_launch = HasPendingUncleanExit(profile_);
-  bool has_incompatible_applications = false;
-#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  if (is_post_crash_launch) {
-    // Check if there are any incompatible applications cached from the last
-    // Chrome run.
-    has_incompatible_applications =
-        IncompatibleApplicationsUpdater::HasCachedApplications();
-  }
-#endif
 
   // Presentation of promotional and/or educational tabs may be controlled via
   // administrative policy.
@@ -378,8 +379,8 @@ void StartupBrowserCreatorImpl::DetermineURLsAndLaunch(
 
   auto result = DetermineStartupTabs(
       StartupTabProviderImpl(), process_startup, is_incognito_or_guest,
-      is_post_crash_launch, has_incompatible_applications, promotions_enabled,
-      whats_new_enabled, privacy_sandbox_dialog_required);
+      is_post_crash_launch, promotions_enabled, whats_new_enabled,
+      privacy_sandbox_dialog_required);
   StartupTabs tabs = std::move(result.tabs);
 
   // Return immediately if we start an async restore, since the remainder of
@@ -396,6 +397,9 @@ void StartupBrowserCreatorImpl::DetermineURLsAndLaunch(
   }
   if (command_line_->HasSwitch(switches::kOpenInNewWindow)) {
     behavior_options |= HAS_NEW_WINDOW_SWITCH;
+  }
+  if (command_line_->HasSwitch(switches::kSameTab)) {
+    behavior_options |= HAS_SAME_TAB_SWITCH;
   }
   if (result.launch_result == LaunchResult::kWithGivenUrls) {
     behavior_options |= HAS_CMD_LINE_TABS;
@@ -448,7 +452,6 @@ StartupBrowserCreatorImpl::DetermineStartupTabs(
     chrome::startup::IsProcessStartup process_startup,
     bool is_incognito_or_guest,
     bool is_post_crash_launch,
-    bool has_incompatible_applications,
     bool promotions_enabled,
     bool whats_new_enabled,
     bool privacy_sandbox_dialog_required) {
@@ -468,13 +471,6 @@ StartupBrowserCreatorImpl::DetermineStartupTabs(
   if (is_incognito_or_guest || is_post_crash_launch) {
     if (!tabs.empty()) {
       return {std::move(tabs), launch_result};
-    }
-
-    if (is_post_crash_launch) {
-      tabs = provider.GetPostCrashTabs(has_incompatible_applications);
-      if (!tabs.empty()) {
-        return {std::move(tabs), launch_result};
-      }
     }
 
     return {StartupTabs({StartupTab(GURL(chrome::kChromeUINewTabURL))}),
@@ -597,7 +593,9 @@ Browser* StartupBrowserCreatorImpl::RestoreOrCreateBrowser(
     if (browser) {
       return browser;
     }
-  } else if (behavior == BrowserOpenBehavior::USE_EXISTING) {
+  } else if (behavior == BrowserOpenBehavior::USE_EXISTING ||
+             behavior ==
+                 BrowserOpenBehavior::USE_EXISTING_AND_OVERWRITE_ACTIVE_TAB) {
     browser = chrome::FindTabbedBrowser(
         profile_, process_startup == chrome::startup::IsProcessStartup::kYes);
   }
@@ -612,7 +610,10 @@ Browser* StartupBrowserCreatorImpl::RestoreOrCreateBrowser(
       browser, process_startup,
       (tabs.empty()
            ? StartupTabs({StartupTab(GURL(chrome::kChromeUINewTabURL))})
-           : tabs));
+           : tabs),
+      (behavior == BrowserOpenBehavior::USE_EXISTING_AND_OVERWRITE_ACTIVE_TAB
+           ? (TabOverWrite::kYes)
+           : (TabOverWrite::kNo)));
 
   // Now that a restore is no longer possible, it is safe to clear session
   // cookie/storage, unless this is a crash recovery.
@@ -633,9 +634,17 @@ StartupBrowserCreatorImpl::DetermineBrowserOpenBehavior(
     // function. If Chrome was launched with passed URLs, assume these should
     // be appended to an existing window if possible, unless overridden by a
     // switch.
-    return ((options & HAS_CMD_LINE_TABS) && !(options & HAS_NEW_WINDOW_SWITCH))
-               ? BrowserOpenBehavior::USE_EXISTING
-               : BrowserOpenBehavior::NEW;
+    if (options & HAS_CMD_LINE_TABS && !(options & HAS_NEW_WINDOW_SWITCH)) {
+      // If not a new window and the kSameTab switch is included then the
+      // active tab will be overwritten (if one exists).
+      if (options & HAS_SAME_TAB_SWITCH) {
+        return BrowserOpenBehavior::USE_EXISTING_AND_OVERWRITE_ACTIVE_TAB;
+      }
+
+      return BrowserOpenBehavior::USE_EXISTING;
+    }
+
+    return BrowserOpenBehavior::NEW;
   }
 
   if (pref.ShouldRestoreLastSession()) {

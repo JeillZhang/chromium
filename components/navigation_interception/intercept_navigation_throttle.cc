@@ -19,11 +19,11 @@ BASE_FEATURE(kAsyncCheck,
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 InterceptNavigationThrottle::InterceptNavigationThrottle(
-    content::NavigationHandle* navigation_handle,
+    content::NavigationThrottleRegistry& registry,
     CheckCallback should_ignore_callback,
     SynchronyMode async_mode,
     std::optional<base::RepeatingClosure> request_finish_async_work_callback)
-    : content::NavigationThrottle(navigation_handle),
+    : content::NavigationThrottle(registry),
       should_ignore_callback_(should_ignore_callback),
       request_finish_async_work_callback_(request_finish_async_work_callback),
       ui_task_runner_(base::SingleThreadTaskRunner::GetCurrentDefault()),
@@ -32,7 +32,12 @@ InterceptNavigationThrottle::InterceptNavigationThrottle(
         request_finish_async_work_callback_.has_value());
 }
 
-InterceptNavigationThrottle::~InterceptNavigationThrottle() = default;
+InterceptNavigationThrottle::~InterceptNavigationThrottle() {
+  // Clients should not synchronously cause the navigation to be deleted.
+  // Putting the check here allows us to get a stack for what's causing the
+  // deletion.
+  CHECK(!in_sync_check_);
+}
 
 content::NavigationThrottle::ThrottleCheckResult
 InterceptNavigationThrottle::WillStartRequest() {
@@ -81,14 +86,20 @@ InterceptNavigationThrottle::Defer() {
 
 content::NavigationThrottle::ThrottleCheckResult
 InterceptNavigationThrottle::CheckIfShouldIgnoreNavigation() {
+  // If called while deferring, could lead to crashes where the OnCheckComplete
+  // callback cancels the deferred navigation and deletes |this| synchronously.
+  CHECK(!deferring_);
+
   bool async = ShouldCheckAsynchronously();
   pending_check_ = true;
+  in_sync_check_ = true;
   auto weak_this = weak_factory_.GetWeakPtr();
   should_ignore_callback_.Run(
       navigation_handle(), async,
       base::BindOnce(&InterceptNavigationThrottle::OnCheckComplete, weak_this));
   // Clients should not synchronously cause the navigation to be deleted.
   CHECK(weak_this);
+  in_sync_check_ = false;
   if (pending_check_) {
     if (async) {
       return content::NavigationThrottle::PROCEED;
@@ -115,7 +126,16 @@ void InterceptNavigationThrottle::OnCheckComplete(bool should_ignore) {
   if (deferring_redirect_ && !should_ignore_) {
     CHECK(deferring_);
     deferring_redirect_ = false;
-    CheckIfShouldIgnoreNavigation();
+    // Not calling CheckIfShouldIgnoreNavigation() for complicated reasons.
+    // CancelDeferredNavigation below can delete |this|, and when called from
+    // this callsite that's actually fine, so we don't want to crash from the
+    // checks to ensure we're not deleted in CheckIfShouldIgnoreNavigation. Also
+    // we don't want to call Defer() a second time since we're already
+    // deferring.
+    should_ignore_callback_.Run(
+        navigation_handle(), ShouldCheckAsynchronously(),
+        base::BindOnce(&InterceptNavigationThrottle::OnCheckComplete,
+                       weak_factory_.GetWeakPtr()));
     // Careful, we may be re-entrant here for synchronous checks.
     return;
   }
@@ -129,6 +149,7 @@ void InterceptNavigationThrottle::OnCheckComplete(bool should_ignore) {
     } else {
       Resume();
     }
+    // Careful, |this| may be deleted be either the Resume or Cancel calls.
   }
 }
 

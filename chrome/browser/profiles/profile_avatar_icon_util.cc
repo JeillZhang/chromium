@@ -24,11 +24,9 @@
 #include "base/path_service.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "cc/paint/paint_flags.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
@@ -350,20 +348,6 @@ const gfx::ImageSkia CreatePaddedIcon(const gfx::VectorIcon& icon,
   return gfx::CanvasImageSource::CreatePadded(sized_icon, gfx::Insets(padding));
 }
 
-// Returns a filled person avatar icon.
-gfx::Image GetLegacyPlaceholderAvatarIconWithColors(SkColor fill_color,
-                                                    SkColor stroke_color,
-                                                    int size) {
-  CHECK(!base::FeatureList::IsEnabled(kOutlineSilhouetteIcon));
-
-  const gfx::VectorIcon& person_icon =
-      size >= 40 ? kPersonFilledPaddedLargeIcon : kPersonFilledPaddedSmallIcon;
-  const gfx::ImageSkia icon_without_background = gfx::CreateVectorIcon(
-      gfx::IconDescription(person_icon, size, stroke_color));
-  return gfx::Image(
-      profiles::AddBackgroundToImage(icon_without_background, fill_color));
-}
-
 class CircleImageSource : public gfx::CanvasImageSource {
  public:
   CircleImageSource(int size, SkColor color)
@@ -416,7 +400,8 @@ constexpr SkColor kAvatarBubbleGaiaBackgroundColor =
     SkColorSetRGB(0xf5, 0xf5, 0xf5);
 constexpr SkColor kUserManagerBackgroundColor = SkColorSetRGB(0xee, 0xee, 0xee);
 
-constexpr char kDefaultUrlPrefix[] = "chrome://theme/IDR_PROFILE_AVATAR_";
+constexpr std::string_view kDefaultUrlPrefix =
+    "chrome://theme/IDR_PROFILE_AVATAR_";
 constexpr base::FilePath::CharType kGAIAPictureFileName[] =
     FILE_PATH_LITERAL("Google Profile Picture.png");
 constexpr base::FilePath::CharType kHighResAvatarFolderName[] =
@@ -425,7 +410,7 @@ constexpr base::FilePath::CharType kHighResAvatarFolderName[] =
 // The size of the function-static kDefaultAvatarIconResources array below.
 #if BUILDFLAG(IS_ANDROID)
 constexpr size_t kDefaultAvatarIconsCount = 1;
-#elif BUILDFLAG(IS_CHROMEOS_ASH)
+#elif BUILDFLAG(IS_CHROMEOS)
 constexpr size_t kDefaultAvatarIconsCount = 27;
 #else
 constexpr size_t kDefaultAvatarIconsCount = 56;
@@ -446,15 +431,10 @@ constexpr size_t kPlaceholderAvatarIndex = 0;
 #endif
 
 ui::ImageModel GetGuestAvatar(int size) {
-  int color_id = ui::kColorMenuIcon;
-  const gfx::VectorIcon* vector_icon = &kUserAccountAvatarRefreshIcon;
-  if (base::FeatureList::IsEnabled(switches::kEnableImprovedGuestProfileMenu)) {
-    // Guest profiles generally use the default theme, no need to go through the
-    // `ThemeService`.
-    color_id = ui::kColorSysPrimary;
-    vector_icon = &kAccountBoxIcon;
-  }
-  return ui::ImageModel::FromVectorIcon(*vector_icon, color_id, size);
+  // Guest profiles generally use the default theme, no need to go through the
+  // `ThemeService`.
+  return ui::ImageModel::FromVectorIcon(kAccountBoxIcon, ui::kColorSysPrimary,
+                                        size);
 }
 
 gfx::Image GetSizedAvatarIcon(const gfx::Image& image,
@@ -499,11 +479,7 @@ ui::ImageModel GetSizedAvatarImageModel(const ui::ImageModel& image, int size) {
             gfx::Size(size, size)));
   }
   const ui::VectorIconModel& model = image.GetVectorIcon();
-  if (model.has_color()) {
-    return ui::ImageModel::FromVectorIcon(*model.vector_icon(), model.color(),
-                                          size);
-  }
-  return ui::ImageModel::FromVectorIcon(*model.vector_icon(), model.color_id(),
+  return ui::ImageModel::FromVectorIcon(*model.vector_icon(), model.color(),
                                         size);
 }
 
@@ -610,7 +586,7 @@ size_t GetPlaceholderAvatarIndex() {
 }
 
 size_t GetModernAvatarIconStartIndex() {
-#if !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
   return GetPlaceholderAvatarIndex() + 1;
 #else
   // Only use the placeholder avatar on ChromeOS and Android.
@@ -704,7 +680,7 @@ const IconResourceInfo* GetDefaultAvatarIconResourceInfo(size_t index) {
           // Placeholder avatar icon:
           {IDR_PROFILE_AVATAR_26, nullptr, IDS_DEFAULT_AVATAR_LABEL_26},
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH) && !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
           // Modern avatar icons:
           {IDR_PROFILE_AVATAR_27, "avatar_origami_cat.png",
            IDS_DEFAULT_AVATAR_LABEL_27},
@@ -773,8 +749,6 @@ gfx::Image GetPlaceholderAvatarIconVisibleAgainstBackground(
     SkColor profile_color_seed,
     int size,
     AvatarVisibilityAgainstBackground visibility) {
-  CHECK(base::FeatureList::IsEnabled(kOutlineSilhouetteIcon));
-
   const gfx::VectorIcon& person_icon =
       vector_icons::kAccountCircleChromeRefreshIcon;
 
@@ -799,11 +773,6 @@ gfx::Image GetPlaceholderAvatarIconWithColors(
     SkColor stroke_color,
     int size,
     const PlaceholderAvatarIconParams& icon_params) {
-  if (!base::FeatureList::IsEnabled(kOutlineSilhouetteIcon)) {
-    return GetLegacyPlaceholderAvatarIconWithColors(fill_color, stroke_color,
-                                                    size);
-  }
-
   // If the icon should be an outline icon visible against the background, use
   // `GetPlaceholderAvatarIconVisibleAgainstBackground()` instead.
   CHECK(!icon_params.visibility_against_background.has_value());
@@ -862,15 +831,13 @@ bool IsDefaultAvatarIconIndex(size_t index) {
   return index < kDefaultAvatarIconsCount;
 }
 
-bool IsDefaultAvatarIconUrl(const std::string& url, size_t* icon_index) {
+bool IsDefaultAvatarIconUrl(std::string_view url, size_t* icon_index) {
   DCHECK(icon_index);
   if (!base::StartsWith(url, kDefaultUrlPrefix, base::CompareCase::SENSITIVE))
     return false;
 
   int int_value = -1;
-  if (base::StringToInt(base::MakeStringPiece(
-                            url.begin() + strlen(kDefaultUrlPrefix), url.end()),
-                        &int_value)) {
+  if (base::StringToInt(url.substr(kDefaultUrlPrefix.size()), &int_value)) {
     if (int_value < 0 ||
         int_value >= static_cast<int>(kDefaultAvatarIconsCount))
       return false;

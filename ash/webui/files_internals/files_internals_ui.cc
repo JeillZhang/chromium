@@ -15,6 +15,7 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/escape.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "content/public/browser/web_contents.h"
 
 namespace ash {
@@ -93,20 +94,18 @@ void FilesInternalsUI::HandleRequest(
     return;
   }
 
-  if (base::StartsWith(url_path_query, kGetFileTasksHtmlQuestion)) {
+  std::optional<std::string_view> remainder =
+      base::RemovePrefix(url_path_query, kGetFileTasksHtmlQuestion);
+  if (remainder) {
     std::string file_system_url;
-
     base::StringPairs params;
-    if (base::SplitStringIntoKeyValuePairs(
-            url_path_query.substr(strlen(kGetFileTasksHtmlQuestion)), '=', '&',
-            &params)) {
+    if (base::SplitStringIntoKeyValuePairs(*remainder, '=', '&', &params)) {
       for (const auto& param : params) {
         if (param.first == "fsurl") {
           file_system_url = base::UnescapeBinaryURLComponent(param.second);
         }
       }
     }
-
     delegate_->GetFileTasks(file_system_url, std::move(string_callback));
     return;
   }

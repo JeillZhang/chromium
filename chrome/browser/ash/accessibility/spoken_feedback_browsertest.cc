@@ -35,13 +35,18 @@
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "base/test/task_environment.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
+#include "chrome/browser/accessibility/caption_bubble_context_browser.h"
+#include "chrome/browser/accessibility/live_caption/live_caption_controller_factory.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/ash/accessibility/accessibility_feature_browsertest.h"
@@ -54,6 +59,7 @@
 #include "chrome/browser/ash/login/test/login_manager_mixin.h"
 #include "chrome/browser/ash/login/test/oobe_base_test.h"
 #include "chrome/browser/ash/login/wizard_context.h"
+#include "chrome/browser/extensions/api/braille_display_private/braille_display_private_api.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/input_method/candidate_window_view.h"
 #include "chrome/browser/ui/ash/login/login_display_host.h"
@@ -67,6 +73,8 @@
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
+#include "components/live_caption/live_caption_controller.h"
+#include "components/live_caption/pref_names.h"
 #include "components/services/app_service/public/cpp/app_types.h"
 #include "components/user_manager/user_names.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -78,6 +86,7 @@
 #include "extensions/browser/browsertest_util.h"
 #include "extensions/browser/extension_host_test_helper.h"
 #include "extensions/common/constants.h"
+#include "media/mojo/mojom/speech_recognition_result.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/base/ime/candidate_window.h"
@@ -93,13 +102,16 @@
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/widget/widget.h"
 
+using KeyEvent = ::extensions::api::braille_display_private::KeyEvent;
+using KeyCommand = ::extensions::api::braille_display_private::KeyCommand;
+
 namespace ash {
 
 namespace {
 
 const char* kChromeVoxPerformCommandMetric =
     "Accessibility.ChromeVox.PerformCommand";
-const double kExpectedPhoneticSpeechAndHintDelayMS = 1000;
+const base::TimeDelta kExpectedPhoneticSpeechAndHintDelay = base::Seconds(1);
 
 }  // namespace
 
@@ -259,7 +271,7 @@ void LoggedInSpokenFeedbackTest::EnableChromeVox(bool check_for_intro) {
                                           : "*");
   sm_.Call([this]() {
     ImportJSModuleForChromeVox("ChromeVox",
-                               "/chromevox/background/chromevox.js");
+                               "/chromevox/mv2/background/chromevox.js");
   });
   sm_.Call([this]() { DisableEarcons(); });
 }
@@ -276,7 +288,7 @@ void LoggedInSpokenFeedbackTest::ExecuteCommandHandlerCommand(
     std::string command) {
   ImportJSModuleForChromeVox(
       "CommandHandlerInterface",
-      "/chromevox/background/input/command_handler_interface.js");
+      "/chromevox/mv2/background/input/command_handler_interface.js");
   RunJSForChromeVox("CommandHandlerInterface.instance.onCommand('" + command +
                     "');");
 }
@@ -482,6 +494,131 @@ IN_PROC_BROWSER_TEST_F(LoggedInSpokenFeedbackTest,
   histogram_tester.ExpectBucketCount(kChromeVoxPerformCommandMetric,
                                      36 /*ChromeVoxCommand.HELP*/, 1);
   histogram_tester.ExpectTotalCount(kChromeVoxPerformCommandMetric, 5);
+}
+
+class CaptionSpokenFeedbackTest : public LoggedInSpokenFeedbackTest {
+ protected:
+  ~CaptionSpokenFeedbackTest() override = default;
+
+  CaptionSpokenFeedbackTest() {
+    scoped_feature_list_.InitWithFeatures(
+        {ash::features::kOnDeviceSpeechRecognition,
+         ::features::kAccessibilityCaptionsOnBrailleDisplay},
+        {});
+  }
+
+  void SetCaptionText(const std::string& text) {
+    // The UI is only created after SODA is installed.
+    speech::SodaInstaller::GetInstance()->NotifySodaInstalledForTesting(
+        speech::LanguageCode::kEnUs);
+    speech::SodaInstaller::GetInstance()->NotifySodaInstalledForTesting();
+
+    ::captions::LiveCaptionController* live_caption_controller =
+        ::captions::LiveCaptionControllerFactory::GetForProfile(
+            AccessibilityManager::Get()->profile());
+    live_caption_controller->DispatchTranscription(
+        /*web_contents=*/nullptr, GetCaptionBubbleContext(),
+        media::SpeechRecognitionResult(text, /*is_final=*/false));
+  }
+
+  ::captions::CaptionBubbleContextBrowser* GetCaptionBubbleContext() {
+    if (!caption_bubble_context_) {
+      caption_bubble_context_ = ::captions::CaptionBubbleContextBrowser::Create(
+          browser()->tab_strip_model()->GetActiveWebContents());
+    }
+    return caption_bubble_context_.get();
+  }
+
+  void SendBrailleKeyEvent(KeyCommand key_command) {
+    KeyEvent key_event;
+    key_event.command = key_command;
+    extensions::BrailleDisplayPrivateAPI(GetProfile())
+        .OnBrailleKeyEvent(key_event);
+  }
+
+ private:
+  std::unique_ptr<::captions::CaptionBubbleContextBrowser>
+      caption_bubble_context_;
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(CaptionSpokenFeedbackTest, ToggleCaptions) {
+  PrefChangeRegistrar change_observer;
+  EnableChromeVox();
+  sm_.Call([this, &change_observer]() {
+    change_observer.Init(AccessibilityManager::Get()->profile()->GetPrefs());
+    change_observer.Add(::prefs::kLiveCaptionEnabled,
+                        base::BindLambdaForTesting([this, &change_observer]() {
+                          SetCaptionText("Hello World");
+                          change_observer.Remove(::prefs::kLiveCaptionEnabled);
+                        }));
+    ExecuteCommandHandlerCommand("toggleCaptions");
+  });
+  sm_.ExpectSpeech("Hello World");
+  sm_.Call([this, &change_observer]() {
+    ExecuteCommandHandlerCommand("toggleCaptions");
+    change_observer.Add(::prefs::kLiveCaptionEnabled,
+                        base::BindLambdaForTesting([this]() {
+                          SetCaptionText("Goodbye World");
+                          ExecuteCommandHandlerCommand("nextLine");
+                        }));
+  });
+  sm_.ExpectNextSpeechIsNotPattern("Goodbye World");
+  sm_.Replay();
+}
+
+IN_PROC_BROWSER_TEST_F(CaptionSpokenFeedbackTest, CaptionsNotToggled) {
+  PrefChangeRegistrar change_observer;
+  EnableChromeVox();
+  sm_.Call([this, &change_observer]() {
+    change_observer.Init(AccessibilityManager::Get()->profile()->GetPrefs());
+    change_observer.Add(::prefs::kLiveCaptionEnabled,
+                        base::BindLambdaForTesting(
+                            [this]() { SetCaptionText("Hello World"); }));
+  });
+  sm_.Call([this]() { ExecuteCommandHandlerCommand("nextLine"); });
+  sm_.ExpectNextSpeechIsNotPattern("Hello World");
+  sm_.Replay();
+}
+
+IN_PROC_BROWSER_TEST_F(CaptionSpokenFeedbackTest, CaptionsChanged) {
+  std::string captions = "To be, or not to be";
+  PrefChangeRegistrar change_observer;
+  EnableChromeVox();
+
+  AutomationTestUtils test_utils(extension_misc::kChromeVoxExtensionId);
+  sm_.Call([&test_utils]() { test_utils.SetUpTestSupport(); });
+
+  sm_.Call([this, &change_observer, &captions]() {
+    // Use braille captions as an approximation of a braille display.
+    ExecuteCommandHandlerCommand("toggleBrailleCaptions");
+
+    // Set the caption text only once live captions is enabled.
+    change_observer.Init(AccessibilityManager::Get()->profile()->GetPrefs());
+    change_observer.Add(::prefs::kLiveCaptionEnabled,
+                        base::BindLambdaForTesting(
+                            [this, &captions]() { SetCaptionText(captions); }));
+    ExecuteCommandHandlerCommand("toggleCaptions");
+  });
+  sm_.ExpectSpeechPattern("To be*");
+  sm_.Call([this, &captions, &test_utils]() {
+    captions += ", that is the question";
+    SetCaptionText(captions);
+    test_utils.WaitForChildrenChangedEvent();
+
+    SendBrailleKeyEvent(KeyCommand::kPanRight);
+  });
+  sm_.ExpectSpeechPattern("*that is*");
+  sm_.Call([this, &captions, &test_utils]() {
+    captions += ": Whether 'tis nobler in the";
+    SetCaptionText(captions);
+    test_utils.WaitForChildrenChangedEvent();
+
+    SendBrailleKeyEvent(KeyCommand::kPanRight);
+  });
+  sm_.ExpectSpeechPattern("*Whether*");
+
+  sm_.Replay();
 }
 
 class NotificationCenterSpokenFeedbackTest : public LoggedInSpokenFeedbackTest {
@@ -1543,7 +1680,7 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest,
   view->GetViewAccessibility().SetRole(ax::mojom::Role::kButton);
   view->GetViewAccessibility().SetName(u"hello");
   view->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
-  widget->GetRootView()->AddChildView(view);
+  widget->GetRootView()->AddChildViewRaw(view);
 
   // Show the widget, then touch and slide on the right edge of the screen.
   sm_.Call([widget, clock_ptr, generator_ptr]() {
@@ -1625,7 +1762,7 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, TouchExploreSecondaryDisplay) {
   view->GetViewAccessibility().SetRole(ax::mojom::Role::kButton);
   view->GetViewAccessibility().SetName(u"hello");
   view->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
-  widget->GetRootView()->AddChildView(view);
+  widget->GetRootView()->AddChildViewRaw(view);
 
   // Show the widget, then touch and slide on the right edge of the screen.
   sm_.Call([widget, clock_ptr, generator_ptr]() {
@@ -1853,49 +1990,49 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest,
   sm_.ExpectSpeech("L");
   sm_.ExpectSpeech("lima");
   sm_.Call([this]() {
-    EXPECT_TRUE(sm_.GetDelayForLastUtteranceMS() >=
-                kExpectedPhoneticSpeechAndHintDelayMS);
+    EXPECT_GE(sm_.GetDelayForLastUtterance(),
+              kExpectedPhoneticSpeechAndHintDelay);
   });
   sm_.ExpectSpeech("Press Search plus Space to activate");
   sm_.Call([this]() {
-    EXPECT_TRUE(sm_.GetDelayForLastUtteranceMS() >=
-                kExpectedPhoneticSpeechAndHintDelayMS);
+    EXPECT_GE(sm_.GetDelayForLastUtterance(),
+              kExpectedPhoneticSpeechAndHintDelay);
   });
   sm_.Call([this]() { SendKeyPressWithSearchAndShift(ui::VKEY_RIGHT); });
   sm_.ExpectSpeech("I");
   sm_.ExpectSpeech("india");
   sm_.Call([this]() {
-    EXPECT_TRUE(sm_.GetDelayForLastUtteranceMS() >=
-                kExpectedPhoneticSpeechAndHintDelayMS);
+    EXPECT_GE(sm_.GetDelayForLastUtterance(),
+              kExpectedPhoneticSpeechAndHintDelay);
   });
   sm_.ExpectSpeech("Press Search plus Space to activate");
   sm_.Call([this]() {
-    EXPECT_TRUE(sm_.GetDelayForLastUtteranceMS() >=
-                kExpectedPhoneticSpeechAndHintDelayMS);
+    EXPECT_GE(sm_.GetDelayForLastUtterance(),
+              kExpectedPhoneticSpeechAndHintDelay);
   });
   sm_.Call([this]() { SendKeyPressWithSearchAndShift(ui::VKEY_RIGHT); });
   sm_.ExpectSpeech("C");
   sm_.ExpectSpeech("charlie");
   sm_.Call([this]() {
-    EXPECT_TRUE(sm_.GetDelayForLastUtteranceMS() >=
-                kExpectedPhoneticSpeechAndHintDelayMS);
+    EXPECT_GE(sm_.GetDelayForLastUtterance(),
+              kExpectedPhoneticSpeechAndHintDelay);
   });
   sm_.ExpectSpeech("Press Search plus Space to activate");
   sm_.Call([this]() {
-    EXPECT_TRUE(sm_.GetDelayForLastUtteranceMS() >=
-                kExpectedPhoneticSpeechAndHintDelayMS);
+    EXPECT_GE(sm_.GetDelayForLastUtterance(),
+              kExpectedPhoneticSpeechAndHintDelay);
   });
   sm_.Call([this]() { SendKeyPressWithSearchAndShift(ui::VKEY_RIGHT); });
   sm_.ExpectSpeech("K");
   sm_.ExpectSpeech("kilo");
   sm_.Call([this]() {
-    EXPECT_TRUE(sm_.GetDelayForLastUtteranceMS() >=
-                kExpectedPhoneticSpeechAndHintDelayMS);
+    EXPECT_GE(sm_.GetDelayForLastUtterance(),
+              kExpectedPhoneticSpeechAndHintDelay);
   });
   sm_.ExpectSpeech("Press Search plus Space to activate");
   sm_.Call([this]() {
-    EXPECT_TRUE(sm_.GetDelayForLastUtteranceMS() >=
-                kExpectedPhoneticSpeechAndHintDelayMS);
+    EXPECT_GE(sm_.GetDelayForLastUtterance(),
+              kExpectedPhoneticSpeechAndHintDelay);
   });
   sm_.Replay();
 }

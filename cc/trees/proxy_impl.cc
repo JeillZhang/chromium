@@ -25,7 +25,6 @@
 #include "cc/base/devtools_instrumentation.h"
 #include "cc/base/features.h"
 #include "cc/benchmarks/benchmark_instrumentation.h"
-#include "cc/debug/rendering_stats_instrumentation.h"
 #include "cc/input/browser_controls_offset_manager.h"
 #include "cc/input/browser_controls_offset_tag_modifications.h"
 #include "cc/metrics/compositor_timing_history.h"
@@ -103,13 +102,11 @@ class ScopedCommitCompletionEvent {
   base::WeakPtr<ProxyMain> proxy_main_weak_ptr_;
 };
 
-ProxyImpl::ProxyImpl(
-    base::WeakPtr<ProxyMain> proxy_main_weak_ptr,
-    LayerTreeHost* layer_tree_host,
-    int id,
-    const LayerTreeSettings* settings,
-    RenderingStatsInstrumentation* rendering_stats_instrumentation,
-    TaskRunnerProvider* task_runner_provider)
+ProxyImpl::ProxyImpl(base::WeakPtr<ProxyMain> proxy_main_weak_ptr,
+                     LayerTreeHost* layer_tree_host,
+                     int id,
+                     const LayerTreeSettings* settings,
+                     TaskRunnerProvider* task_runner_provider)
     : layer_tree_host_id_(id),
       next_frame_is_newly_committed_frame_(false),
       inside_draw_(false),
@@ -130,9 +127,7 @@ ProxyImpl::ProxyImpl(
   scheduler_settings.main_frame_before_commit_enabled = true;
 
   std::unique_ptr<CompositorTimingHistory> compositor_timing_history(
-      new CompositorTimingHistory(
-          CompositorTimingHistory::RENDERER_UMA,
-          rendering_stats_instrumentation));
+      new CompositorTimingHistory(CompositorTimingHistory::RENDERER_UMA));
   scheduler_ = std::make_unique<Scheduler>(
       this, scheduler_settings, layer_tree_host_id_,
       task_runner_provider_->ImplThreadTaskRunner(),
@@ -622,10 +617,14 @@ void ProxyImpl::SetNeedsImplSideInvalidation(
 }
 
 void ProxyImpl::NotifyImageDecodeRequestFinished(int request_id,
+                                                 bool speculative,
                                                  bool decode_succeeded) {
   DCHECK(IsImplThread());
   if (base::FeatureList::IsEnabled(
           features::kSendExplicitDecodeRequestsImmediately)) {
+    if (speculative) {
+      SetSpeculativeDecodeRequestInFlight(false);
+    }
     MainThreadTaskRunner()->PostTask(
         FROM_HERE,
         base::BindOnce(&ProxyMain::NotifyImageDecodeRequestFinished,
@@ -998,8 +997,18 @@ base::SingleThreadTaskRunner* ProxyImpl::MainThreadTaskRunner() {
 }
 
 void ProxyImpl::QueueImageDecodeOnImpl(int request_id,
-                                       std::unique_ptr<DrawImage> image) {
-  host_impl_->QueueImageDecode(request_id, *image);
+                                       std::unique_ptr<DrawImage> image,
+                                       bool speculative) {
+  host_impl_->QueueImageDecode(request_id, *image, speculative);
+}
+
+bool ProxyImpl::SpeculativeDecodeRequestInFlight() const {
+  return speculative_decode_request_in_flight_.load();
+}
+
+void ProxyImpl::SetSpeculativeDecodeRequestInFlight(bool value) {
+  CHECK(value != speculative_decode_request_in_flight_.load());
+  speculative_decode_request_in_flight_.store(value);
 }
 
 void ProxyImpl::SetSourceURL(ukm::SourceId source_id, const GURL& url) {
@@ -1011,6 +1020,13 @@ void ProxyImpl::SetUkmSmoothnessDestination(
     base::WritableSharedMemoryMapping ukm_smoothness_data) {
   DCHECK(IsImplThread());
   host_impl_->SetUkmSmoothnessDestination(std::move(ukm_smoothness_data));
+}
+
+void ProxyImpl::SetUkmDroppedFramesDestination(
+    base::WritableSharedMemoryMapping ukm_dropped_frames_data) {
+  DCHECK(IsImplThread());
+  host_impl_->SetUkmDroppedFramesDestination(
+      std::move(ukm_dropped_frames_data));
 }
 
 void ProxyImpl::ClearHistory() {
@@ -1047,6 +1063,14 @@ ProxyImpl::DataForCommit::~DataForCommit() = default;
 
 bool ProxyImpl::DataForCommit::IsValid() const {
   return commit_completion_event.get() && commit_state.get() && unsafe_state;
+}
+
+void ProxyImpl::SetShouldThrottleFrameRate(bool flag) {
+  scheduler_->SetShouldThrottleFrameRate(flag);
+}
+
+void ProxyImpl::NotifyNewLocalSurfaceIdExpectedWhilePaused() {
+  host_impl_->NotifyNewLocalSurfaceIdExpectedWhilePaused();
 }
 
 }  // namespace cc

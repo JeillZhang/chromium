@@ -16,7 +16,7 @@
 #include "gpu/gpu_gles2_export.h"
 #include "gpu/ipc/common/gpu_memory_buffer_handle_info.h"
 #include "gpu/ipc/service/shared_image_stub.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/gpu_memory_buffer_handle.h"
 
 #if BUILDFLAG(IS_WIN)
 #include <d3d11.h>
@@ -69,6 +69,11 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelSharedImageInterface
   scoped_refptr<ClientSharedImage> CreateSharedImage(
       const SharedImageInfo& si_info,
       gfx::GpuMemoryBufferHandle buffer_handle) override;
+  scoped_refptr<ClientSharedImage> CreateSharedImageForMLTensor(
+      std::string debug_label,
+      viz::SharedImageFormat format,
+      const gfx::Size& size,
+      gpu::SharedImageUsageSet usage) override;
   scoped_refptr<ClientSharedImage> CreateSharedImageForSoftwareCompositor(
       const SharedImageInfo& si_info) override;
   void UpdateSharedImage(const SyncToken& sync_token,
@@ -88,7 +93,8 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelSharedImageInterface
                                         const gfx::ColorSpace& color_space,
                                         GrSurfaceOrigin surface_origin,
                                         SkAlphaType alpha_type,
-                                        SharedImageUsageSet usage) override;
+                                        SharedImageUsageSet usage,
+                                        std::string_view debug_label) override;
   void PresentSwapChain(const SyncToken& sync_token,
                         const Mailbox& mailbox) override;
 #if BUILDFLAG(IS_FUCHSIA)
@@ -102,7 +108,6 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelSharedImageInterface
   SyncToken GenVerifiedSyncToken() override;
   void VerifySyncToken(SyncToken& sync_token) override;
   void WaitSyncToken(const SyncToken& sync_token) override;
-  void Flush() override;
 
   const SharedImageCapabilities& GetCapabilities() override;
 

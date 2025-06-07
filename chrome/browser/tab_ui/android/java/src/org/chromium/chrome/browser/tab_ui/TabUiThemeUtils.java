@@ -5,17 +5,25 @@
 package org.chromium.chrome.browser.tab_ui;
 
 import android.content.Context;
-import android.content.res.TypedArray;
-import android.graphics.Color;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.ColorRes;
-import androidx.annotation.StyleRes;
 import androidx.core.content.ContextCompat;
 
 import com.google.android.material.color.MaterialColors;
-import com.google.android.material.elevation.ElevationOverlayProvider;
 
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.theme.SurfaceColorUpdateUtils;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
+import org.chromium.components.tab_groups.TabGroupColorId;
+
+/**
+ * Utility methods for providing colors and styles for the tab UI.
+ *
+ * @deprecated Add new changes to TabUiThemeUtil.java, or TabUiThemeProvider.java.
+ */
+@NullMarked
+@Deprecated
 public class TabUiThemeUtils {
     private static final String TAG = "TabUiThemeUtils";
 
@@ -29,29 +37,29 @@ public class TabUiThemeUtils {
      */
     public static @ColorInt int getChromeOwnedFaviconTintColor(
             Context context, boolean isIncognito, boolean isTabSelected) {
-        return getTitleTextColor(context, isIncognito, isTabSelected);
+        return getTitleTextColor(context, isIncognito, isTabSelected, null);
     }
 
     /**
      * Returns the title text appearance for the tab grid card based on the incognito mode.
      *
+     * @param context {@link Context} used to retrieve color.
      * @param isIncognito Whether the text appearance is used for incognito mode.
      * @param isSelected Whether the tab is currently selected.
+     * @param colorId Color chosen by user for the TabGroup, null if not a tab group.
      * @return The text appearance for the tab grid card title.
      */
     public static @ColorInt int getTitleTextColor(
-            Context context, boolean isIncognito, boolean isSelected) {
-        if (isIncognito) {
-            @ColorRes
-            int colorRes =
-                    isSelected
-                            ? R.color.incognito_tab_title_selected_color
-                            : R.color.incognito_tab_title_color;
-            return context.getColor(colorRes);
+            Context context,
+            boolean isIncognito,
+            boolean isSelected,
+            @Nullable @TabGroupColorId Integer colorId) {
+        if (isSelected) {
+            return isIncognito
+                    ? context.getColor(R.color.incognito_tab_title_selected_color)
+                    : MaterialColors.getColor(context, R.attr.colorOnPrimary, TAG);
         } else {
-            return isSelected
-                    ? MaterialColors.getColor(context, R.attr.colorOnPrimary, TAG)
-                    : MaterialColors.getColor(context, R.attr.colorOnSurface, TAG);
+            return SurfaceColorUpdateUtils.getCardViewTextColor(context, isIncognito, colorId);
         }
     }
 
@@ -62,49 +70,26 @@ public class TabUiThemeUtils {
      * @param context {@link Context} used to retrieve color.
      * @param isIncognito Whether the color is used for incognito mode.
      * @param isSelected Whether the tab is currently selected.
+     * @param colorId Color chosen by user for the TabGroup, null if not a tab group.
      * @return The mini-thumbnail placeholder color.
      */
     public static @ColorInt int getMiniThumbnailPlaceholderColor(
-            Context context, boolean isIncognito, boolean isSelected) {
-        if (isIncognito) {
-            @ColorRes
-            int colorRes =
-                    isSelected
-                            ? R.color.incognito_tab_thumbnail_placeholder_selected_color
-                            : R.color.incognito_tab_thumbnail_placeholder_color;
-            return context.getColor(colorRes);
-        } else {
+            Context context,
+            boolean isIncognito,
+            boolean isSelected,
+            @Nullable @TabGroupColorId Integer colorId) {
+        if (isSelected) {
+            if (isIncognito) {
+                return context.getColor(R.color.incognito_tab_thumbnail_placeholder_selected_color);
+            }
             int alpha =
                     context.getResources()
-                            .getInteger(
-                                    isSelected
-                                            ? R.integer
-                                                    .tab_thumbnail_placeholder_selected_color_alpha
-                                            : R.integer.tab_thumbnail_placeholder_color_alpha);
-
-            @StyleRes
-            int styleRes =
-                    isSelected
-                            ? R.style.TabThumbnailPlaceholderStyle_Selected
-                            : R.style.TabThumbnailPlaceholderStyle;
-            TypedArray ta =
-                    context.obtainStyledAttributes(styleRes, R.styleable.TabThumbnailPlaceholder);
-
-            @ColorInt
-            int baseColor =
-                    ta.getColor(
-                            R.styleable.TabThumbnailPlaceholder_colorTileBase, Color.TRANSPARENT);
-            float tileSurfaceElevation =
-                    ta.getDimension(R.styleable.TabThumbnailPlaceholder_elevationTileBase, 0);
-
-            ta.recycle();
-            if (tileSurfaceElevation != 0) {
-                ElevationOverlayProvider eop = new ElevationOverlayProvider(context);
-                baseColor = eop.compositeOverlay(baseColor, tileSurfaceElevation);
-            }
-
+                            .getInteger(R.integer.tab_thumbnail_placeholder_selected_color_alpha);
+            @ColorInt int baseColor = SemanticColorUtils.getColorOnPrimary(context);
             return MaterialColors.compositeARGBWithAlpha(baseColor, alpha);
         }
+        return SurfaceColorUpdateUtils.getCardViewMiniThumbnailPlaceholderColor(
+                context, isIncognito, colorId);
     }
 
     /**
@@ -113,27 +98,22 @@ public class TabUiThemeUtils {
      * @param context {@link Context} used to retrieve color.
      * @param isIncognito Whether the color is used for incognito mode.
      * @param isSelected Whether the tab is currently selected.
+     * @param colorId Color chosen by user for the TabGroup, null if not a tab group.
      * @return The {@link ColorInt} for tab grid card view background.
      */
     public static @ColorInt int getCardViewBackgroundColor(
-            Context context, boolean isIncognito, boolean isSelected) {
-        if (isIncognito) {
+            Context context,
+            boolean isIncognito,
+            boolean isSelected,
+            @Nullable @TabGroupColorId Integer colorId) {
+        if (isSelected) {
             // Incognito does not use dynamic colors, so it can use colors from resources.
-            @ColorRes
-            int colorRes =
-                    isSelected
-                            ? R.color.incognito_tab_bg_selected_color
-                            : R.color.incognito_tab_bg_color;
-            return ContextCompat.getColor(context, colorRes);
+            return isIncognito
+                    ? ContextCompat.getColor(context, R.color.incognito_tab_bg_selected_color)
+                    : MaterialColors.getColor(context, R.attr.colorPrimary, TAG);
         } else {
-            float tabElevation = context.getResources().getDimension(R.dimen.tab_bg_elevation);
-            @ColorInt
-            int colorInt =
-                    isSelected
-                            ? MaterialColors.getColor(context, R.attr.colorPrimary, TAG)
-                            : new ElevationOverlayProvider(context)
-                                    .compositeOverlayWithThemeSurfaceColorIfNeeded(tabElevation);
-            return colorInt;
+            return SurfaceColorUpdateUtils.getCardViewBackgroundColor(
+                    context, isIncognito, colorId);
         }
     }
 }

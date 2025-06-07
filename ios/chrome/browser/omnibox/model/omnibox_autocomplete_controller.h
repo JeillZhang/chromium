@@ -5,34 +5,52 @@
 #ifndef IOS_CHROME_BROWSER_OMNIBOX_MODEL_OMNIBOX_AUTOCOMPLETE_CONTROLLER_H_
 #define IOS_CHROME_BROWSER_OMNIBOX_MODEL_OMNIBOX_AUTOCOMPLETE_CONTROLLER_H_
 
-#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 
+#import "ios/chrome/browser/omnibox/model/autocomplete_result_wrapper_delegate.h"
 #import "ui/base/window_open_disposition.h"
 
+@protocol AutocompleteSuggestion;
 struct AutocompleteMatch;
 class AutocompleteResult;
-class OmniboxController;
-@class OmniboxPopupController;
-class OmniboxViewIOS;
+@class AutocompleteResultWrapper;
+@protocol OmniboxAutocompleteControllerDelegate;
+@protocol OmniboxAutocompleteControllerDebuggerDelegate;
+class OmniboxControllerIOS;
+class OmniboxEditModelIOS;
+@class OmniboxTextController;
 
 /// Controller for the omnibox autocomplete system. Handles interactions with
-/// the autocomplete system and dispatches results to the OmniboxTextController
-/// and OmniboxPopupController.
-@interface OmniboxAutocompleteController : NSObject
+/// the autocomplete system and dispatches results.
+@interface OmniboxAutocompleteController
+    : NSObject <AutocompleteResultWrapperDelegate>
 
-/// Controller of the omnibox popup.
-@property(nonatomic, weak) OmniboxPopupController* omniboxPopupController;
+/// Delegate of the omnibox autocomplete controller.
+@property(nonatomic, weak) id<OmniboxAutocompleteControllerDelegate> delegate;
+
+/// Debugger delegate of the omnibox autocomplete controller.
+@property(nonatomic, weak) id<OmniboxAutocompleteControllerDebuggerDelegate>
+    debuggerDelegate;
+
+/// Autcomplete result wrapper.
+@property(nonatomic, strong)
+    AutocompleteResultWrapper* autocompleteResultWrapper;
+
+/// Controller of the omnibox text.
+@property(nonatomic, weak) OmniboxTextController* omniboxTextController;
+
+// Whether or not the popup has suggestions.
+@property(nonatomic, assign, readonly) BOOL hasSuggestions;
 
 /// Initializes with an OmniboxController.
-- (instancetype)initWithOmniboxController:(OmniboxController*)omniboxController
-                           omniboxViewIOS:(OmniboxViewIOS*)omniboxViewIOS
+- (instancetype)initWithOmniboxController:
+                    (OmniboxControllerIOS*)omniboxController
+                         omniboxEditModel:(OmniboxEditModelIOS*)omniboxEditModel
     NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 
 /// Removes all C++ references.
 - (void)disconnect;
-
-#pragma mark - OmniboxEditModel event
 
 /// Updates the popup suggestions.
 - (void)updatePopupSuggestions;
@@ -40,11 +58,8 @@ class OmniboxViewIOS;
 #pragma mark - OmniboxPopup event
 
 /// Request suggestions for a number of visible suggestions.
-- (void)requestResultsWithVisibleSuggestionCount:
+- (void)requestSuggestionsWithVisibleSuggestionCount:
     (NSUInteger)visibleSuggestionCount;
-
-/// Whether `match` is a starred/bookmarked match.
-- (BOOL)isStarredMatch:(const AutocompleteMatch&)match;
 
 /// Selects `match` for opening.
 - (void)selectMatchForOpening:(const AutocompleteMatch&)match
@@ -62,6 +77,25 @@ class OmniboxViewIOS;
 
 /// Notifies of call action.
 - (void)onCallAction;
+
+/// Previews the given autocomplete suggestion.
+- (void)previewSuggestion:(id<AutocompleteSuggestion>)suggestion
+            isFirstUpdate:(BOOL)isFirstUpdate;
+
+#pragma mark - OmniboxText events
+
+/// Closes the omnibox popup.
+- (void)closeOmniboxPopup;
+
+/// Updates the popup text alignment.
+- (void)setTextAlignment:(NSTextAlignment)alignment;
+
+/// Updates the popup semantic content attribute.
+- (void)setSemanticContentAttribute:
+    (UISemanticContentAttribute)semanticContentAttribute;
+
+/// Notifies thumbnail update.
+- (void)setHasThumbnail:(BOOL)hasThumbnail;
 
 @end
 

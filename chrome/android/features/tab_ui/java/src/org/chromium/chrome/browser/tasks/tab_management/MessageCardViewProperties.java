@@ -11,6 +11,7 @@ import android.view.View.OnClickListener;
 
 import androidx.annotation.IntDef;
 
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.tab.state.ShoppingPersistedTabData;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -19,6 +20,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 /** List of properties used by TabGridSecondaryItem. */
+@NullMarked
 class MessageCardViewProperties {
     /** An enum interface to specify where the message card can be shown. */
     @IntDef({MessageCardScope.REGULAR, MessageCardScope.INCOGNITO, MessageCardScope.BOTH})
@@ -97,13 +99,14 @@ class MessageCardViewProperties {
      * By default, {@code @dimen/tab_list_selected_margin} margin is applied on all sides. Following
      * properties can be used to override the specific side margins.
      */
-    public static final PropertyModel.WritableIntPropertyKey TOP_MARGIN_OVERRIDE =
+    public static final PropertyModel.WritableIntPropertyKey TOP_MARGIN_OVERRIDE_PX =
             new PropertyModel.WritableIntPropertyKey();
-    public static final PropertyModel.WritableIntPropertyKey BOTTOM_MARGIN_OVERRIDE =
+
+    public static final PropertyModel.WritableIntPropertyKey BOTTOM_MARGIN_OVERRIDE_PX =
             new PropertyModel.WritableIntPropertyKey();
-    public static final PropertyModel.WritableIntPropertyKey LEFT_MARGIN_OVERRIDE =
+    public static final PropertyModel.WritableIntPropertyKey LEFT_MARGIN_OVERRIDE_PX =
             new PropertyModel.WritableIntPropertyKey();
-    public static final PropertyModel.WritableIntPropertyKey RIGHT_MARGIN_OVERRIDE =
+    public static final PropertyModel.WritableIntPropertyKey RIGHT_MARGIN_OVERRIDE_PX =
             new PropertyModel.WritableIntPropertyKey();
 
     public static final PropertyKey[] ALL_KEYS =
@@ -133,9 +136,9 @@ class MessageCardViewProperties {
                 PRICE_DROP,
                 VIEW_AS_ACTION_BUTTON,
                 ACTION_BUTTON_VISIBLE,
-                TOP_MARGIN_OVERRIDE,
-                BOTTOM_MARGIN_OVERRIDE,
-                LEFT_MARGIN_OVERRIDE,
-                RIGHT_MARGIN_OVERRIDE
+                TOP_MARGIN_OVERRIDE_PX,
+                BOTTOM_MARGIN_OVERRIDE_PX,
+                LEFT_MARGIN_OVERRIDE_PX,
+                RIGHT_MARGIN_OVERRIDE_PX
             };
 }

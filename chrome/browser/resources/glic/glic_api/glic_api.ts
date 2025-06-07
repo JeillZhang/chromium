@@ -32,6 +32,8 @@ export declare interface GlicHostRegistry {
    * rejection of the promise indicates a browser side failure.
    *
    * The web client must call this once when its webview on-load event is fired.
+   *
+   * This should only be called once! Subsequent calls will break.
    */
   registerWebClient(webClient: GlicWebClient): Promise<void>;
 }
@@ -52,32 +54,32 @@ export declare interface GlicWebClient {
    * initialize() will not be called again.
    *
    * A failed promise means initialization failed and it will not be retried.
-   *
-   * Note: Later on, error-status information may be bundled with the failed
-   * promise so that the browser may retry calling initialize() in case of
-   * retryable errors.
+   * @throws {WebClientInitializeError}
    */
   initialize(glicBrowserHost: GlicBrowserHost): Promise<void>;
 
   /**
-   * @todo Remove void promise value once the web client returns OpenPanelInfo.
-   *       https://crbug.com/391946150
-   *
    * @todo The browser is currently storing the previous panel size, but the web
    *       client should be updated to set the panel size when handling this
    *       call. https://crbug.com/392141194
+   *
+   * @todo Remove PanelState from the input argument type once the web client
+   *       adopts PanelOpeningData.
+   *       https://crbug.com/402147705
    *
    * Called right before the panel is made visible to the user. This event is
    * always called no matter how the panel opening is initiated.
    *
    * The web client should use the handling of this call to execute any
    * preparations needed to become user-visible, and return a fully populated
-   * OpenPanelInfo.
+   * OpenPanelInfo. `panelOpeningData` holds information about the open request
+   * and the state of the panel that is about to be presented.
    *
    * Important: The panel is only made user-visible once the returned promise is
    * resolved or failed (failures are ignored and the panel is still shown).
    */
-  notifyPanelWillOpen?(panelState: PanelState): Promise<void|OpenPanelInfo>;
+  notifyPanelWillOpen?
+      (panelOpeningData: PanelOpeningData&PanelState): Promise<OpenPanelInfo>;
 
   /**
    * Called right after the panel was hidden away and is not visible to
@@ -92,26 +94,13 @@ export declare interface GlicWebClient {
   notifyPanelWasClosed?(): Promise<void>;
 
   /**
-   * The user has requested activation of the web client.
-   * The attachedToWindowId identifies the browser window to which the
-   * panel is attached to. It is undefined if it is detached.
+   * The web client should resolve the promise after verifying the app is
+   * responsive.
    *
-   * Note: The returned promise is currently not used in the browser.
-   *
-   * @deprecated: Not supported anymore and will eventually be removed.
+   * If the host receives no response within 500 ms, it will flag the web client
+   * as unresponsive and displaying an error state to the user.
    */
-  notifyPanelOpened?(attachedToWindowId: string|undefined): Promise<void>;
-
-  /**
-   * The user has closed the web client window. The window may be activated
-   * again later.
-   *
-   * The promise being resolved indicates the web client has stored any needed
-   * information and stopped accepting the user's input.
-   *
-   * @deprecated: Not supported anymore and will eventually be removed.
-   */
-  notifyPanelClosed?(): Promise<void>;
+  checkResponsive?(): Promise<void>;
 }
 
 /**
@@ -136,6 +125,22 @@ export declare interface GlicBrowserHost {
       Promise<void>;
 
   /**
+   * Set the state of the panel's user drag-to-resize capability, or if the
+   * panel hasn't been created yet, set whether it will be user resizable when
+   * it is created.
+   */
+  enableDragResize?(enabled: boolean): Promise<void>;
+
+  /**
+   * Returns true if the web client should resize its content to fit the
+   * window.
+   *
+   * @todo This should be the default sizing mode. Remove after the manual
+   * resizing is landed. crbug.com/402795394.
+   */
+  shouldFitWindow?(): Promise<boolean>;
+
+  /**
    * Set the areas of the glic window from which it should be draggable. If
    * `areas` is empty, a default draggable area will be created.
    *
@@ -145,13 +150,89 @@ export declare interface GlicBrowserHost {
   setWindowDraggableAreas(areas: DraggableArea[]): Promise<void>;
 
   /**
-   * Fetches page context for the currently focused tab, optionally including
-   * more expensive-to-generate data.
+   * Sets the minimum possible size a user can resize to for the glic window.
    *
-   * @throws {GetTabContextError} on failure.
+   * All provided values will go through sanity checks (e.g. checking min
+   * values for height and width) and may be adjusted. The web client should
+   * expect that the provided values may not be applied verbatim. Note: This
+   * will not affect the current glic window size.
+   */
+  setMinimumWidgetSize?(width: number, height: number): Promise<void>;
+
+  /**
+   * Fetches page context for the currently focused tab, optionally including
+   * more expensive-to-generate data. Requesting only the base data is cheap,
+   * but the returned information should be identical to the latest push-update
+   * received by the web client from `getFocusedTabStateV2`.
+   *
+   * All optional data, which are expensive to extract, should only be requested
+   * when necessary.
+   *
+   * Critically, this function may return information from a previously focused
+   * page due its asynchronous nature. To confirm, tabId and URL should match
+   * the respective values of the tab of interest.
+   *
+   * @throws {Error} on failure.
    */
   getContextFromFocusedTab?
       (options: TabContextOptions): Promise<TabContextResult>;
+
+  /**
+   * @todo Not yet implemented. https://crbug.com/402086021
+   *
+   * Inform Chrome about an action. Chrome Takes an action based on the
+   * action proto and returns new context based on the tab context options.
+   *
+   * Attempts to act while the associated task is stopped/paused will be
+   * rejected.
+   *
+   * @throws {ActInFocusedTabError} on failure.
+   */
+  actInFocusedTab?
+      (params: ActInFocusedTabParams): Promise<ActInFocusedTabResult>;
+
+  /**
+   * Stops the actor task with the given ID in the browser if it exists. No-op
+   * otherwise.
+   *
+   * Stopping a task removes all actor related restrictions from the associated
+   * tab. Any in progress actions are canceled and the associated Promises are
+   * rejected.
+   *
+   * If the task ID is not provided or 0, the most recent task is stopped.
+   *
+   * @todo Require callers to provide a valid ID.
+   */
+  stopActorTask?(taskId?: number): void;
+
+  /**
+   * Pauses the actor task with the given ID in the browser if it exists. No-op
+   * otherwise.
+   *
+   * Pausing a task removes actor related restrictions that prevent the user
+   * from interacting with the associated tab. Any in progress actions are
+   * canceled and the associated Promises are rejected.
+   *
+   * If the task ID is 0, the most recent task is paused.
+   *
+   * @todo Require callers to provide a valid ID.
+   */
+  pauseActorTask?(taskId: number): void;
+
+  /**
+   * Resumes a previously paused actor task with the given ID.
+   *
+   * Returns the tab context at the time of resumption, based on the provided
+   * context options.
+   *
+   * If the task ID is 0, the most recent task is resumed.
+   *
+   * @throws {Error} on failure.
+   *
+   * @todo Require callers to provide a valid ID.
+   */
+  resumeActorTask?(taskId: number, tabContextOptions: TabContextOptions):
+      Promise<TabContextResult>;
 
   /**
    * Requests the host to capture a screenshot. The choice of the screenshot
@@ -185,13 +266,27 @@ export declare interface GlicBrowserHost {
    */
   createTab?(url: string, options: CreateTabOptions): Promise<TabData>;
 
-  /** Opens a new tab to the glic settings page. */
-  openGlicSettingsPage?(): void;
+  /**
+   * Opens a tab with the glic settings page, optionally highlighting a specific
+   * field in it. If an open tab already has the glic settings page loaded, it
+   * is focused instead.
+   */
+  openGlicSettingsPage?(options?: OpenSettingsOptions): void;
 
   /** Requests the closing of the panel containing the web client. */
   closePanel?(): Promise<void>;
 
   /**
+   * Similar to closePanel but also requests that the web client be torn down.
+   * Normally, Chrome manages creation and destruction of the web client. This
+   * function is a fallback solution to permit the web client to limit its
+   * lifetime, if needed.
+   */
+  closePanelAndShutdown?(): void;
+
+  /**
+   * @deprecated The panel will only maintain the detached state.
+   *
    * Requests that the web client's panel be attached to a browser window.
    * If attachment fails, the panel's state will not be updated. getPanelState
    * can be used to monitor whether attachment is successful.
@@ -199,6 +294,8 @@ export declare interface GlicBrowserHost {
   attachPanel?(): void;
 
   /**
+   * @deprecated The panel will only maintain the detached state.
+   *
    * Requests that the web client's panel be detached from a browser window
    * (floats free).
    */
@@ -211,10 +308,26 @@ export declare interface GlicBrowserHost {
    */
   showProfilePicker?(): void;
 
-  /** Returns the state of the panel. */
+  /**
+   * @deprecated The panel will only maintain the detached state.
+   *
+   * Returns the state of the panel.
+   */
   getPanelState?(): ObservableValue<PanelState>;
 
   /**
+   * Whether the glic panel is in the active state. In the inactive state,
+   * microphone recording should stop, but any playing audio output can
+   * continue.
+   *
+   * Note that the Glic panel is inactive if it is attached to a browser window,
+   * and that browser window is not the current active window.
+   */
+  panelActive(): ObservableValue<boolean>;
+
+  /**
+   * @deprecated The panel will only maintain the detached state.
+   *
    * Whether the panel can be attached. This is true if there is a browser
    * window suitable for attachment. This state is only meaningful when the
    * panel is in the detached state, and should be not be considered otherwise
@@ -224,6 +337,18 @@ export declare interface GlicBrowserHost {
   canAttachPanel?(): ObservableValue<boolean>;
 
   /**
+   * Whether any browser windows are open for this profile. This exists to allow
+   * the web client to signal the user that they need to open a browser window
+   * before sharing context. A browser window being open does not guarantee
+   * there is a focused tab or a panel can attach to the browser.
+   */
+  isBrowserOpen?(): ObservableValue<boolean>;
+
+  /**
+   * @deprecated Use `getFocusedTabStateV2` instead. This function returns a
+   * TabData on success but no information at all on failure. V2 solves this by
+   * returning error codes to signal why no focus was available.
+   *
    * Returns the observable state of the currently focused tab. Updates are sent
    * whenever the focus changes due to the user switching tabs or navigating the
    * current focused tab.
@@ -232,22 +357,24 @@ export declare interface GlicBrowserHost {
    *          a new tab is focused or the current tab is navigated. The value
    *          will be `undefined` if there's no active tab or it cannot be
    *          focused (i.e. the URL is ineligible for tab context sharing).
-   *
-   * @deprecated Used `getFocusedTabStateV2` instead. This function returns a
-   * TabData on success but no information at all on failure. V2 solves this by
-   * returning error codes to signal why no focus was available.
    */
   getFocusedTabState?(): ObservableValue<TabData|undefined>;
 
   /**
    * Returns the observable state of the currently focused tab. Updates are sent
-   * whenever the focus changes due to the user switching tabs or navigating the
-   * current focused tab.
-   *
-   * @returns An ObservableValue for `FocusedTabData` values that will be
-   * recalculated when a new tab is focused or the current tab is navigated.
-   * When focus is recalculated the ObservableValue will be updated if any of
-   * the FocusedTabData fields change.
+   * whenever:
+   * - The user switches active tabs, which causes a change in `tabId`.
+   * - The tab navigates to a new page, which causes a change in `url`.
+   * - The user moves the current tab to a new window,  which causes a change in
+   *   `windowId`.
+   * - The user switches active windows, which would definitely change both
+   *   `tabId` and `windowId` and, likely, all other data fields, too.
+   * - The user switches between tabs that can and cannot be focused (or
+   *   vice-versa), which changes which field has a value set between `hasFocus`
+   *   and `hasNoFocus`.
+   * - Any other data represented in `TabData` (title, favicon, mime type)
+   *   changes and needs to be updated to match the respective tab state.
+   *   Updates are possible throughout the lifetime of a page.
    */
   getFocusedTabStateV2?(): ObservableValue<FocusedTabData>;
 
@@ -259,6 +386,15 @@ export declare interface GlicBrowserHost {
 
   /** Returns the state of the tab context permission. */
   getTabContextPermissionState?(): ObservableValue<boolean>;
+
+  /** Returns the state of the OS granted location permission. */
+  getOsLocationPermissionState?(): ObservableValue<boolean>;
+
+  /** Returns the state of the OS hotkey. */
+  getOsHotkeyState?(): ObservableValue<{hotkey: string}>;
+
+  /** Returns the state of the glic closed captioning setting. */
+  getClosedCaptioningSetting?(): ObservableValue<boolean>;
 
   /**
    * Set the state of the microphone permission in settings. Returns a promise
@@ -277,6 +413,12 @@ export declare interface GlicBrowserHost {
    * that resolves when the browser has stored the new pref value.
    */
   setTabContextPermissionState(enabled: boolean): Promise<void>;
+
+  /**
+   * Set the state of the closed captioning permission in settings. Returns a
+   * promise that resolves when the browser has stored the new pref value.
+   */
+  setClosedCaptioningSetting?(enabled: boolean): Promise<void>;
 
   /** Returns the user profile information. */
   getUserProfileInfo?(): Promise<UserProfileInfo>;
@@ -318,15 +460,77 @@ export declare interface GlicBrowserHost {
   getMetrics?(): GlicBrowserHostMetrics;
 
   /**
-   * @todo Not yet implemented. https://crbug.com/381437495
+   * @todo Not yet implemented for PDFs. https://crbug.com/395859365
    *
    * Scrolls to and (optionally) highlights content specified by an input
-   * selector. Returns a promise that resolves when the selected content is
-   * matched and a scroll is started.
+   * selector. Only one highlight is active at a time. Returns a promise that
+   * resolves when the selected content is matched and a scroll is started. Only
+   * available when `GlicScrollTo` is enabled.
    *
    * @throws {ScrollToError} on failure.
    */
   scrollTo?(params: ScrollToParams): Promise<void>;
+
+  /**
+   * Drops the content highlight from scrollTo(). No effects if no contents are
+   * highlighted. Only available when `GlicScrollTo` is enabled.
+   */
+  dropScrollToHighlight?(): void;
+
+  /**
+   * Enrolls the Chrome client in the synthetic experiment group specified by
+   * trial_name.group_name. Enrollment will only start when the API is called
+   * and end when Chrome closes.
+   */
+  setSyntheticExperimentState?(trialName: string, groupName: string): void;
+
+  /**
+   * Opens the OS permission settings page for the given permission type.
+   * Supports `media` for microphone and `geolocation` for location.
+   * @throws {Error} if the permission type is not supported.
+   */
+  openOsPermissionSettingsMenu?(permission: OsPermissionType): void;
+
+  /**
+   * Get the status of the OS Microphone permission currently granted to Chrome.
+   */
+  getOsMicrophonePermissionStatus?(): Promise<boolean>;
+
+  /**
+   * Returns an observable that signals true when the user starts resizing the
+   * panel and false when the user stops.
+   */
+  isManuallyResizing?(): ObservableValue<boolean>;
+
+  /**
+   * @todo Not yet implemented. https://crbug.com/404617216
+   *
+   * Returns the set of zero state suggestions for the currently focused tab
+   * based on if the client is currently in it's is_first_run.
+   * Callers should verify the current focused tab matches the
+   * ZeroStateSuggestions tabId and url before using it.
+   */
+  getZeroStateSuggestionsForFocusedTab?
+      (is_first_run?: boolean): Promise<ZeroStateSuggestions>;
+}
+/** Fields of interest from the system settings page. */
+export type OsPermissionType = 'media'|'geolocation';
+
+/** Fields of interest from the Glic settings page. */
+export enum SettingsPageField {
+  /** The OS hotkey configuration field. */
+  OS_HOTKEY = 1,
+  /** The OS entrypoint enabling field. */
+  OS_ENTRYPOINT_TOGGLE = 2,
+}
+
+/** Optional parameters for the openGlicSettingsPage function. */
+export declare interface OpenSettingsOptions {
+  /**
+   * Optionally select a field to be highlighted while opening the Glic settings
+   * page.
+   */
+  highlightField?: SettingsPageField;
 }
 
 /** Holds optional parameters for `GlicBrowserHost#resizeWindow`. */
@@ -349,8 +553,6 @@ export declare interface CreateTabOptions {
 }
 
 /**
- * @todo Not yet implemented. https://crbug.com/391417447
- *
  * Provides measurement-related functionality to the Glic web client.
  *
  * The typical sequence of events should be either:
@@ -408,9 +610,19 @@ export declare interface OpenPanelInfo {
    * arguments will be used.
    */
   resizeParams?: {width: number, height: number, options?: ResizeWindowOptions};
+
+  /**
+   * Whether the panel should start out resizable by the user. The panel is
+   * resizable if this field is not provided.
+   */
+  canUserResize?: boolean;
 }
 
-/** A panel can be in one of these three states. */
+/**
+ * @deprecated The panel will only maintain the detached state.
+ *
+ * A panel can be in one of these three states.
+ */
 export enum PanelStateKind {
   /** Not shown. This is the initial state. */
   HIDDEN = 0,
@@ -424,9 +636,15 @@ export enum PanelStateKind {
   ATTACHED = 2,
 }
 
-/** Information of how the panel is being presented/configured. */
+/**
+ * @deprecated The panel will only maintain the detached state.
+ *
+ * Information of how the panel is being presented/configured.
+ */
 export declare interface PanelState {
-  /** The panel's presentation kind/state. */
+  /**
+   * The panel's presentation kind/state.
+   */
   kind: PanelStateKind;
   /**
    * Present only when attached to a window, indicating which window it is
@@ -435,14 +653,56 @@ export declare interface PanelState {
   windowId?: string;
 }
 
+/**
+ * Data structure sent from the browser to the web client with panel opening
+ * information.
+ */
+export declare interface PanelOpeningData {
+  /**
+   * @deprecated The panel will only maintain the detached state.
+   *
+   * The state of the panel as it's being opened.
+   */
+  panelState?: PanelState;
+  /**
+   * Indicates the entry point used to trigger the opening of the panel.
+   * In the event the web client's page is reloaded, the new web client will
+   * receive a notifyPanelWillOpen call with the same invocation source as
+   * before, even though the user did not, for example, click a button again.
+   */
+  invocationSource?: InvocationSource;
+}
+
+/** Entry points that can trigger the opening of the panel. */
+export enum InvocationSource {
+  /** Button in the OS. */
+  OS_BUTTON = 0,
+  /** Menu from button in the OS. */
+  OS_BUTTON_MENU = 1,
+  /** OS-level hotkey. */
+  OS_HOTKEY = 2,
+  /** Button in top-chrome. */
+  TOP_CHROME_BUTTON = 3,
+  /** First run experience. */
+  FRE = 4,
+  /** From the profile picker. */
+  PROFILE_PICKER = 5,
+  /** From contextual cueing. */
+  NUDGE = 6,
+  /** From 3-dot menu. */
+  THREE_DOTS_MENU = 7,
+  /** An unsupported/unknown source. */
+  UNSUPPORTED = 8,
+  /** From the What's New page. */
+  WHATS_NEW = 9,
+  /** User clicks sign-in and then signs in. */
+  AFTER_SIGN_IN = 10,
+}
+
 /** The default value of TabContextOptions.pdfSizeLimit. */
 export const DEFAULT_PDF_SIZE_LIMIT = 64 * 1024 * 1024;
 
-/**
- * @todo Not yet implemented. https://crbug.com/383110287
- *
- * The default value of TabContextOptions.innerTextBytesLimit.
- */
+/** The default value of TabContextOptions.innerTextBytesLimit. */
 export const DEFAULT_INNER_TEXT_BYTES_LIMIT = 20000;
 
 /** Options for getting context from a tab. */
@@ -453,8 +713,6 @@ export declare interface TabContextOptions {
    */
   innerText?: boolean;
   /**
-   * @todo Not yet implemented. https://crbug.com/383110287
-   *
    * Maximum size in UTF-8 bytes that the returned innerText data may contain.
    * If exceeded, the innerText will be truncated to the nearest character that
    * will leave the string less than or equal to the specified byte size.
@@ -469,6 +727,11 @@ export declare interface TabContextOptions {
   viewportScreenshot?: boolean;
   /** If true, returns the serialized annotatedPageContent proto. */
   annotatedPageContent?: boolean;
+  /**
+   * Maximum number of meta tags (per Document/Frame) to include in the
+   * response. Defaults to 0 if not provided.
+   */
+  maxMetaTags?: number;
   /**
    * If true, and the focused tab contains a PDF as the top level document,
    * returns PdfDocumentData.
@@ -534,12 +797,40 @@ export declare interface DocumentData {
    * embedded same-origin iframes.
    */
   innerText?: string;
+
+  /** Whether `innerText` was truncated due to `innerTextBytesLimit`. */
+  innerTextTruncated?: boolean;
 }
 
 /** Annotated data from a web document. */
 export declare interface AnnotatedPageData {
   /** Serialized annotatedPageContent proto. */
   annotatedPageContent?: ReadableStream<Uint8Array>;
+  /**
+   * Metadata about the annotated page content. Present when
+   * annotatedPageContent has been requested.
+   */
+  metadata?: PageMetadata;
+}
+
+/** Meta tag name and content taken from the <head> element of a frame. */
+export declare interface MetaTag {
+  name: string;
+  content: string;
+}
+
+/**
+ * Metadata about a frame.  Number of MetaTags is limited by the
+ * maxMetaTags option.
+ */
+export declare interface FrameMetadata {
+  url: string;
+  metaTags: MetaTag[];
+}
+
+/** Metadata about the page.  Includes URL and meta tags for each frame. */
+export declare interface PageMetadata {
+  frameMetadata: FrameMetadata[];
 }
 
 /**
@@ -548,21 +839,32 @@ export declare interface AnnotatedPageData {
  * itself.
  */
 export declare interface TabData {
-  /** Unique ID of the tab that owns the page. */
+  /**
+   * Unique ID of the tab that owns the page. These values are unique across
+   * all tabs from all windows, and will not change even if the user moves the
+   * tab to a different window.
+   */
   tabId: string;
-  /** Unique ID of the browser window holding the tab. */
+  /**
+   * Unique ID of the browser window holding the tab. This value may change if
+   * the tab is moved to a different window.
+   */
   windowId: string;
-  /** URL of the page. */
+  /**
+   * URL of the page. For a given tab, this value will change if the tab is
+   * navigated to a different URL.
+   */
   url: string;
   /**
    * The title of the loaded page. Returned only if the page is loaded enough
-   * for it to be available. It may be empty if the page did not define a title.
+   * for it to be available. It may be empty if the page did not specify a
+   * title.
    */
   title?: string;
   /**
-   * Returns the favicon for the tab, encoded as a PNG image. Returned only if
-   * the page is loaded enough for it to be available and the page specifies
-   * one.
+   * Returns the favicon for the tab, encoded as a PNG image. An image is
+   * returned only if the page is loaded enough for it to be available and the
+   * page specifies a favicon.
    */
   favicon?(): Promise<Blob|undefined>;
   /**
@@ -572,29 +874,32 @@ export declare interface TabData {
   documentMimeType?: string;
 }
 
-/** Data class holding information about the focused tab state. */
+/**
+ * Data class holding information about the focused tab state. It works as a
+ * discriminated union type: exactly one field is ever present.
+ */
 export declare interface FocusedTabData {
-  /** Stores the focused tab data if one exists. */
-  focusedTab?: TabData;
-  /**
-   * If a focus candidate exists but cannot be focused then
-   * `focusedTabCandidate` will hold its `TabData` and an
-   * `InvalidCandidateError` specifying why it is not focusable.
-   */
-  focusedTabCandidate?: FocusedTabCandidate;
-  /** If no candidate exists than the noCandidateTabError will indicate why. */
-  noCandidateTabError?: NoCandidateTabError;
+  /** Present only if a tab has focus. */
+  hasFocus?: FocusedTabDataHasFocus;
+  /** Present only if no tab has focus. */
+  hasNoFocus?: FocusedTabDataHasNoFocus;
 }
 
-/** Data class holding information about the focused tab candidate. */
-export declare interface FocusedTabCandidate {
+/** FocusedTabData variant for when a tab has focus. */
+export declare interface FocusedTabDataHasFocus {
+  /** Information about the focused tab. */
+  tabData: TabData;
+}
+
+/** FocusedTabData variant for when no tabs have focus. */
+export declare interface FocusedTabDataHasNoFocus {
   /**
-   * Stores the focused tab candidate data if the browser has valid TabData
-   * which cannot be used for context extraction.
+   * Information about the active tab, which cannot be focused. Present only
+   * if there is an active tab.
    */
-  focusedTabCandidateData?: TabData;
-  /** Specifies why the candidate was invalid for focus. */
-  invalidCandidateError?: InvalidCandidateError;
+  tabFocusCandidateData?: TabData;
+  /** A human-readable message explaining why there is no focused tab. */
+  noFocusReason: string;
 }
 
 /**
@@ -629,10 +934,23 @@ export declare interface Screenshot {
 
 /** Maps the ErrorWithReason.reasonType to the type of reason. */
 export declare interface ErrorReasonTypes {
-  tabContext: GetTabContextErrorReason;
   captureScreenshot: CaptureScreenshotErrorReason;
   scrollTo: ScrollToErrorReason;
+  webClientInitialize: WebClientInitializeErrorReason;
+  actInFocusedTab: ActInFocusedTabErrorReason;
 }
+
+/** Reason why the web client could not initialize. */
+export enum WebClientInitializeErrorReason {
+  /**
+   * Unknown reason. The user can manually retry loading, which reloads the
+   * entire webview.
+   */
+  UNKNOWN = 0,
+  /** This list will be expanded later. */
+}
+
+export type WebClientInitializeError = ErrorWithReason<'webClientInitialize'>;
 
 /** Error implementation with a typed generic reason attached. */
 export declare interface ErrorWithReason<
@@ -643,40 +961,17 @@ export declare interface ErrorWithReason<
   reason: ErrorReasonTypes[T];
 }
 
-/** Reason for failure while extracting tab context. */
-export enum GetTabContextErrorReason {
+/** Reason for failure while acting in the focused tab. */
+export enum ActInFocusedTabErrorReason {
   UNKNOWN = 0,
-  /** The web contents was navigated or closed during context gathering. */
-  WEB_CONTENTS_CHANGED = 1,
-  /** Permission to capture page context is denied. */
-  PERMISSION_DENIED = 2,
-  /** The URL in the tab data is not supported. */
-  UNSUPPORTED_URL = 3,
-  /** There are no Chrome tabs available to be focused. */
-  NO_FOCUSABLE_TABS = 4,
-}
-
-/**
- * Reason why a focused tab candidate is not valid for focus. NOTE: This may be
- * extended in the future so avoid using complete switches on the currently used
- * enum values.
- */
-export enum InvalidCandidateError {
-  /** Candidate invalid for an unknown reason. */
-  UNKNOWN = 0,
-  /** The URL in the tab data is not supported. */
-  UNSUPPORTED_URL = 1,
-}
-
-/**
- * Reason why a focused tab is not available. NOTE: This may be extended in the
- * future so avoid using complete switches on the currently used enum values.
- */
-export enum NoCandidateTabError {
-  /** An unknown error occurred while getting the tab data. */
-  UNKNOWN = 0,
-  /** There are no Chrome tabs available to be focused. */
-  NO_FOCUSABLE_TABS = 1,
+  /** Context could not be gathered after acting. */
+  GET_CONTEXT_FAILED = 1,
+  /** The action proto is invalid. */
+  INVALID_ACTION_PROTO = 2,
+  /** Action target is not found. */
+  TARGET_NOT_FOUND = 3,
+  /** Failed to start a new task. */
+  FAILED_TO_START_TASK = 4,
 }
 
 /**
@@ -696,11 +991,25 @@ export enum CaptureScreenshotErrorReason {
   USER_CANCELLED_SCREEN_PICKER_DIALOG = 2,
 }
 
-/** Error type used for tab context extraction errors. */
-export type GetTabContextError = ErrorWithReason<'tabContext'>;
+export declare interface ActInFocusedTabResult {
+  // The tab context result after acting and gathering new context.
+  tabContextResult?: TabContextResult;
+}
+
+export declare interface ActInFocusedTabParams {
+  // Corresponds to
+  // components/optimization_guide/proto/features/actions_data.proto:
+  // BrowserAction
+  actionProto: ArrayBuffer;
+  // Tab context options to gather context after acting.
+  tabContextOptions: TabContextOptions;
+}
 
 /** Error type used for screenshot capture errors. */
 export type CaptureScreenshotError = ErrorWithReason<'captureScreenshot'>;
+
+/** Error type used for actuation errors. */
+export type ActInFocusedTabError = ErrorWithReason<'actInFocusedTab'>;
 
 /** Params for scrollTo(). */
 export declare interface ScrollToParams {
@@ -712,6 +1021,18 @@ export declare interface ScrollToParams {
 
   /** Used to specify content to scroll to and highlight. */
   selector: ScrollToSelector;
+
+  /**
+   * Identifies the document we want to perform the scrollTo operation on. When
+   * specified, we verify that the currently focused tab's document matches the
+   * ID, and throw an error if doesn't. If not specified, the implementation
+   * will use the main frame of the currently focused tab without verification.
+   *
+   * Note: documentId is being migrated to become a required param and the
+   * client will soon throw a NotSupported error (behind a flag currently) when
+   * not specified.
+   */
+  documentId?: string;
 }
 
 /**
@@ -724,25 +1045,64 @@ export declare interface ScrollToSelector {
   exactText?: ScrollToTextSelector;
 
   /**
-   * Text fragment selector, see ScrollToTextFragmentSelector for more details
+   * Text fragment selector, see ScrollToTextFragmentSelector for more details.
    */
   textFragment?: ScrollToTextFragmentSelector;
+
+  /** Node selector, see ScrollToNodeSelector for more details. */
+  node?: ScrollToNodeSelector;
 }
 
 /**
- * scrollTo() selector to select exact text in HTML and PDF documents.
+ * scrollTo() selector to select exact text in HTML and PDF documents within
+ * a given search range starting from the start node (specified with
+ * searchRangeStartNodeId) to the end of the document. If not specified, the
+ * search range will be the entire document.
+ * The documentId in ScrollToParams must be specified if a
+ * searchRangeStartNodeId is specified.
  */
 export declare interface ScrollToTextSelector {
   text: string;
+
+  /**
+   * See common_ancestor_dom_node_id in proto ContentAttributes
+   * in components/optimization_guide/proto/features/common_quality_data.proto.
+   */
+  searchRangeStartNodeId?: number;
 }
 
 /**
- * scrollTo() selector to select a range of text in HTML and PDF documents.
+ * scrollTo() selector to select a range of text in HTML and PDF documents
+ * within a given search range starting from the start node (specified with
+ * searchRangeStartNodeId) to the end of the document. If not specified, the
+ * search range will be the entire document.
+ * The documentId in ScrollToParams must be specified if a
+ * searchRangeStartNodeId is specified.
  * Text selected will match textStart <anything in the middle> textEnd.
  */
 export declare interface ScrollToTextFragmentSelector {
   textStart: string;
   textEnd: string;
+
+  /**
+   * See common_ancestor_dom_node_id in proto ContentAttributes
+   * in components/optimization_guide/proto/features/common_quality_data.proto.
+   */
+  searchRangeStartNodeId?: number;
+}
+
+/**
+ * scrollTo() selector to select all text inside a specific node (corresponding
+ * to the provided nodeId). documentId must also be specified in ScrollToParams
+ * when this selector is used.
+ */
+export declare interface ScrollToNodeSelector {
+  /**
+   * Value should be obtained from common_ancestor_dom_node_id in
+   * ContentAttributes (see
+   * components/optimization_guide/proto/features/common_quality_data.proto)
+   */
+  nodeId: number;
 }
 
 /** Error type used for scrollTo(). */
@@ -754,7 +1114,40 @@ export enum ScrollToErrorReason {
    * Invalid params were provided to scrollTo(), or the browser doesn't support
    * scrollTo() yet.
    */
-  NOT_SUPPORTED = 0
+  NOT_SUPPORTED = 0,
+  /** scrollTo() was called again before this call finished processing. */
+  NEWER_SCROLL_TO_CALL = 1,
+  /** There is no tab currently in focus. */
+  NO_FOCUSED_TAB = 2,
+  /** The selector did not match any content in the document. */
+  NO_MATCH_FOUND = 3,
+  /**
+   * The currently focused tab changed or navigated while processing the
+   * scrollTo() call.
+   */
+  FOCUSED_TAB_CHANGED_OR_NAVIGATED = 4,
+  /**
+   * The documentId provided doesn't match the currently focused tab's primary
+   * document. The document may have been navigated away, may not currently be
+   * in focus, or may not be in a primary main frame (we don't currently support
+   * iframes).
+   */
+  NO_MATCHING_DOCUMENT = 5,
+
+  /**
+   *  The search range starting from DOMNodeId did not result in a valid range.
+   */
+  SEARCH_RANGE_INVALID = 6,
+
+  /**
+   * Tab context permission was disabled.
+   */
+  TAB_CONTEXT_PERMISSION_DISABLED = 7,
+
+  /**
+   * The web client requested to drop the highlight via `dropScrollToHighlight`.
+   */
+  DROPPED_BY_WEB_CLIENT = 8,
 }
 
 /**
@@ -803,10 +1196,16 @@ export declare interface UserProfileInfo {
    * image.
    */
   avatarIcon(): Promise<Blob|undefined>;
-  /** The name displayed for this profile. */
+  /** The full name displayed for this profile. */
   displayName: string;
+  /** The given name for this profile. */
+  givenName?: string;
+  /** The local profile name, which can be customized by the user. */
+  localProfileName?: string;
   /** The profile email. */
   email: string;
+  /** Whether the profile's signed-in account is a managed account. */
+  isManaged?: boolean;
 }
 
 /** Chrome version data broken down into its numeric components. */
@@ -830,4 +1229,80 @@ export declare interface WithGlicApi {
 export declare interface GlicApiBootMessage {
   type: 'glic-bootstrap';
   glicApiSource: string;
+}
+
+/** Zero-state suggestions for the current tab. */
+export declare interface ZeroStateSuggestions {
+  /**
+   * A collection of suggestions associated with the linked tab. This may be
+   * empty.
+   */
+  suggestions: SuggestionContent[];
+  /** A unique ID to track the the associated tab. */
+  tabId: string;
+  /** The url of the associated tab. */
+  url: string;
+}
+
+/** Zero-state suggestion for the current tab.*/
+export declare interface SuggestionContent {
+  /** The suggestion text. Always provided. */
+  suggestion: string;
+}
+
+//
+// Types used in presubmit check.
+//
+
+// Types to be checked for backwards compatibility on presubmit, excluding
+// enums.
+export interface BackwardsCompatibleTypes {
+  actInFocusedTabParams: ActInFocusedTabParams;
+  actInFocusedTabResult: ActInFocusedTabResult;
+  annotatedPageData: AnnotatedPageData;
+  browserHost: GlicBrowserHost;
+  chromeVersion: ChromeVersion;
+  createTabOptions: CreateTabOptions;
+  documentData: DocumentData;
+  draggableArea: DraggableArea;
+  focusedTabData: FocusedTabData;
+  glicBrowserHostMetrics: GlicBrowserHostMetrics;
+  hostRegistry: GlicHostRegistry;
+  imageOriginAnnotations: ImageOriginAnnotations;
+  openPanelInfo: OpenPanelInfo;
+  panelOpeningData: PanelOpeningData;
+  panelState: PanelState;
+  pdfDocumentData: PdfDocumentData;
+  resizeWindowOptions: ResizeWindowOptions;
+  screenshot: Screenshot;
+  scrollToParams: ScrollToParams;
+  scrollToSelector: ScrollToSelector;
+  scrollToTextFragmentSelector: ScrollToTextFragmentSelector;
+  scrollToTextSelector: ScrollToTextSelector;
+  subscriber: Subscriber;
+  tabContextOptions: TabContextOptions;
+  tabContextResult: TabContextResult;
+  tabData: TabData;
+  userProfileInfo: UserProfileInfo;
+  webClient: GlicWebClient;
+  webPageData: WebPageData;
+  openSettingsOptions: OpenSettingsOptions;
+  osPermissionType: OsPermissionType;
+  zeroStateSuggestions: ZeroStateSuggestions;
+}
+
+// Enums that should not be changed.
+export interface ClosedEnums {
+  panelStateKind: typeof PanelStateKind;
+  webClientMode: typeof WebClientMode;
+}
+
+// Enums that can be extended.
+export interface ExtensibleEnums {
+  captureScreenshotErrorReason: typeof CaptureScreenshotErrorReason;
+  scrollToErrorReason: typeof ScrollToErrorReason;
+  webClientInitializeErrorReason: typeof WebClientInitializeErrorReason;
+  invocationSource: typeof InvocationSource;
+  actInFocusedTabErrorReason: typeof ActInFocusedTabErrorReason;
+  settingsPageField: typeof SettingsPageField;
 }

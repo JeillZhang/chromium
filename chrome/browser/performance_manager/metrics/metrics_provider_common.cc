@@ -29,8 +29,9 @@ ui::AXMode::ModeFlagHistogramValue ModeFlagsToEnum(uint32_t mode_flags) {
       return ui::AXMode::ModeFlagHistogramValue::UMA_AX_MODE_WEB_CONTENTS;
     case ui::AXMode::kInlineTextBoxes:
       return ui::AXMode::ModeFlagHistogramValue::UMA_AX_MODE_INLINE_TEXT_BOXES;
-    case ui::AXMode::kScreenReader:
-      return ui::AXMode::ModeFlagHistogramValue::UMA_AX_MODE_SCREEN_READER;
+    case ui::AXMode::kExtendedProperties:
+      return ui::AXMode::ModeFlagHistogramValue::
+          UMA_AX_MODE_EXTENDED_PROPERTIES;
     case ui::AXMode::kHTML:
       return ui::AXMode::ModeFlagHistogramValue::UMA_AX_MODE_HTML;
     case ui::AXMode::kHTMLMetadata:
@@ -39,10 +40,10 @@ ui::AXMode::ModeFlagHistogramValue ModeFlagsToEnum(uint32_t mode_flags) {
       return ui::AXMode::ModeFlagHistogramValue::UMA_AX_MODE_LABEL_IMAGES;
     case ui::AXMode::kPDFPrinting:
       return ui::AXMode::ModeFlagHistogramValue::UMA_AX_MODE_PDF;
-    case ui::AXMode::kPDFOcr:
-      return ui::AXMode::ModeFlagHistogramValue::UMA_AX_MODE_PDF_OCR;
     case ui::AXMode::kAnnotateMainNode:
       return ui::AXMode::ModeFlagHistogramValue::UMA_AX_MODE_ANNOTATE_MAIN_NODE;
+    case ui::AXMode::kScreenReader:
+      return ui::AXMode::ModeFlagHistogramValue::UMA_AX_MODE_SCREEN_READER;
     default:
       return ui::AXMode::ModeFlagHistogramValue::UMA_AX_MODE_MAX;
   }
@@ -107,13 +108,15 @@ void MetricsProviderCommon::RecordA11yFlags() {
     MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kNativeAPIs);
     MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kWebContents);
     MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kInlineTextBoxes);
-    MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kScreenReader);
+    MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kExtendedProperties);
     MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kHTML);
     MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kHTMLMetadata);
     MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kLabelImages);
     MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kPDFPrinting);
-    MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kPDFOcr);
     MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kAnnotateMainNode);
+    // ui::AXMode::kFromPlatform is unconditionally filtered out and is
+    // therefore never present in `mode`.
+    MaybeRecordAccessibilityModeFlags(mode, ui::AXMode::kScreenReader);
   }
 }
 

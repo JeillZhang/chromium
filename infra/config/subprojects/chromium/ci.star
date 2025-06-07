@@ -37,6 +37,7 @@ luci.bucket(
                 # or fix yet.
                 "mdb/chrome-active-sheriffs",
                 "mdb/chrome-gpu",
+                "mdb/clank-engprod",
                 "mdb/bling-engprod",
             ],
             users = [
@@ -152,8 +153,10 @@ luci.gitiles_poller(
 def register_gardener_rotation_consoles():
     rotations = [getattr(builders.gardener_rotations, a) for a in dir(builders.gardener_rotations)]
     for rotation in rotations:
-        if rotation and len(rotation) > 0:
-            consoles.console_view(name = builders.gardener_rotation_name(rotation[0]))
+        if rotation:
+            consoles.console_view(name = rotation.console_name)
+            if rotation.tree_closer_console:
+                consoles.console_view(name = rotation.tree_closer_console)
 
 register_gardener_rotation_consoles()
 
@@ -222,6 +225,7 @@ exec("./ci/chromium.android.fyi.star")
 exec("./ci/chromium.android.desktop.star")
 exec("./ci/chromium.android.desktop.fyi.star")
 exec("./ci/chromium.angle.star")
+exec("./ci/chromium.bedrock.star")
 exec("./ci/chromium.cft.star")
 exec("./ci/chromium.chromiumos.star")
 exec("./ci/chromium.clang.star")

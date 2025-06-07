@@ -35,7 +35,6 @@ constexpr char kMantisHashKey[] =
     "\x7c\x8c\x82\x6f\x3e\xcd\x16\xf0\xfb\xfe\xfc\x9c\x2a\x48\x07\x75\x7e\xea"
     "\x46\xf2";
 
-
 }  // namespace
 
 // Please keep the order of these switches synchronized with the header file
@@ -553,27 +552,9 @@ const char kEnterpriseForceManualEnrollmentInTestBuilds[] =
 const char kEnterpriseEnableUnifiedStateDetermination[] =
     "enterprise-enable-state-determination";
 
-// Whether to enable forced enterprise re-enrollment.
-const char kEnterpriseEnableForcedReEnrollment[] =
-    "enterprise-enable-forced-re-enrollment";
-
 // Whether to enable forced enterprise re-enrollment on Flex.
 const char kEnterpriseEnableForcedReEnrollmentOnFlex[] =
     "enterprise-enable-forced-re-enrollment-on-flex";
-
-// Whether to enable initial enterprise enrollment.
-const char kEnterpriseEnableInitialEnrollment[] =
-    "enterprise-enable-initial-enrollment";
-
-// Power of the power-of-2 initial modulus that will be used by the
-// auto-enrollment client. E.g. "4" means the modulus will be 2^4 = 16.
-const char kEnterpriseEnrollmentInitialModulus[] =
-    "enterprise-enrollment-initial-modulus";
-
-// Power of the power-of-2 maximum modulus that will be used by the
-// auto-enrollment client.
-const char kEnterpriseEnrollmentModulusLimit[] =
-    "enterprise-enrollment-modulus-limit";
 
 // Disallow blocking developer mode through enterprise device policy:
 // - Fail enterprise enrollment if enrolling would block dev mode.
@@ -862,6 +843,10 @@ const char kOobeSkipNewUserCheckForTesting[] =
 // Skips all other OOBE pages after user login.
 const char kOobeSkipPostLogin[] = "oobe-skip-postlogin";
 
+// Disable metrics consent for testing.
+const char kOobeDisablePreConsentMetricsForTesting[] =
+    "oobe-disable-pre-consent-metrics-for-testing";
+
 // Returns true if we should skip split modifier check on the split modifier
 // info screen.
 const char kOobeSkipSplitModifierCheckForTesting[] =
@@ -882,6 +867,9 @@ const char kOobeTriggerSyncTimeoutForTests[] =
 
 // If set, the overview button will be visible.
 const char kOverviewButtonForTests[] = "overview-button-for-tests";
+
+// If set, the overrrides the overscan settings on all displays.
+const char kOverscanInsetsOverride[] = "overscan-insets-override";
 
 // Controls how often the HiddenNetworkHandler class checks for wrongly hidden
 // networks. The interval should be provided in seconds, should follow the
@@ -950,6 +938,12 @@ const char kSafeMode[] = "safe-mode";
 // Password change url for SAML users.
 // TODO(crbug.com/40618074): Remove when the bug is fixed.
 const char kSamlPasswordChangeUrl[] = "saml-password-change-url";
+
+// Selects which type of disclaimer should be shown for Scanner for debugging.
+const char kScannerDisclaimerDebugOverride[] =
+    "scanner-disclaimer-debug-override";
+const char kScannerDisclaimerDebugOverrideReminder[] = "reminder";
+const char kScannerDisclaimerDebugOverrideFull[] = "full";
 
 // New modular design for the shelf with apps separated into a hotseat UI and
 // smaller shelf in clamshell mode.
@@ -1124,6 +1118,11 @@ bool ShouldSkipSplitModifierCheckForTesting() {
 
 bool ShouldSkipOobePostLogin() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(kOobeSkipPostLogin);
+}
+
+bool ShouldDisablePreConsentMetricsForTesting() {
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+      kOobeDisablePreConsentMetricsForTesting);
 }
 
 bool ShouldShowAccessibilityButtonOnMarketingOptInForTesting() {

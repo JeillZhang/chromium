@@ -10,7 +10,6 @@
 #include <optional>
 #include <set>
 #include <tuple>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -46,6 +45,7 @@
 #include "cc/trees/browser_controls_params.h"
 #include "cc/trees/render_frame_metadata.h"
 #include "components/input/dispatch_to_renderer_callback.h"
+#include "components/input/input_constants.h"
 #include "components/input/input_router_config_helper.h"
 #include "components/input/native_web_keyboard_event.h"
 #include "components/input/render_input_router.mojom.h"
@@ -113,6 +113,7 @@
 #include "skia/ext/platform_canvas.h"
 #include "skia/ext/skia_utils_base.h"
 #include "storage/browser/file_system/isolated_context.h"
+#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 #include "third_party/blink/public/common/input/synthetic_web_input_event_builders.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/common/widget/constants.h"
@@ -177,9 +178,7 @@ bool g_check_for_pending_visual_properties_ack = true;
 // <process id, routing id>
 using RenderWidgetHostID = std::pair<int32_t, int32_t>;
 using RoutingIDWidgetMap =
-    std::unordered_map<RenderWidgetHostID,
-                       RenderWidgetHostImpl*,
-                       base::IntPairHash<RenderWidgetHostID>>;
+    absl::flat_hash_map<RenderWidgetHostID, RenderWidgetHostImpl*>;
 base::LazyInstance<RoutingIDWidgetMap>::DestructorAtExit
     g_routing_id_widget_map = LAZY_INSTANCE_INITIALIZER;
 
@@ -232,17 +231,17 @@ std::vector<DropData::Metadata> DropDataToMetaData(const DropData& drop_data) {
   std::vector<DropData::Metadata> metadata;
   if (drop_data.text) {
     metadata.push_back(DropData::Metadata::CreateForMimeType(
-        DropData::Kind::STRING, base::ASCIIToUTF16(ui::kMimeTypeText)));
+        DropData::Kind::STRING, ui::kMimeTypePlainText16));
   }
 
   if (drop_data.url.is_valid()) {
     metadata.push_back(DropData::Metadata::CreateForMimeType(
-        DropData::Kind::STRING, base::ASCIIToUTF16(ui::kMimeTypeURIList)));
+        DropData::Kind::STRING, ui::kMimeTypeUriList16));
   }
 
   if (drop_data.html) {
     metadata.push_back(DropData::Metadata::CreateForMimeType(
-        DropData::Kind::STRING, base::ASCIIToUTF16(ui::kMimeTypeHTML)));
+        DropData::Kind::STRING, ui::kMimeTypeHtml16));
   }
 
   // On Aura, filenames are available before drop.
@@ -447,6 +446,14 @@ RenderWidgetHostImpl::RenderWidgetHostImpl(
   agent_scheduling_group_->GetProcess()->AddPriorityClient(this);
 
   SetupRenderInputRouter();
+  if (!frame_tree || !frame_tree->is_primary()) {
+    // We are preserving the old behavior for non-primary frames because the
+    // paint-holding signal seems missing in non-primary frames, and more
+    // importantly, releasing input early is fine in this case because the page
+    // either does not receive an input (kPrerender) or is a non-top-frame
+    // (where holding back input is not needed, crbug.com/40074208).
+    input_router()->MakeActive();
+  }
 
   const auto* command_line = base::CommandLine::ForCurrentProcess();
   if (!command_line->HasSwitch(switches::kDisableNewContentRenderingTimeout)) {
@@ -460,7 +467,9 @@ RenderWidgetHostImpl::RenderWidgetHostImpl(
   render_frame_metadata_provider_.AddObserver(this);
 
   if (!hidden) {
-    first_shown_time_ = base::TimeTicks::Now();
+    latest_shown_time_ = base::TimeTicks::Now();
+    first_shown_time_ = latest_shown_time_;
+    NotifyVizOfPageVisibilityUpdates();
   }
 }
 
@@ -483,7 +492,7 @@ RenderWidgetHostImpl::~RenderWidgetHostImpl() {
       }
       base::UmaHistogramTimes("Renderer.ContentProduction.DelayFromUnhide",
                               delay_from_unhide);
-    } else {
+    } else if (!paint_holding_activated_) {
       base::TimeTicks now = base::TimeTicks::Now();
 
       base::TimeDelta commit_to_unhide_delay;
@@ -584,6 +593,15 @@ void RenderWidgetHostImpl::SetView(RenderWidgetHostViewBase* view) {
     MaybeDispatchBufferedFrameSinkRequest();
     is_topmost_frame_widget_with_view_ =
         !view->IsRenderWidgetHostViewChildFrame() && !self_owned_;
+
+    if (!is_topmost_frame_widget_with_view_) {
+      // We need to drop input only for the topmost frame shown to the user, see
+      // crbug.com/40074208.
+      //
+      // TODO(https://crbug.com/397701273): What happens to the input events to
+      // a subframe in the navigated page?
+      input_router()->MakeActive();
+    }
 
     // SendScreenRects() and SynchronizeVisualProperties() delay until a view
     // is set, however we come here with a newly created `view` that is not
@@ -741,15 +759,8 @@ void RenderWidgetHostImpl::RendererWidgetCreated(bool for_frame_widget) {
   renderer_widget_created_ = true;
 
   mojo::PendingRemote<blink::mojom::RenderInputRouterClient> browser_remote;
-  mojo::PendingReceiver<blink::mojom::RenderInputRouterClient> viz_receiver =
-      mojo::NullReceiver();
-  if (input::IsTransferInputToVizSupported()) {
-    mojo::PendingRemote<blink::mojom::RenderInputRouterClient> viz_remote;
-    viz_receiver = viz_remote.InitWithNewPipeAndPassReceiver();
-    viz_rir_client_remote_ = std::move(viz_remote);
-  }
-  blink_widget_->SetupRenderInputRouterConnections(
-      browser_remote.InitWithNewPipeAndPassReceiver(), std::move(viz_receiver));
+  blink_widget_->SetupBrowserRenderInputRouterConnections(
+      browser_remote.InitWithNewPipeAndPassReceiver());
 
   GetRenderInputRouter()->BindRenderInputRouterInterfaces(
       std::move(browser_remote));
@@ -854,6 +865,8 @@ void RenderWidgetHostImpl::WasHidden() {
   // Tell the RenderProcessHost we were hidden.
   GetProcess()->UpdateClientPriority(this);
 
+  NotifyVizOfPageVisibilityUpdates();
+
   for (auto& observer : observers_) {
     observer.RenderWidgetHostVisibilityChanged(this, false);
   }
@@ -872,10 +885,10 @@ void RenderWidgetHostImpl::WasShown(
   TRACE_EVENT_WITH_FLOW0("renderer_host", "RenderWidgetHostImpl::WasShown",
                          routing_id_, TRACE_EVENT_FLAG_FLOW_OUT);
   is_hidden_ = false;
-
+  latest_shown_time_ = base::TimeTicks::Now();
   if (!was_ever_shown_) {
     was_ever_shown_ = true;
-    first_shown_time_ = base::TimeTicks::Now();
+    first_shown_time_ = latest_shown_time_;
   }
 
   // If we navigated in background, clear the displayed graphics of the
@@ -883,7 +896,7 @@ void RenderWidgetHostImpl::WasShown(
   // TODO(crbug.com/40249421): Checking if there is a content rendering timeout
   // running isn't ideal for seeing if the tab navigated in the background.
   ForceFirstFrameAfterNavigationTimeout();
-  RestartInputEventAckTimeoutIfNecessary();
+  RestartRenderInputRouterInputEventAckTimeout();
 
   // This methods avoids running when the widget is hidden, so we run it here
   // once it is no longer hidden.
@@ -891,7 +904,15 @@ void RenderWidgetHostImpl::WasShown(
   // SendScreenRects() and SynchronizeVisualProperties() should happen
   // together as one message, but we send them back-to-back for now so that
   // all state gets to the renderer as close together as possible.
-  SynchronizeVisualProperties();
+  //
+  // If we are evicted we need to unthrottle the synchronization. The pending
+  // ack could have been set after we were hidden. We need to always sync the
+  // new `viz::LocalSurfaceId` to restore from being evicted.
+  if (view_->is_evicted()) {
+    SynchronizeVisualPropertiesIgnoringPendingAck();
+  } else {
+    SynchronizeVisualProperties();
+  }
 
   CHECK(!pending_show_params_);
   if (!waiting_for_init_) {
@@ -905,6 +926,8 @@ void RenderWidgetHostImpl::WasShown(
   view_->reset_is_evicted();
 
   GetProcess()->UpdateClientPriority(this);
+
+  NotifyVizOfPageVisibilityUpdates();
 
   for (auto& observer : observers_) {
     observer.RenderWidgetHostVisibilityChanged(this, true);
@@ -1103,7 +1126,7 @@ blink::VisualProperties RenderWidgetHostImpl::GetVisualProperties() {
         gfx::Rect(view_->GetCompositorViewportPixelSize());
     visual_properties.window_controls_overlay_rect =
         delegate_->GetWindowsControlsOverlayRect();
-    visual_properties.virtual_keyboard_resize_height_physical_px =
+    visual_properties.virtual_keyboard_resize_height_device_px =
         delegate_->GetVirtualKeyboardResizeHeight();
     visual_properties.window_show_state = delegate_->GetWindowShowState();
     visual_properties.resizable = delegate_->GetResizable();
@@ -1466,27 +1489,35 @@ void RenderWidgetHostImpl::ViewDestroyed() {
   SetView(nullptr);
 }
 
-bool RenderWidgetHostImpl::RequestRepaintForTesting() {
+bool RenderWidgetHostImpl::RequestRepaintOnNewSurface() {
   if (!view_) {
     return false;
   }
 
-  return view_->RequestRepaintForTesting();
+  return view_->RequestRepaintOnNewSurface();
 }
 
 void RenderWidgetHostImpl::RenderProcessBlockedStateChanged(bool blocked) {
-  if (blocked) {
-    GetRenderInputRouter()->StopInputEventAckTimeout();
-  } else {
-    RestartInputEventAckTimeoutIfNecessary();
+  GetRenderInputRouter()->RenderProcessBlockedStateChanged(blocked);
+}
+
+void RenderWidgetHostImpl::NotifyVizOfPageVisibilityUpdates() {
+  if (auto* delegate_remote =
+          mojo_rir_delegate_impl_.GetRenderInputRouterDelegateRemote()) {
+    delegate_remote->NotifyVisibilityChanged(frame_sink_id_, is_hidden_);
   }
 }
 
-void RenderWidgetHostImpl::RestartInputEventAckTimeoutIfNecessary() {
+void RenderWidgetHostImpl::RestartRenderInputRouterInputEventAckTimeout() {
   if (is_hidden_) {
     return;
   }
-
+  // Notifies RenderInputRouters on both browser and VizCompositor to restart
+  // their input event ack timers.
+  if (auto* remote =
+          mojo_rir_delegate_impl_.GetRenderInputRouterDelegateRemote()) {
+    remote->RestartInputEventAckTimeoutIfNecessary(GetFrameSinkId());
+  }
   GetRenderInputRouter()->RestartInputEventAckTimeoutIfNecessary();
 }
 
@@ -1504,7 +1535,18 @@ void RenderWidgetHostImpl::DidNavigate() {
   }
 }
 
-void RenderWidgetHostImpl::StartNewContentRenderingTimeout() {
+void RenderWidgetHostImpl::InitializePaintHolding(bool active) {
+  paint_holding_activated_ = active;
+
+  if (!active) {
+    // Input router remains inactive in the post-navigation page while
+    // paint-holding shows the user a snapshot of previous page.  If
+    // paint-holding is not active, there is no need to hold back input from the
+    // new page.
+    input_router()->MakeActive();
+    return;
+  }
+
   if (!new_content_rendering_timeout_) {
     return;
   }
@@ -1534,6 +1576,10 @@ void RenderWidgetHostImpl::ForwardMouseEventWithLatencyInfo(
 
   CHECK_GE(mouse_event.GetType(), WebInputEvent::Type::kMouseTypeFirst);
   CHECK_LE(mouse_event.GetType(), WebInputEvent::Type::kMouseTypeLast);
+
+  if (delegate_ && delegate_->PreHandleMouseEvent(mouse_event)) {
+    return;
+  }
 
   for (auto& mouse_event_callback : mouse_event_callbacks_) {
     if (mouse_event_callback.Run(mouse_event)) {
@@ -2105,7 +2151,20 @@ void RenderWidgetHostImpl::GetSnapshotFromBrowser(
   if (from_surface) {
     pending_surface_browser_snapshots_.insert(
         std::make_pair(snapshot_id, std::move(callback)));
-    RequestForceRedraw(snapshot_id);
+    if (base::FeatureList::IsEnabled(features::kCDPScreenshotNewSurface)) {
+      // 1. Force content redraw in the renderer.
+      blink_widget_->ForceRedraw(base::DoNothing());
+      // 2. Force a repaint to ensure that surface is updated.
+      RequestRepaintOnNewSurface();
+      // 3. Create a copy request from the newest surface. This
+      // should wait until the requested repaint has arrived.
+      GetView()->CopyFromSurface(
+          gfx::Rect(), gfx::Size(),
+          base::BindOnce(&RenderWidgetHostImpl::OnSnapshotFromSurfaceReceived,
+                         weak_factory_.GetWeakPtr(), snapshot_id, 0));
+    } else {
+      RequestForceRedraw(snapshot_id);
+    }
     return;
   }
 
@@ -2396,14 +2455,23 @@ void RenderWidgetHostImpl::Destroy(bool also_delete) {
   }
 }
 
-void RenderWidgetHostImpl::OnInputEventAckTimeout() {
+void RenderWidgetHostImpl::OnInputEventAckTimeout(
+    base::TimeTicks ack_timeout_ts) {
   if (is_hidden_) {
     return;
   }
+
+  // If a widget's visibility changed mid-input sequence handling and an ack
+  // later times out, defer marking the renderer unresponsive until the widget
+  // has been shown for at least `kHungRendererDelay`.
+  if ((ack_timeout_ts - latest_shown_time_) < input::kHungRendererDelay) {
+    return;
+  }
+
   RendererIsUnresponsive(
       RendererIsUnresponsiveReason::kOnInputEventAckTimeout,
       base::BindRepeating(
-          &RenderWidgetHostImpl::RestartInputEventAckTimeoutIfNecessary,
+          &RenderWidgetHostImpl::RestartRenderInputRouterInputEventAckTimeout,
           weak_factory_.GetWeakPtr()));
 }
 
@@ -2439,6 +2507,17 @@ void RenderWidgetHostImpl::RendererIsResponsive() {
   }
 }
 
+void RenderWidgetHostImpl::DidOverscroll(
+    blink::mojom::DidOverscrollParamsPtr params) {
+  if (view_) {
+    ui::DidOverscrollParams overscroll_params = {
+        params->accumulated_overscroll, params->latest_overscroll_delta,
+        params->current_fling_velocity, params->causal_event_viewport_point,
+        params->overscroll_behavior};
+    view_->DidOverscroll(overscroll_params);
+  }
+}
+
 void RenderWidgetHostImpl::ClearDisplayedGraphics() {
   NotifyNewContentRenderingTimeoutForTesting();
   if (view_) {
@@ -2452,6 +2531,8 @@ void RenderWidgetHostImpl::ClearDisplayedGraphics() {
   // we will release input events at this point anyway.  So for our purpose,
   // this is equivalent to receiving the signal.
   first_content_metadata_received_ = true;
+
+  input_router()->MakeActive();
 }
 
 void RenderWidgetHostImpl::OnKeyboardEventAck(
@@ -3022,10 +3103,9 @@ void RenderWidgetHostImpl::TextInputStateChanged(
 
 void RenderWidgetHostImpl::OnImeCompositionRangeChanged(
     const gfx::Range& range,
-    const std::optional<std::vector<gfx::Rect>>& character_bounds,
-    const std::optional<std::vector<gfx::Rect>>& line_bounds) {
+    const std::optional<std::vector<gfx::Rect>>& character_bounds) {
   if (view_) {
-    view_->ImeCompositionRangeChanged(range, character_bounds, line_bounds);
+    view_->ImeCompositionRangeChanged(range, character_bounds);
   }
 }
 
@@ -3269,10 +3349,6 @@ void RenderWidgetHostImpl::OnInputIgnored(const blink::WebInputEvent& event) {
   delegate_->OnInputIgnored(event);
 }
 
-bool RenderWidgetHostImpl::IsRendererProcessBlocked() {
-  return GetProcess()->IsBlocked();
-}
-
 input::StylusInterface* RenderWidgetHostImpl::GetStylusInterface() {
   return static_cast<input::StylusInterface*>(GetView());
 }
@@ -3314,29 +3390,6 @@ RenderWidgetHostImpl::BindAndGenerateCreateFrameWidgetParams() {
 
   params->visual_properties = GetInitialVisualProperties();
 
-  return params;
-}
-
-mojom::CreateFrameWidgetParamsPtr
-RenderWidgetHostImpl::BindAndGenerateCreateFrameWidgetParamsForNewWindow() {
-  auto params = mojom::CreateFrameWidgetParams::New();
-  params->routing_id = GetRoutingID();
-  mojo::PendingAssociatedRemote<blink::mojom::Widget> widget_remote;
-  params->widget = widget_remote.InitWithNewEndpointAndPassReceiver();
-  BindWidgetInterfaces(params->widget_host.InitWithNewEndpointAndPassReceiver(),
-                       std::move(widget_remote));
-  mojo::PendingAssociatedRemote<blink::mojom::FrameWidget> frame_widget_remote;
-  params->frame_widget =
-      frame_widget_remote.InitWithNewEndpointAndPassReceiver();
-  BindFrameWidgetInterfaces(
-      params->frame_widget_host.InitWithNewEndpointAndPassReceiver(),
-      std::move(frame_widget_remote));
-  // TODO(danakj): For some reason, there is no RenderWidgetHostView here, but
-  // it seems like there should be one? In the meantime we send some nonsense
-  // with semi-valid but incorrect screen info (it needs a RenderWidgetHostView
-  // to be correct). An updated VisualProperties will get to the RenderWidget
-  // eventually.
-  params->visual_properties.screen_infos = GetScreenInfos();
   return params;
 }
 
@@ -3552,23 +3605,23 @@ void RenderWidgetHostImpl::CreateFrameSink(
     mojo::PendingReceiver<viz::mojom::CompositorFrameSink>
         compositor_frame_sink_receiver,
     mojo::PendingRemote<viz::mojom::CompositorFrameSinkClient>
-        compositor_frame_sink_client) {
+        compositor_frame_sink_client,
+    mojo::PendingRemote<blink::mojom::RenderInputRouterClient>
+        viz_rir_client_remote) {
   // Connects the viz process end of CompositorFrameSink message pipes. The
   // renderer compositor may request a new CompositorFrameSink on context
   // loss, which will destroy the existing CompositorFrameSink.
   create_frame_sink_callback_ = base::BindOnce(
       [](mojo::PendingReceiver<viz::mojom::CompositorFrameSink> receiver,
          mojo::PendingRemote<viz::mojom::CompositorFrameSinkClient> client,
-         std::optional<mojo::PendingRemote<
-             blink::mojom::RenderInputRouterClient>> viz_rir_client_remote,
+         mojo::PendingRemote<blink::mojom::RenderInputRouterClient>
+             viz_rir_client_remote,
          bool force_enable_zoom, base::UnguessableToken grouping_id,
          const viz::FrameSinkId& frame_sink_id) {
         input::mojom::RenderInputRouterConfigPtr config;
-        if (input::IsTransferInputToVizSupported()) {
-          DCHECK(viz_rir_client_remote.has_value());
-
+        if (input::InputUtils::IsTransferInputToVizSupported()) {
           config = input::mojom::RenderInputRouterConfig::New();
-          config->rir_client = std::move(viz_rir_client_remote.value());
+          config->rir_client = std::move(viz_rir_client_remote);
           config->grouping_id = grouping_id;
           config->force_enable_zoom = force_enable_zoom;
         }
@@ -3577,10 +3630,14 @@ void RenderWidgetHostImpl::CreateFrameSink(
             std::move(config));
       },
       std::move(compositor_frame_sink_receiver),
-      std::move(compositor_frame_sink_client),
-      std::move(viz_rir_client_remote_),
+      std::move(compositor_frame_sink_client), std::move(viz_rir_client_remote),
       GetRenderInputRouter()->GetForceEnableZoom());
 
+  if (input::InputUtils::IsTransferInputToVizSupported()) {
+    // Handles setting up GPU mojo endpoint connections for
+    // RenderInputRouterDelegate[Client] interfaces.
+    mojo_rir_delegate_impl_.SetupRenderInputRouterDelegateConnection();
+  }
   MaybeDispatchBufferedFrameSinkRequest();
 }
 
@@ -3688,6 +3745,10 @@ void RenderWidgetHostImpl::SetupInputRouter() {
 }
 
 void RenderWidgetHostImpl::SetForceEnableZoom(bool enabled) {
+  if (auto* remote =
+          mojo_rir_delegate_impl_.GetRenderInputRouterDelegateRemote()) {
+    remote->ForceEnableZoomStateChanged(enabled, frame_sink_id_);
+  }
   GetRenderInputRouter()->SetForceEnableZoom(enabled);
 }
 
@@ -3761,6 +3822,7 @@ void RenderWidgetHostImpl::OnRenderFrameMetadataChangedAfterActivation(
   if (!first_content_metadata_received_) {
     first_content_metadata_received_ = true;
     first_content_metadata_time_ = base::TimeTicks::Now();
+    input_router()->MakeActive();
   }
 
   const auto& metadata =
@@ -3772,14 +3834,6 @@ void RenderWidgetHostImpl::OnRenderFrameMetadataChangedAfterActivation(
 
   if (mobile_optimized_state_changed) {
     input_router()->NotifySiteIsMobileOptimized(is_mobile_optimized_);
-    // Notifies Viz only if the page's mobile optimized state has changed, since
-    // this is only used to set touch ack timeout delay for mobile sites in
-    // PassthroughTouchEventQueue.
-    if (auto* delegate_remote =
-            delegate()->GetRenderInputRouterDelegateRemote()) {
-      delegate_remote->NotifySiteIsMobileOptimized(is_mobile_optimized_,
-                                                   frame_sink_id_);
-    }
     if (auto* touch_emulator =
             GetTouchEmulator(/*create_if_necessary=*/false)) {
       touch_emulator->SetDoubleTapSupportForPageEnabled(!is_mobile_optimized_);

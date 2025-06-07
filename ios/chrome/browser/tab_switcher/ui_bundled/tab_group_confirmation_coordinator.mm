@@ -39,6 +39,7 @@
   if (self) {
     _actionType = actionType;
     _sourceView = sourceView;
+    _canCancel = YES;
   }
   return self;
 }
@@ -51,6 +52,7 @@
   if (self) {
     _actionType = actionType;
     _sourceButtonItem = sourceButtonItem;
+    _canCancel = YES;
   }
   return self;
 }
@@ -84,6 +86,7 @@
   _actionSheetCoordinator.alertStyle = _showAsAlert
                                            ? UIAlertControllerStyleAlert
                                            : UIAlertControllerStyleActionSheet;
+
   _actionSheetCoordinator.popoverArrowDirection =
       UIPopoverArrowDirectionDown | UIPopoverArrowDirectionUp;
 
@@ -94,17 +97,21 @@
                                      }
                                       style:UIAlertActionStyleDestructive];
   if ([self shouldHaveSecondaryAction]) {
+    UIAlertActionStyle secondaryStyle =
+        self.canCancel ? UIAlertActionStyleDefault : UIAlertActionStyleCancel;
     [_actionSheetCoordinator addItemWithTitle:[self secondaryItemTitle]
                                        action:^{
                                          [weakSelf handleSecondaryAction];
                                        }
-                                        style:UIAlertActionStyleDefault];
+                                        style:secondaryStyle];
   }
-  [_actionSheetCoordinator addItemWithTitle:l10n_util::GetNSString(IDS_CANCEL)
-                                     action:^{
-                                       [weakSelf stop];
-                                     }
-                                      style:UIAlertActionStyleCancel];
+  if (self.canCancel) {
+    [_actionSheetCoordinator addItemWithTitle:l10n_util::GetNSString(IDS_CANCEL)
+                                       action:^{
+                                         [weakSelf stop];
+                                       }
+                                        style:UIAlertActionStyleCancel];
+  }
   [_actionSheetCoordinator start];
 }
 
@@ -136,6 +143,9 @@
 // Stops the action sheet coordinator currently showned and nullifies the
 // instance.
 - (void)dismissActionSheetCoordinator {
+  if (self.dismissAction) {
+    self.dismissAction();
+  }
   [_actionSheetCoordinator stop];
   _actionSheetCoordinator = nil;
 }
@@ -193,14 +203,12 @@
 
 // Returns a string used in the action sheet as a message.
 - (NSString*)sheetMessage {
-  ProfileIOS* profile = self.browser->GetProfile();
-
   // Show a user's email in the message if it's not incognito and a user is
   // signed in.
   NSString* userEmail = nil;
-  if (!profile->IsOffTheRecord()) {
+  if (!self.profile->IsOffTheRecord()) {
     AuthenticationService* authenticationService =
-        AuthenticationServiceFactory::GetForProfile(profile);
+        AuthenticationServiceFactory::GetForProfile(self.profile);
     id<SystemIdentity> identity = authenticationService->GetPrimaryIdentity(
         signin::ConsentLevel::kSignin);
     userEmail = identity.userEmail;

@@ -118,15 +118,15 @@ TEST_F(PrivacySandboxAttestationsInstallerFeatureEnabledTest,
 TEST_F(PrivacySandboxAttestationsInstallerFeatureEnabledTest, OnCustomInstall) {
   PrivacySandboxAttestationsComponentInstallerPolicy policy(base::DoNothing());
 
-  EXPECT_EQ(policy.OnCustomInstall(base::Value::Dict(), base::FilePath())
-                .result.code_,
-            0);
+  EXPECT_EQ(
+      policy.OnCustomInstall(base::Value::Dict(), base::FilePath()).result.code,
+      0);
 }
 
 TEST_F(PrivacySandboxAttestationsInstallerFeatureEnabledTest,
        RegisterIfFeatureEnabled) {
   component_updater::MockComponentUpdateService mock_update_service;
-  EXPECT_CALL(mock_update_service, RegisterComponent(testing::_)).Times(1);
+  EXPECT_CALL(mock_update_service, RegisterComponent(testing::_));
   RegisterPrivacySandboxAttestationsComponent(&mock_update_service);
 
   env_.RunUntilIdle();

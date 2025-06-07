@@ -29,6 +29,10 @@
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
 
+#if defined(ABSL_HAVE_ADDRESS_SANITIZER)
+#include <sanitizer/asan_interface.h>
+#endif
+
 // must be last
 #include "google/protobuf/port_def.inc"
 
@@ -40,10 +44,12 @@ class MessageLite;
 
 namespace internal {
 
+PROTOBUF_EXPORT size_t StringSpaceUsedExcludingSelfLong(const std::string& str);
+
 struct MessageTraitsImpl;
 
 template <typename T>
-inline PROTOBUF_ALWAYS_INLINE void StrongPointer(T* var) {
+PROTOBUF_ALWAYS_INLINE void StrongPointer(T* var) {
 #if defined(__GNUC__)
   asm("" : : "r"(var));
 #else
@@ -57,14 +63,14 @@ inline PROTOBUF_ALWAYS_INLINE void StrongPointer(T* var) {
 // Optimized implementation for clang where we can generate a relocation without
 // adding runtime instructions.
 template <typename T, T ptr>
-inline PROTOBUF_ALWAYS_INLINE void StrongPointer() {
+PROTOBUF_ALWAYS_INLINE void StrongPointer() {
   // This injects a relocation in the code path without having to run code, but
   // we can only do it with a newer clang.
   asm(".reloc ., BFD_RELOC_NONE, %p0" ::"Ws"(ptr));
 }
 
 template <typename T, typename TraitsImpl = MessageTraitsImpl>
-inline PROTOBUF_ALWAYS_INLINE void StrongReferenceToType() {
+PROTOBUF_ALWAYS_INLINE void StrongReferenceToType() {
   static constexpr auto ptr =
       decltype(TraitsImpl::template value<T>)::StrongPointer();
   // This is identical to the implementation of StrongPointer() above, but it
@@ -76,12 +82,12 @@ inline PROTOBUF_ALWAYS_INLINE void StrongReferenceToType() {
 // Portable fallback. It usually generates a single LEA instruction or
 // equivalent.
 template <typename T, T ptr>
-inline PROTOBUF_ALWAYS_INLINE void StrongPointer() {
+PROTOBUF_ALWAYS_INLINE void StrongPointer() {
   StrongPointer(ptr);
 }
 
 template <typename T, typename TraitsImpl = MessageTraitsImpl>
-inline PROTOBUF_ALWAYS_INLINE void StrongReferenceToType() {
+PROTOBUF_ALWAYS_INLINE void StrongReferenceToType() {
   return StrongPointer(
       decltype(TraitsImpl::template value<T>)::StrongPointer());
 }
@@ -174,14 +180,9 @@ template <typename To, typename From>
 void AssertDownCast(From* from) {
   static_assert(std::is_base_of<From, To>::value, "illegal DownCast");
 
-#if defined(__cpp_concepts)
   // Check that this function is not used to downcast message types.
   // For those we should use {Down,Dynamic}CastTo{Message,Generated}.
-  static_assert(!requires {
-    std::derived_from<std::remove_pointer_t<To>,
-                      typename std::remove_pointer_t<To>::MessageLite>;
-  });
-#endif
+  static_assert(!std::is_base_of_v<MessageLite, To>);
 
 #if PROTOBUF_RTTI
   // RTTI: debug mode only!
@@ -248,6 +249,14 @@ enum { kCacheAlignment = alignof(max_align_t) };  // do the best we can
 // The maximum byte alignment we support.
 enum { kMaxMessageAlignment = 8 };
 
+inline constexpr bool EnableExperimentalMicroString() {
+#if defined(PROTOBUF_ENABLE_EXPERIMENTAL_MICRO_STRING)
+  return true;
+#else
+  return false;
+#endif
+}
+
 // Returns true if debug hardening for clearing oneof message on arenas is
 // enabled.
 inline constexpr bool DebugHardenClearOneofMessageOnArena() {
@@ -258,9 +267,18 @@ inline constexpr bool DebugHardenClearOneofMessageOnArena() {
 #endif
 }
 
+constexpr bool HasAnySanitizer() {
+#if defined(ABSL_HAVE_ADDRESS_SANITIZER) || \
+    defined(ABSL_HAVE_MEMORY_SANITIZER) || defined(ABSL_HAVE_THREAD_SANITIZER)
+  return true;
+#else
+  return false;
+#endif
+}
+
 constexpr bool PerformDebugChecks() {
-#if defined(NDEBUG) && !defined(PROTOBUF_ASAN) && !defined(PROTOBUF_MSAN) && \
-    !defined(PROTOBUF_TSAN)
+  if (HasAnySanitizer()) return true;
+#if defined(NDEBUG)
   return false;
 #else
   return true;
@@ -293,6 +311,18 @@ constexpr bool DebugHardenFuzzMessageSpaceUsedLong() {
   return false;
 }
 
+// Reads n bytes from p, if PerformDebugChecks() is true. This allows ASAN to
+// detect if a range of memory is not valid when we expect it to be. The
+// volatile keyword is necessary here to prevent the compiler from optimizing
+// away the memory reads below.
+inline void AssertBytesAreReadable(const volatile char* p, int n) {
+  if (PerformDebugChecks()) {
+    for (int i = 0; i < n; ++i) {
+      p[i];
+    }
+  }
+}
+
 // Returns true if pointers are 8B aligned, leaving least significant 3 bits
 // available.
 inline constexpr bool PtrIsAtLeast8BAligned() { return alignof(void*) >= 8; }
@@ -301,6 +331,15 @@ inline constexpr bool IsLazyParsingSupported() {
   // We need 3 bits for pointer tagging in lazy parsing.
   return PtrIsAtLeast8BAligned();
 }
+
+#if defined(ABSL_IS_LITTLE_ENDIAN)
+constexpr bool IsLittleEndian() { return true; }
+#elif defined(ABSL_IS_BIG_ENDIAN)
+constexpr bool IsLittleEndian() { return false; }
+#else
+#error "Only little-endian and big-endian are supported"
+#endif
+constexpr bool IsBigEndian() { return !IsLittleEndian(); }
 
 // Prefetch 5 64-byte cache line starting from 7 cache-lines ahead.
 // Constants are somewhat arbitrary and pretty aggressive, but were
@@ -311,7 +350,7 @@ inline constexpr bool IsLazyParsingSupported() {
 // past the end of message/valid memory, however we are doing this
 // inside inline asm block, since computing the invalid pointer
 // is a potential UB. Only insert prefetch once per function,
-inline PROTOBUF_ALWAYS_INLINE void Prefetch5LinesFrom7Lines(const void* ptr) {
+PROTOBUF_ALWAYS_INLINE void Prefetch5LinesFrom7Lines(const void* ptr) {
   PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 448);
   PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 512);
   PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 576);
@@ -320,7 +359,7 @@ inline PROTOBUF_ALWAYS_INLINE void Prefetch5LinesFrom7Lines(const void* ptr) {
 }
 
 // Prefetch 5 64-byte cache lines starting from 1 cache-line ahead.
-inline PROTOBUF_ALWAYS_INLINE void Prefetch5LinesFrom1Line(const void* ptr) {
+PROTOBUF_ALWAYS_INLINE void Prefetch5LinesFrom1Line(const void* ptr) {
   PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 64);
   PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 128);
   PROTOBUF_PREFETCH_WITH_OFFSET(ptr, 192);
@@ -329,8 +368,7 @@ inline PROTOBUF_ALWAYS_INLINE void Prefetch5LinesFrom1Line(const void* ptr) {
 }
 
 #if defined(NDEBUG) && ABSL_HAVE_BUILTIN(__builtin_unreachable)
-[[noreturn]] ABSL_ATTRIBUTE_COLD PROTOBUF_ALWAYS_INLINE inline void
-Unreachable() {
+[[noreturn]] ABSL_ATTRIBUTE_COLD PROTOBUF_ALWAYS_INLINE void Unreachable() {
   __builtin_unreachable();
 }
 #elif ABSL_HAVE_BUILTIN(__builtin_FILE) && ABSL_HAVE_BUILTIN(__builtin_LINE)
@@ -344,13 +382,45 @@ Unreachable() {
 }
 #endif
 
-#ifdef PROTOBUF_TSAN
+constexpr bool HasMemoryPoisoning() {
+#if defined(ABSL_HAVE_ADDRESS_SANITIZER)
+  return true;
+#else
+  return false;
+#endif
+}
+
+// Poison memory region when supported by sanitizer config.
+inline void PoisonMemoryRegion(const void* p, size_t n) {
+#if defined(ABSL_HAVE_ADDRESS_SANITIZER)
+  ASAN_POISON_MEMORY_REGION(p, n);
+#else
+  // Nothing
+#endif
+}
+
+inline void UnpoisonMemoryRegion(const void* p, size_t n) {
+#if defined(ABSL_HAVE_ADDRESS_SANITIZER)
+  ASAN_UNPOISON_MEMORY_REGION(p, n);
+#else
+  // Nothing
+#endif
+}
+
+inline bool IsMemoryPoisoned(const void* p) {
+#if defined(ABSL_HAVE_ADDRESS_SANITIZER)
+  return __asan_address_is_poisoned(p);
+#else
+  return false;
+#endif
+}
+
+#if defined(ABSL_HAVE_THREAD_SANITIZER)
 // TODO: it would be preferable to use __tsan_external_read/
 // __tsan_external_write, but they can cause dlopen issues.
 template <typename T>
-inline PROTOBUF_ALWAYS_INLINE void TSanRead(const T* impl) {
-  char protobuf_tsan_dummy =
-      *reinterpret_cast<const char*>(&impl->_tsan_detect_race);
+PROTOBUF_ALWAYS_INLINE void TSanRead(const T* impl) {
+  char protobuf_tsan_dummy = impl->_tsan_detect_race;
   asm volatile("" : "+r"(protobuf_tsan_dummy));
 }
 
@@ -358,12 +428,12 @@ inline PROTOBUF_ALWAYS_INLINE void TSanRead(const T* impl) {
 // member is not important. We can unconditionally write to it without affecting
 // correctness of the rest of the class.
 template <typename T>
-inline PROTOBUF_ALWAYS_INLINE void TSanWrite(T* impl) {
-  *reinterpret_cast<char*>(&impl->_tsan_detect_race) = 0;
+PROTOBUF_ALWAYS_INLINE void TSanWrite(T* impl) {
+  impl->_tsan_detect_race = 0;
 }
 #else
-inline PROTOBUF_ALWAYS_INLINE void TSanRead(const void*) {}
-inline PROTOBUF_ALWAYS_INLINE void TSanWrite(const void*) {}
+PROTOBUF_ALWAYS_INLINE void TSanRead(const void*) {}
+PROTOBUF_ALWAYS_INLINE void TSanWrite(const void*) {}
 #endif
 
 // This trampoline allows calling from codegen without needing a #include to
@@ -384,19 +454,16 @@ constexpr T* Launder(T* p) {
 }
 
 #if defined(PROTOBUF_CUSTOM_VTABLE)
-constexpr bool EnableCustomNew() { return true; }
 template <typename T>
 constexpr bool EnableCustomNewFor() {
   return true;
 }
 #elif ABSL_HAVE_BUILTIN(__is_bitwise_cloneable)
-constexpr bool EnableCustomNew() { return true; }
 template <typename T>
 constexpr bool EnableCustomNewFor() {
   return __is_bitwise_cloneable(T);
 }
 #else
-constexpr bool EnableCustomNew() { return false; }
 template <typename T>
 constexpr bool EnableCustomNewFor() {
   return false;
@@ -439,6 +506,61 @@ class NoopDebugCounter {
   explicit constexpr NoopDebugCounter() = default;
   constexpr void Inc() {}
 };
+
+// Default empty string object. Don't use this directly. Instead, call
+// GetEmptyString() to get the reference. This empty string is aligned with a
+// minimum alignment of 8 bytes to match the requirement of ArenaStringPtr.
+
+// Take advantage of C++20 constexpr support in std::string.
+class alignas(8) GlobalEmptyStringConstexpr {
+ public:
+  const std::string& get() const { return value_; }
+  // Nothing to init, or destroy.
+  std::string* Init() const { return nullptr; }
+
+  template <typename T = std::string, bool = (T(), true)>
+  static constexpr std::true_type HasConstexprDefaultConstructor(int) {
+    return {};
+  }
+  static constexpr std::false_type HasConstexprDefaultConstructor(char) {
+    return {};
+  }
+
+ private:
+  std::string value_;
+};
+
+class alignas(8) GlobalEmptyStringDynamicInit {
+ public:
+  const std::string& get() const {
+    return *reinterpret_cast<const std::string*>(internal::Launder(buffer_));
+  }
+  std::string* Init() {
+    return ::new (static_cast<void*>(buffer_)) std::string();
+  }
+
+ private:
+  alignas(std::string) char buffer_[sizeof(std::string)];
+};
+
+using GlobalEmptyString = std::conditional_t<
+    GlobalEmptyStringConstexpr::HasConstexprDefaultConstructor(0),
+    const GlobalEmptyStringConstexpr, GlobalEmptyStringDynamicInit>;
+
+PROTOBUF_EXPORT extern GlobalEmptyString fixed_address_empty_string;
+
+enum class BoundsCheckMode { kNoEnforcement, kReturnDefault, kAbort };
+
+PROTOBUF_EXPORT constexpr BoundsCheckMode GetBoundsCheckMode() {
+#if defined(PROTOBUF_INTERNAL_BOUNDS_CHECK_MODE_ABORT)
+  return BoundsCheckMode::kAbort;
+#elif defined(PROTOBUF_INTERNAL_BOUNDS_CHECK_MODE_RETURN_DEFAULT)
+  return BoundsCheckMode::kReturnDefault;
+#else
+  return BoundsCheckMode::kNoEnforcement;
+#endif
+}
+
 
 }  // namespace internal
 }  // namespace protobuf

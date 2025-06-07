@@ -17,6 +17,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
 
+import androidx.appcompat.view.ContextThemeWrapper;
 import androidx.test.core.app.ApplicationProvider;
 
 import org.junit.Before;
@@ -82,7 +83,10 @@ public class TabLabellerUnitTest {
     @Before
     public void setUp() {
         MessagingBackendServiceFactory.setForTesting(mMessagingBackendService);
-        mContext = ApplicationProvider.getApplicationContext();
+        mContext =
+                new ContextThemeWrapper(
+                        ApplicationProvider.getApplicationContext(),
+                        R.style.Theme_BrowserUI_DayNight);
         mTabGroupIdSupplier.set(GROUP_ID1);
         mTabLabeller =
                 new TabLabeller(
@@ -95,7 +99,7 @@ public class TabLabellerUnitTest {
 
     private PersistentMessage makeStandardMessage() {
         PersistentMessage message = new PersistentMessage();
-        message.type = PersistentNotificationType.CHIP;
+        message.type = PersistentNotificationType.DIRTY_TAB;
         message.attribution = new MessageAttribution();
         message.attribution.tabMetadata = new TabMessageMetadata();
         message.attribution.tabMetadata.localTabId = 1;
@@ -190,7 +194,7 @@ public class TabLabellerUnitTest {
     @Test
     public void testShowAll_WrongMessageType() {
         PersistentMessage message = makeStandardMessage();
-        message.type = PersistentNotificationType.DIRTY_TAB;
+        message.type = PersistentNotificationType.CHIP;
         List<PersistentMessage> messageList = List.of(message);
         when(mMessagingBackendService.getMessagesForGroup(any(), any())).thenReturn(messageList);
 

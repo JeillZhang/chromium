@@ -96,6 +96,8 @@ class ChromeMetricsServiceClientTest : public testing::Test {
 #if BUILDFLAG(IS_CHROMEOS)
     scoped_feature_list_.InitWithFeatures(
         {features::kUmaStorageDimensions,
+         features::kK12AgeClassificationMetricsProvider,
+         features::kClassManagementEnabledMetricsProvider,
          metrics::dwa::kDwaFeature},
         {});
 
@@ -166,13 +168,10 @@ TEST_F(ChromeMetricsServiceClientTest, FilterFiles) {
 }  // namespace
 
 TEST_F(ChromeMetricsServiceClientTest, TestRegisterUKMProviders) {
-  // Test that UKM service has initialized its metrics providers. Currently
-  // there are 10 providers for all platform except ChromeOS.
-  // AccessibilityStateProvider, NetworkMetricsProvider, InstallDateProvider,
-  // GPUMetricsProvider, CPUMetricsProvider ScreenInfoMetricsProvider,
-  // FormFactorMetricsProvider, FieldTrialsProvider,
-  // PrivacyBudgetMetricsProvider, and ComponentMetricsProvider.
-  size_t expected_providers = 10;
+  // Test that UKM service has initialized all its metrics providers listed in
+  // ChromeMetricsServiceClient::RegisterUKMProviders, for all platform with one
+  // exception on ChromeOS.
+  size_t expected_providers = 11;
 #if BUILDFLAG(IS_CHROMEOS)
   // ChromeOSMetricsProvider
   expected_providers++;
@@ -241,19 +240,20 @@ TEST_F(ChromeMetricsServiceClientTest, TestRegisterMetricsServiceProviders) {
   // AmbientModeMetricsProvider, AssistantServiceMetricsProvider,
   // CrosHealthdMetricsProvider, ChromeOSMetricsProvider,
   // ChromeOSHistogramMetricsProvider, ChromeShelfMetricsProvider,
-  // KeyboardBacklightColorMetricsProvider,
+  // ClassManagementEnabledMetricsProvider,
+  // K12AgeClassificationMetricsProvider, KeyboardBacklightColorMetricsProvider,
   // PersonalizationAppThemeMetricsProvider, PrinterMetricsProvider,
   // FamilyUserMetricsProvider, FamilyLinkUserMetricsProvider,
   // UpdateEngineMetricsProvider, OsSettingsMetricsProvider,
   // UserTypeByDeviceTypeMetricsProvider, WallpaperMetricsProvider,
   // and VmmMetricsProvider.
-  expected_providers += 16;
+  expected_providers += 18;
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if !BUILDFLAG(IS_CHROMEOS)
   // ChromeSigninStatusMetricsProvider (for non ChromeOS).
-  // AccessibilityMetricsProvider, FamilyLinkUserMetricsProvider
-  expected_providers += 3;
+  // FamilyLinkUserMetricsProvider
+  expected_providers += 2;
 #endif  // !BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_MAC)
@@ -272,6 +272,11 @@ TEST_F(ChromeMetricsServiceClientTest, TestRegisterMetricsServiceProviders) {
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
   // BluetoothMetricsProvider
+  expected_providers += 1;
+#endif
+
+#if BUILDFLAG(ENABLE_GLIC)
+  // GlicMetricsProvider
   expected_providers += 1;
 #endif
 
@@ -336,17 +341,9 @@ TEST_F(ChromeMetricsServiceClientTest, GetUploadSigningKey_CanSignLogs) {
   const std::string signing_key =
       chrome_metrics_service_client->GetUploadSigningKey();
 
-  std::string signature;
-  bool sign_success = metrics::UnsentLogStore::ComputeHMACForLog(
-      "Test Log Data", signing_key, &signature);
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  // The signing key should be able to sign data for a Chrome-branded build.
-  EXPECT_TRUE(sign_success);
+  std::string signature =
+      metrics::UnsentLogStore::ComputeHMACForLog("Test Log Data", signing_key);
+  // This signature never fails, even if there is no signing key available:
+  // empty keys are padded with zero bytes to the requisite length.
   EXPECT_FALSE(signature.empty());
-#else
-  // In non-branded builds, we may still have a valid signing key if
-  // USE_OFFICIAL_GOOGLE_API_KEYS is true. However, that macro is not available
-  // in this file, so just check that success == a non-empty signature.
-  EXPECT_EQ(sign_success, !signature.empty());
-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 }

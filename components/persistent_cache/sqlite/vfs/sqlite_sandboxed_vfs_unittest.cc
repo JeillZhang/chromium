@@ -11,6 +11,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "components/persistent_cache/sqlite/test_utils.h"
 #include "components/persistent_cache/sqlite/vfs/sqlite_database_vfs_file_set.h"
 #include "sql/database.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -27,47 +28,27 @@ const base::FilePath kNonExistentVirtualFilePath =
 
 class SqliteSandboxedVfsTest : public testing::Test {
  public:
-  base::FilePath GetTemporaryDir() {
-    scoped_temp_dirs_.emplace_back();
-    CHECK(scoped_temp_dirs_.back().CreateUniqueTempDir());
-    return scoped_temp_dirs_.back().GetPath();
-  }
-
-  SqliteVfsFileSet GetTemporaryVfsFileSet() {
-    base::FilePath temporary_subdir = GetTemporaryDir();
-
-    uint32_t flags = base::File::FLAG_OPEN_ALWAYS | base::File::FLAG_READ |
-                     base::File::FLAG_WRITE;
-
-    // Note: Specifically give nonsensical names to the files here to examplify
-    // that using a vfs allows for their use not through their actual names.
-    base::File db_file(temporary_subdir.AppendASCII("FIRST"), flags);
-    base::File journal_file(temporary_subdir.AppendASCII("SECOND"), flags);
-
-    return SqliteVfsFileSet(
-        SandboxedFile(std::move(db_file),
-                      SandboxedFile::AccessRights::kReadWrite),
-        SandboxedFile(std::move(journal_file),
-                      SandboxedFile::AccessRights::kReadWrite));
+  SqliteVfsFileSet CreateFilesAndBuildVfsFileSet() {
+    return temporary_vfs_file_set_provider_.CreateFilesAndBuildVfsFileSet();
   }
 
  private:
-  std::vector<base::ScopedTempDir> scoped_temp_dirs_;
+  test_utils::TestHelper temporary_vfs_file_set_provider_;
 };
 
 TEST_F(SqliteSandboxedVfsTest, NoAccessWithoutRegistering) {
-  SqliteVfsFileSet vfs_file_set = GetTemporaryVfsFileSet();
+  SqliteVfsFileSet vfs_file_set = CreateFilesAndBuildVfsFileSet();
   EXPECT_FALSE(SqliteSandboxedVfsDelegate::GetInstance()
                    ->OpenFile(kNonExistentVirtualFilePath, 0)
                    .IsValid());
 }
 
 TEST_F(SqliteSandboxedVfsTest, AccessAfterRegistering) {
-  SqliteVfsFileSet vfs_file_set = GetTemporaryVfsFileSet();
+  SqliteVfsFileSet vfs_file_set = CreateFilesAndBuildVfsFileSet();
 
   SqliteSandboxedVfsDelegate::UnregisterRunner unregister_runner =
       SqliteSandboxedVfsDelegate::GetInstance()->RegisterSandboxedFiles(
-          vfs_file_set.Copy());
+          vfs_file_set);
 
   for (const auto& virtual_file_path_to_file : vfs_file_set.GetFiles()) {
     EXPECT_TRUE(SqliteSandboxedVfsDelegate::GetInstance()
@@ -77,13 +58,13 @@ TEST_F(SqliteSandboxedVfsTest, AccessAfterRegistering) {
 }
 
 TEST_F(SqliteSandboxedVfsTest, NoAccessAfterUnregistering) {
-  SqliteVfsFileSet vfs_file_set = GetTemporaryVfsFileSet();
+  SqliteVfsFileSet vfs_file_set = CreateFilesAndBuildVfsFileSet();
 
   // Register and immediately unregister.
   {
     SqliteSandboxedVfsDelegate::UnregisterRunner unregister_runner =
         SqliteSandboxedVfsDelegate::GetInstance()->RegisterSandboxedFiles(
-            vfs_file_set.Copy());
+            vfs_file_set);
   }
 
   for (const auto& virtual_file_path_to_file : vfs_file_set.GetFiles()) {
@@ -94,19 +75,19 @@ TEST_F(SqliteSandboxedVfsTest, NoAccessAfterUnregistering) {
 }
 
 TEST_F(SqliteSandboxedVfsTest, AccessAfterReRegistering) {
-  SqliteVfsFileSet vfs_file_set = GetTemporaryVfsFileSet();
+  SqliteVfsFileSet vfs_file_set = CreateFilesAndBuildVfsFileSet();
 
   // Register and immediately unregister.
   {
     SqliteSandboxedVfsDelegate::UnregisterRunner unregister_runner =
         SqliteSandboxedVfsDelegate::GetInstance()->RegisterSandboxedFiles(
-            vfs_file_set.Copy());
+            vfs_file_set);
   }
 
   // Register again.
   SqliteSandboxedVfsDelegate::UnregisterRunner unregister_runner =
       SqliteSandboxedVfsDelegate::GetInstance()->RegisterSandboxedFiles(
-          vfs_file_set.Copy());
+          vfs_file_set);
 
   for (const auto& virtual_file_path_to_file : vfs_file_set.GetFiles()) {
     EXPECT_TRUE(SqliteSandboxedVfsDelegate::GetInstance()
@@ -116,7 +97,7 @@ TEST_F(SqliteSandboxedVfsTest, AccessAfterReRegistering) {
 }
 
 TEST_F(SqliteSandboxedVfsTest, DeleteFileAlwaysImpossible) {
-  SqliteVfsFileSet vfs_file_set = GetTemporaryVfsFileSet();
+  SqliteVfsFileSet vfs_file_set = CreateFilesAndBuildVfsFileSet();
 
   // Impossible to delete non-registered files.
   for (const auto& virtual_file_path_to_file : vfs_file_set.GetFiles()) {
@@ -127,7 +108,7 @@ TEST_F(SqliteSandboxedVfsTest, DeleteFileAlwaysImpossible) {
 
   SqliteSandboxedVfsDelegate::UnregisterRunner unregister_runner =
       SqliteSandboxedVfsDelegate::GetInstance()->RegisterSandboxedFiles(
-          vfs_file_set.Copy());
+          vfs_file_set);
 
   // Impossible to delete registered files.
   for (const auto& virtual_file_path_to_file : vfs_file_set.GetFiles()) {
@@ -138,40 +119,47 @@ TEST_F(SqliteSandboxedVfsTest, DeleteFileAlwaysImpossible) {
 }
 
 TEST_F(SqliteSandboxedVfsTest, OpenFile) {
-  SqliteVfsFileSet vfs_file_set = GetTemporaryVfsFileSet();
+  SqliteVfsFileSet vfs_file_set = CreateFilesAndBuildVfsFileSet();
 
   int64_t length = 0;
-  for (const auto& virtual_file_path_to_file : vfs_file_set.GetFiles()) {
-    virtual_file_path_to_file.second.DuplicateUnderlyingFile().SetLength(
+  for (auto& virtual_file_path_to_file : vfs_file_set.GetFiles()) {
+    virtual_file_path_to_file.second->UnderlyingFileForTesting().SetLength(
         length += 100);
   }
 
   SqliteSandboxedVfsDelegate::UnregisterRunner unregister_runner =
       SqliteSandboxedVfsDelegate::GetInstance()->RegisterSandboxedFiles(
-          vfs_file_set.Copy());
+          vfs_file_set);
 
   for (const auto& virtual_file_path_to_file : vfs_file_set.GetFiles()) {
-    const base::File from_delegate =
+    base::File::Info info_from_map;
+    virtual_file_path_to_file.second->UnderlyingFileForTesting().GetInfo(
+        &info_from_map);
+
+    // Simulate an open from the VFS.
+    base::File from_delegate =
         SqliteSandboxedVfsDelegate::GetInstance()->OpenFile(
             virtual_file_path_to_file.first, 0);
-    base::File from_map =
-        virtual_file_path_to_file.second.DuplicateUnderlyingFile();
 
     base::File::Info info_from_delegate;
-    base::File::Info info_from_map;
-
     from_delegate.GetInfo(&info_from_delegate);
-    from_map.GetInfo(&info_from_map);
-
     EXPECT_EQ(info_from_delegate.size, info_from_map.size);
+
+    // Simulate the binding done by the VFS.
+    virtual_file_path_to_file.second->OnFileOpened(std::move(from_delegate));
+
+    base::File::Info info_from_opened_file;
+    virtual_file_path_to_file.second->OpenedFileForTesting().GetInfo(
+        &info_from_opened_file);
+    EXPECT_EQ(info_from_opened_file.size, info_from_map.size);
   }
 }
 
 TEST_F(SqliteSandboxedVfsTest, SqliteIntegration) {
-  SqliteVfsFileSet vfs_file_set = GetTemporaryVfsFileSet();
+  SqliteVfsFileSet vfs_file_set = CreateFilesAndBuildVfsFileSet();
   SqliteSandboxedVfsDelegate::UnregisterRunner unregister_runner =
       SqliteSandboxedVfsDelegate::GetInstance()->RegisterSandboxedFiles(
-          vfs_file_set.Copy());
+          vfs_file_set);
 
   sql::Database db(sql::DatabaseOptions().set_vfs_name_discouraged(
                        SqliteSandboxedVfsDelegate::kSqliteVfsName),

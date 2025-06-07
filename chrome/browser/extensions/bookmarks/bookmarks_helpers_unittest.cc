@@ -22,7 +22,7 @@
 #include "components/bookmarks/managed/managed_bookmark_service.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
-#include "components/sync/base/features.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/sync_bookmarks/bookmark_sync_service.h"
 #include "content/public/test/browser_task_environment.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -85,6 +85,14 @@ class ExtensionBookmarksTest : public testing::Test {
     node2_ = model_->AddURL(folder_, 0, u"Digg", GURL("http://reddit.com"));
     model_->SetNodeMetaInfo(node2_, "some_key2", "some_value2");
     model_->AddURL(folder_, 0, u"CNet", GURL("http://cnet.com"));
+
+    // Add a URL to the mobile node so that it is not hidden.
+    model_->AddURL(model_->mobile_node(), 0, u"Mobile bookmark",
+                   GURL("http://www.mobile.com"));
+
+    // Add a URL to the managed node so that it is not hidden.
+    model_->AddURL(managed_->managed_node(), 0, u"Managed bookmark",
+                   GURL("http://www.managed.com"));
   }
 
   // A simple wrapper to get a single BookmarkTreeNode from a BookmarkNode (with
@@ -110,7 +118,7 @@ TEST_F(ExtensionBookmarksTest, GetFullTreeFromRoot) {
       GetBookmarkTreeNode(model_, managed_, model_->root_node(),
                           /*recurse=*/true,
                           /*only_folders=*/false);
-  ASSERT_EQ(2U, tree.children->size());
+  ASSERT_EQ(4U, tree.children->size());
 }
 
 TEST_F(ExtensionBookmarksTest, GetTreeFromOtherPermanentNode) {
@@ -195,8 +203,11 @@ TEST_F(ExtensionBookmarksTest, GetLocalPermanentAndManagedFolders) {
 
 TEST_F(ExtensionBookmarksTest, GetAccountPermanentNodes) {
   base::test::ScopedFeatureList features{
-      syncer::kSyncEnableBookmarksInTransportMode};
+      switches::kSyncEnableBookmarksInTransportMode};
   model_->CreateAccountPermanentFolders();
+  // Add a URL to the mobile node so that it is not hidden.
+  model_->AddURL(model_->account_mobile_node(), 0, u"Mobile bookmark",
+                 GURL("http://www.mobile.com"));
 
   EXPECT_THAT(
       GetSingleBookmarkTreeNode(model_->account_bookmark_bar_node()),
@@ -251,8 +262,11 @@ TEST_F(ExtensionBookmarksTest,
 TEST_F(ExtensionBookmarksTest,
        GetTreePopulatesSyncingProperty_AccountNodesEnabled) {
   base::test::ScopedFeatureList features{
-      syncer::kSyncEnableBookmarksInTransportMode};
+      switches::kSyncEnableBookmarksInTransportMode};
   model_->CreateAccountPermanentFolders();
+  // Add a URL to the mobile node so that it is not hidden.
+  model_->AddURL(model_->account_mobile_node(), 0, u"Mobile bookmark",
+                 GURL("http://www.mobile.com"));
 
   // Check that local permanent nodes are not syncing.
   EXPECT_FALSE(GetSingleBookmarkTreeNode(model_->bookmark_bar_node()).syncing);
@@ -369,6 +383,83 @@ TEST_F(ExtensionBookmarksTest, GetMetaInfo) {
     ASSERT_TRUE(dict.FindString("some_key2"));
     EXPECT_EQ("some_value2", *(dict.FindString("some_key2")));
   }
+}
+
+TEST_F(ExtensionBookmarksTest, PopulateBookmarkTreeNodeIndexConsistency) {
+  const BookmarkNode* url1 = model_->AddURL(model_->bookmark_bar_node(), 0,
+                                            u"URL1", GURL("http://url1.com"));
+  const BookmarkNode* url2 = model_->AddURL(model_->bookmark_bar_node(), 1,
+                                            u"URL2", GURL("http://url2.com"));
+  const BookmarkNode* subfolder =
+      model_->AddFolder(model_->bookmark_bar_node(), 2, u"Subfolder");
+  const BookmarkNode* url3 =
+      model_->AddURL(subfolder, 0, u"URL3", GURL("http://url3.com"));
+
+  // Get the tree and verify indexes.
+  BookmarkTreeNode tree =
+      GetBookmarkTreeNode(model_, managed_, model_->bookmark_bar_node(),
+                          /*recurse=*/true, /*only_folders=*/false);
+
+  ASSERT_TRUE(tree.children.has_value());
+  const std::vector<BookmarkTreeNode>& children = *tree.children;
+
+  // Helper to find node by title.
+  auto find_node = [](const std::vector<BookmarkTreeNode>& nodes,
+                      const std::string& title) {
+    return std::find_if(
+        nodes.begin(), nodes.end(),
+        [&title](const BookmarkTreeNode& node) { return node.title == title; });
+  };
+
+  // Verify each node's visible_index matches GetAPIIndexOf.
+  auto url1_it = find_node(children, "URL1");
+  ASSERT_NE(url1_it, children.end());
+  EXPECT_EQ(GetAPIIndexOf(*url1), url1_it->index);
+
+  auto url2_it = find_node(children, "URL2");
+  ASSERT_NE(url2_it, children.end());
+  EXPECT_EQ(GetAPIIndexOf(*url2), url2_it->index);
+
+  auto subfolder_it = find_node(children, "Subfolder");
+  ASSERT_NE(subfolder_it, children.end());
+  EXPECT_EQ(GetAPIIndexOf(*subfolder), subfolder_it->index);
+
+  ASSERT_TRUE(subfolder_it->children.has_value());
+  auto url3_it = find_node(*subfolder_it->children, "URL3");
+  ASSERT_NE(url3_it, subfolder_it->children->end());
+  EXPECT_EQ(GetAPIIndexOf(*url3), url3_it->index);
+
+  // Verify indexes reflect the node order.
+  EXPECT_EQ(0U, url1_it->index);
+  EXPECT_EQ(1U, url2_it->index);
+  EXPECT_EQ(2U, subfolder_it->index);
+  EXPECT_EQ(0U, url3_it->index);
+
+  // Directly test PopulateBookmarkTreeNode.
+  api::bookmarks::BookmarkTreeNode populated_node;
+  PopulateBookmarkTreeNode(model_, managed_, url1,
+                           /*recurse=*/false, /*only_folders=*/false,
+                           std::nullopt, &populated_node);
+  EXPECT_EQ(GetAPIIndexOf(*url1), populated_node.index);
+
+  // Test recursive population.
+  api::bookmarks::BookmarkTreeNode recursive_node;
+  PopulateBookmarkTreeNode(model_, managed_, subfolder,
+                           /*recurse=*/true, /*only_folders=*/false,
+                           std::nullopt, &recursive_node);
+  EXPECT_EQ(GetAPIIndexOf(*subfolder), recursive_node.index);
+  ASSERT_TRUE(recursive_node.children.has_value());
+  ASSERT_EQ(1U, recursive_node.children->size());
+  EXPECT_EQ(GetAPIIndexOf(*url3), recursive_node.children->at(0).index);
+
+  // Test only_folders with recursion.
+  api::bookmarks::BookmarkTreeNode folders_node;
+  PopulateBookmarkTreeNode(model_, managed_, model_->bookmark_bar_node(),
+                           /*recurse=*/true, /*only_folders=*/true,
+                           std::nullopt, &folders_node);
+  ASSERT_TRUE(folders_node.children.has_value());
+  ASSERT_EQ(1U, folders_node.children->size());  // Only the subfolder.
+  EXPECT_EQ(GetAPIIndexOf(*subfolder), folders_node.children->at(0).index);
 }
 
 }  // namespace bookmarks_helpers

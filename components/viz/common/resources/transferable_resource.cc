@@ -3,10 +3,20 @@
 // found in the LICENSE file.
 
 #include "components/viz/common/resources/transferable_resource.h"
+
+#include "base/feature_list.h"
 #include "components/viz/common/resources/returned_resource.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
 
 namespace viz {
+
+namespace {
+
+BASE_FEATURE(kPassAlphaTypeDirectly,
+             "PassAlphaTypeDirectly",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+}  // namespace
 
 // static
 TransferableResource TransferableResource::MakeSoftwareSharedImage(
@@ -15,6 +25,8 @@ TransferableResource TransferableResource::MakeSoftwareSharedImage(
     const gfx::Size& size,
     SharedImageFormat format,
     ResourceSource source) {
+  // Passed in format must be either single or multiplane and not default set.
+  CHECK(format.is_single_plane() || format.is_multi_plane());
   TransferableResource r;
   r.is_software = true;
   r.memory_buffer_id_ = client_shared_image->mailbox();
@@ -34,6 +46,8 @@ TransferableResource TransferableResource::MakeGpu(
     SharedImageFormat format,
     bool is_overlay_candidate,
     ResourceSource source) {
+  // Passed in format must be either single or multiplane and not default set.
+  CHECK(format.is_single_plane() || format.is_multi_plane());
   TransferableResource r;
   r.is_software = false;
   r.memory_buffer_id_ = mailbox;
@@ -73,11 +87,27 @@ TransferableResource TransferableResource::Make(
 
   resource.size = override.size.value_or(shared_image->size());
   resource.format = override.format.value_or(shared_image->format());
+  // Passed in format must be either single or multiplane and not default set.
+  CHECK(resource.format.is_single_plane() || resource.format.is_multi_plane());
   resource.is_overlay_candidate = override.is_overlay_candidate.value_or(
       shared_image->usage().Has(gpu::SHARED_IMAGE_USAGE_SCANOUT));
   resource.color_space =
       override.color_space.value_or(shared_image->color_space());
   resource.origin = override.origin.value_or(shared_image->surface_origin());
+  SkAlphaType alpha_type =
+      override.alpha_type.value_or(shared_image->alpha_type());
+  // Historically `alpha_type` has been compressed to a "premul" bool with
+  // kOpaque_SkAlphaType being treated as kPremul_SkAlphaType on the service
+  // side. Eliminate this historical behavior under a killswitch.
+  // TODO(crbug.com/410591523): Remove killswitch after it has safely rolled
+  // out.
+  if (base::FeatureList::IsEnabled(kPassAlphaTypeDirectly)) {
+    resource.alpha_type = alpha_type;
+  } else {
+    resource.alpha_type = (alpha_type == kUnpremul_SkAlphaType)
+                              ? alpha_type
+                              : kPremul_SkAlphaType;
+  }
   resource.set_texture_target(
       override.texture_target.value_or(shared_image->GetTextureTarget()));
 

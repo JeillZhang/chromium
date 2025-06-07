@@ -42,10 +42,26 @@ class TokenManager;
 
 class BabelOrcaConsumer : public BabelOrcaController {
  public:
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused. Public for testing.
+  //
+  // LINT.IfChange(ReceivingStoppedReason)
+  enum class ReceivingStoppedReason {
+    kSessionEnded = 0,
+    kSessionCaptionTurnedOff = 1,
+    kLocalCaptionTurnedOff = 2,
+    kTachyonSigninError = 3,
+    kJoinGroupError = 4,
+    kTachyonReceiveMessagesError = 5,
+    kMaxValue = kTachyonReceiveMessagesError,
+  };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/ash/enums.xml:BabelOrcaReceivingStoppedReason)
+
   static std::unique_ptr<BabelOrcaController> Create(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       signin::IdentityManager* identity_manager,
       GaiaId gaia_id,
+      std::string school_tools_base_url,
       std::unique_ptr<CaptionController> caption_controller,
       std::unique_ptr<BabelOrcaCaptionTranslator> translator,
       PrefService* pref_service,
@@ -56,6 +72,7 @@ class BabelOrcaConsumer : public BabelOrcaController {
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       signin::IdentityManager* identity_manager,
       const GaiaId& gaia_id,
+      std::string school_tools_base_url,
       std::unique_ptr<CaptionController> caption_controller,
       TokenManager* tachyon_oauth_token_manager,
       TachyonRequestDataProvider* tachyon_request_data_provider,
@@ -71,6 +88,7 @@ class BabelOrcaConsumer : public BabelOrcaController {
   void OnSessionCaptionConfigUpdated(bool session_captions_enabled,
                                      bool translations_enabled) override;
   void OnLocalCaptionConfigUpdated(bool local_captions_enabled) override;
+  bool IsProducer() override;
 
  private:
   void OnTranslationCallback(
@@ -94,9 +112,12 @@ class BabelOrcaConsumer : public BabelOrcaController {
 
   void Reset();
 
+  bool IsReceivingCaptions();
+
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
   const raw_ptr<signin::IdentityManager> identity_manager_;
   const GaiaId gaia_id_;
+  const std::string school_tools_base_url_;
   const std::unique_ptr<CaptionController> caption_controller_;
   const raw_ptr<TokenManager> tachyon_oauth_token_manager_;
   const raw_ptr<TachyonRequestDataProvider> tachyon_request_data_provider_;
@@ -112,7 +133,6 @@ class BabelOrcaConsumer : public BabelOrcaController {
 
   bool signed_in_ = false;
   bool joined_group_ = false;
-  bool session_translations_enabled_ = false;
   bool local_captions_enabled_ = false;
   bool session_captions_enabled_ = false;
   bool in_session_ = false;

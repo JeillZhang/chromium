@@ -15,7 +15,6 @@
 #include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/regional_capabilities/regional_capabilities_service_factory.h"
@@ -117,7 +116,9 @@ std::unique_ptr<TemplateURL> CreateTestTemplateURL(
     base::Time last_modified,
     bool safe_for_autoreplace,
     TemplateURLData::PolicyOrigin policy_origin,
-    int prepopulate_id) {
+    int prepopulate_id,
+    int starter_pack_id,
+    TemplateURLData::ActiveStatus is_active) {
   DCHECK(!base::StartsWith(guid, "key"))
       << "Don't use test GUIDs with the form \"key1\". Use \"guid1\" instead "
          "for clarity.";
@@ -132,6 +133,8 @@ std::unique_ptr<TemplateURL> CreateTestTemplateURL(
   data.last_modified = last_modified;
   data.policy_origin = policy_origin;
   data.prepopulate_id = prepopulate_id;
+  data.starter_pack_id = starter_pack_id;
+  data.is_active = is_active;
   if (!guid.empty()) {
     data.sync_guid = guid;
   }
@@ -217,8 +220,11 @@ TemplateURLServiceTestUtil::SetUpRequiredServicesWithCustomLocalState(
             CHECK(local_state);
 
             return std::make_unique<search_engines::SearchEngineChoiceService>(
+                std::make_unique<FakeSearchEngineChoiceServiceClient>(),
                 *profile->GetPrefs(), local_state, *regional_capabilities,
-                /*is_profile_eligible_for_dse_guest_propagation=*/false);
+                CHECK_DEREF(
+                    TemplateURLPrepopulateData::ResolverFactory::GetInstance()
+                        ->GetForProfile(profile)));
           }),
   });
 

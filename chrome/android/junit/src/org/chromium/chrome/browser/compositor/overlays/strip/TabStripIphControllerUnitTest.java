@@ -46,10 +46,7 @@ import org.chromium.ui.base.LocalizationUtils;
 /** Unit tests for {@link TabStripIphController}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
-@EnableFeatures({
-    ChromeFeatureList.TAB_STRIP_GROUP_COLLAPSE,
-    ChromeFeatureList.TAB_GROUP_SYNC_ANDROID
-})
+@EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
 public class TabStripIphControllerUnitTest {
     private static final float TAB_STRIP_HEIGHT = 40f;
     private static final float TAB_WIDTH = 150f;
@@ -64,6 +61,7 @@ public class TabStripIphControllerUnitTest {
     @Mock private Tracker mTracker;
     @Mock private View mContainerView;
     @Mock private StripLayoutView.StripLayoutViewOnClickHandler mClickHandler;
+    @Mock private StripLayoutView.StripLayoutViewOnKeyboardFocusHandler mKeyboardFocusHandler;
     @Mock private TabLoadTrackerCallback mLoadTrackerCallback;
     @Mock private LayoutUpdateHost mUpdateHost;
 
@@ -92,6 +90,7 @@ public class TabStripIphControllerUnitTest {
                 new StripLayoutGroupTitle(
                         mContext,
                         mStripLayoutGroupTitleDelegate,
+                        mKeyboardFocusHandler,
                         /* incognito= */ false,
                         ROOT_ID,
                         TAB_GROUP_ID);
@@ -100,6 +99,7 @@ public class TabStripIphControllerUnitTest {
                         mContext,
                         TAB_ID,
                         mClickHandler,
+                        mKeyboardFocusHandler,
                         mLoadTrackerCallback,
                         mUpdateHost,
                         /* incognito= */ false);
@@ -111,7 +111,7 @@ public class TabStripIphControllerUnitTest {
     @Test
     public void testIphProperties_TabGroupSync() {
         mController.showIphOnTabStrip(
-                mGroupTitle, null, mContainerView, IphType.TAB_GROUP_SYNC, TAB_STRIP_HEIGHT);
+                mGroupTitle, null, mContainerView, IphType.TAB_GROUP_SYNC, TAB_STRIP_HEIGHT, false);
         var captor = ArgumentCaptor.forClass(IphCommand.class);
         verify(mUserEducationHelper).requestShowIph(captor.capture());
         var cmd = captor.getValue();
@@ -134,13 +134,14 @@ public class TabStripIphControllerUnitTest {
 
     @Test
     public void testIphProperties_GroupTitleBubble() {
-        mGroupTitle.setShowBubble(true);
+        mGroupTitle.setNotificationBubbleShown(true);
         mController.showIphOnTabStrip(
                 mGroupTitle,
                 null,
                 mContainerView,
                 IphType.GROUP_TITLE_NOTIFICATION_BUBBLE,
-                TAB_STRIP_HEIGHT);
+                TAB_STRIP_HEIGHT,
+                false);
         var captor = ArgumentCaptor.forClass(IphCommand.class);
         verify(mUserEducationHelper).requestShowIph(captor.capture());
         var cmd = captor.getValue();
@@ -167,13 +168,14 @@ public class TabStripIphControllerUnitTest {
     @Test
     public void testIphProperties_GroupTitleBubble_Rtl() {
         LocalizationUtils.setRtlForTesting(true);
-        mGroupTitle.setShowBubble(true);
+        mGroupTitle.setNotificationBubbleShown(true);
         mController.showIphOnTabStrip(
                 mGroupTitle,
                 null,
                 mContainerView,
                 IphType.GROUP_TITLE_NOTIFICATION_BUBBLE,
-                TAB_STRIP_HEIGHT);
+                TAB_STRIP_HEIGHT,
+                false);
         var captor = ArgumentCaptor.forClass(IphCommand.class);
         verify(mUserEducationHelper).requestShowIph(captor.capture());
         var cmd = captor.getValue();
@@ -198,13 +200,14 @@ public class TabStripIphControllerUnitTest {
 
     @Test
     public void testIphProperties_TabBubble() {
-        mGroupTitle.setShowBubble(true);
+        mGroupTitle.setNotificationBubbleShown(true);
         mController.showIphOnTabStrip(
                 mGroupTitle,
                 mTab,
                 mContainerView,
                 IphType.TAB_NOTIFICATION_BUBBLE,
-                TAB_STRIP_HEIGHT);
+                TAB_STRIP_HEIGHT,
+                false);
         var captor = ArgumentCaptor.forClass(IphCommand.class);
         verify(mUserEducationHelper).requestShowIph(captor.capture());
         var cmd = captor.getValue();
@@ -230,13 +233,14 @@ public class TabStripIphControllerUnitTest {
     @Test
     public void testIphProperties_TabBubble_Rtl() {
         LocalizationUtils.setRtlForTesting(true);
-        mGroupTitle.setShowBubble(true);
+        mGroupTitle.setNotificationBubbleShown(true);
         mController.showIphOnTabStrip(
                 mGroupTitle,
                 mTab,
                 mContainerView,
                 IphType.TAB_NOTIFICATION_BUBBLE,
-                TAB_STRIP_HEIGHT);
+                TAB_STRIP_HEIGHT,
+                false);
         var captor = ArgumentCaptor.forClass(IphCommand.class);
         verify(mUserEducationHelper).requestShowIph(captor.capture());
         var cmd = captor.getValue();
@@ -257,5 +261,18 @@ public class TabStripIphControllerUnitTest {
         assertEquals("Iph anchor rect top bound is incorrect ", 7, anchorRect.top);
         // Group title height(40dp) - title bottom margin(9dp) = 31dp.
         assertEquals("Iph anchor rect bottom bound is incorrect ", 31, anchorRect.bottom);
+    }
+
+    @Test
+    public void testIphProperties_TabTearingXr() {
+        mController.showIphOnTabStrip(
+                null, mTab, mContainerView, IphType.TAB_TEARING_XR, TAB_STRIP_HEIGHT, true);
+        var captor = ArgumentCaptor.forClass(IphCommand.class);
+        verify(mUserEducationHelper).requestShowIph(captor.capture());
+        var cmd = captor.getValue();
+
+        // Assert: feature name and snooze mode.
+        assertEquals(FeatureConstants.IPH_TAB_TEARING_XR, cmd.featureName);
+        assertEquals(true, cmd.enableSnoozeMode);
     }
 }

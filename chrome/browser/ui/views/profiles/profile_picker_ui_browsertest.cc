@@ -4,11 +4,14 @@
 
 #include <memory>
 
+#include "base/files/file_path.h"
 #include "base/functional/callback_helpers.h"
 #include "base/strings/strcat.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
+#include "chrome/browser/enterprise/browser_management/management_service_factory.h"
 #include "chrome/browser/enterprise/util/managed_browser_utils.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
@@ -19,9 +22,9 @@
 #include "chrome/browser/ui/views/profiles/profiles_pixel_test_utils.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
+#include "components/policy/core/common/management/scoped_management_service_override_for_testing.h"
 #include "components/signin/public/base/signin_buildflags.h"
 #include "components/signin/public/base/signin_switches.h"
-#include "components/signin/public/identity_manager/account_capabilities_test_mutator.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/signin/public/identity_manager/signin_constants.h"
 #include "components/supervised_user/core/common/features.h"
@@ -40,8 +43,6 @@ struct ProfilePickerTestParam {
   // Requires `use_multiple_profiles` to be enabled.
   bool has_supervised_user = false;
   bool show_kite_for_supervised_users = false;
-  // param to be removed when `kOutlineSilhouetteIcon` is enabled by default.
-  bool outline_silhouette_icon = false;
   bool disallow_profile_creation = false;
   bool use_glic_version = false;
   bool no_glic_eligible_profiles = false;
@@ -60,8 +61,10 @@ std::string ParamToTestSuffix(
 // Permutations of supported parameters.
 const ProfilePickerTestParam kTestParams[] = {
     {.pixel_test_param = {.test_suffix = "Regular"}},
-    {.pixel_test_param = {.test_suffix = "MultipleProfiles"},
-     .use_multiple_profiles = true},
+    {
+        .pixel_test_param = {.test_suffix = "MultipleProfiles"},
+        .use_multiple_profiles = true,
+    },
     {.pixel_test_param = {.test_suffix = "PortraitModeWindow",
                           .window_size =
                               PixelTestParam::kPortraitModeWindowSize}},
@@ -75,21 +78,13 @@ const ProfilePickerTestParam kTestParams[] = {
     {.pixel_test_param = {.test_suffix = "MultipleProfilesNoProfileCreation"},
      .use_multiple_profiles = true,
      .disallow_profile_creation = true},
-    {.pixel_test_param = {.test_suffix = "MultipleProfiles_OutlineSilhouette"},
-     .use_multiple_profiles = true,
-     .outline_silhouette_icon = true},
-    {.pixel_test_param = {.test_suffix = "DarkRtlSmallMultipleProfiles",
-                          .use_dark_theme = true,
-                          .use_right_to_left_language = true,
-                          .window_size = PixelTestParam::kSmallWindowSize},
-     .use_multiple_profiles = true},
-    {.pixel_test_param = {.test_suffix =
-                              "DarkRtlSmallMultipleProfiles_OutlineSilhouette",
-                          .use_dark_theme = true,
-                          .use_right_to_left_language = true,
-                          .window_size = PixelTestParam::kSmallWindowSize},
-     .use_multiple_profiles = true,
-     .outline_silhouette_icon = true},
+    {
+        .pixel_test_param = {.test_suffix = "DarkRtlSmallMultipleProfiles",
+                             .use_dark_theme = true,
+                             .use_right_to_left_language = true,
+                             .window_size = PixelTestParam::kSmallWindowSize},
+        .use_multiple_profiles = true,
+    },
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
     {.pixel_test_param = {.test_suffix = "MultipleProfiles_Kite"},
      .use_multiple_profiles = true,
@@ -102,11 +97,14 @@ const ProfilePickerTestParam kTestParams[] = {
      .use_multiple_profiles = true,
      .has_supervised_user = true,
      .show_kite_for_supervised_users = true},
-    {.pixel_test_param = {.test_suffix = "ManagedProfileHasWorkLabel"},
+    {.pixel_test_param = {.test_suffix = "ManagedProfileHasCustomWorkLabel"},
      .use_multiple_profiles = true,
      .is_enterprise_badging_enabled = true},
 #endif
     {.pixel_test_param = {.test_suffix = "GlicRegular"},
+     .use_glic_version = true},
+    {.pixel_test_param = {.test_suffix = "GlicRegularDarkMode",
+                          .use_dark_theme = true},
      .use_glic_version = true},
     {.pixel_test_param = {.test_suffix = "GlicRegularSmall",
                           .window_size = PixelTestParam::kSmallWindowSize},
@@ -130,7 +128,6 @@ const ProfilePickerTestParam kTestParams[] = {
                               PixelTestParam::kPortraitModeWindowSize},
      .use_multiple_profiles = true,
      .use_glic_version = true},
-
 };
 
 enum class ProfileStatus {
@@ -140,36 +137,10 @@ enum class ProfileStatus {
   kSignedInSupervised,
 };
 
-// Make non empty account Glic eligible in Glic mode by adapting the
-// account capabilities of the signed in account and propagating them to the
-// `ProfileAttributesEntry`.
-void EnableGlicForAccount(signin::IdentityManager* identity_manager,
-                          AccountInfo account_info) {
-  CHECK(identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSignin));
-  AccountCapabilitiesTestMutator mutator(&account_info.capabilities);
-  mutator.set_can_use_model_execution_features(true);
-
-  // In order to have the propagation of the account capabilities in the
-  // `ProfileAttributesEntry` the account info must be complete/valid.
-  // Fill them with dummy data if not filled already.
-  if (account_info.hosted_domain.empty()) {
-    account_info.hosted_domain = signin::constants::kNoHostedDomainFound;
-  }
-  if (account_info.full_name.empty()) {
-    account_info.full_name = "Joe Testing";
-  }
-  if (account_info.given_name.empty()) {
-    account_info.given_name = "Joe";
-  }
-  if (account_info.picture_url.empty()) {
-    account_info.picture_url = "PICTURE_URL_EMPTY";
-  }
-  signin::UpdateAccountInfoForAccount(identity_manager, account_info);
-}
-
 void SetSigninProfileProperties(signin::IdentityManager* identity_manager,
                                 ProfileStatus profile_status,
-                                bool is_glic_version) {
+                                bool is_glic_version,
+                                const base::FilePath& profile_path) {
   CHECK(identity_manager);
 
   AccountInfo account_info;
@@ -201,7 +172,14 @@ void SetSigninProfileProperties(signin::IdentityManager* identity_manager,
   }
 
   if (!account_info.IsEmpty() && is_glic_version) {
-    EnableGlicForAccount(identity_manager, account_info);
+    // Override the value in the entry bypassing the real logic; this way the
+    // test does not depend on the real implementation of the Glic-Eligibility.
+    // The entry value is not expected to be updated after this call, the
+    // eligibilty may be reset.
+    g_browser_process->profile_manager()
+        ->GetProfileAttributesStorage()
+        .GetProfileAttributesWithPath(profile_path)
+        ->SetIsGlicEligible(true);
   }
 }
 
@@ -229,17 +207,16 @@ void AddMultipleProfiles(bool is_glic_version, bool has_supervised_user) {
     ProfileManager::CreateMultiProfileAsync(
         u"Joe", icon_index++, /*is_hidden=*/false,
         /*initialized_callback=*/
-        base::BindLambdaForTesting(
-            [&run_loop, &profile_status, &is_glic_version](Profile* profile) {
-              SetSigninProfileProperties(
-                  IdentityManagerFactory::GetForProfile(profile),
-                  profile_status, is_glic_version);
-              if (profile_status == ProfileStatus::kSignedInManaged) {
-                enterprise_util::SetUserAcceptedAccountManagement(profile,
-                                                                  true);
-              }
-              run_loop.Quit();
-            }));
+        base::BindLambdaForTesting([&run_loop, &profile_status,
+                                    &is_glic_version](Profile* profile) {
+          SetSigninProfileProperties(
+              IdentityManagerFactory::GetForProfile(profile), profile_status,
+              is_glic_version, profile->GetPath());
+          if (profile_status == ProfileStatus::kSignedInManaged) {
+            enterprise_util::SetUserAcceptedAccountManagement(profile, true);
+          }
+          run_loop.Quit();
+        }));
     run_loop.Run();
   }
 }
@@ -255,7 +232,6 @@ class ProfilePickerUIPixelTest
     scoped_feature_list_.InitWithFeatureStates(
         {{supervised_user::kShowKiteForSupervisedUsers,
           GetParam().show_kite_for_supervised_users},
-         {kOutlineSilhouetteIcon, GetParam().outline_silhouette_icon},
          {features::kEnterpriseProfileBadgingForAvatar,
           GetParam().is_enterprise_badging_enabled}});
 #endif
@@ -273,8 +249,18 @@ class ProfilePickerUIPixelTest
       SetSigninProfileProperties(
           IdentityManagerFactory::GetForProfile(browser()->profile()),
           ProfileStatus::kSignedIn,
-          /*is_glic_version=*/true);
+          /*is_glic_version=*/true, browser()->profile()->GetPath());
     }
+
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+    if (GetParam().is_enterprise_badging_enabled) {
+      policy::ScopedManagementServiceOverrideForTesting platform_management(
+          policy::ManagementServiceFactory::GetForProfile(browser()->profile()),
+          policy::EnterpriseManagementAuthority::CLOUD);
+      browser()->profile()->GetPrefs()->SetString(
+          prefs::kEnterpriseCustomLabelForProfile, "Work");
+    }
+#endif
 
     if (GetParam().use_multiple_profiles) {
       // In Glic mode, if `use_multiple_profiles` is set,

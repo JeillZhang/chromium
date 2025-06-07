@@ -26,7 +26,6 @@
 #include "base/trace_event/trace_event.h"
 #include "build/branding_buildflags.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/enterprise/signin/enterprise_signin_prefs.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
@@ -79,7 +78,7 @@
 #include "sql/error_delegate_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "base/files/file_util.h"
 #endif
 
@@ -89,9 +88,6 @@
 
 #if BUILDFLAG(IS_WIN)
 #include "base/enterprise_util.h"
-#if BUILDFLAG(ENABLE_RLZ)
-#include "rlz/lib/machine_id.h"  // nogncheck crbug.com/1125897
-#endif  // BUILDFLAG(ENABLE_RLZ)
 #endif  // BUILDFLAG(IS_WIN)
 
 using content::BrowserContext;
@@ -165,11 +161,6 @@ const auto kTrackedPrefs = std::to_array<prefs::TrackedPreferenceMetadata>({
      PrefTrackingStrategy::ATOMIC, ValueType::PERSONAL},
     {29, prefs::kMediaStorageIdSalt, EnforcementLevel::ENFORCE_ON_LOAD,
      PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
-#if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
-    {30, prefs::kModuleBlocklistCacheMD5Digest,
-     EnforcementLevel::ENFORCE_ON_LOAD, PrefTrackingStrategy::ATOMIC,
-     ValueType::IMPERSONAL},
-#endif
 #if BUILDFLAG(IS_WIN)
     {32, prefs::kMediaCdmOriginData, EnforcementLevel::ENFORCE_ON_LOAD,
      PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
@@ -275,24 +266,16 @@ GetTrackingConfiguration() {
 
 std::unique_ptr<ProfilePrefStoreManager> CreateProfilePrefStoreManager(
     const base::FilePath& profile_path) {
-  std::string legacy_device_id;
-#if BUILDFLAG(IS_WIN) && BUILDFLAG(ENABLE_RLZ)
-  // This was used by the musicManagerPrivate API, and remains here for backward
-  // compatibility so ProfilePrefStoreManager can continue to calculate the same
-  // hashes as before.
-  rlz_lib::GetMachineId(&legacy_device_id);
-#endif
   std::string seed;
   CHECK(ui::ResourceBundle::HasSharedInstance());
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   seed = std::string(ui::ResourceBundle::GetSharedInstance().GetRawDataResource(
       IDR_PREF_HASH_SEED_BIN));
 #endif
-  return std::make_unique<ProfilePrefStoreManager>(profile_path, seed,
-                                                   legacy_device_id);
+  return std::make_unique<ProfilePrefStoreManager>(profile_path, seed);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 // The standalone browser prefs store does not exist anymore but there may still
 // be files left on disk. Delete them.
 // TODO(crbug.com/380780352): Remove this code after the stepping stone.
@@ -413,7 +396,7 @@ std::unique_ptr<sync_preferences::PrefServiceSyncable> CreateProfilePrefs(
               io_task_runner, std::move(reset_on_load_observer),
               std::move(validation_delegate));
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   io_task_runner->PostTask(
       FROM_HERE,
       base::BindOnce(&CleanupObsoleteStandaloneBrowserPrefsFile, profile_path));
@@ -543,7 +526,7 @@ void HandlePersistentPrefStoreReadError(
          !BrowserThread::IsThreadInitialized(BrowserThread::UI));
 
   if (error != PersistentPrefStore::PREF_READ_ERROR_NONE) {
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
     // Failing to load prefs on startup is a bad thing(TM). See bug 38352 for
     // an example problem that this can cause.
     // Do some diagnosis and try to avoid losing data.

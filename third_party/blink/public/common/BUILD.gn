@@ -22,14 +22,14 @@ blink_python_runner("make_generated_permissions_policy_helper") {
 
   inputs = scripts_for_json5_files + [
              "../../renderer/build/scripts/make_policy_helper_public.py",
-             "../../renderer/core/permissions_policy/permissions_policy_features.json5",
+             "//services/network/public/cpp/permissions_policy/permissions_policy_features.json5",
              "../../renderer/build/scripts/templates/policy_helper_public.cc.tmpl",
            ]
   outputs = [ "$root_gen_dir/third_party/blink/public/common/permissions_policy/policy_helper_public.cc" ]
 
   args = [
     rebase_path(
-        "../../renderer/core/permissions_policy/permissions_policy_features.json5",
+        "//services/network/public/cpp/permissions_policy/permissions_policy_features.json5",
         root_build_dir),
     "--output_dir",
     rebase_path(
@@ -98,6 +98,11 @@ source_set("common_export") {
   sources = [ "common_export.h" ]
 }
 
+source_set("preloading_headers") {
+  deps = [ ":common_export" ]
+  sources = [ "navigation/preloading_headers.h" ]
+}
+
 source_set("headers") {
   visibility = [
     ":*",
@@ -142,9 +147,9 @@ source_set("headers") {
     "fenced_frame/redacted_fenced_frame_config_mojom_traits.h",
     "fetch/fetch_api_request_headers_map.h",
     "fetch/fetch_api_request_headers_mojom_traits.h",
+    "fingerprinting_protection/canvas_noise_token.h",
     "forcedark/forcedark_switches.h",
     "frame/delegated_capability_request_token.h",
-    "frame/fenced_frame_permissions_policies.h",
     "frame/fenced_frame_sandbox_flags.h",
     "frame/frame_ad_evidence.h",
     "frame/frame_owner_element_type.h",
@@ -192,6 +197,7 @@ source_set("headers") {
     "interest_group/seller_capabilities.h",
     "link_to_text/link_to_text_mojom_traits.h",
     "loader/background_resource_fetch_histograms.h",
+    "loader/code_cache_util.h",
     "loader/http_body_element_type.h",
     "loader/inter_process_time_ticks_converter.h",
     "loader/javascript_framework_detection.h",
@@ -212,10 +218,6 @@ source_set("headers") {
     "manifest/manifest.h",
     "manifest/manifest_icon_selector.h",
     "manifest/manifest_util.h",
-    "media/display_type.h",
-    "media/video_capture.h",
-    "media/watch_time_component.h",
-    "media/watch_time_reporter.h",
     "mediastream/media_device_id.h",
     "mediastream/media_devices.h",
     "mediastream/media_devices_mojom_traits.h",
@@ -253,8 +255,6 @@ source_set("headers") {
     "origin_trials/trial_token.h",
     "origin_trials/trial_token_result.h",
     "origin_trials/trial_token_validator.h",
-    "page/browsing_context_group_info.h",
-    "page/browsing_context_group_info_mojom_traits.h",
     "page/color_provider_color_maps.h",
     "page/color_provider_color_maps_mojom_traits.h",
     "page/content_to_visible_time_reporter.h",
@@ -272,9 +272,6 @@ source_set("headers") {
     "permissions/permission_utils.h",
     "permissions_policy/document_policy.h",
     "permissions_policy/document_policy_features.h",
-    "permissions_policy/permissions_policy.h",
-    "permissions_policy/permissions_policy_declaration.h",
-    "permissions_policy/permissions_policy_features.h",
     "permissions_policy/policy_helper_public.h",
     "permissions_policy/policy_value.h",
     "renderer_preferences/renderer_preferences.h",
@@ -308,6 +305,7 @@ source_set("headers") {
     "use_counter/use_counter_feature_tracker.h",
     "user_agent/user_agent_brand_version_type.h",
     "user_agent/user_agent_metadata.h",
+    "view_source/rendering_preferences.h",
     "web_cache/web_cache_resource_type_stats.h",
     "web_package/signed_exchange_consts.h",
     "web_package/web_package_request_matcher.h",
@@ -326,10 +324,12 @@ source_set("headers") {
   public_deps = [
     ":make_generated_permissions_policy_helper",
     ":make_runtime_feature_state_contexts_headers",
+    ":preloading_headers",
     "//base",
     "//mojo/public/cpp/bindings",
     "//services/metrics/public/cpp:metrics_cpp",
     "//services/network/public/cpp:cpp",
+    "//services/network/public/mojom:mojom_permissions_policy",
     "//skia",
     "//skia/public/mojom:shared_typemap_traits",
     "//third_party/blink/public:runtime_features_for_public",

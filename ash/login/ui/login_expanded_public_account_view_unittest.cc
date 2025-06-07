@@ -16,6 +16,7 @@
 #include "ash/strings/grit/ash_strings.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -87,8 +88,8 @@ class LoginExpandedPublicAccountViewTest
     container_ = new views::BoxLayoutView();
     container_->SetCrossAxisAlignment(
         views::BoxLayout::CrossAxisAlignment::kStart);
-    container_->AddChildView(public_account_.get());
-    container_->AddChildView(other_view_.get());
+    container_->AddChildViewRaw(public_account_.get());
+    container_->AddChildViewRaw(other_view_.get());
     auto widget = CreateWidgetWithContent(container_);
     switch (GetParam().orientation) {
       case Orientation::kLandscape:

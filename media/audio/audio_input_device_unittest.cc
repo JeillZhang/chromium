@@ -105,7 +105,7 @@ class AssertingCaptureCallback : public AudioCapturerSource::CaptureCallback {
   base::WaitableEvent capture_called_event_;
 };
 
-}  // namespace.
+}  // namespace
 
 class AudioInputDeviceTest
     : public ::testing::TestWithParam<AudioInputDevice::DeadStreamDetection> {
@@ -214,6 +214,10 @@ TEST_P(AudioInputDeviceTest, CreateStream) {
 
 TEST_P(AudioInputDeviceTest, CaptureCallback) {
   base::test::TaskEnvironment ste;
+
+  scoped_feature_list_.InitWithFeatures(
+      {}, {base::test::FeatureRef(media::kAudioInputConfirmReadsViaShmem)});
+
   CreateInputDevice();
 
   uint32_t buffer_index = 0;
@@ -309,4 +313,4 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Values(AudioInputDevice::DeadStreamDetection::kDisabled,
                       AudioInputDevice::DeadStreamDetection::kEnabled));
 
-}  // namespace media.
+}  // namespace media

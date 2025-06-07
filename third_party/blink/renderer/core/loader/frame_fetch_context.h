@@ -112,6 +112,7 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
 
   bool StartSpeculativeImageDecode(Resource* resource,
                                    base::OnceClosure callback) override;
+  bool SpeculativeDecodeRequestInFlight() const override;
 
   bool IsPrerendering() const override;
 
@@ -133,7 +134,8 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
       const ResourceRequestHead& resource_request,
       base::optional_ref<const KURL> alias_url,
       ResourceType type,
-      const FetchInitiatorInfo& initiator_info) override;
+      const FetchInitiatorInfo& initiator_info,
+      subresource_filter::ScopedRule* out_rule) override;
 
   // LoadingBehaviorObserver overrides:
   void DidObserveLoadingBehavior(LoadingBehaviorFlag) override;
@@ -155,7 +157,7 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
   void AddLcpPredictedCallback(base::OnceClosure callback) override;
 
  private:
-  friend class FrameFetchContextTest;
+  friend class FrameFetchContextTestBase;
 
   struct FrozenState;
 
@@ -200,7 +202,7 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
   Settings* GetSettings() const;
   String GetUserAgent() const;
   std::optional<UserAgentMetadata> GetUserAgentMetadata() const;
-  const PermissionsPolicy* GetPermissionsPolicy() const override;
+  const network::PermissionsPolicy* GetPermissionsPolicy() const override;
   const FeatureContext* GetFeatureContext() const override;
   HashSet<HashAlgorithm> CSPHashesToReport() const override;
   void AddCSPHashReport(

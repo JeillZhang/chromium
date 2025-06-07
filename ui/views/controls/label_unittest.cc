@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -139,7 +140,8 @@ class LabelTest : public test::BaseControlTestWidget {
   ~LabelTest() override = default;
 
   void MockAXModeAdded() {
-    ui::AXMode mode = ui::AXPlatformForTest::GetInstance().GetProcessMode();
+    ui::AXMode mode =
+        ui::AXPlatformForTest::GetInstance().GetAccessibilityMode();
     widget()->OnAXModeAdded(mode);
   }
 
@@ -318,12 +320,12 @@ TEST_F(LabelTest, ColorPropertyOnEnabledColorIdChange) {
   const auto color = label()->GetWidget()->GetColorProvider()->GetColor(
       ui::kColorPrimaryForeground);
   label()->SetAutoColorReadabilityEnabled(false);
-  label()->SetEnabledColorId(ui::kColorPrimaryForeground);
+  label()->SetEnabledColor(ui::kColorPrimaryForeground);
   EXPECT_EQ(color, label()->GetEnabledColor());
 
   // Update the enabled id and verify the actual enabled color is updated to
   // reflect the color id change. Regression test case for: b/262402965.
-  label()->SetEnabledColorId(ui::kColorAccent);
+  label()->SetEnabledColor(ui::kColorAccent);
   EXPECT_EQ(
       label()->GetWidget()->GetColorProvider()->GetColor(ui::kColorAccent),
       label()->GetEnabledColor());
@@ -804,7 +806,7 @@ TEST_F(LabelTest, Accessibility) {
 }
 
 TEST_F(LabelTest, SetTextNotifiesAccessibilityEvent) {
-  test::AXEventCounter counter(views::AXEventManager::Get());
+  test::AXEventCounter counter(views::AXUpdateNotifier::Get());
 
   // Changing the text affects the accessible name, so it should notify.
   EXPECT_EQ(0, counter.GetCount(ax::mojom::Event::kTextChanged));
@@ -1314,8 +1316,9 @@ TEST_F(LabelTest, GetSubstringBounds) {
 #endif
 // Ensures DCHECK for subpixel rendering on transparent layer is working.
 TEST_F(LabelTest, MAYBE_ChecksSubpixelRenderingOntoOpaqueSurface) {
-  View view;
-  Label* label = view.AddChildView(std::make_unique<TestLabel>());
+  View* view =
+      widget()->GetContentsView()->AddChildView(std::make_unique<View>());
+  Label* label = view->AddChildView(std::make_unique<TestLabel>());
   EXPECT_TRUE(label->GetSubpixelRenderingEnabled());
 
   gfx::Canvas canvas;
@@ -1324,11 +1327,11 @@ TEST_F(LabelTest, MAYBE_ChecksSubpixelRenderingOntoOpaqueSurface) {
   label->OnPaint(&canvas);
 
   // Painting to an opaque layer should also be fine.
-  view.SetPaintToLayer();
+  view->SetPaintToLayer();
   label->OnPaint(&canvas);
 
   // Set up a transparent layer for the parent view.
-  view.layer()->SetFillsBoundsOpaquely(false);
+  view->layer()->SetFillsBoundsOpaquely(false);
 
   // Painting on a transparent layer should DCHECK.
   EXPECT_DCHECK_DEATH(label->OnPaint(&canvas));
@@ -1340,7 +1343,7 @@ TEST_F(LabelTest, MAYBE_ChecksSubpixelRenderingOntoOpaqueSurface) {
 
   // Painting onto a transparent layer should not DCHECK if there's an opaque
   // background in a parent of the Label.
-  view.SetBackground(CreateSolidBackground(SK_ColorWHITE));
+  view->SetBackground(CreateSolidBackground(SK_ColorWHITE));
   label->OnPaint(&canvas);
 }
 

@@ -28,7 +28,9 @@ import org.chromium.blink.mojom.RpContext;
 import org.chromium.blink.mojom.RpMode;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.AccountProperties;
+import org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.ButtonData;
 import org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.ItemProperties;
+import org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.LoginButtonProperties;
 import org.chromium.chrome.browser.ui.android.webid.data.Account;
 import org.chromium.chrome.browser.ui.android.webid.data.ClientIdMetadata;
 import org.chromium.chrome.browser.ui.android.webid.data.IdentityCredentialTokenError;
@@ -123,7 +125,8 @@ public class AccountSelectionJUnitTestBase {
             };
     protected static final float ALPHA_COMPARISON_DELTA = 0.00001f;
 
-    @Mock Callback<Account> mAccountCallback;
+    @Mock Callback<ButtonData> mAccountCallback;
+    @Mock Callback<ButtonData> mIdpLoginCallback;
     @Mock AccountSelectionComponent.Delegate mMockDelegate;
     @Mock BottomSheetController mMockBottomSheetController;
     @Mock Tab mTab;
@@ -144,12 +147,17 @@ public class AccountSelectionJUnitTestBase {
     GURL mTestErrorUrl;
     GURL mTestEmptyErrorUrl;
     Account mAnaAccount;
+    Account mAnaAccountWithUseDifferentAccount;
+    Account mAnaAccountWithoutBrandIcons;
     Account mBobAccount;
     Account mCarlAccount;
     Account mNewUserAccount;
     Account mNoOneAccount;
     Account mFilteredOutAccount;
+    Account mFilteredOutAccountWithUseDifferentAccount;
     Account mNicolasAccount;
+    Account mSingleIdentifierAccount;
+    Account mSingleIdentifierAccountFilteredOut;
 
     IdentityCredentialTokenError mTokenError;
     IdentityCredentialTokenError mTokenErrorEmptyUrl;
@@ -188,84 +196,6 @@ public class AccountSelectionJUnitTestBase {
         mTestLoginUrl = new GURL("https://idp.com/login");
         mTestErrorUrl = new GURL("https://idp.com/error");
         mTestEmptyErrorUrl = new GURL("");
-
-        mAnaAccount =
-                new Account(
-                        "Ana",
-                        "ana@email.example",
-                        "Ana Doe",
-                        "Ana",
-                        /* secondaryDescription= */ null,
-                        /* pictureBitmap= */ null,
-                        /* isSignIn= */ true,
-                        /* isBrowserTrustedSignIn= */ true,
-                        /* isFilteredOut= */ false);
-        mBobAccount =
-                new Account(
-                        "Bob",
-                        "",
-                        "Bob",
-                        "",
-                        /* secondaryDescription= */ null,
-                        /* pictureBitmap= */ null,
-                        /* isSignIn= */ true,
-                        /* isBrowserTrustedSignIn= */ true,
-                        /* isFilteredOut= */ false);
-        mCarlAccount =
-                new Account(
-                        "Carl",
-                        "carl@three.test",
-                        "Carl Test",
-                        ":)",
-                        /* secondaryDescription= */ null,
-                        /* pictureBitmap= */ null,
-                        /* isSignIn= */ true,
-                        /* isBrowserTrustedSignIn= */ true,
-                        /* isFilteredOut= */ false);
-        mNewUserAccount =
-                new Account(
-                        "602214076",
-                        "goto@email.example",
-                        "Sam E. Goto",
-                        "Sam",
-                        /* secondaryDescription= */ null,
-                        /* pictureBitmap= */ null,
-                        /* isSignIn= */ false,
-                        /* isBrowserTrustedSignIn= */ false,
-                        /* isFilteredOut= */ false);
-        mNoOneAccount =
-                new Account(
-                        "",
-                        "",
-                        "No Subject",
-                        "",
-                        /* secondaryDescription= */ null,
-                        /* pictureBitmap= */ null,
-                        /* isSignIn= */ true,
-                        /* isBrowserTrustedSignIn= */ true,
-                        /* isFilteredOut= */ false);
-        mFilteredOutAccount =
-                new Account(
-                        "ID123",
-                        "nicolas@example.com",
-                        "Nicolas Pena",
-                        "Nicolas",
-                        /* secondaryDescription= */ null,
-                        /* pictureBitmap= */ null,
-                        /* isSignIn= */ true,
-                        /* isBrowserTrustedSignIn= */ true,
-                        /* isFilteredOut= */ true);
-        mNicolasAccount =
-                new Account(
-                        "NicoId",
-                        "nicolas@email.com",
-                        "Nico P",
-                        "Nicolas",
-                        "email.com",
-                        /* pictureBitmap= */ null,
-                        /* isSignIn= */ true,
-                        /* isBrowserTrustedSignIn= */ true,
-                        /* isFilteredOut= */ false);
 
         mTokenError = new IdentityCredentialTokenError(TEST_ERROR_CODE, mTestErrorUrl);
         mTokenErrorEmptyUrl = new IdentityCredentialTokenError(TEST_ERROR_CODE, mTestEmptyErrorUrl);
@@ -326,6 +256,169 @@ public class AccountSelectionJUnitTestBase {
                         DEFAULT_DISCLOSURE_FIELDS,
                         /* hasLoginStatusMismatch= */ false);
 
+        mAnaAccount =
+                new Account(
+                        "Ana",
+                        "ana@email.example",
+                        "Ana Doe",
+                        "Ana",
+                        /* secondaryDescription= */ "email.example",
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ Bitmap.createBitmap(
+                                100, 100, Bitmap.Config.ARGB_4444),
+                        /* isSignIn= */ true,
+                        /* isBrowserTrustedSignIn= */ true,
+                        /* isFilteredOut= */ false,
+                        mIdpData);
+        mAnaAccountWithUseDifferentAccount =
+                new Account(
+                        "Ana",
+                        "ana@email.example",
+                        "Ana Doe",
+                        "Ana",
+                        /* secondaryDescription= */ null,
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ Bitmap.createBitmap(
+                                100, 100, Bitmap.Config.ARGB_4444),
+                        /* isSignIn= */ true,
+                        /* isBrowserTrustedSignIn= */ true,
+                        /* isFilteredOut= */ false,
+                        mIdpDataWithUseDifferentAccount);
+        mAnaAccountWithoutBrandIcons =
+                new Account(
+                        "Ana",
+                        "ana@email2.example",
+                        "Ana Doe",
+                        "Ana",
+                        /* secondaryDescription= */ "email2.example",
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ Bitmap.createBitmap(
+                                100, 100, Bitmap.Config.ARGB_4444),
+                        /* isSignIn= */ true,
+                        /* isBrowserTrustedSignIn= */ true,
+                        /* isFilteredOut= */ false,
+                        mIdpDataWithoutIcons);
+        mBobAccount =
+                new Account(
+                        "Bob",
+                        "",
+                        "Bob",
+                        "",
+                        /* secondaryDescription= */ null,
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ null,
+                        /* isSignIn= */ true,
+                        /* isBrowserTrustedSignIn= */ true,
+                        /* isFilteredOut= */ false,
+                        mIdpData);
+        mCarlAccount =
+                new Account(
+                        "Carl",
+                        "carl@three.test",
+                        "Carl Test",
+                        ":)",
+                        /* secondaryDescription= */ null,
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ null,
+                        /* isSignIn= */ true,
+                        /* isBrowserTrustedSignIn= */ true,
+                        /* isFilteredOut= */ false,
+                        mIdpData);
+        mNewUserAccount =
+                new Account(
+                        "602214076",
+                        "goto@email.example",
+                        "Sam E. Goto",
+                        "Sam",
+                        /* secondaryDescription= */ "email.example",
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ Bitmap.createBitmap(
+                                100, 100, Bitmap.Config.ARGB_4444),
+                        /* isSignIn= */ false,
+                        /* isBrowserTrustedSignIn= */ false,
+                        /* isFilteredOut= */ false,
+                        mIdpData);
+        mNoOneAccount =
+                new Account(
+                        "",
+                        "",
+                        "No Subject",
+                        "",
+                        /* secondaryDescription= */ null,
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ null,
+                        /* isSignIn= */ true,
+                        /* isBrowserTrustedSignIn= */ true,
+                        /* isFilteredOut= */ false,
+                        mIdpData);
+        mFilteredOutAccount =
+                new Account(
+                        "ID123",
+                        "nicolas@example.com",
+                        "Nicolas Pena",
+                        "Nicolas",
+                        /* secondaryDescription= */ null,
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ null,
+                        /* isSignIn= */ true,
+                        /* isBrowserTrustedSignIn= */ true,
+                        /* isFilteredOut= */ true,
+                        mIdpData);
+        mFilteredOutAccountWithUseDifferentAccount =
+                new Account(
+                        "ID123",
+                        "nicolas@example.com",
+                        "Nicolas Pena",
+                        "Nicolas",
+                        /* secondaryDescription= */ null,
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ null,
+                        /* isSignIn= */ true,
+                        /* isBrowserTrustedSignIn= */ true,
+                        /* isFilteredOut= */ true,
+                        mIdpDataWithUseDifferentAccount);
+        mNicolasAccount =
+                new Account(
+                        "NicoId",
+                        "nicolas@email.com",
+                        "Nico P",
+                        "Nicolas",
+                        "email.com",
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ null,
+                        /* isSignIn= */ true,
+                        /* isBrowserTrustedSignIn= */ true,
+                        /* isFilteredOut= */ false,
+                        mIdpData);
+
+        mSingleIdentifierAccount =
+                new Account(
+                        "singleid1",
+                        "",
+                        "username",
+                        "",
+                        /* secondaryDescription= */ null,
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ null,
+                        /* isSignIn= */ false,
+                        /* isBrowserTrustedSignIn= */ false,
+                        /* isFilteredOut= */ false,
+                        mIdpData);
+
+        mSingleIdentifierAccountFilteredOut =
+                new Account(
+                        "singleid2",
+                        "",
+                        "username2",
+                        "",
+                        /* secondaryDescription= */ null,
+                        /* pictureBitmap= */ null,
+                        /* circledBadgedPictureBitmap= */ null,
+                        /* isSignIn= */ true,
+                        /* isBrowserTrustedSignIn= */ true,
+                        /* isFilteredOut= */ true,
+                        mIdpData);
+
         mNewAccountsSingleReturningAccount = Arrays.asList(mAnaAccount);
         mNewAccountsSingleNewAccount = Arrays.asList(mNewUserAccount);
         mNewAccountsMultipleAccounts = Arrays.asList(mAnaAccount, mBobAccount);
@@ -354,26 +447,29 @@ public class AccountSelectionJUnitTestBase {
                         /* scrollOffsetSupplier= */ null,
                         mRpMode);
         mMockModalDialogManager = new MockModalDialogManager();
-        mMediator =
-                new AccountSelectionMediator(
-                        mTab,
-                        mMockDelegate,
-                        mModel,
-                        mSheetAccountItems,
-                        mMockBottomSheetController,
-                        mBottomSheetContent,
-                        DESIRED_AVATAR_SIZE,
-                        mRpMode,
-                        mContext,
-                        mMockModalDialogManager);
+        resetMediator();
     }
 
-    MVCListAdapter.ListItem buildAccountItem(Account account) {
+    MVCListAdapter.ListItem buildAccountItem(Account account, boolean showIdp) {
         return new MVCListAdapter.ListItem(
                 AccountSelectionProperties.ITEM_TYPE_ACCOUNT,
                 new PropertyModel.Builder(AccountProperties.ALL_KEYS)
                         .with(AccountProperties.ACCOUNT, account)
                         .with(AccountProperties.ON_CLICK_LISTENER, mAccountCallback)
+                        .with(AccountProperties.SHOW_IDP, showIdp)
+                        .build());
+    }
+
+    MVCListAdapter.ListItem buildIdpLoginItem(IdentityProviderData idpData, boolean showIdp) {
+        LoginButtonProperties.Properties properties = new LoginButtonProperties.Properties();
+        properties.mIdentityProvider = idpData;
+        properties.mOnClickListener = mIdpLoginCallback;
+        properties.mRpMode = mRpMode;
+        properties.mShowIdp = showIdp;
+        return new MVCListAdapter.ListItem(
+                AccountSelectionProperties.ITEM_TYPE_LOGIN,
+                new PropertyModel.Builder(LoginButtonProperties.ALL_KEYS)
+                        .with(LoginButtonProperties.PROPERTIES, properties)
                         .build());
     }
 
@@ -391,6 +487,24 @@ public class AccountSelectionJUnitTestBase {
         if (key == ItemProperties.SPINNER_ENABLED) {
             return model.get((WritableBooleanPropertyKey) key);
         }
+        if (key == ItemProperties.DRAGBAR_HANDLE_VISIBLE) {
+            return model.get((WritableBooleanPropertyKey) key);
+        }
         return model.get((WritableObjectPropertyKey<PropertyModel>) key) != null;
+    }
+
+    void resetMediator() {
+        mMediator =
+                new AccountSelectionMediator(
+                        mTab,
+                        mMockDelegate,
+                        mModel,
+                        mSheetAccountItems,
+                        mMockBottomSheetController,
+                        mBottomSheetContent,
+                        DESIRED_AVATAR_SIZE,
+                        mRpMode,
+                        mContext,
+                        mMockModalDialogManager);
     }
 }

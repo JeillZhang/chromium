@@ -154,8 +154,6 @@ void ImmersiveModeControllerChromeos::OnWidgetActivationChanged(
     return;
   }
 
-  // TODO(sammiequon): Investigate if we can move immersive mode logic to the
-  // browser non client frame view.
   DCHECK_EQ(browser_view_->frame(), widget);
   if (widget->GetNativeWindow()->GetProperty(chromeos::kWindowStateTypeKey) ==
       chromeos::WindowStateType::kFloated) {
@@ -197,7 +195,11 @@ void ImmersiveModeControllerChromeos::OnImmersiveRevealStarted() {
 
 void ImmersiveModeControllerChromeos::OnImmersiveRevealEnded() {
   visible_fraction_ = 0;
-  browser_view_->contents_web_view()->holder()->SetHitTestTopInset(0);
+  std::vector<ContentsWebView*> contents_views =
+      browser_view_->GetAllVisibleContentsWebViews();
+  for (ContentsWebView* contents_view : contents_views) {
+    contents_view->holder()->SetHitTestTopInset(0);
+  }
   for (Observer& observer : observers_) {
     observer.OnImmersiveRevealEnded();
   }
@@ -210,7 +212,11 @@ void ImmersiveModeControllerChromeos::OnImmersiveFullscreenEntered() {
 }
 
 void ImmersiveModeControllerChromeos::OnImmersiveFullscreenExited() {
-  browser_view_->contents_web_view()->holder()->SetHitTestTopInset(0);
+  std::vector<ContentsWebView*> contents_views =
+      browser_view_->GetAllVisibleContentsWebViews();
+  for (ContentsWebView* contents_view : contents_views) {
+    contents_view->holder()->SetHitTestTopInset(0);
+  }
   for (Observer& observer : observers_) {
     observer.OnImmersiveFullscreenExited();
   }
@@ -228,10 +234,18 @@ void ImmersiveModeControllerChromeos::SetVisibleFraction(
   // animation duration. See: https://crbug.com/901544.
   if (browser_view_->GetSupportsTabStrip()) {
     if (visible_fraction == 1.0) {
-      browser_view_->contents_web_view()->holder()->SetHitTestTopInset(
-          browser_view_->top_container()->height());
+      std::vector<ContentsWebView*> contents_views =
+          browser_view_->GetAllVisibleContentsWebViews();
+      for (ContentsWebView* contents_view : contents_views) {
+        contents_view->holder()->SetHitTestTopInset(
+            browser_view_->top_container()->height());
+      }
     } else if (visible_fraction_ == 1.0) {
-      browser_view_->contents_web_view()->holder()->SetHitTestTopInset(0);
+      std::vector<ContentsWebView*> contents_views =
+          browser_view_->GetAllVisibleContentsWebViews();
+      for (ContentsWebView* contents_view : contents_views) {
+        contents_view->holder()->SetHitTestTopInset(0);
+      }
     }
   }
   visible_fraction_ = visible_fraction;

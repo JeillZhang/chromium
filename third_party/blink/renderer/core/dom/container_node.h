@@ -25,7 +25,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_DOM_CONTAINER_NODE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_DOM_CONTAINER_NODE_H_
 
-#include "base/functional/function_ref.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_value.h"
@@ -41,7 +40,6 @@ namespace blink {
 class Element;
 class ExceptionState;
 class GetHTMLOptions;
-class GetInnerHTMLOptions;
 class HTMLCollection;
 class RadioNodeList;
 class StyleRecalcContext;
@@ -73,11 +71,6 @@ enum class DynamicRestyleFlags {
       kChildrenAffectedByIndirectAdjacentRules |
       kChildrenAffectedByForwardPositionalRules |
       kChildrenAffectedByBackwardPositionalRules
-};
-
-enum SubtreeModificationAction {
-  kDispatchSubtreeModifiedEvent,
-  kOmitSubtreeModifiedEvent
 };
 
 // This constant controls how much buffer is initially allocated
@@ -121,10 +114,6 @@ class CORE_EXPORT ContainerNode : public Node {
     return HasOneChild() && first_child_->IsTextNode();
   }
 
-  // Returns true if all children are text nodes and at least one of them is not
-  // empty. Ignores comments.
-  bool HasOnlyText() const;
-
   Element* QuerySelector(const AtomicString& selectors, ExceptionState&);
   Element* QuerySelector(const AtomicString& selectors);
   StaticElementList* QuerySelectorAll(const AtomicString& selectors,
@@ -161,14 +150,6 @@ class CORE_EXPORT ContainerNode : public Node {
   RadioNodeList* GetRadioNodeList(const AtomicString&,
                                   bool only_match_img_elements = false);
 
-  // Returns the contents of the first descendant that is either (1) an element
-  // containing only text or (2) a readonly text input, whose text contains the
-  // given substring, if the validity checker returns true for it. Ignores ASCII
-  // case in the substring search.
-  String FindTextInElementWith(
-      const AtomicString& substring,
-      base::FunctionRef<bool(const String&)> validity_checker) const;
-
   // Returns all Text nodes where `regex` would match for the text inside of
   // the node, case-insensitive. This function does not normalize adjacent Text
   // nodes and search them together. It only matches within individual Text
@@ -179,7 +160,7 @@ class CORE_EXPORT ContainerNode : public Node {
   StaticNodeList* FindAllTextNodesMatchingRegex(const String& regex) const;
 
   // These methods are only used during parsing.
-  // They don't send DOM mutation events or accept DocumentFragments.
+  // They don't accept DocumentFragments.
   void ParserAppendChild(Node*);
 
   // Called when the parser adds a child to a DocumentFragment as the result
@@ -197,8 +178,7 @@ class CORE_EXPORT ContainerNode : public Node {
   void ParserInsertBefore(Node* new_child, Node& ref_child);
   void ParserTakeAllChildrenFrom(ContainerNode&);
 
-  void RemoveChildren(
-      SubtreeModificationAction = kDispatchSubtreeModifiedEvent);
+  void RemoveChildren();
 
   void CloneChildNodesFrom(const ContainerNode&, NodeCloningData&);
 
@@ -486,9 +466,8 @@ class CORE_EXPORT ContainerNode : public Node {
   void ReplaceChildren(const VectorOf<Node>& nodes,
                        ExceptionState& exception_state);
 
-  // Common implementation of getHTML and getInnerHTML. These are exposed (via
-  // IDL) on Element and ShadowRoot only.
-  String getInnerHTML(const GetInnerHTMLOptions* options) const;
+  // IDL implementation of getHTML. This is exposed on Element and ShadowRoot
+  // only.
   String getHTML(const GetHTMLOptions*, ExceptionState&) const;
 
   // DocumentOrElementEventHandlers:

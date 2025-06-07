@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -18,8 +19,8 @@
 #include "components/autofill/core/browser/data_manager/addresses/address_data_manager.h"
 #include "components/autofill/core/browser/data_manager/addresses/test_address_data_manager.h"
 #include "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
-#include "components/autofill/core/browser/data_model/autofill_profile_test_api.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/addresses/autofill_profile_test_api.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/foundations/test_autofill_client.h"
 #include "components/autofill/core/browser/geo/phone_number_i18n.h"
@@ -438,6 +439,8 @@ TEST_F(AddressSuggestionGeneratorTest,
                        "123 Zoo St.\nSecond Line\nThird line", "unit 5",
                        "Hollywood", "CA", "91601", "US", "12345678910");
   profile1.usage_history().set_use_date(AutofillClock::Now() - base::Days(200));
+  profile1.usage_history().set_modification_date(AutofillClock::Now() -
+                                                 base::Days(200));
   address_data().AddProfile(profile1);
 
   AutofillProfile profile2(i18n_model_definition::kLegacyHierarchyCountryCode);
@@ -446,6 +449,8 @@ TEST_F(AddressSuggestionGeneratorTest,
                        "456 Zoo St.\nSecond Line\nThird line", "unit 5",
                        "Hollywood", "CA", "91601", "US", "12345678910");
   profile2.usage_history().set_use_date(AutofillClock::Now() - base::Days(20));
+  profile2.usage_history().set_modification_date(AutofillClock::Now() -
+                                                 base::Days(20));
   address_data().AddProfile(profile2);
 
   // Query with empty string only returns profile2.
@@ -639,8 +644,10 @@ TEST_F(AddressSuggestionGeneratorTest,
   AutofillProfile profile_1 = test::GetFullProfile();
   AutofillProfile profile_2 = test::GetFullProfile2();
   profile_1.usage_history().set_use_count(10);
+  profile_1.usage_history().set_modification_date(kDisusedTime);
   profile_1.usage_history().set_use_date(kDisusedTime);
   profile_2.usage_history().set_use_count(1);
+  profile_2.usage_history().set_modification_date(kDisusedTime);
   profile_2.usage_history().set_use_date(kDisusedTime);
   address_data().AddProfile(profile_1);
   address_data().AddProfile(profile_2);
@@ -655,6 +662,46 @@ TEST_F(AddressSuggestionGeneratorTest,
   histogram_tester.ExpectUniqueSample(kAddressesSuppressedHistogramName, 1, 1);
 }
 
+// Tests that disused profiles stop being disused
+TEST_F(AddressSuggestionGeneratorTest,
+       GetProfilesToSuggest_DisusedProfiles_ResetWhenUpdatingProfiles) {
+  base::Time kDisusedTime =
+      base::Time::Now() - kDisusedDataModelTimeDelta - base::Days(1);
+
+  AutofillProfile profile_1 = test::GetFullProfile();
+  AutofillProfile profile_2 = test::GetFullProfile2();
+  profile_1.usage_history().set_modification_date(kDisusedTime);
+  profile_1.usage_history().set_use_date(base::Time::Now());
+  profile_2.usage_history().set_modification_date(kDisusedTime);
+  profile_2.usage_history().set_use_date(kDisusedTime);
+  address_data().AddProfile(profile_1);
+  address_data().AddProfile(profile_2);
+
+  // Expect to get one hidden profile because `profile_2` is disused.
+  ASSERT_EQ(
+      GetProfilesToSuggestForTest(address_data(), NAME_FULL, u"",
+                                  /*field_is_autofilled=*/false, {NAME_FULL})
+          .size(),
+      1u);
+
+  // Simulate that `profile_2` was somehow updated (could be either through the
+  // settings page or through accepting an update prompt).
+  profile_2.SetRawInfo(NAME_FULL, u"Modified Name");
+  // This is needed because `TestAddressDataManager::UpdateProfile()` doesn't
+  // simulate date modifications. In reality this is done by simply calling
+  // `AddressDataManager::UpdateProfile()`.
+  profile_2.usage_history().set_modification_date(base::Time::Now());
+  address_data().UpdateProfile(profile_2);
+
+  // Expect now to see both profiles since the modification of `profile_2` means
+  // that it is a relevant profile.
+  EXPECT_EQ(
+      GetProfilesToSuggestForTest(address_data(), NAME_FULL, u"",
+                                  /*field_is_autofilled=*/false, {NAME_FULL})
+          .size(),
+      2u);
+}
+
 TEST_F(AddressSuggestionGeneratorTest, CreateSuggestionsFromProfiles) {
   AutofillProfile profile(i18n_model_definition::kLegacyHierarchyCountryCode);
   test::SetProfileInfo(&profile, "Marion", "Mitchell", "Morrison",
@@ -664,8 +711,7 @@ TEST_F(AddressSuggestionGeneratorTest, CreateSuggestionsFromProfiles) {
 
   std::vector<Suggestion> suggestions = CreateSuggestionsFromProfilesForTest(
       {profile}, {ADDRESS_HOME_STREET_ADDRESS}, SuggestionType::kAddressEntry,
-      ADDRESS_HOME_STREET_ADDRESS,
-      /*trigger_field_max_length=*/0);
+      ADDRESS_HOME_STREET_ADDRESS);
   ASSERT_FALSE(suggestions.empty());
   EXPECT_EQ(u"123 Zoo St., Second Line, Third line, unit 5",
             suggestions[0].main_text.value);
@@ -677,8 +723,7 @@ TEST_F(AddressSuggestionGeneratorTest, CreateSuggestionsUsingEmailOverride) {
 
   std::vector<Suggestion> suggestions = CreateSuggestionsFromProfilesForTest(
       {profile1, profile2}, {EMAIL_ADDRESS}, SuggestionType::kAddressEntry,
-      EMAIL_ADDRESS, /*trigger_field_max_length=*/0, false, "en-US",
-      "plus-address-override@me.com",
+      EMAIL_ADDRESS, "en-US", "plus-address-override@me.com",
       base::UTF16ToUTF8(profile2.GetRawInfo(EMAIL_ADDRESS)));
   ASSERT_EQ(suggestions.size(), 2u);
   EXPECT_EQ(profile1.GetRawInfo(EMAIL_ADDRESS), suggestions[0].main_text.value);
@@ -695,8 +740,7 @@ TEST_F(AddressSuggestionGeneratorTest,
 
   std::vector<Suggestion> suggestions = CreateSuggestionsFromProfilesForTest(
       {profile}, {PHONE_HOME_WHOLE_NUMBER}, SuggestionType::kAddressEntry,
-      PHONE_HOME_WHOLE_NUMBER,
-      /*trigger_field_max_length=*/0);
+      PHONE_HOME_WHOLE_NUMBER);
   ASSERT_FALSE(suggestions.empty());
   EXPECT_EQ(u"+1 234-567-8910", suggestions[0].main_text.value);
 }
@@ -728,11 +772,8 @@ TEST_F(AddressSuggestionGeneratorTest,
 TEST_F(
     AddressSuggestionGeneratorTest,
     GetSuggestionsForProfiles_RemoveFieldByFieldFillingSuggestionsMatchingFieldContent) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(
-      {features::kAutofillAddressFieldSwapping,
-       features::kAutofillImproveAddressFieldSwapping},
-      /*disabled_features=*/{});
+  base::test::ScopedFeatureList scoped_feature_list{
+      features::kAutofillImproveAddressFieldSwapping};
   AutofillProfile profile1 = test::GetFullProfile();
   AutofillProfile profile2 = test::GetFullProfile2();
   address_data().AddProfile(profile1);
@@ -771,6 +812,67 @@ TEST_F(
                   EqualsSuggestion(SuggestionType::kSeparator),
                   EqualsSuggestion(SuggestionType::kUndoOrClear),
                   EqualsSuggestion(SuggestionType::kManageAddress)));
+}
+
+// Tests that Home/Work icons are correctly assigned.
+TEST_F(AddressSuggestionGeneratorTest, TestAddressSuggestion_HomeAndWorkIcons) {
+  base::test::ScopedFeatureList features(
+      features::kAutofillEnableSupportForHomeAndWork);
+
+  AutofillProfile profile_default = test::GetFullProfile();
+  AutofillProfile profile_home = test::GetFullProfile();
+  AutofillProfile profile_work = test::GetFullProfile();
+
+  test_api(profile_home)
+      .set_record_type(AutofillProfile::RecordType::kAccountHome);
+  test_api(profile_work)
+      .set_record_type(AutofillProfile::RecordType::kAccountWork);
+
+  std::vector<Suggestion> suggestions = CreateSuggestionsFromProfilesForTest(
+      {profile_default, profile_home, profile_work}, {NAME_FIRST, NAME_LAST},
+      SuggestionType::kAddressEntry, NAME_FIRST);
+
+  raw_ptr<const base::Feature> kIphFeature =
+      &feature_engagement::kIPHAutofillHomeWorkProfileSuggestionFeature;
+  EXPECT_THAT(
+      suggestions,
+      ElementsAre(
+          AllOf(HasIcon(Suggestion::Icon::kAccount), HasNoIphFeature()),
+          AllOf(HasIcon(Suggestion::Icon::kHome), HasIphFeature(kIphFeature)),
+          AllOf(HasIcon(Suggestion::Icon::kWork), HasIphFeature(kIphFeature))));
+
+  suggestions = CreateSuggestionsFromProfilesForTest(
+      {profile_default, profile_home, profile_work}, {NAME_FIRST, NAME_LAST},
+      SuggestionType::kAddressEntry, EMAIL_ADDRESS);
+
+  // If trigger field is email address, don't show home and work icons.
+  EXPECT_THAT(suggestions, Each(AllOf(HasIcon(Suggestion::Icon::kEmail),
+                                      HasNoIphFeature())));
+}
+
+// Tests that Home/Work icons are not used if the H&W feature is disabled.
+TEST_F(AddressSuggestionGeneratorTest,
+       TestAddressSuggestion_HomeAndWorkIcons_FeatureDisabled) {
+  base::test::ScopedFeatureList features;
+  features.InitAndDisableFeature(
+      features::kAutofillEnableSupportForHomeAndWork);
+
+  AutofillProfile profile_default = test::GetFullProfile();
+  AutofillProfile profile_home = test::GetFullProfile();
+  AutofillProfile profile_work = test::GetFullProfile();
+
+  test_api(profile_home)
+      .set_record_type(AutofillProfile::RecordType::kAccountHome);
+  test_api(profile_work)
+      .set_record_type(AutofillProfile::RecordType::kAccountWork);
+
+  std::vector<Suggestion> suggestions = CreateSuggestionsFromProfilesForTest(
+      {profile_default, profile_home, profile_work}, {NAME_FIRST, NAME_LAST},
+      SuggestionType::kAddressEntry, NAME_FIRST);
+
+  // Default icons are expected.
+  EXPECT_THAT(suggestions, Each(AllOf(HasIcon(Suggestion::Icon::kAccount),
+                                      HasNoIphFeature())));
 }
 
 #if !BUILDFLAG(IS_IOS)
@@ -865,10 +967,35 @@ TEST_F(AddressLabelSuggestionGeneratorTest,
   EXPECT_THAT(
       CreateSuggestionsFromProfilesForTest({profile}, {NAME_FIRST, NAME_LAST},
                                            SuggestionType::kAddressEntry,
-                                           NAME_FIRST,
-                                           /*trigger_field_max_length=*/0),
+                                           NAME_FIRST),
       SuggestionVectorMainTextsAre(Suggestion::Text(
           profile.GetRawInfo(NAME_FULL), Suggestion::Text::IsPrimary(true))));
+}
+
+// Tests that suggestions for alternative name fields have the alternative name
+// as the main text.
+TEST_F(AddressLabelSuggestionGeneratorTest,
+       CreateSuggestionsFromProfiles_AlternativeNameFieldMainText) {
+  base::test::ScopedFeatureList features;
+  features.InitWithFeatures({features::kAutofillImprovedLabels,
+                             features::kAutofillSupportPhoneticNameForJP},
+                            {});
+  AutofillProfile profile(AddressCountryCode("JP"));
+  test::SetProfileInfo(&profile, "firstName", "middleName", "lastName",
+                       "mail@mail.com", "company", "line1", "line2", "city",
+                       "state", "zip", "JP", "phone");
+  profile.SetRawInfo(ALTERNATIVE_GIVEN_NAME, u"あおい");
+  profile.SetRawInfo(ALTERNATIVE_FAMILY_NAME, u"やまもと");
+  profile.FinalizeAfterImport();
+
+  // Suggestions for alternative name fields should have the alternative name
+  // as the main text.
+  EXPECT_THAT(CreateSuggestionsFromProfilesForTest(
+                  {profile}, {ALTERNATIVE_GIVEN_NAME, ALTERNATIVE_FAMILY_NAME},
+                  SuggestionType::kAddressEntry, ALTERNATIVE_GIVEN_NAME),
+              SuggestionVectorMainTextsAre(
+                  Suggestion::Text(profile.GetRawInfo(ALTERNATIVE_GIVEN_NAME),
+                                   Suggestion::Text::IsPrimary(true))));
 }
 
 // Suggestions for `ADDRESS_HOME_LINE1` should have `NAME_FULL` as the label.
@@ -884,8 +1011,7 @@ TEST_P(AddressLabelSuggestionGeneratorTest,
   EXPECT_THAT(
       CreateSuggestionsFromProfilesForTest(
           {profile}, {NAME_FULL, ADDRESS_HOME_STREET_ADDRESS, ADDRESS_HOME_ZIP},
-          SuggestionType::kAddressEntry, triggering_field_type,
-          /*trigger_field_max_length=*/0),
+          SuggestionType::kAddressEntry, triggering_field_type),
       ElementsAre(AllOf(EqualLabels({{full_form_filling_label}}))));
 }
 
@@ -907,8 +1033,7 @@ TEST_P(
   EXPECT_THAT(
       CreateSuggestionsFromProfilesForTest(
           {profile1, profile2}, {NAME_FULL, ADDRESS_HOME_STREET_ADDRESS},
-          SuggestionType::kAddressEntry, triggering_field_type,
-          /*trigger_field_max_length=*/0),
+          SuggestionType::kAddressEntry, triggering_field_type),
       ElementsAre(
           AllOf(EqualLabels({{full_form_filling_label + u"hoa@gmail.com"}})),
           AllOf(EqualLabels({{full_form_filling_label + u"pham@gmail.com"}}))));
@@ -933,8 +1058,7 @@ TEST_P(AddressLabelSuggestionGeneratorTest,
   EXPECT_THAT(
       CreateSuggestionsFromProfilesForTest(
           {profile1, profile2}, {NAME_FULL, ADDRESS_HOME_STREET_ADDRESS},
-          SuggestionType::kAddressEntry, triggering_field_type,
-          /*trigger_field_max_length=*/0),
+          SuggestionType::kAddressEntry, triggering_field_type),
       ElementsAre(
           AllOf(EqualLabels({{full_form_filling_label + u"United States"}})),
           AllOf(EqualLabels({{full_form_filling_label + u"Switzerland"}}))));

@@ -50,7 +50,7 @@ TEST(VideoLayerImplTest, Occlusion) {
       &provider, media::VIDEO_ROTATION_0);
   video_layer_impl->SetBounds(layer_size);
   video_layer_impl->SetDrawsContent(true);
-  video_layer_impl->set_visible_layer_rect(gfx::Rect(layer_size));
+  video_layer_impl->SetVisibleLayerRectForTesting(gfx::Rect(layer_size));
   CopyProperties(impl.root_layer(), video_layer_impl);
 
   impl.CalcDrawProps(viewport_size);
@@ -321,7 +321,7 @@ TEST(VideoLayerImplTest, SoftwareVideoFrameGeneratesYUVQuad) {
       &provider, media::VIDEO_ROTATION_0);
   video_layer_impl->SetBounds(layer_size);
   video_layer_impl->SetDrawsContent(true);
-  video_layer_impl->set_visible_layer_rect(gfx::Rect(layer_size));
+  video_layer_impl->SetVisibleLayerRectForTesting(gfx::Rect(layer_size));
   CopyProperties(impl.root_layer(), video_layer_impl);
 
   impl.CalcDrawProps(layer_size);
@@ -355,7 +355,7 @@ TEST(VideoLayerImplTest, HibitSoftwareVideoFrameGeneratesYUVQuad) {
       &provider, media::VIDEO_ROTATION_0);
   video_layer_impl->SetBounds(layer_size);
   video_layer_impl->SetDrawsContent(true);
-  video_layer_impl->set_visible_layer_rect(gfx::Rect(layer_size));
+  video_layer_impl->SetVisibleLayerRectForTesting(gfx::Rect(layer_size));
   CopyProperties(impl.root_layer(), video_layer_impl);
 
   impl.CalcDrawProps(layer_size);
@@ -395,7 +395,7 @@ TEST(VideoLayerImplTest, NativeYUVFrameGeneratesYUVQuad) {
       &provider, media::VIDEO_ROTATION_0);
   video_layer_impl->SetBounds(layer_size);
   video_layer_impl->SetDrawsContent(true);
-  video_layer_impl->set_visible_layer_rect(gfx::Rect(layer_size));
+  video_layer_impl->SetVisibleLayerRectForTesting(gfx::Rect(layer_size));
   CopyProperties(impl.root_layer(), video_layer_impl);
   impl.CalcDrawProps(layer_size);
 
@@ -435,7 +435,7 @@ TEST(VideoLayerImplTest, NativeARGBFrameGeneratesTextureQuad) {
       &provider, media::VIDEO_ROTATION_0);
   video_layer_impl->SetBounds(layer_size);
   video_layer_impl->SetDrawsContent(true);
-  video_layer_impl->set_visible_layer_rect(gfx::Rect(layer_size));
+  video_layer_impl->SetVisibleLayerRectForTesting(gfx::Rect(layer_size));
   CopyProperties(impl.root_layer(), video_layer_impl);
 
   impl.CalcDrawProps(layer_size);
@@ -446,10 +446,6 @@ TEST(VideoLayerImplTest, NativeARGBFrameGeneratesTextureQuad) {
   EXPECT_EQ(1u, impl.quad_list().size());
   const viz::DrawQuad* draw_quad = impl.quad_list().ElementAt(0);
   ASSERT_EQ(viz::DrawQuad::Material::kTextureContent, draw_quad->material);
-
-  const viz::TextureDrawQuad* texture_draw_quad =
-      viz::TextureDrawQuad::MaterialCast(draw_quad);
-  EXPECT_EQ(texture_draw_quad->resource_size_in_pixels(), resource_size);
 }
 
 TEST(VideoLayerImplTest, GetDamageReasons) {

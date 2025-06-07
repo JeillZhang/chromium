@@ -43,22 +43,20 @@ public class DataSharingServiceFactoryTest {
     @Test
     @MediumTest
     public void testSettingTestFactory() throws TimeoutException {
-        DataSharingService testService = new TestDataSharingService();
-
-        DataSharingServiceFactory.setForTesting(testService);
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    DataSharingService testService = new TestDataSharingService();
+                    DataSharingServiceFactory.setForTesting(testService);
+                });
         LibraryLoader.getInstance().ensureInitialized();
         mActivityTestRule.startMainActivityOnBlankPage();
 
         ThreadUtils.runOnUiThreadBlocking(
-                new Runnable() {
-                    @Override
-                    public void run() {
-                        DataSharingService dataSharingService =
-                                DataSharingServiceFactory.getForProfile(
-                                        ProfileManager.getLastUsedRegularProfile());
-                        Assert.assertTrue(dataSharingService.isEmptyService());
-                        Assert.assertEquals(dataSharingService, testService);
-                    }
+                () -> {
+                    DataSharingService dataSharingService =
+                            DataSharingServiceFactory.getForProfile(
+                                    ProfileManager.getLastUsedRegularProfile());
+                    Assert.assertTrue(dataSharingService.isEmptyService());
                 });
     }
 
@@ -153,7 +151,7 @@ public class DataSharingServiceFactoryTest {
 
     @Test
     @MediumTest
-    @DisableFeatures(ChromeFeatureList.DATA_SHARING)
+    @DisableFeatures({ChromeFeatureList.DATA_SHARING, ChromeFeatureList.DATA_SHARING_JOIN_ONLY})
     public void testServiceCreation_EmptyService() throws TimeoutException {
         LibraryLoader.getInstance().ensureInitialized();
         mActivityTestRule.startMainActivityOnBlankPage();

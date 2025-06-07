@@ -417,6 +417,11 @@ void SetSigninEnterprisePolicyValue(BrowserSigninMode signinMode) {
 // Sign-in opened from: tab switcher.
 // Interrupted at: user consent.
 - (void)testDismissSigninFromTabSwitcher {
+  // TODO(crbug.com/422731851): Test is failing on iPad. Re-enable when fixed.
+  if ([ChromeEarlGrey isIPadIdiom]) {
+    EARL_GREY_TEST_DISABLED(@"Failing on iPad.");
+  }
+
   // When Tab Groups is the third panel (i.e. when Tab Group Sync is enabled),
   // Recent Tabs is not reachable from the Tab Grid. So the sign-in flow is not
   // supported with Tab Group Sync enabled.
@@ -432,6 +437,11 @@ void SetSigninEnterprisePolicyValue(BrowserSigninMode signinMode) {
 // Sign-in opened from: tab switcher.
 // Interrupted at: identity picker.
 - (void)testDismissSigninFromTabSwitcherFromIdentityPicker {
+  // TODO(crbug.com/422731851): Test is failing on iPad. Re-enable when fixed.
+  if ([ChromeEarlGrey isIPadIdiom]) {
+    EARL_GREY_TEST_DISABLED(@"Failing on iPad.");
+  }
+
   // When Tab Groups is the third panel (i.e. when Tab Group Sync is enabled),
   // Recent Tabs is not reachable from the Tab Grid. So the sign-in flow is not
   // supported with Tab Group Sync enabled.
@@ -548,20 +558,6 @@ void SetSigninEnterprisePolicyValue(BrowserSigninMode signinMode) {
   // TODO(crbug.com/41493423): We should log Signin offered.
   expecteds.signinSigninStartedAccessPoint = 1;
   expecteds.signinSignInStarted = 1;
-  [SigninEarlGrey assertExpectedSigninHistograms:expecteds];
-}
-
-// Tests that an add account operation triggered from the web is handled.
-// Regression test for crbug.com/1054861.
-- (void)testSigninAddAccountFromWeb {
-  [ChromeEarlGrey simulateAddAccountFromWeb];
-
-  [self assertFakeSSOScreenIsVisible];
-
-  // TODO(crbug.com/41493423): We should log signin started. Ideally that signin
-  // was offered, but this is probably not possible on the web.
-  ExpectedSigninHistograms* expecteds = [[ExpectedSigninHistograms alloc]
-      initWithAccessPoint:signin_metrics::AccessPoint::kWebSignin];
   [SigninEarlGrey assertExpectedSigninHistograms:expecteds];
 }
 
@@ -685,6 +681,11 @@ void SetSigninEnterprisePolicyValue(BrowserSigninMode signinMode) {
 
 // Tests that a signed-in user can open "Settings" screen from the NTP.
 - (void)testOpenManageSyncSettingsFromNTP {
+  if ([SigninEarlGrey isIdentityDiscAccountMenuEnabled]) {
+    // The identity disk will open the account menu sheet and not the settings
+    // menu.
+    return;
+  }
   // Sign in to Chrome.
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGreyUI signinWithFakeIdentity:fakeIdentity];
@@ -757,12 +758,11 @@ void SetSigninEnterprisePolicyValue(BrowserSigninMode signinMode) {
   [SigninEarlGreyUI assertFakeAddAccountMenuDisplayed];
 }
 
-// Tests that a signed-out user can open "Sign in and sync" screen from the NTP.
+// Tests that a signed-out user can open the "Sign in" screen from the NTP.
 - (void)testOpenSignInFromNTP {
   // Select the identity disc particle.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(GetNSString(
-                     IDS_IOS_IDENTITY_DISC_SIGNED_OUT_ACCESSIBILITY_LABEL))]
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(kNTPFeedHeaderIdentityDisc)]
       performAction:grey_tap()];
   [SigninEarlGreyUI assertFakeAddAccountMenuDisplayed];
 }
@@ -773,9 +773,8 @@ void SetSigninEnterprisePolicyValue(BrowserSigninMode signinMode) {
   [SigninEarlGrey addFakeIdentity:[FakeSystemIdentity fakeIdentity1]];
 
   // Select the identity disc particle.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(GetNSString(
-                     IDS_IOS_IDENTITY_DISC_SIGNED_OUT_ACCESSIBILITY_LABEL))]
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(kNTPFeedHeaderIdentityDisc)]
       performAction:grey_tap()];
 
   // Ensure the sign-in sheet is displayed.
@@ -792,9 +791,8 @@ void SetSigninEnterprisePolicyValue(BrowserSigninMode signinMode) {
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
   // Select the NTP avatar disc.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(GetNSString(
-                     IDS_IOS_IDENTITY_DISC_SIGNED_OUT_ACCESSIBILITY_LABEL))]
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(kNTPFeedHeaderIdentityDisc)]
       performAction:grey_tap()];
 
   // Confirm sign in.
@@ -848,9 +846,8 @@ void SetSigninEnterprisePolicyValue(BrowserSigninMode signinMode) {
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
 
   // Select the NTP avatar disc.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(GetNSString(
-                     IDS_IOS_IDENTITY_DISC_SIGNED_OUT_ACCESSIBILITY_LABEL))]
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(kNTPFeedHeaderIdentityDisc)]
       performAction:grey_tap()];
 
   // Confirm sign in.
@@ -891,9 +888,8 @@ void SetSigninEnterprisePolicyValue(BrowserSigninMode signinMode) {
 // activity from the NTP.
 - (void)testOpenAuthActivityFromNTPIfNoDeviceAccount {
   // Select the identity disc particle.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(GetNSString(
-                     IDS_IOS_IDENTITY_DISC_SIGNED_OUT_ACCESSIBILITY_LABEL))]
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(kNTPFeedHeaderIdentityDisc)]
       performAction:grey_tap()];
 
   // Ensure the auth activity is displayed.
@@ -922,9 +918,8 @@ void SetSigninEnterprisePolicyValue(BrowserSigninMode signinMode) {
       performAction:grey_tap()];
 
   // Select the identity disc particle.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(GetNSString(
-                     IDS_IOS_IDENTITY_DISC_SIGNED_OUT_ACCESSIBILITY_LABEL))]
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(kNTPFeedHeaderIdentityDisc)]
       performAction:grey_tap()];
 
   // Ensure the sign-in sheet is displayed.

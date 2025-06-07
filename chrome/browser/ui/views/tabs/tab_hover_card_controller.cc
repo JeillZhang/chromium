@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/tabs/tab_hover_card_controller.h"
 
+#include <algorithm>
 #include <optional>
 
 #include "base/callback_list.h"
@@ -102,17 +103,20 @@ base::TimeDelta GetShowDelay(int tab_width) {
   //               |                                |
   //       pinned tab width               standard tab width
   constexpr base::TimeDelta kMinimumTriggerDelay = base::Milliseconds(300);
-  if (tab_width < tab_style->GetPinnedWidth()) {
+  const int tab_pinned_width = tab_style->GetPinnedWidth(/*is_split=*/false);
+  const int tab_standard_width =
+      tab_style->GetStandardWidth(/*is_split=*/false);
+  if (tab_width < tab_pinned_width) {
     return kMinimumTriggerDelay;
   }
   constexpr base::TimeDelta kMaximumTriggerDelay = base::Milliseconds(800);
   double logarithmic_fraction =
-      std::log(tab_width - tab_style->GetPinnedWidth() + 1) /
-      std::log(tab_style->GetStandardWidth() - tab_style->GetPinnedWidth() + 1);
+      std::log(tab_width - tab_pinned_width + 1) /
+      std::log(tab_standard_width - tab_pinned_width + 1);
   base::TimeDelta scaling_factor = kMaximumTriggerDelay - kMinimumTriggerDelay;
   base::TimeDelta delay =
       logarithmic_fraction * scaling_factor + kMinimumTriggerDelay;
-  if (tab_width >= tab_style->GetStandardWidth()) {
+  if (tab_width >= tab_standard_width) {
     delay += base::Milliseconds(max_width_additional_delay);
   }
   return delay;
@@ -361,8 +365,14 @@ void TabHoverCardController::UpdateOrShowCard(
     ResetCardsSeenCount();
   }
   if (is_initial && !disable_animations_for_testing_) {
+    // Use the largest tab in the tab strip when determining the delay so that
+    // the delay is consistent for all tabs within the tab strip.
+    int largest_tab = tab->width();
+    for (int i = 0; i < tab_strip_->GetTabCount(); i++) {
+      largest_tab = std::max(largest_tab, tab_strip_->tab_at(i)->width());
+    }
     delayed_show_timer_.Start(
-        FROM_HERE, GetShowDelay(tab->width()),
+        FROM_HERE, GetShowDelay(largest_tab),
         base::BindOnce(&TabHoverCardController::ShowHoverCard,
                        weak_ptr_factory_.GetWeakPtr(), true, tab));
   } else {
@@ -383,21 +393,23 @@ void TabHoverCardController::ShowHoverCard(bool is_initial,
     return;
   }
 
+  // Note: `target_tab_` can be nullified via reentreant callbacks invoked
+  // throughout the HoverCard creation process. The doc mentioned at
+  // crbug.com/40865488#comment23 discusses proper fixes for this. Until then,
+  // early-return after vulnerable calls here if `target_tab_` has become null.
+  // See also: crbug.com/1295601, crbug.com/1322117, crbug.com/1348956
   CreateHoverCard(target_tab_);
-
-  // For some reason, |target_tab_| can be rendered invalid before the next
-  // call. There may be an asynchronous operation buried deep within
-  // CreateHoverCard() above. Regardless, the validity needs to be checked
-  // before the next call.
-  // See: crbug.com/1295601, crbug.com/1322117, crbug.com/1348956
-  // TODO(crbug.com/40865488): look into this and figure out what is actually
-  // happening.
   if (!TargetTabIsValid()) {
     HideHoverCard();
     return;
   }
 
   UpdateCardContent(target_tab_);
+  if (!TargetTabIsValid()) {
+    HideHoverCard();
+    return;
+  }
+
   slide_animator_->UpdateTargetBounds();
   MaybeStartThumbnailObservation(target_tab_, is_initial);
   hover_card_->GetWidget()->SetZOrderSublevel(
@@ -545,7 +557,7 @@ void TabHoverCardController::UpdateCardContent(Tab* tab) {
 void TabHoverCardController::MaybeStartThumbnailObservation(
     Tab* tab,
     bool is_initial_show) {
-  // If the preview image feature is not enabled, |thumbnail_observer_| will be
+  // If the preview image feature is not enabled, `thumbnail_observer_` will be
   // null.
   if (!thumbnail_observer_) {
     return;
@@ -648,7 +660,7 @@ void TabHoverCardController::StartThumbnailObservation(Tab* tab) {
     return;
   }
 
-  // If the preview image feature is not enabled, |thumbnail_observer_| will be
+  // If the preview image feature is not enabled, `thumbnail_observer_` will be
   // null.
   if (!thumbnail_observer_) {
     return;
@@ -682,7 +694,7 @@ void TabHoverCardController::StartThumbnailObservation(Tab* tab) {
 }
 
 bool TabHoverCardController::ShouldShowImmediately(const Tab* tab) const {
-  // If less than |kShowWithoutDelayTimeBuffer| time has passed since the hover
+  // If less than `kShowWithoutDelayTimeBuffer` time has passed since the hover
   // card was last visible then it is shown immediately. This is to account for
   // if hover unintentionally leaves the tab strip.
   constexpr base::TimeDelta kShowWithoutDelayTimeBuffer =

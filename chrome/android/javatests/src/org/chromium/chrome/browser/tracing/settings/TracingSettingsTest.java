@@ -226,7 +226,6 @@ public class TracingSettingsTest {
         // Recording started, a notification with a stop button should be displayed.
         Notification notification = waitForNotification().notification;
         Assert.assertEquals(FLAG_ONGOING_EVENT, notification.flags & FLAG_ONGOING_EVENT);
-        Assert.assertEquals(null, notification.deleteIntent);
         Assert.assertEquals(1, NotificationCompat.getActionCount(notification));
         PendingIntent stopIntent = NotificationCompat.getAction(notification, 0).actionIntent;
 
@@ -291,7 +290,7 @@ public class TracingSettingsTest {
     }
 
     public static class CategoryParams implements ParameterProvider {
-        private static List<ParameterSet> sParams =
+        private static final List<ParameterSet> sParams =
                 Arrays.asList(
                         new ParameterSet()
                                 .value(TracingSettings.UI_PREF_DEFAULT_CATEGORIES, "toplevel")

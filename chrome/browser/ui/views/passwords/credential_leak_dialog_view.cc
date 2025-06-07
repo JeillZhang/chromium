@@ -13,11 +13,11 @@
 #include "chrome/browser/ui/passwords/password_dialog_prompts.h"
 #include "chrome/browser/ui/tabs/public/tab_dialog_manager.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
-#include "chrome/browser/ui/tabs/public/tab_interface.h"
 #include "chrome/browser/ui/views/accessibility/theme_tracking_non_accessible_image_view.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/password_manager/core/browser/leak_detection_dialog_utils.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/mojom/dialog_button.mojom.h"
@@ -81,8 +81,9 @@ void CredentialLeakPromptImpl::ShowCredentialLeakPrompt() {
     credential_leak_dialog_view_->InitWindow();
     dialog_ = tab_interface->GetTabFeatures()
                   ->tab_dialog_manager()
-                  ->CreateShowDialogAndBlockTabInteraction(
-                      credential_leak_dialog_view_.release());
+                  ->CreateAndShowDialog(
+                      credential_leak_dialog_view_.release(),
+                      std::make_unique<tabs::TabDialogManager::Params>());
     dialog_->MakeCloseSynchronous(base::BindOnce(
         &CredentialLeakPromptImpl::CloseWidget, base::Unretained(this)));
   }
@@ -113,9 +114,8 @@ CredentialLeakDialogView::CredentialLeakDialogView(
 
   // Set the ownership of the delegate, not the View. The View is owned by the
   // Widget as a child view.
-  // TODO(crbug.com/338254375): Remove the following two lines once this is the
-  // default state for widgets and the delegates.
-  views::WidgetDelegate::SetOwnedByWidget(false);
+  // TODO(crbug.com/338254375): Remove the following line once this is the
+  // default state for widgets.
   SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
 
   SetButtons(controller->ShouldShowCancelButton()

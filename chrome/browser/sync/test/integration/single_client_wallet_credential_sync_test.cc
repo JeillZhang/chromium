@@ -4,13 +4,14 @@
 
 #include "base/notreached.h"
 #include "base/test/test_future.h"
+#include "build/build_config.h"
 #include "chrome/browser/sync/test/integration/fake_server_match_status_checker.h"
 #include "chrome/browser/sync/test/integration/sync_service_impl_harness.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "chrome/browser/sync/test/integration/wallet_helper.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager.h"
 #include "components/autofill/core/browser/data_manager/payments/payments_data_manager_test_utils.h"
-#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/sync/base/data_type.h"
 #include "components/sync/base/features.h"
@@ -61,7 +62,7 @@ bool ServerCvcChecker::IsExitConditionSatisfied(std::ostream* os) {
              .size() == expected_count_;
 }
 
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 std::vector<std::unique_ptr<autofill::CreditCard>> GetServerCards(
     scoped_refptr<autofill::AutofillWebDataService> service) {
   base::test::TestFuture<WebDataServiceBase::Handle,
@@ -73,7 +74,7 @@ std::vector<std::unique_ptr<autofill::CreditCard>> GetServerCards(
              *future.Get<1>())
       .GetValue();
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 }  // namespace
 
@@ -163,7 +164,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientWalletCredentialSyncTest, EnabledByDefault) {
 
 // ChromeOS does not support late signin after profile creation, so the test
 // below does not apply.
-#if !BUILDFLAG(IS_CHROMEOS_ASH)
+#if !BUILDFLAG(IS_CHROMEOS)
 // Verify card and CVC data is synced when the user signs in.
 IN_PROC_BROWSER_TEST_F(SingleClientWalletCredentialSyncTest,
                        DownloadCardCredential) {
@@ -416,7 +417,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientWalletCredentialSyncTest,
   EXPECT_EQ(0uL, paydm->GetCreditCards().size());
 }
 
-#endif  // !BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 // Verify that card and CVC data should get cleared from the database when the
 // sync for Payments is disabled.

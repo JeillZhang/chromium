@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/views/accessibility/non_accessible_image_view.h"
@@ -96,7 +97,7 @@ SecurityInformationView::SecurityInformationView(int side_margin) {
       AddChildView(std::make_unique<views::View>());
 
   const int end_padding =
-      layout_provider->GetDistanceMetric(DISTANCE_CONTROL_LIST_VERTICAL);
+      layout_provider->GetDistanceMetric(views::DISTANCE_CONTROL_LIST_VERTICAL);
   layout->AddPaddingRow(views::TableLayout::kFixedSize, end_padding);
 }
 
@@ -112,7 +113,7 @@ void SecurityInformationView::SetSummary(const std::u16string& summary_text,
   security_summary_label_->SetDefaultTextStyle(text_style);
 }
 
-void SecurityInformationView::SetDetails(
+void SecurityInformationView::SetDetailsWithLearnMore(
     const std::u16string& details_text,
     views::Link::ClickedCallback security_details_callback) {
   std::vector<std::u16string> subst;
@@ -131,6 +132,10 @@ void SecurityInformationView::SetDetails(
           security_details_callback);
 
   security_details_label_->AddStyleRange(details_range, link_style);
+}
+
+void SecurityInformationView::SetDetails(const std::u16string& details_text) {
+  security_details_label_->SetText(details_text);
 }
 
 void SecurityInformationView::AddResetDecisionsLabel(

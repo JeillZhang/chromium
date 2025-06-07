@@ -144,7 +144,7 @@ class BookmarkBarDragAndDropInteractiveTest : public InteractiveBrowserTest {
     return Steps(PollState(kMenuShownId, base::BindLambdaForTesting([this]() {
                              return BookmarkBarActiveMenu();
                            })),
-                 WaitForState(kMenuShownId, testing::NotNull()), );
+                 WaitForState(kMenuShownId, testing::NotNull()));
   }
 
   // Returns a relative-position callback that gets the top-center point of
@@ -236,19 +236,8 @@ class BookmarkBarDragAndDropInteractiveTest : public InteractiveBrowserTest {
 #define MAYBE_DISABLED(test_name) test_name
 #endif
 
-void SkipIfMac11() {
-#if BUILDFLAG(IS_MAC)
-  if (base::mac::MacOSMajorVersion() == 11) {
-    // TODO(crbug.com/391735476) Deflake on Mac11.
-    GTEST_SKIP() << "Test is flaky on Mac11 (crbug.com/391735476)";
-  }
-#endif
-}
-
 IN_PROC_BROWSER_TEST_F(BookmarkBarDragAndDropInteractiveTest,
                        MAYBE_DISABLED(BookmarksDragAndDrop)) {
-  SkipIfMac11();
-
   // Add two bookmarks nodes to the bookmarks bar.
   bookmarks::BookmarkModel* const model =
       BookmarkModelFactory::GetForBrowserContext(browser()->profile());
@@ -276,13 +265,11 @@ IN_PROC_BROWSER_TEST_F(BookmarkBarDragAndDropInteractiveTest,
       NameBarMenuChild(kANodeMenuId, 1u),
       CheckViewProperty(kANodeMenuId, &views::MenuItemView::title, u"a"),
       NameBarMenuChild(kBNodeMenuId, 0u),
-      CheckViewProperty(kBNodeMenuId, &views::MenuItemView::title, u"b"), );
+      CheckViewProperty(kBNodeMenuId, &views::MenuItemView::title, u"b"));
 }
 
 IN_PROC_BROWSER_TEST_F(BookmarkBarDragAndDropInteractiveTest,
                        MAYBE_DISABLED(BookmarksDragAndDropToNestedFolder)) {
-  SkipIfMac11();
-
   // Add two bookmarks nodes to the bookmarks bar.
   bookmarks::BookmarkModel* const model =
       BookmarkModelFactory::GetForBrowserContext(browser()->profile());
@@ -310,13 +297,11 @@ IN_PROC_BROWSER_TEST_F(BookmarkBarDragAndDropInteractiveTest,
       NameBarMenuChild(kBNodeMenuId, 0u),
       CheckViewProperty(kBNodeMenuId, &views::MenuItemView::title, u"b"),
       NameSubmenuChild(kBNodeMenuId, kANodeMenuId, 0u),
-      CheckViewProperty(kANodeMenuId, &views::MenuItemView::title, u"a"), );
+      CheckViewProperty(kANodeMenuId, &views::MenuItemView::title, u"a"));
 }
 
 IN_PROC_BROWSER_TEST_F(BookmarkBarDragAndDropInteractiveTest,
                        MAYBE_DISABLED(BookmarksDragAndDropFromNestedFolder)) {
-  SkipIfMac11();
-
   // Add two bookmarks nodes to the bookmarks bar.
   bookmarks::BookmarkModel* const model =
       BookmarkModelFactory::GetForBrowserContext(browser()->profile());
@@ -346,6 +331,6 @@ IN_PROC_BROWSER_TEST_F(BookmarkBarDragAndDropInteractiveTest,
       NameBarMenuChild(kBNodeMenuId, 0u),
       CheckViewProperty(kBNodeMenuId, &views::MenuItemView::title, u"b"),
       NameBarMenuChild(kANodeMenuId, 1u),
-      CheckViewProperty(kANodeMenuId, &views::MenuItemView::title, u"a"), );
+      CheckViewProperty(kANodeMenuId, &views::MenuItemView::title, u"a"));
 }
 }  // namespace

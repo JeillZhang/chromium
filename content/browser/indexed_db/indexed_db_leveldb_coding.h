@@ -100,12 +100,12 @@ CONTENT_EXPORT void EncodeBlobJournal(const BlobJournalType& journal,
     base::span<const uint8_t>* value);
 [[nodiscard]] CONTENT_EXPORT bool DecodeDouble(std::string_view* slice,
                                                double* value);
-[[nodiscard]] CONTENT_EXPORT bool DecodeIDBKey(
-    std::string_view* slice,
-    std::unique_ptr<blink::IndexedDBKey>* value);
-[[nodiscard]] CONTENT_EXPORT bool DecodeSortableIDBKey(
-    std::string_view serialized,
-    blink::IndexedDBKey* value);
+// Will return an invalid key if deserialization fails.
+[[nodiscard]] CONTENT_EXPORT blink::IndexedDBKey DecodeIDBKey(
+    std::string_view* slice);
+// Will return an invalid key if deserialization fails.
+[[nodiscard]] CONTENT_EXPORT blink::IndexedDBKey DecodeSortableIDBKey(
+    std::string_view serialized);
 [[nodiscard]] CONTENT_EXPORT bool DecodeIDBKeyPath(
     std::string_view* slice,
     blink::IndexedDBKeyPath* value);
@@ -143,6 +143,7 @@ std::string IndexedDBKeyToDebugString(std::string_view key);
 // anyway).
 CONTENT_EXPORT PartitionedLockId
 GetDatabaseLockId(std::u16string database_name);
+// Note: this one is only to be used by the LevelDB backing store.
 CONTENT_EXPORT PartitionedLockId GetObjectStoreLockId(int64_t database_id,
                                                       int64_t object_store_id);
 
@@ -186,7 +187,7 @@ class KeyPrefix {
   static const int64_t kMaxIndexId =
       (1ULL << kMaxIndexIdBits) - 1;  // max signed int32_t
 
-  static const int64_t kInvalidId = -1;
+  CONTENT_EXPORT static const int64_t kInvalidId;
 
   KeyPrefix();
   explicit KeyPrefix(int64_t database_id);
@@ -480,7 +481,7 @@ class ObjectStoreDataKey {
                                            const blink::IndexedDBKey& user_key);
   std::string DebugString() const;
 
-  std::unique_ptr<blink::IndexedDBKey> user_key() const;
+  blink::IndexedDBKey DecodeUserKey() const;
 
  private:
   std::string encoded_user_key_;
@@ -504,7 +505,7 @@ class ExistsEntryKey {
                             const blink::IndexedDBKey& user_key);
   std::string DebugString() const;
 
-  std::unique_ptr<blink::IndexedDBKey> user_key() const;
+  blink::IndexedDBKey DecodeUserKey() const;
 
  private:
   static const int64_t kSpecialIndexNumber;
@@ -560,8 +561,8 @@ class IndexDataKey {
       int64_t database_id,
       int64_t object_store_id,
       int64_t index_id,
-      const std::string& encoded_user_key,
-      const std::string& encoded_primary_key,
+      const std::string_view encoded_user_key,
+      const std::string_view encoded_primary_key,
       int64_t sequence_number);
   static std::string Encode(int64_t database_id,
                             int64_t object_store_id,
@@ -584,8 +585,8 @@ class IndexDataKey {
   int64_t DatabaseId() const;
   int64_t ObjectStoreId() const;
   int64_t IndexId() const;
-  std::unique_ptr<blink::IndexedDBKey> user_key() const;
-  std::unique_ptr<blink::IndexedDBKey> primary_key() const;
+  blink::IndexedDBKey DecodeUserKey() const;
+  blink::IndexedDBKey DecodePrimaryKey() const;
 
   CONTENT_EXPORT std::string Encode() const;
 

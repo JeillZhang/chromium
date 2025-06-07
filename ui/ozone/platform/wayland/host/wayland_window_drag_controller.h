@@ -86,6 +86,10 @@ class WaylandWindowDragController : public WaylandDataDevice::DragDelegate,
   // drag controller.
   bool IsDragInProgress() const;
 
+  // Returns true iff there is an active drag session and `window` is the
+  // current window being dragged.
+  bool IsDraggingWindow(WaylandToplevelWindow* window) const;
+
   // Tells if any of the window drag protocol (ie: zcr-extended-drag-v1 or
   // xdg-toplevel-drag-v1) is available. May also return true in tests if
   // `window_drag_protocol_available_for_testing_` is set.
@@ -136,6 +140,8 @@ class WaylandWindowDragController : public WaylandDataDevice::DragDelegate,
   // WaylandWindowObserver:
   void OnWindowRemoved(WaylandWindow* window) override;
 
+  // Asks the Wayland compositor to cancel the drag session, if any.
+  void CancelDragSession();
   // Handles drag/move mouse |event|, while in |kDetached| mode, forwarding it
   // as a bounds change event to the upper layer handlers.
   void HandleMotionEvent(LocatedEvent* event);

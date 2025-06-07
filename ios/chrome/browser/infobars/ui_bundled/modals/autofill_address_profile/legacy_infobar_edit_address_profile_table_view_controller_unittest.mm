@@ -51,7 +51,8 @@ class LegacyInfobarEditAddressProfileTableViewControllerTest
            initWithDelegate:nil
         personalDataManager:personal_data_manager_.get()
             autofillProfile:profile_.get()
-          isMigrationPrompt:NO];
+          isMigrationPrompt:NO
+           addManualAddress:NO];
     CreateController();
     CheckController();
 
@@ -69,7 +70,8 @@ class LegacyInfobarEditAddressProfileTableViewControllerTest
             initWithDelegate:autofill_profile_edit_mediator_
                    userEmail:base::SysUTF16ToNSString(kTestSyncingEmail)
                   controller:viewController
-                settingsView:NO];
+                settingsView:NO
+            addManualAddress:NO];
     viewController.handler = autofill_profile_edit_table_view_controller_;
     autofill_profile_edit_mediator_.consumer =
         autofill_profile_edit_table_view_controller_;
@@ -145,8 +147,10 @@ class LegacyInfobarEditAddressProfileTableViewControllerTest
 };
 
 // Tests the edit view initialisation for the save prompt of an account profile.
+// TODO(crbug.com/416030990): Remove test for cleanup of
+// AutofillDynamicallyLoadsFieldsForAddressInput.
 TEST_F(LegacyInfobarEditAddressProfileTableViewControllerTest,
-       TestEditForAccountProfile) {
+       DISABLED_TestEditForAccountProfile) {
   CreateAccountProfile();
 
   NSString* expected_footer_text = l10n_util::GetNSStringF(
@@ -168,8 +172,10 @@ class LegacyInfobarEditAddressProfileTableViewControllerMigrationPromptTest
 };
 
 // Tests the edit view initialisation for the migration prompt to account.
+// TODO(crbug.com/416030990): Remove test for cleanup of
+// AutofillDynamicallyLoadsFieldsForAddressInput.
 TEST_F(LegacyInfobarEditAddressProfileTableViewControllerMigrationPromptTest,
-       TestMigrationPrompt) {
+       DISABLED_TestMigrationPrompt) {
   NSString* expected_footer_text = l10n_util::GetNSStringF(
       IDS_IOS_AUTOFILL_SAVE_ADDRESS_IN_ACCOUNT_FOOTER, kTestSyncingEmail);
   TestModelRowsAndButtons(

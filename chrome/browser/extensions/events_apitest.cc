@@ -28,6 +28,8 @@
 #include "extensions/browser/background_script_executor.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_event_histogram_value.h"
+#include "extensions/browser/extension_host.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/process_manager_observer.h"
@@ -424,7 +426,8 @@ IN_PROC_BROWSER_TEST_F(EventsApiTest,
         registry->disabled_extensions().GetByID(extension_id);
     ASSERT_TRUE(extension_v2);
     // Enable the extension.
-    extension_service()->GrantPermissionsAndEnableExtension(extension_v2);
+    ExtensionRegistrar::Get(profile())->GrantPermissionsAndEnableExtension(
+        *extension_v2);
     EXPECT_TRUE(catcher.GetNextResult());
   }
 }
@@ -515,7 +518,7 @@ IN_PROC_BROWSER_TEST_F(
 
   // Navigate to the extension page that registers the events.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), extension->GetResourceURL("page.html")));
+      browser(), extension->ResolveExtensionURL("page.html")));
 
   content::WebContents* extension_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
@@ -534,7 +537,7 @@ IN_PROC_BROWSER_TEST_F(
   // EXPECT_EQ(2, content::EvalJs(extension_contents, "self.receivedEvents;"));
   // because each listener should fire exactly once (we only visited one new
   // page).
-  // However, currently we'll disptach the event to the same process twice
+  // However, currently we'll dispatch the event to the same process twice
   // (once for each listener), and each dispatch will match both listeners,
   // resulting in each listener being triggered twice (for a total of four
   // received events).
@@ -558,12 +561,8 @@ class ChromeUpdatesEventsApiTest : public EventsApiTest,
     EventsApiTest::SetUpOnMainThread();
     ProcessManager* process_manager = ProcessManager::Get(profile());
     ProcessManager::Get(profile())->AddObserver(this);
-    const ProcessManager::FrameSet& frames = process_manager->GetAllFrames();
-    for (auto* frame : frames) {
-      const Extension* extension =
-          process_manager->GetExtensionForRenderFrameHost(frame);
-      if (extension)
-        observed_extension_names_.insert(extension->name());
+    for (ExtensionHost* host : process_manager->background_hosts()) {
+      observed_extension_names_.insert(host->extension()->name());
     }
   }
 
@@ -614,7 +613,7 @@ IN_PROC_BROWSER_TEST_F(ChromeUpdatesEventsApiTest, ChromeUpdates) {
   content::RunAllPendingInMessageLoop();
   content::RunAllTasksUntilIdle();
 
-  // "chrome updates listener" registerd a listener for the onInstalled event,
+  // "chrome updates listener" registered a listener for the onInstalled event,
   // whereas "chrome updates non listener" did not. Only the
   // "chrome updates listener" extension should have been woken up for the
   // chrome update event.

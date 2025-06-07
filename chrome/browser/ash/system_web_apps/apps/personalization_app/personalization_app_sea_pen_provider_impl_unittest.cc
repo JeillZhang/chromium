@@ -29,9 +29,11 @@
 #include "base/i18n/time_formatting.h"
 #include "base/json/values_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
 #include "base/test/icu_test_util.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_path_override.h"
 #include "base/test/test_future.h"
@@ -146,8 +148,8 @@ void AddAndLoginUser(const AccountId& account_id, user_manager::UserType type) {
     case user_manager::UserType::kPublicAccount:
       user = user_manager->AddPublicAccountUser(account_id);
       break;
-    case user_manager::UserType::kKioskApp:
-    case user_manager::UserType::kWebKioskApp:
+    case user_manager::UserType::kKioskChromeApp:
+    case user_manager::UserType::kKioskWebApp:
     case user_manager::UserType::kKioskIWA:
       break;
   }
@@ -189,9 +191,7 @@ class PersonalizationAppSeaPenProviderImplTest : public testing::Test {
       : scoped_user_manager_(std::make_unique<ash::FakeChromeUserManager>()),
         profile_manager_(TestingBrowserProcess::GetGlobal()) {
     scoped_feature_list_.InitWithFeatures(
-        {features::kSeaPen, features::kSeaPenDemoMode,
-         features::kFeatureManagementSeaPen},
-        {});
+        {features::kSeaPenDemoMode, features::kFeatureManagementSeaPen}, {});
   }
 
   PersonalizationAppSeaPenProviderImplTest(
@@ -305,6 +305,8 @@ class PersonalizationAppSeaPenProviderImplTest : public testing::Test {
             });
   }
 
+  base::HistogramTester& histogram_tester() { return histogram_tester_; }
+
  private:
   void AddProfile(const std::string& name, user_manager::UserType user_type) {
     switch (user_type) {
@@ -319,8 +321,8 @@ class PersonalizationAppSeaPenProviderImplTest : public testing::Test {
         profile_ = profile_manager_.CreateGuestProfile();
         break;
       case user_manager::UserType::kPublicAccount:
-      case user_manager::UserType::kKioskApp:
-      case user_manager::UserType::kWebKioskApp:
+      case user_manager::UserType::kKioskChromeApp:
+      case user_manager::UserType::kKioskWebApp:
       case user_manager::UserType::kKioskIWA:
         profile_ = profile_manager_.CreateTestingProfile(name);
         break;
@@ -341,6 +343,7 @@ class PersonalizationAppSeaPenProviderImplTest : public testing::Test {
       sea_pen_provider_remote_;
   std::unique_ptr<PersonalizationAppSeaPenProviderImpl> sea_pen_provider_;
   TestSeaPenObserver test_sea_pen_observer_;
+  base::HistogramTester histogram_tester_;
 };
 
 TEST_F(PersonalizationAppSeaPenProviderImplTest, TextSearchReturnsThumbnails) {
@@ -363,6 +366,9 @@ TEST_F(PersonalizationAppSeaPenProviderImplTest, TextSearchReturnsThumbnails) {
                            MatchesSeaPenImage("fake_sea_pen_image_3", 3),
                            MatchesSeaPenImage("fake_sea_pen_image_4", 4)));
   EXPECT_EQ(search_wallpaper_future.Get<1>(), manta::MantaStatusCode::kOk);
+  histogram_tester().ExpectUniqueSample(
+      "Ash.SeaPen.Freeform.Api.Thumbnails.MantaStatusCode",
+      manta::MantaStatusCode::kOk, 1);
 }
 
 TEST_F(PersonalizationAppSeaPenProviderImplTest,
@@ -395,6 +401,28 @@ TEST_F(PersonalizationAppSeaPenProviderImplTest,
                            MatchesSeaPenImage("fake_sea_pen_image_4", 4)));
   EXPECT_THAT(search_wallpaper_future.Get<1>(),
               testing::Eq(manta::MantaStatusCode::kOk));
+  histogram_tester().ExpectUniqueSample(
+      "Ash.SeaPen.Api.Thumbnails.MantaStatusCode", manta::MantaStatusCode::kOk,
+      1);
+}
+
+TEST_F(PersonalizationAppSeaPenProviderImplTest, TextSearchReturnsErrors) {
+  SetUpProfileForTesting(kFakeTestEmail, GetTestAccountId());
+  base::test::TestFuture<
+      std::optional<
+          std::vector<ash::personalization_app::mojom::SeaPenThumbnailPtr>>,
+      manta::MantaStatusCode>
+      search_wallpaper_future;
+  auto query = mojom::SeaPenQuery::NewTextQuery("search_query");
+
+  SetSeaPenFetcherResponse({}, manta::MantaStatusCode::kImageHasPerson, query);
+  sea_pen_provider_remote()->GetSeaPenThumbnails(
+      query->Clone(), search_wallpaper_future.GetCallback());
+  EXPECT_EQ(search_wallpaper_future.Get<1>(),
+            manta::MantaStatusCode::kImageHasPerson);
+  histogram_tester().ExpectUniqueSample(
+      "Ash.SeaPen.Freeform.Api.Thumbnails.MantaStatusCode",
+      manta::MantaStatusCode::kImageHasPerson, 1);
 }
 
 TEST_F(PersonalizationAppSeaPenProviderImplTest, MaxLengthQuery) {
@@ -918,8 +946,6 @@ TEST_F(PersonalizationAppSeaPenProviderImplTest,
        ShouldShowSeaPenIntroductionDialog) {
   SetUpProfileForTesting(kFakeTestEmail, GetTestAccountId());
   test_wallpaper_controller()->ClearCounts();
-  base::test::ScopedFeatureList features;
-  features.InitWithFeatures({features::kSeaPen}, {});
 
   base::test::TestFuture<bool> should_show_dialog_future;
   sea_pen_provider_remote()->ShouldShowSeaPenIntroductionDialog(
@@ -939,8 +965,6 @@ TEST_F(PersonalizationAppSeaPenProviderImplTest,
        ShouldShowSeaPenFreeformIntroductionDialog) {
   SetUpProfileForTesting(kFakeTestEmail, GetTestAccountId());
   test_wallpaper_controller()->ClearCounts();
-  base::test::ScopedFeatureList features;
-  features.InitWithFeatures({features::kSeaPen}, {});
 
   base::test::TestFuture<bool> should_show_dialog_future;
   sea_pen_provider_remote()->ShouldShowSeaPenFreeformIntroductionDialog(

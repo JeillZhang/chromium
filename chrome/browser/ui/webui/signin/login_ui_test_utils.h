@@ -15,7 +15,8 @@ class Browser;
 
 namespace login_ui_test_utils {
 
-constexpr base::TimeDelta kSyncConfirmationDialogTimeout = base::Seconds(30);
+inline constexpr base::TimeDelta kSyncConfirmationDialogTimeout =
+    base::Seconds(30);
 
 // Blocks until the login UI is available and ready for authorization.
 void WaitUntilUIReady(Browser* browser);
@@ -48,6 +49,13 @@ bool SignInWithUI(Browser* browser,
 // to click on confirm button. Returns false if dialog wasn't dismissed before
 // |timeout|.
 [[nodiscard]] bool ConfirmSyncConfirmationDialog(
+    Browser* browser,
+    base::TimeDelta timeout = kSyncConfirmationDialogTimeout);
+
+// Waits for the history sync optin dialog to get displayed, then executes
+// javascript to click on confirm button. Returns false if dialog wasn't
+// dismissed before |timeout|.
+[[nodiscard]] bool ConfirmHistorySyncOptinDialog(
     Browser* browser,
     base::TimeDelta timeout = kSyncConfirmationDialogTimeout);
 

@@ -34,6 +34,7 @@
 #include "media/base/media_observer.h"
 #include "media/base/media_tracks.h"
 #include "media/base/overlay_info.h"
+#include "media/base/picture_in_picture_events_info.h"
 #include "media/base/pipeline_impl.h"
 #include "media/base/renderer_factory_selector.h"
 #include "media/base/routing_token_callback.h"
@@ -178,7 +179,7 @@ class PLATFORM_EXPORT WebMediaPlayerImpl
 
   // Playback controls.
   void Play() override;
-  void Pause() override;
+  void Pause(PauseReason pause_reason) override;
   void Seek(double seconds) override;
   void SetRate(double rate) override;
   void SetVolume(double volume) override;
@@ -212,12 +213,9 @@ class PLATFORM_EXPORT WebMediaPlayerImpl
   bool HasAudio() const override;
 
   void EnabledAudioTracksChanged(
-      const std::vector<WebMediaPlayer::TrackId>& enabled_track_ids) override;
+      std::optional<WebMediaPlayer::TrackId> enabled_track_id) override;
   void SelectedVideoTrackChanged(
       std::optional<WebMediaPlayer::TrackId> selected_track_id) override;
-
-  void OnEnabledAudioTracksChanged(std::vector<media::MediaTrack::Id>);
-  void OnSelectedVideoTrackChanged(std::optional<media::MediaTrack::Id>);
 
   // Dimensions of the video.
   gfx::Size NaturalSize() const override;
@@ -278,7 +276,7 @@ class PLATFORM_EXPORT WebMediaPlayerImpl
   void SetIsEffectivelyFullscreen(
       WebFullscreenVideoStatus fullscreen_video_status) override;
   void OnHasNativeControlsChanged(bool) override;
-  void OnDisplayTypeChanged(DisplayType display_type) override;
+  void OnDisplayTypeChanged(WebMediaPlayer::DisplayType display_type) override;
 
   // WebMediaPlayerDelegate::Observer implementation.
   void OnPageHidden() override;
@@ -338,6 +336,10 @@ class PLATFORM_EXPORT WebMediaPlayerImpl
   void UnregisterFrameSinkHierarchy() override;
 
   void RecordVideoOcclusionState(std::string_view occlusion_state) override;
+
+  void RecordAutoPictureInPictureInfo(
+      const media::PictureInPictureEventsInfo::AutoPipInfo&
+          auto_picture_in_picture_info) override;
 
   bool IsBackgroundMediaSuspendEnabled() const {
     return is_background_suspend_enabled_;
@@ -439,7 +441,6 @@ class PLATFORM_EXPORT WebMediaPlayerImpl
                                 const std::vector<uint8_t>& init_data) override;
   void MakeDemuxerThreadDumper(media::Demuxer* demuxer) override;
   bool CouldPlayIfEnoughData() override;
-  bool IsMediaPlayerRendererClient() override;
   void StopForDemuxerReset() override;
   void RestartForHls() override;
   bool IsSecurityOriginCryptographic() const override;
@@ -600,6 +601,8 @@ class PLATFORM_EXPORT WebMediaPlayerImpl
   bool IsPausedBecausePageHidden() const;
   bool IsPausedBecauseFrameHidden() const;
 
+  bool ShouldResetVisibilityPauseReason(PauseReason pause_reason) const;
+
   // Returns true if the player is in streaming mode, meaning that the source
   // or the demuxer doesn't support timeline or seeking.
   bool IsStreaming() const;
@@ -629,7 +632,7 @@ class PLATFORM_EXPORT WebMediaPlayerImpl
   // Must be called when either of the following happens:
   // - right after the video was hidden,
   // - right after the pipeline has resumed if the video is hidden.
-  void PauseVideoIfNeeded();
+  void PauseVideoIfNeeded(PauseReason pause_reason);
 
   // Disables the video track to save power if possible.
   // Must be called when either of the following happens:
@@ -811,7 +814,7 @@ class PLATFORM_EXPORT WebMediaPlayerImpl
   // Set if paused automatically when hidden. Reset if paused for any other
   // reason. If set to PauseReason::kPageHidden, playback should be resumed when
   // the page becomes visible.
-  std::optional<MediaPlayerClient::PauseReason> visibility_pause_reason_;
+  std::optional<PauseReason> visibility_pause_reason_;
 
   // Set when starting, seeking, and resuming (all of which require a Pipeline
   // seek). |seek_time_| is only valid when |seeking_| is true.
@@ -964,18 +967,6 @@ class PLATFORM_EXPORT WebMediaPlayerImpl
   // started; prevents us from spuriously logging errors that are transient or
   // unimportant.
   bool suppress_destruction_errors_ = false;
-
-  // NOTE: |using_media_player_renderer_| is set based on the usage of a
-  // MediaResource::Type::URL in StartPipeline(). This works because
-  // MediaPlayerRendererClientFactory is the only factory that uses
-  // MediaResource::Type::URL for now.
-  bool using_media_player_renderer_ = false;
-
-#if BUILDFLAG(IS_ANDROID)
-  // Set during the initial DoLoad() call. Used to determine whether to allow
-  // credentials or not for MediaPlayerRenderer.
-  bool allow_media_player_renderer_credentials_ = false;
-#endif
 
   // Stores the current position state of the media.
   media_session::MediaPosition media_position_state_;
@@ -1133,6 +1124,10 @@ class PLATFORM_EXPORT WebMediaPlayerImpl
   bool pending_oneshot_suspend_ = false;
 
   bool should_pause_when_frame_is_hidden_ = false;
+
+  bool is_dominant_visible_content_ = false;
+
+  bool is_effectively_fullscreen_ = false;
 
   base::CancelableOnceClosure have_enough_after_lazy_load_cb_;
 

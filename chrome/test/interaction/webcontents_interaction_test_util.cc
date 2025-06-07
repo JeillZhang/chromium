@@ -25,6 +25,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/to_string.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/values.h"
@@ -731,7 +732,8 @@ void WebContentsInteractionTestUtil::LoadPage(const GURL& url) {
     // similarly-named `content::ExecJs()`, this helper does not actually
     // validate or wait for the script to execute; hopefully, errors from
     // navigation failures will be obvious enough in subsequent steps.
-    ExecuteJsLocal(web_contents(), content::JsReplace("location = $1", url));
+    ExecuteJsLocal(web_contents(),
+                   content::JsReplace("() => location = $1", url));
   }
 }
 

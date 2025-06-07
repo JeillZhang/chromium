@@ -17,6 +17,7 @@
 #include "chrome/browser/extensions/api/extension_action/test_icon_image_observer.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_apitest.h"
+#include "chrome/browser/extensions/extension_browser_test_util.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/test_extension_action_dispatcher_observer.h"
@@ -272,7 +273,8 @@ IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType, Update) {
 IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType, UpdateSvg) {
   // TODO(crbug.com/40123818): Service Workers currently don't support loading
   // SVG images.
-  const bool expect_failure = IsContextTypeForServiceWorker();
+  const bool expect_failure =
+      browser_test_util::IsServiceWorkerContext(context_type_);
   ASSERT_NO_FATAL_FAILURE(
       RunUpdateTest("browser_action/update_svg", expect_failure));
 }
@@ -633,7 +635,7 @@ IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType, AddPopup) {
   {
     ResultCatcher catcher;
     ASSERT_TRUE(ui_test_utils::NavigateToURL(
-        browser(), GURL(extension->GetResourceURL("change_popup.html"))));
+        browser(), GURL(extension->ResolveExtensionURL("change_popup.html"))));
     ASSERT_TRUE(catcher.GetNextResult());
   }
 
@@ -668,7 +670,7 @@ IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType, RemovePopup) {
   {
     ResultCatcher catcher;
     ASSERT_TRUE(ui_test_utils::NavigateToURL(
-        browser(), GURL(extension->GetResourceURL("remove_popup.html"))));
+        browser(), GURL(extension->ResolveExtensionURL("remove_popup.html"))));
     ASSERT_TRUE(catcher.GetNextResult());
   }
 
@@ -679,7 +681,15 @@ IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType, RemovePopup) {
       << "a specific tab id.";
 }
 
-IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType, IncognitoBasic) {
+// TODO(crbug.com/414519997): Flaky on Linux_ASan_LSan.
+#if (defined(ADDRESS_SANITIZER) || defined(LEAK_SANITIZER)) && \
+    BUILDFLAG(IS_LINUX)
+#define MAYBE_IncognitoBasic DISABLED_IncognitoBasic
+#else
+#define MAYBE_IncognitoBasic IncognitoBasic
+#endif
+IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType,
+                       MAYBE_IncognitoBasic) {
   ExtensionTestMessageListener ready_listener("ready");
   ASSERT_TRUE(embedded_test_server()->Start());
   scoped_refptr<const Extension> extension =
@@ -879,7 +889,7 @@ IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType,
   // Tell the extension to update the browser action state.
   ResultCatcher catcher;
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), GURL(extension->GetResourceURL("update.html"))));
+      browser(), GURL(extension->ResolveExtensionURL("update.html"))));
   ASSERT_TRUE(catcher.GetNextResult());
 
   // Test that CSS values (#0F0) set color correctly.
@@ -887,7 +897,7 @@ IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType,
             action->GetBadgeBackgroundColor(ExtensionAction::kDefaultTabId));
 
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), GURL(extension->GetResourceURL("update2.html"))));
+      browser(), GURL(extension->ResolveExtensionURL("update2.html"))));
   ASSERT_TRUE(catcher.GetNextResult());
 
   // Test that array values set color correctly.
@@ -895,7 +905,7 @@ IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType,
             action->GetBadgeBackgroundColor(ExtensionAction::kDefaultTabId));
 
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), GURL(extension->GetResourceURL("update3.html"))));
+      browser(), GURL(extension->ResolveExtensionURL("update3.html"))));
   ASSERT_TRUE(catcher.GetNextResult());
 
   // Test that hsl() values 'hsl(120, 100%, 50%)' set color correctly.
@@ -904,7 +914,7 @@ IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType,
 
   // Test basic color keyword set correctly.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), GURL(extension->GetResourceURL("update4.html"))));
+      browser(), GURL(extension->ResolveExtensionURL("update4.html"))));
   ASSERT_TRUE(catcher.GetNextResult());
 
   ASSERT_EQ(SkColorSetARGB(255, 0, 0, 255),
@@ -922,12 +932,12 @@ IN_PROC_BROWSER_TEST_P(BrowserActionApiTestWithContextType, Getters) {
   // Test the getters for defaults.
   ResultCatcher catcher;
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), GURL(extension->GetResourceURL("update.html"))));
+      browser(), GURL(extension->ResolveExtensionURL("update.html"))));
   ASSERT_TRUE(catcher.GetNextResult());
 
   // Test the getters for a specific tab.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), GURL(extension->GetResourceURL("update2.html"))));
+      browser(), GURL(extension->ResolveExtensionURL("update2.html"))));
   ASSERT_TRUE(catcher.GetNextResult());
 }
 

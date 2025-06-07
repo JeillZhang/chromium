@@ -28,6 +28,7 @@
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/style/icon_button.h"
 #include "ash/test/test_widget_builder.h"
+#include "base/strings/string_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "build/branding_buildflags.h"
@@ -73,7 +74,7 @@ class QuickInsertAccessibilityBrowserTest : public InProcessBrowserTest {
     // Disable earcons which can be annoying in tests.
     sm_.Call([this]() {
       ImportJSModuleForChromeVox("ChromeVox",
-                                 "/chromevox/background/chromevox.js");
+                                 "/chromevox/mv2/background/chromevox.js");
       DisableEarcons();
     });
 

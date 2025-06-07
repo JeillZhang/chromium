@@ -8,13 +8,13 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
-#include "base/functional/overloaded.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/strcat.h"
 #include "base/task/sequenced_task_runner.h"
@@ -42,7 +42,7 @@
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -309,13 +309,13 @@ void IsolatedWebAppInstallationManager::
 // static
 IsolatedWebAppInstallSource
 IsolatedWebAppInstallationManager::CreateInstallSource(
-    absl::variant<base::FilePath, const base::ScopedTempFile*, url::Origin>
+    std::variant<base::FilePath, const base::ScopedTempFile*, url::Origin>
         source,
     InstallSurface surface) {
   switch (surface) {
     case InstallSurface::kDevUi:
-      return IsolatedWebAppInstallSource::FromDevUi(absl::visit(
-          base::Overloaded{
+      return IsolatedWebAppInstallSource::FromDevUi(std::visit(
+          absl::Overload{
               [](base::FilePath path) -> IwaSourceDevModeWithFileOp {
                 return IwaSourceBundleDevModeWithFileOp(
                     std::move(path), IwaSourceBundleDevFileOp::kCopy);
@@ -466,13 +466,8 @@ void IsolatedWebAppInstallationManager::ReportInstallationResult(
 }
 
 void IsolatedWebAppInstallationManager::MaybeScheduleGarbageCollection() {
-  // We are migrating from `ExtensionsPref::kStorageGarbageCollect` to
-  // `prefs::kShouldGarbageCollectStoragePartitions`. During the migration,
-  // either one of the prefs can trigger garbage collection.
-  // TODO(crbug.com/40922689): Delete `ExtensionsPref::kStorageGarbageCollect`.
   if (profile_->GetPrefs()->GetBoolean(
-          prefs::kShouldGarbageCollectStoragePartitions) ||
-      provider_->extensions_manager().ShouldGarbageCollectStoragePartitions()) {
+          prefs::kShouldGarbageCollectStoragePartitions)) {
     provider_->command_manager().ScheduleCommand(
         std::make_unique<web_app::GarbageCollectStoragePartitionsCommand>(
             &profile_.get(),

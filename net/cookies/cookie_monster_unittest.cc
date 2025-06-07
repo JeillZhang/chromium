@@ -32,6 +32,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
@@ -76,6 +77,7 @@ using CookieDeletionInfo = net::CookieDeletionInfo;
 
 namespace {
 
+using testing::_;
 using testing::ElementsAre;
 
 // False means 'less than or equal', so we test both ways for full equal.
@@ -139,6 +141,7 @@ struct CookieMonsterTestTraits {
   static const int creation_time_granularity_in_ms = 0;
   static const bool supports_cookie_access_semantics = true;
   static const bool supports_partitioned_cookies = true;
+  static const bool dispatches_events_on_no_change_overwrite = true;
 };
 
 INSTANTIATE_TYPED_TEST_SUITE_P(CookieMonster,
@@ -1497,44 +1500,6 @@ TEST_F(DeferredCookieTaskTest, DeferredTaskOrder) {
   ASSERT_TRUE(get_cookie_list_callback_deferred.was_run());
   EXPECT_THAT(get_cookie_list_callback_deferred.cookies(),
               MatchesCookieLine("A=B; X=1"));
-}
-
-class CheckAncestorChainBitEnabledTest
-    : public CookieMonsterTest,
-      public testing::WithParamInterface<bool> {
- protected:
-  void SetUp() override {
-    scoped_feature_list_.InitWithFeatureState(
-        features::kAncestorChainBitEnabledInPartitionedCookies,
-        AncestorChainBitEnabled());
-  }
-
-  bool AncestorChainBitEnabled() const { return GetParam(); }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-};
-
-INSTANTIATE_TEST_SUITE_P(/* no label */,
-                         CheckAncestorChainBitEnabledTest,
-                         ::testing::Bool());
-
-TEST_P(CheckAncestorChainBitEnabledTest,
-       CheckExpectedMetricValueTriggeredOnLoad) {
-  base::HistogramTester histogram_tester;
-
-  std::unique_ptr<CookieMonster> cookie_monster =
-      std::make_unique<CookieMonster>(
-          base::MakeRefCounted<FlushablePersistentStore>().get(),
-          net::NetLog::Get());
-  cookie_monster->SetPersistSessionCookies(true);
-
-  EXPECT_TRUE(
-      SetCookie(cookie_monster.get(), http_www_foo_.url(), "X=Y; path=/"));
-
-  histogram_tester.ExpectUniqueSample(
-      "Cookie.Partitioned.AncestorChainBitFeatureEnabled",
-      AncestorChainBitEnabled(), 1u);
 }
 
 TEST_F(CookieMonsterTest, TestCookieDeleteAll) {
@@ -4733,17 +4698,24 @@ TEST_F(CookieMonsterTest, DeleteAll) {
 }
 
 TEST_F(CookieMonsterTest, HistogramCheck) {
+  base::MetricsSubSampler::ScopedAlwaysSampleForTesting always_sample;
   auto cm = std::make_unique<CookieMonster>(nullptr, net::NetLog::Get());
 
   // Should match call in InitializeHistograms, but doesn't really matter
   // since the histogram should have been initialized by the CM construction
   // above.
   base::HistogramBase* expired_histogram = base::Histogram::FactoryGet(
-      "Cookie.ExpirationDurationMinutesSecure", 1, 10 * 365 * 24 * 60, 50,
-      base::Histogram::kUmaTargetedHistogramFlag);
+      "Cookie.ExpirationDurationMinutesSecure.Subsampled2", 1, 400 * 24 * 60,
+      100, base::Histogram::kUmaTargetedHistogramFlag);
+  base::HistogramBase* persistance_histogram =
+      base::BooleanHistogram::FactoryGet(
+          "Cookie.IsPersistentWhenSet.Subsampled",
+          base::HistogramBase::kUmaTargetedHistogramFlag);
 
-  std::unique_ptr<base::HistogramSamples> samples1(
+  std::unique_ptr<base::HistogramSamples> expired_samples1(
       expired_histogram->SnapshotSamples());
+  std::unique_ptr<base::HistogramSamples> persistance_samples1(
+      persistance_histogram->SnapshotSamples());
   auto cookie = CanonicalCookie::CreateUnsafeCookieForTesting(
       "a", "b", "a.url", "/", base::Time(),
       base::Time::Now() + base::Minutes(59), base::Time(), base::Time(),
@@ -4754,16 +4726,26 @@ TEST_F(CookieMonsterTest, HistogramCheck) {
   ASSERT_TRUE(SetCanonicalCookie(cm.get(), std::move(cookie), source_url,
                                  /*modify_httponly=*/true));
 
-  std::unique_ptr<base::HistogramSamples> samples2(
+  std::unique_ptr<base::HistogramSamples> expired_samples2(
       expired_histogram->SnapshotSamples());
-  EXPECT_EQ(samples1->TotalCount() + 1, samples2->TotalCount());
+  std::unique_ptr<base::HistogramSamples> persistance_samples2(
+      persistance_histogram->SnapshotSamples());
+  EXPECT_EQ(expired_samples1->TotalCount() + 1, expired_samples2->TotalCount());
+  EXPECT_EQ(persistance_samples1->TotalCount() + 1,
+            persistance_samples2->TotalCount());
+  EXPECT_EQ(1, persistance_samples2->sum());
 
   // kValidCookieLine creates a session cookie.
   ASSERT_TRUE(SetCookie(cm.get(), http_www_foo_.url(), kValidCookieLine));
 
-  std::unique_ptr<base::HistogramSamples> samples3(
+  std::unique_ptr<base::HistogramSamples> expired_samples3(
       expired_histogram->SnapshotSamples());
-  EXPECT_EQ(samples2->TotalCount(), samples3->TotalCount());
+  std::unique_ptr<base::HistogramSamples> persistance_samples3(
+      persistance_histogram->SnapshotSamples());
+  EXPECT_EQ(expired_samples2->TotalCount(), expired_samples3->TotalCount());
+  EXPECT_EQ(persistance_samples2->TotalCount() + 1,
+            persistance_samples3->TotalCount());
+  EXPECT_EQ(1, persistance_samples3->sum());
 }
 
 TEST_F(CookieMonsterTest, InvalidExpiryTime) {
@@ -7201,8 +7183,9 @@ TEST_F(CookieMonsterTest, IsCookieSentToSamePortThatSetIt) {
 }
 
 TEST_F(CookieMonsterTest, CookieDomainSetHistogram) {
+  base::MetricsSubSampler::ScopedAlwaysSampleForTesting always_sample;
   base::HistogramTester histograms;
-  const char kHistogramName[] = "Cookie.DomainSet";
+  const char kHistogramName[] = "Cookie.DomainSet.Subsampled";
 
   auto store = base::MakeRefCounted<MockPersistentCookieStore>();
   auto cm = std::make_unique<CookieMonster>(store.get(), net::NetLog::Get());
@@ -7228,13 +7211,11 @@ TEST_F(CookieMonsterTest, CookieDomainSetHistogram) {
 }
 
 TEST_F(CookieMonsterTest, CookiePortReadHistogram) {
-  // The per-resource cookie histograms are subsampled, simulate for this test
-  // that the dice roll makes them record.
-  base::MetricsSubSampler::ScopedAlwaysSampleForTesting no_subsampling;
+  base::MetricsSubSampler::ScopedAlwaysSampleForTesting always_sample;
 
   base::HistogramTester histograms;
-  const char kHistogramName[] = "Cookie.Port.Read.RemoteHost";
-  const char kHistogramNameLocal[] = "Cookie.Port.Read.Localhost";
+  const char kHistogramName[] = "Cookie.Port.Read.RemoteHost.Subsampled";
+  const char kHistogramNameLocal[] = "Cookie.Port.Read.Localhost.Subsampled";
 
   auto store = base::MakeRefCounted<MockPersistentCookieStore>();
   auto cm = std::make_unique<CookieMonster>(store.get(), net::NetLog::Get());
@@ -7285,9 +7266,10 @@ TEST_F(CookieMonsterTest, CookiePortReadHistogram) {
 }
 
 TEST_F(CookieMonsterTest, CookiePortSetHistogram) {
+  base::MetricsSubSampler::ScopedAlwaysSampleForTesting always_sample;
   base::HistogramTester histograms;
-  const char kHistogramName[] = "Cookie.Port.Set.RemoteHost";
-  const char kHistogramNameLocal[] = "Cookie.Port.Set.Localhost";
+  const char kHistogramName[] = "Cookie.Port.Set.RemoteHost.Subsampled";
+  const char kHistogramNameLocal[] = "Cookie.Port.Set.Localhost.Subsampled";
 
   auto store = base::MakeRefCounted<MockPersistentCookieStore>();
   auto cm = std::make_unique<CookieMonster>(store.get(), net::NetLog::Get());
@@ -7337,15 +7319,15 @@ TEST_F(CookieMonsterTest, CookiePortSetHistogram) {
 }
 
 TEST_F(CookieMonsterTest, CookiePortReadDiffersFromSetHistogram) {
-  // The per-resource cookie histograms are subsampled, simulate for this test
-  // that the dice roll makes them record.
-  base::MetricsSubSampler::ScopedAlwaysSampleForTesting no_subsampling;
+  base::MetricsSubSampler::ScopedAlwaysSampleForTesting always_sample;
 
   base::HistogramTester histograms;
-  const char kHistogramName[] = "Cookie.Port.ReadDiffersFromSet.RemoteHost";
-  const char kHistogramNameLocal[] = "Cookie.Port.ReadDiffersFromSet.Localhost";
+  const char kHistogramName[] =
+      "Cookie.Port.ReadDiffersFromSet.RemoteHost.Subsampled";
+  const char kHistogramNameLocal[] =
+      "Cookie.Port.ReadDiffersFromSet.Localhost.Subsampled";
   const char kHistogramNameDomainSet[] =
-      "Cookie.Port.ReadDiffersFromSet.DomainSet";
+      "Cookie.Port.ReadDiffersFromSet.DomainSet.Subsampled";
 
   auto store = base::MakeRefCounted<MockPersistentCookieStore>();
   auto cm = std::make_unique<CookieMonster>(store.get(), net::NetLog::Get());
@@ -7441,8 +7423,9 @@ TEST_F(CookieMonsterTest, CookiePortReadDiffersFromSetHistogram) {
 }
 
 TEST_F(CookieMonsterTest, CookieSourceSchemeNameHistogram) {
+  base::MetricsSubSampler::ScopedAlwaysSampleForTesting always_sample;
   base::HistogramTester histograms;
-  const char kHistogramName[] = "Cookie.CookieSourceSchemeName";
+  const char kHistogramName[] = "Cookie.CookieSourceSchemeName.Subsampled";
 
   auto store = base::MakeRefCounted<MockPersistentCookieStore>();
   auto cm = std::make_unique<CookieMonster>(store.get(), net::NetLog::Get());
@@ -7530,14 +7513,12 @@ TEST_F(FirstPartySetEnabledCookieMonsterTest, RecordsPeriodicFPSSizes) {
   net::SchemefulSite member4(GURL("https://member4.test"));
 
   access_delegate_->SetFirstPartySets({
-      {owner1,
-       net::FirstPartySetEntry(owner1, net::SiteType::kPrimary, std::nullopt)},
-      {member1, net::FirstPartySetEntry(owner1, net::SiteType::kAssociated, 0)},
-      {member2, net::FirstPartySetEntry(owner1, net::SiteType::kAssociated, 1)},
-      {owner2,
-       net::FirstPartySetEntry(owner2, net::SiteType::kPrimary, std::nullopt)},
-      {member3, net::FirstPartySetEntry(owner2, net::SiteType::kAssociated, 0)},
-      {member4, net::FirstPartySetEntry(owner2, net::SiteType::kAssociated, 1)},
+      {owner1, net::FirstPartySetEntry(owner1, net::SiteType::kPrimary)},
+      {member1, net::FirstPartySetEntry(owner1, net::SiteType::kAssociated)},
+      {member2, net::FirstPartySetEntry(owner1, net::SiteType::kAssociated)},
+      {owner2, net::FirstPartySetEntry(owner2, net::SiteType::kPrimary)},
+      {member3, net::FirstPartySetEntry(owner2, net::SiteType::kAssociated)},
+      {member4, net::FirstPartySetEntry(owner2, net::SiteType::kAssociated)},
   });
 
   ASSERT_TRUE(SetCookie(cm(), GURL("https://owner1.test"), kValidCookieLine));
@@ -7603,6 +7584,27 @@ TEST_F(CookieMonsterTest, GetAllCookiesForURLNonce) {
                           CookiePartitionKeyCollection(anonymous_iframe_key)),
       ElementsAre(MatchesCookieNameValue("__Host-B", "1"),
                   MatchesCookieNameValue("__Host-C", "0")));
+
+  // Check that unpartitioned cookies were excluded with the correct reason from
+  // within the anonymous iframe:
+  EXPECT_THAT(GetExcludedCookiesForURL(
+                  cm.get(), https_www_foo_.url(),
+                  CookiePartitionKeyCollection(anonymous_iframe_key)),
+              testing::UnorderedElementsAre(
+                  MatchesCookieWithAccessResult(
+                      MatchesCookieWithName("A"),
+                      MatchesCookieAccessResult(
+                          HasExactlyExclusionReasonsForTesting(
+                              {CookieInclusionStatus::ExclusionReason::
+                                   EXCLUDE_ANONYMOUS_CONTEXT}),
+                          _, _, _)),
+                  MatchesCookieWithAccessResult(
+                      MatchesCookieWithName("__Host-B"),
+                      MatchesCookieAccessResult(
+                          HasExactlyExclusionReasonsForTesting(
+                              {CookieInclusionStatus::ExclusionReason::
+                                   EXCLUDE_ANONYMOUS_CONTEXT}),
+                          _, _, _))));
 }
 
 TEST_F(CookieMonsterTest, SiteHasCookieInOtherPartition) {
@@ -7662,10 +7664,6 @@ TEST_F(CookieMonsterTest, SiteHasCookieInOtherPartition) {
   // method only considers partitioned cookies.
   EXPECT_THAT(cm->SiteHasCookieInOtherPartition(site, partition_key),
               testing::Optional(false));
-
-  // Should return nullopt when the partition key is nullopt.
-  EXPECT_FALSE(
-      cm->SiteHasCookieInOtherPartition(site, /*partition_key=*/std::nullopt));
 }
 
 // Test that domain cookies which shadow origin cookies are excluded when scheme
@@ -7721,8 +7719,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // Shadowing domain cookie after the origin cookie.
   cookie_ptrs = {origin_cookie1.get(), origin_cookie2.get(),
                  domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {*origin_cookie1, *origin_cookie2}));
   EXPECT_TRUE(CookieListsMatch(excluded, {*domain_cookie1}));
   reset();
@@ -7730,8 +7729,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // Shadowing domain cookie before the origin cookie.
   cookie_ptrs = {domain_cookie1.get(), origin_cookie2.get(),
                  origin_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {*origin_cookie2, *origin_cookie1}));
   EXPECT_TRUE(CookieListsMatch(excluded, {*domain_cookie1}));
   reset();
@@ -7743,8 +7743,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // Multiple different shadowing domain cookies.
   cookie_ptrs = {domain_cookie1.get(), origin_cookie2.get(),
                  origin_cookie1.get(), domain_cookie2.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {*origin_cookie2, *origin_cookie1}));
   EXPECT_TRUE(CookieListsMatch(excluded, {*domain_cookie1, *domain_cookie2}));
   reset();
@@ -7757,8 +7758,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   cookie_ptrs = {domain_cookie1.get(), origin_cookie2.get(),
                  origin_cookie1.get(), domain_cookie2.get(),
                  domain_cookie3.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(
       included, {*origin_cookie2, *origin_cookie1, *domain_cookie3}));
   EXPECT_TRUE(CookieListsMatch(excluded, {*domain_cookie1, *domain_cookie2}));
@@ -7772,8 +7774,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // should all be excluded.
   cookie_ptrs = {domain_cookie1.get(), origin_cookie2.get(),
                  origin_cookie1.get(), sub_domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {*origin_cookie2, *origin_cookie1}));
   EXPECT_TRUE(
       CookieListsMatch(excluded, {*domain_cookie1, *sub_domain_cookie1}));
@@ -7781,8 +7784,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
 
   // Domain cookies may shadow each other.
   cookie_ptrs = {domain_cookie1.get(), sub_domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(
       CookieListsMatch(included, {*domain_cookie1, *sub_domain_cookie1}));
   EXPECT_TRUE(CookieListsMatch(excluded, {}));
@@ -7795,8 +7799,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // Origin cookies on different paths may not be shadowed, even if the
   // origin cookie wouldn't be included on this request.
   cookie_ptrs = {path_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {}));
   EXPECT_TRUE(
       CookieListsMatch(excluded, {*path_origin_cookie1, *domain_cookie1}));
@@ -7810,8 +7815,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // Origin cookies that are excluded due to scheme binding don't affect domain
   // cookies.
   cookie_ptrs = {insecure_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {*domain_cookie1}));
   EXPECT_TRUE(CookieListsMatch(excluded, {*insecure_origin_cookie1}));
   EXPECT_TRUE(
@@ -7827,8 +7833,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // Domain cookies that are excluded due to scheme binding shouldn't also be
   // exclude because of shadowing.
   cookie_ptrs = {origin_cookie1.get(), insecure_domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {*origin_cookie1}));
   EXPECT_TRUE(CookieListsMatch(excluded, {*insecure_domain_cookie1}));
   EXPECT_TRUE(
@@ -7839,8 +7846,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // If both domain and origin cookie are excluded due to scheme binding then
   // domain cookie shouldn't get shadowing exclusion.
   cookie_ptrs = {insecure_origin_cookie1.get(), insecure_domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {}));
   EXPECT_TRUE(CookieListsMatch(
       excluded, {*insecure_origin_cookie1, *insecure_domain_cookie1}));
@@ -7874,7 +7882,8 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   cookie_ptrs = {trust_origin_cookie1.get(), secure_trust_domain_cookie1.get(),
                  secure_trust_domain_cookie2.get()};
   cm->FilterCookiesWithOptions(http_www_trustworthy.url(), options,
-                               &cookie_ptrs, &included, &excluded);
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(
       included, {*trust_origin_cookie1, *secure_trust_domain_cookie2}));
   EXPECT_TRUE(CookieListsMatch(excluded, {*secure_trust_domain_cookie1}));
@@ -7897,7 +7906,8 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   cookie_ptrs = {secure_trust_origin_cookie1.get(), trust_domain_cookie1.get(),
                  trust_domain_cookie2.get()};
   cm->FilterCookiesWithOptions(http_www_trustworthy.url(), options,
-                               &cookie_ptrs, &included, &excluded);
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(
       included, {*secure_trust_origin_cookie1, *trust_domain_cookie2}));
   EXPECT_TRUE(CookieListsMatch(excluded, {*trust_domain_cookie1}));
@@ -7911,8 +7921,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // Origin cookies that have warnings due to port binding don't affect domain
   // cookies.
   cookie_ptrs = {port_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(
       CookieListsMatch(included, {*port_origin_cookie1, *domain_cookie1}));
   EXPECT_TRUE(included[0].access_result.status.HasWarningReason(
@@ -7926,8 +7937,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // Origin cookies that have excluded due to scheme binding and have a port
   // binding warning don't affect domain cookies.
   cookie_ptrs = {port_insecure_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {*domain_cookie1}));
   EXPECT_TRUE(
       excluded[0].access_result.status.HasExactlyWarningReasonsForTesting(
@@ -7947,8 +7959,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // Origin cookies that are excluded due to port binding don't affect domain
   // cookies.
   cookie_ptrs = {port_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {*domain_cookie1}));
   EXPECT_TRUE(CookieListsMatch(excluded, {*port_origin_cookie1}));
   EXPECT_TRUE(
@@ -7959,8 +7972,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsExcludeShadowingDomains) {
   // Origin cookies that are excluded due to scheme and port binding don't
   // affect domain cookies.
   cookie_ptrs = {port_insecure_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {*domain_cookie1}));
   EXPECT_TRUE(CookieListsMatch(excluded, {*port_insecure_origin_cookie1}));
   EXPECT_TRUE(
@@ -8062,8 +8076,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // Shadowing domain cookie after the origin cookie.
   cookie_ptrs = {origin_cookie1.get(), origin_cookie2.get(),
                  domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {*domain_cookie1}));
   reset();
@@ -8071,8 +8086,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // Shadowing domain cookie before the origin cookie.
   cookie_ptrs = {domain_cookie1.get(), origin_cookie2.get(),
                  origin_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {*domain_cookie1}));
   reset();
@@ -8084,8 +8100,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // Multiple different shadowing domain cookies.
   cookie_ptrs = {domain_cookie1.get(), origin_cookie2.get(),
                  origin_cookie1.get(), domain_cookie2.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(
       DomainCookiesHaveWarnings(included, {*domain_cookie1, *domain_cookie2}));
@@ -8099,8 +8116,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   cookie_ptrs = {domain_cookie1.get(), origin_cookie2.get(),
                  origin_cookie1.get(), domain_cookie2.get(),
                  domain_cookie3.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(
       DomainCookiesHaveWarnings(included, {*domain_cookie1, *domain_cookie2}));
@@ -8114,8 +8132,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // should all have a warning.
   cookie_ptrs = {domain_cookie1.get(), origin_cookie2.get(),
                  origin_cookie1.get(), sub_domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(DomainCookiesHaveWarnings(
       included, {*domain_cookie1, *sub_domain_cookie1}));
@@ -8123,8 +8142,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
 
   // Domain cookies may shadow each other.
   cookie_ptrs = {domain_cookie1.get(), sub_domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {}));
   reset();
@@ -8136,8 +8156,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // Origin cookies on different paths may not be shadowed, even if the
   // origin cookie wouldn't be included on this request.
   cookie_ptrs = {path_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {domain_cookie1.get()}));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {*domain_cookie1}));
   reset();
@@ -8150,8 +8171,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // Origin cookies that have a warning for scheme binding don't affect domain
   // cookies.
   cookie_ptrs = {insecure_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {}));
   EXPECT_TRUE(included[0].access_result.status.HasWarningReason(
@@ -8166,8 +8188,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // Domain cookies that are excluded due to scheme binding shouldn't also get a
   // shadow warning.
   cookie_ptrs = {origin_cookie1.get(), insecure_domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {}));
   EXPECT_TRUE(
@@ -8178,8 +8201,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // If both domain and origin cookie have warnings due to scheme binding then
   // domain cookie shouldn't get shadowing warning.
   cookie_ptrs = {insecure_origin_cookie1.get(), insecure_domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {}));
   EXPECT_TRUE(included[0].access_result.status.HasWarningReason(
@@ -8214,7 +8238,8 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   cookie_ptrs = {trust_origin_cookie1.get(), secure_trust_domain_cookie1.get(),
                  secure_trust_domain_cookie2.get()};
   cm->FilterCookiesWithOptions(http_www_trustworthy.url(), options,
-                               &cookie_ptrs, &included, &excluded);
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(
       DomainCookiesHaveWarnings(included, {*secure_trust_domain_cookie1}));
@@ -8237,7 +8262,8 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   cookie_ptrs = {secure_trust_origin_cookie1.get(), trust_domain_cookie1.get(),
                  trust_domain_cookie2.get()};
   cm->FilterCookiesWithOptions(http_www_trustworthy.url(), options,
-                               &cookie_ptrs, &included, &excluded);
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {*trust_domain_cookie1}));
   reset();
@@ -8250,8 +8276,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // Origin cookies that have warnings due to port binding don't affect domain
   // cookies.
   cookie_ptrs = {port_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {}));
   EXPECT_TRUE(included[0].access_result.status.HasWarningReason(
@@ -8265,8 +8292,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // Origin cookies that have warnings due to scheme and port binding don't
   // affect domain cookies.
   cookie_ptrs = {port_insecure_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, cookie_ptrs));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {}));
   EXPECT_TRUE(
@@ -8284,8 +8312,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // Origin cookies that are excluded due to port binding don't affect domain
   // cookies.
   cookie_ptrs = {port_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {domain_cookie1.get()}));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {}));
   EXPECT_TRUE(CookieListsMatch(excluded, {port_origin_cookie1.get()}));
@@ -8297,8 +8326,9 @@ TEST_F(CookieMonsterTest, FilterCookiesWithOptionsWarnShadowingDomains) {
   // Origin cookies that are excluded due to port binding and have a scheme
   // binding warning don't affect domain cookies.
   cookie_ptrs = {port_insecure_origin_cookie1.get(), domain_cookie1.get()};
-  cm->FilterCookiesWithOptions(https_www_foo_.url(), options, &cookie_ptrs,
-                               &included, &excluded);
+  cm->FilterCookiesWithOptions(https_www_foo_.url(), options,
+                               CookiePartitionKeyCollection(), cookie_ptrs,
+                               included, excluded);
   EXPECT_TRUE(CookieListsMatch(included, {domain_cookie1.get()}));
   EXPECT_TRUE(DomainCookiesHaveWarnings(included, {}));
   EXPECT_TRUE(CookieListsMatch(excluded, {port_insecure_origin_cookie1.get()}));

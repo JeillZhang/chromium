@@ -56,17 +56,13 @@ BuildInfo::BuildInfo()
       android_build_fp_(android_info::android_build_fp()),
       installer_package_name_(apk_info::installer_package_name()),
       abi_name_(android_info::abi_name()),
-      custom_themes_(device_info::custom_themes()),
       resources_version_(apk_info::resources_version()),
       target_sdk_version_(apk_info::target_sdk_version()),
       is_debug_android_(android_info::is_debug_android()),
       is_tv_(device_info::is_tv()),
       version_incremental_(android_info::version_incremental()),
       hardware_(android_info::hardware()),
-      is_at_least_t_(android_info::is_at_least_t()),
       is_automotive_(device_info::is_automotive()),
-      is_at_least_u_(android_info::is_at_least_u()),
-      targets_at_least_u_(apk_info::targets_at_least_u()),
       codename_(android_info::codename()),
       vulkan_deqp_level_(device_info::vulkan_deqp_level()),
       is_foldable_(device_info::is_foldable()),
@@ -76,7 +72,7 @@ BuildInfo::BuildInfo()
 
 BuildInfo::~BuildInfo() = default;
 
-const char* BuildInfo::gms_version_code() const {
+const std::string& BuildInfo::gms_version_code() const {
   return device_info::gms_version_code();
 }
 
@@ -85,7 +81,7 @@ void BuildInfo::set_gms_version_code_for_test(
   device_info::set_gms_version_code_for_test(gms_version_code);
 }
 
-std::string BuildInfo::host_signing_cert_sha256() {
+const std::string BuildInfo::host_signing_cert_sha256() {
   JNIEnv* env = AttachCurrentThread();
   return Java_BuildInfo_lazyGetHostSigningCertSha256(env);
 }

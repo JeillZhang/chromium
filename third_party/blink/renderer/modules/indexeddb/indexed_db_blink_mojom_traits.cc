@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/modules/indexeddb/indexed_db_blink_mojom_traits.h"
 
 #include <utility>
@@ -33,7 +28,6 @@ bool StructTraits<blink::mojom::IDBDatabaseMetadataDataView,
                   blink::IDBDatabaseMetadata>::
     Read(blink::mojom::IDBDatabaseMetadataDataView data,
          blink::IDBDatabaseMetadata* out) {
-  out->id = data.id();
   String name;
   if (!data.ReadName(&name))
     return false;
@@ -131,8 +125,7 @@ bool UnionTraits<blink::mojom::IDBKeyDataView, std::unique_ptr<blink::IDBKey>>::
       data.GetBinaryDataView(&bytes);
       *out = blink::IDBKey::CreateBinary(
           base::MakeRefCounted<base::RefCountedData<Vector<char>>>(
-              Vector<char>(base::span(
-                  reinterpret_cast<const char*>(bytes.data()), bytes.size()))));
+              Vector<char>(base::as_chars(base::span(bytes)))));
       return true;
     }
     case blink::mojom::IDBKeyDataView::Tag::kString: {
@@ -174,7 +167,7 @@ UnionTraits<blink::mojom::IDBKeyDataView, std::unique_ptr<blink::IDBKey>>::
 base::span<const uint8_t>
 StructTraits<blink::mojom::IDBValueDataView, std::unique_ptr<blink::IDBValue>>::
     bits(const std::unique_ptr<blink::IDBValue>& input) {
-  return base::as_byte_span(input->Data());
+  return input->Data();
 }
 
 // static
@@ -224,8 +217,7 @@ bool StructTraits<blink::mojom::IDBValueDataView,
   }
 
   if (value_bits.empty()) {
-    *out = std::make_unique<blink::IDBValue>(std::move(value_bits),
-                                             Vector<blink::WebBlobInfo>());
+    *out = std::make_unique<blink::IDBValue>();
     return true;
   }
 
@@ -266,9 +258,10 @@ bool StructTraits<blink::mojom::IDBValueDataView,
     }
   }
 
-  *out = std::make_unique<blink::IDBValue>(
-      std::move(value_bits), std::move(value_blob_info),
-      std::move(file_system_access_tokens));
+  *out = std::make_unique<blink::IDBValue>();
+  (*out)->SetData(std::move(value_bits));
+  (*out)->SetBlobInfo(std::move(value_blob_info));
+  (*out)->SetFileSystemAccessTokens(std::move(file_system_access_tokens));
   return true;
 }
 
